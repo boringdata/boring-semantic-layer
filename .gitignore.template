@@ -1,0 +1,5 @@
+.envrc.secrets
+builds/
+*pyc
+.gitignore
+.direnv/*

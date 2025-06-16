@@ -1,0 +1,27 @@
+[project]
+name = "boring-semantic-layer"
+version = "0.0.0"
+description = "A boring semantic layer built with Xorq"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ipython>=9.3.0",
+    "urllib3>=2.2.3",
+    "xorq>=2.2.0",
+]
+
+[project.scripts]
+hello = "boring_semantic_layer:hello"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.6.7",
+    "pre-commit>=4.2.0",
+]
+[tool.uv.sources]
+xorq-benchmarks = {workspace = true}
+xorq = {path = "dist/xorq-0.2.2-py3-none-any.whl"}

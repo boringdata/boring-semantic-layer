@@ -1,0 +1,33 @@
+ci:
+  autofix_commit_msg: "style: auto fixes from pre-commit.ci hooks"
+  autofix_prs: false
+  autoupdate_commit_msg: "chore(deps): pre-commit.ci autoupdate"
+  skip:
+    - ruff
+default_stages:
+  - pre-commit
+repos:
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        additional_dependencies:
+          - tomli
+        args: [--ignore-words=.codespell.ignore-words]
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Ruff version.
+    rev: v0.11.13
+    hooks:
+      # Run the linter.
+      - id: ruff
+        args: ["--output-format=full", "--fix", "src"]
+      # Run the formatter.
+      - id: ruff-format
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    # uv version.
+    rev: 0.7.13
+    hooks:
+      # Update the uv lockfile
+      - id: uv-lock
+      - id: uv-export
+        args: ["--frozen", "--no-hashes", "--no-emit-project", "--all-groups", "--all-extras", "--output-file=requirements-dev.txt"]
