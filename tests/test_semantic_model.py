@@ -32,7 +32,7 @@ def test_filter_and_order():
         dimensions={"group": lambda t: t.group},
         measures={"sum_val": lambda t: t.val.sum()},
     )
-    expr = model.query(dims=["group"], measures=["sum_val"], filters={"group": "a"})
+    expr = model.query(dims=["group"], measures=["sum_val"], filters= lambda t: t.group == "a")
     result = expr.execute().reset_index(drop=True)
     expected = pd.DataFrame({"group": ["a"], "sum_val": [40]})
     pd.testing.assert_frame_equal(result, expected)
@@ -45,3 +45,4 @@ def test_unknown_dimension_raises():
     model = SemanticModel(table=table, dimensions={"a": lambda t: t.a}, measures={})
     with pytest.raises(KeyError):
         _ = model.query(dims=["b"], measures=[])
+
