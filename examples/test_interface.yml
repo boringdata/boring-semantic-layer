@@ -1,0 +1,27 @@
+carriers_sm:
+  name: carriers
+  table: carriers_tbl
+  dimensions:
+    code: lambda t: t.code
+    name: lambda t: t.name
+    nickname: lambda t: t.nickname
+  measures:
+    carrier_count: lambda t: t.count()
+
+flight_sm:
+  name: flights
+  table: flights_tbl
+  dimensions:
+    origin: origin
+    destination: destination
+    carrier: carrier
+    tail_num: tail_num
+  measures:
+    flight_count: lambda t: t.count()
+    avg_dep_delay: lambda t: t.dep_delay.mean()
+  joins:
+    carriers:
+      alias: carriers
+      model: carriers_sm
+      on: lambda left, right: left.carrier == right.code
+      how: inner

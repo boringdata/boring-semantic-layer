@@ -5,6 +5,8 @@ description = "A boring semantic layer built with Xorq"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "ibis>=3.3.0",
+    "ibis-framework[duckdb,examples]>=10.6.0",
     "ipython>=9.3.0",
     "urllib3>=2.2.3",
     "xorq>=2.2.0",
