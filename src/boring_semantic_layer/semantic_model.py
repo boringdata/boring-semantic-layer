@@ -8,7 +8,7 @@ from xorq.vendor.ibis.expr.types.core import Expr
 
 Dimension = Callable[[Expr], Expr]
 Measure = Callable[[Expr], Expr]
-FilterValue = Union[str, int, float, List[Any]]
+FilterValue = Callable[[Expr], Expr]
 
 
 @dataclass
@@ -73,7 +73,7 @@ class SemanticModel:
         self,
         dims: Optional[List[str]] = None,
         measures: Optional[List[str]] = None,
-        filters: Optional[Dict[str, FilterValue]] = None,
+        filters: Optional[List[FilterValue]] = None,
         order_by: Optional[List[Tuple[str, str]]] = None,
         limit: Optional[int] = None,
     ) -> Expr:
@@ -100,27 +100,11 @@ class SemanticModel:
 
         # Apply filters
         if filters:
-            for key, value in filters.items():
-                # Handle join-scoped filters (alias.field)
-                if isinstance(key, str) and "." in key:
-                    alias, field = key.split(".", 1)
-                    join = self.joins.get(alias)
-                    if not join:
-                        raise KeyError(f"Unknown join alias in filter: {alias}")
-                    model = join.model
-                    if field in model.dimensions:
-                        col = model.dimensions[field](t)
-                    else:
-                        col = t[field]
-                elif key in self.dimensions:
-                    col = self.dimensions[key](t)
-                else:
-                    # fallback to raw column
-                    col = t[key]
-                if isinstance(value, (list, tuple, set)):
-                    t = t.filter(col.isin(value))
-                else:
-                    t = t.filter(col == value)
+            if isinstance(filters, Callable):
+                filters = [filters]
+
+            for filter_ in filters:
+                t = t.filter(filter_)
 
         dims = dims or []
         measures = measures or []
@@ -134,6 +118,7 @@ class SemanticModel:
                     raise KeyError(f"Unknown dimension: {d}")
             elif d not in self.dimensions:
                 raise KeyError(f"Unknown dimension: {d}")
+        
         for m in measures:
             if isinstance(m, str) and "." in m:
                 alias, field = m.split(".", 1)
