@@ -62,7 +62,9 @@ class SemanticModel:
         dimensions: Dict[str, Dimension],
         measures: Dict[str, Measure],
         joins: Optional[Dict[str, Join]] = None,
+        name: Optional[str] = None,
     ) -> None:
+        self.name = name or table.get_name()
         self.table = table
         self.dimensions = dimensions
         self.measures = measures
