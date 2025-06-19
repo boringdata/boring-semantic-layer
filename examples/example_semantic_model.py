@@ -29,7 +29,10 @@ flights_sm = SemanticModel(
         "destination": lambda t: t.destination,
         "carrier": lambda t: t.carrier,
         "tail_num": lambda t: t.tail_num,
+        "arr_time": lambda t: t.arr_time,
     },
+    timeDimension="arr_time",
+    smallestTimeGrain="TIME_GRAIN_SECOND",
     measures={
         "flight_count": lambda t: t.count(),
         "avg_dep_delay": lambda t: t.dep_delay.mean(),
@@ -42,5 +45,5 @@ flights_sm = SemanticModel(
             on=lambda left, right: left.carrier == right.code,
             how="inner",
         ),
-    },
+    }
 )
