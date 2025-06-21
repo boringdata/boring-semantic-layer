@@ -3,13 +3,18 @@
 from dataclasses import dataclass, field
 from functools import reduce
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Literal, ForwardRef, ClassVar
-from ibis import _
-from ibis.expr.types.core import Expr
 from pydantic import BaseModel, Field, field_validator
 from dataclasses import dataclass, field
 from typing import ClassVar
 import pandas as pd
 
+try:
+    import xorq.vendor.ibis as ibis_mod
+except ImportError:
+    import ibis as ibis_mod
+
+Expr = ibis_mod.expr.types.core.Expr
+_ = ibis_mod._
 
 Dimension = Callable[[Expr], Expr]
 Measure = Callable[[Expr], Expr]
@@ -61,16 +66,16 @@ class Join:
 class Filter:
     """
     Unified filter class that handles all filter types and returns an unbound ibis expression.
-    
+
     Supports:
     1. JSON filter objects (simple or compound)
     2. String expressions (eval as unbound ibis expressions)
     3. Callable functions that take a table and return a boolean expression
-    
+
     Examples:
         # JSON simple filter
         Filter(filter={"field": "country", "operator": "=", "value": "US"})
-        
+
         # JSON compound filter with table reference
         Filter(filter={
             "operator": "AND",
@@ -79,15 +84,15 @@ class Filter:
                 {"field": "customers.tier", "operator": "in", "values": ["gold", "platinum"]}
             ]
         })
-        
+
         # String expression
         Filter(filter="_.dep_time.year() == 2024")
-        
+
         # Callable function
         Filter(filter=lambda t: t.amount > 1000)
     """
     filter: Union[Dict, str, Callable[[Expr], Expr]]
-    
+
     # Class level constants
     OPERATOR_MAPPING = {
         "=": lambda x, y: x == y,
@@ -107,7 +112,7 @@ class Filter:
     }
     OPERATORS: ClassVar[set] = set(OPERATOR_MAPPING.keys())
     COMPOUND_OPERATORS: ClassVar[set] = {"AND", "OR"}
-    
+
     def __post_init__(self):
         """Validate filter after initialization."""
         if not isinstance(self.filter, (dict, str, Callable)):
@@ -142,18 +147,18 @@ class Filter:
         if "operator" in filter_obj and filter_obj["operator"] in self.COMPOUND_OPERATORS:
             if "conditions" not in filter_obj or not filter_obj["conditions"]:
                 raise ValueError("Compound filter must have non-empty conditions list")
-            
+
             # Process first condition
             if not filter_obj["conditions"]:
                 raise ValueError("Compound filter must have at least one condition")
-                
+
             result = self._parse_json_filter(filter_obj["conditions"][0], table, model)
-            
+
             # Then combine with remaining conditions
             for condition in filter_obj["conditions"][1:]:
                 next_expr = self._parse_json_filter(condition, table, model)
                 result = self.OPERATOR_MAPPING[filter_obj["operator"]](result, next_expr)
-            
+
             return result
 
         # Handle simple filters
@@ -170,19 +175,19 @@ class Filter:
         operator = filter_obj["operator"]
         if operator not in self.OPERATORS:
             raise ValueError(f"Unsupported operator: {operator}")
-        
+
         # For 'in' and 'not in' operators, use values list
         if operator in ["in", "not in"]:
             if "values" not in filter_obj:
                 raise ValueError(f"Operator '{operator}' requires 'values' field")
             return self.OPERATOR_MAPPING[operator](field_expr, filter_obj["values"])
-        
+
         # For null checks, value is not needed
         elif operator in ["is null", "is not null"]:
             if any(k in filter_obj for k in ["value", "values"]):
                 raise ValueError(f"Operator '{operator}' should not have 'value' or 'values' fields")
             return self.OPERATOR_MAPPING[operator](field_expr, None)
-        
+
         # For all other operators, use the value field
         else:
             if "value" not in filter_obj:
@@ -192,7 +197,7 @@ class Filter:
     def to_ibis(self, table: Expr, model: Optional["SemanticModel"] = None) -> Expr:
         """
         Convert the filter to an Ibis expression.
-        
+
         Args:
             table: The Ibis table expression to filter
             model: Optional SemanticModel for validating field references
@@ -252,13 +257,13 @@ class SemanticModel:
         self.dimensions = dimensions
         self.measures = measures
         self.timeDimension = timeDimension
-        
+
         # Validate smallestTimeGrain if provided
         if smallestTimeGrain is not None:
             if smallestTimeGrain not in TIME_GRAIN_TRANSFORMATIONS:
                 raise ValueError(f"Invalid smallestTimeGrain. Must be one of: {', '.join(TIME_GRAIN_TRANSFORMATIONS.keys())}")
         self.smallestTimeGrain = smallestTimeGrain
-        
+
         # Mapping of join alias to Join definitions
         self.joins: Dict[str, Join] = joins or {}
 
@@ -266,10 +271,10 @@ class SemanticModel:
         """Validate that the requested time grain is not finer than the smallest allowed grain."""
         if time_grain is None or self.smallestTimeGrain is None:
             return
-            
+
         requested_idx = TIME_GRAIN_ORDER.index(time_grain)
         smallest_idx = TIME_GRAIN_ORDER.index(self.smallestTimeGrain)
-        
+
         if requested_idx < smallest_idx:
             raise ValueError(
                 f"Requested time grain '{time_grain}' is finer than the smallest allowed grain '{self.smallestTimeGrain}'"
@@ -279,10 +284,10 @@ class SemanticModel:
         """Transform the time dimension based on the specified grain."""
         if not self.timeDimension or not time_grain:
             return table, self.dimensions.copy()
-            
+
         # Create a copy of dimensions
         dimensions = self.dimensions.copy()
-        
+
         # Get or create the time dimension function
         if self.timeDimension in dimensions:
             time_dim_func = dimensions[self.timeDimension]
@@ -290,11 +295,11 @@ class SemanticModel:
             # Create a default time dimension function that accesses the column directly
             time_dim_func = lambda t: getattr(t, self.timeDimension)
             dimensions[self.timeDimension] = time_dim_func
-        
+
         # Create the transformed dimension function
         transform_func = TIME_GRAIN_TRANSFORMATIONS[time_grain]
         dimensions[self.timeDimension] = lambda t: transform_func(time_dim_func(t))
-        
+
         return table, dimensions
 
     def query(
@@ -315,7 +320,7 @@ class SemanticModel:
             measures: List of measure keys to compute.
             filters: List of filters that can be:
                 - Dictionary defining a filter in JSON format with the following structure:
-                  
+
                   Simple Filter:
                   {
                       "field": "column_name",     # Can include table references like "table.column"
@@ -324,7 +329,7 @@ class SemanticModel:
                       # OR
                       "values": ["val1", "val2"]  # For 'in' operator only
                   }
-                  
+
                   Compound Filter (AND/OR):
                   {
                       "operator": "AND",          # or "OR"
@@ -376,7 +381,7 @@ class SemanticModel:
         if time_range and self.timeDimension:
             if not isinstance(time_range, dict) or "start" not in time_range or "end" not in time_range:
                 raise ValueError("time_range must be a dictionary with 'start' and 'end' keys")
-            
+
             time_filter = {
                 "operator": "AND",
                 "conditions": [
@@ -402,11 +407,11 @@ class SemanticModel:
                 t = t.filter(filter_obj.to_ibis(t, self))
 
         dims = dims or []
-        
+
         # If time_grain is specified and timeDimension exists, automatically include it in dimensions
         if time_grain and self.timeDimension and self.timeDimension not in dims:
             dims.append(self.timeDimension)
-            
+
         measures = measures or []
 
         # Validate keys (dimensions and measures), including joins
@@ -418,7 +423,7 @@ class SemanticModel:
                     raise KeyError(f"Unknown dimension: {d}")
             elif d not in dimensions:
                 raise KeyError(f"Unknown dimension: {d}")
-        
+
         for m in measures:
             if isinstance(m, str) and "." in m:
                 alias, field = m.split(".", 1)
@@ -482,27 +487,27 @@ class SemanticModel:
 
     def get_time_range(self) -> Dict[str, Any]:
         """Get the available time range for the model's time dimension.
-        
+
         Returns:
             A dictionary with 'start' and 'end' dates in ISO format, or an error if no time dimension
         """
         if not self.timeDimension:
             return {"error": "Model does not have a time dimension"}
-            
+
         # Get the original time dimension function
         time_dim_func = self.dimensions[self.timeDimension]
-        
+
         # Query the min and max dates
         time_range = self.table.aggregate(
             start=time_dim_func(self.table).min(),
             end=time_dim_func(self.table).max()
         ).execute()
-        
+
         # Convert to ISO format if not None
         # Access the first (and only) row's values directly
         start_date = pd.Timestamp(time_range["start"].iloc[0]).isoformat() if pd.notna(time_range["start"].iloc[0]) else None
         end_date = pd.Timestamp(time_range["end"].iloc[0]).isoformat() if pd.notna(time_range["end"].iloc[0]) else None
-        
+
         return {
             "start": start_date,
             "end": end_date
@@ -536,14 +541,14 @@ class SemanticModel:
             "dimensions": self.available_dimensions,
             "measures": self.available_measures,
         }
-        
+
         # Add time dimension info if present
         if self.timeDimension:
             definition["timeDimension"] = self.timeDimension
-            
+
         # Add smallest time grain if present
         if self.smallestTimeGrain:
             definition["smallestTimeGrain"] = self.smallestTimeGrain
-           
+
         return definition
 

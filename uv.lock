@@ -59,26 +59,33 @@ name = "boring-semantic-layer"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
-    { name = "ipython" },
+    { name = "ibis-framework" },
     { name = "urllib3" },
+]
+
+[package.optional-dependencies]
+xorq = [
     { name = "xorq" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "ipython" },
     { name = "pre-commit" },
     { name = "ruff" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "ipython", specifier = ">=9.3.0" },
+    { name = "ibis-framework", specifier = ">=10.6.0" },
     { name = "urllib3", specifier = ">=2.2.3" },
-    { name = "xorq", path = "dist/xorq-0.2.2-py3-none-any.whl" },
+    { name = "xorq", marker = "extra == 'xorq'", path = "dist/xorq-0.2.2-py3-none-any.whl" },
 ]
+provides-extras = ["xorq"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "ipython", specifier = ">=9.3.0" },
     { name = "pre-commit", specifier = ">=4.2.0" },
     { name = "ruff", specifier = ">=0.6.7" },
 ]
@@ -359,6 +366,24 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e2/d8/738c77c1e821e350da4a048849f695ff88a02b291f8c69db23908867aea6/grpcio-1.73.0-cp313-cp313-musllinux_1_1_x86_64.whl", hash = "sha256:07ad7c57233c2109e4ac999cb9c2710c3b8e3f491a73b058b0ce431f31ed8145", size = 6287593, upload-time = "2025-06-09T10:04:22.878Z" },
     { url = "https://files.pythonhosted.org/packages/09/ec/8498eabc018fa39ae8efe5e47e3f4c1bc9ed6281056713871895dc998807/grpcio-1.73.0-cp313-cp313-win32.whl", hash = "sha256:0eb5df4f41ea10bda99a802b2a292d85be28958ede2a50f2beb8c7fc9a738419", size = 3668637, upload-time = "2025-06-09T10:04:25.787Z" },
     { url = "https://files.pythonhosted.org/packages/d7/35/347db7d2e7674b621afd21b12022e7f48c7b0861b5577134b4e939536141/grpcio-1.73.0-cp313-cp313-win_amd64.whl", hash = "sha256:38cf518cc54cd0c47c9539cefa8888549fcc067db0b0c66a46535ca8032020c4", size = 4335872, upload-time = "2025-06-09T10:04:29.032Z" },
+]
+
+[[package]]
+name = "ibis-framework"
+version = "10.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "atpublic" },
+    { name = "parsy" },
+    { name = "python-dateutil" },
+    { name = "sqlglot" },
+    { name = "toolz" },
+    { name = "typing-extensions" },
+    { name = "tzdata" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b5/f0/9973b5a0cf6df44dd6c4bd2a98c32ef559df96277b62f350a975b1bcbe3d/ibis_framework-10.6.0.tar.gz", hash = "sha256:58dae8c926f4cef611e90e289ce8ff3ff00a06c1be32ecae4d9bede68f806f8a", size = 1229322, upload-time = "2025-06-16T14:40:52.704Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/87/3d495c6c53e09ac85cfb3979b0a5a9c8a12f7ae085bbe9cc4a1c9c3bc302/ibis_framework-10.6.0-py3-none-any.whl", hash = "sha256:f33b73075710425548f474c60489ac33adee499fa71736a4583f77b21b6f7ab8", size = 1932922, upload-time = "2025-06-16T14:40:50.173Z" },
 ]
 
 [[package]]
