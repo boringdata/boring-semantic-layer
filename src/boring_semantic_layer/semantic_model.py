@@ -1,11 +1,7 @@
 """Lightweight semantic layer for BI-style queries using Xorq backend."""
 
-from dataclasses import dataclass, field
-from functools import reduce
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Literal, ForwardRef, ClassVar
-from pydantic import BaseModel, Field, field_validator
-from dataclasses import dataclass, field
-from typing import ClassVar
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Literal, ClassVar
 import pandas as pd
 
 try:
@@ -27,7 +23,7 @@ TimeGrain = Literal[
     "TIME_GRAIN_DAY",
     "TIME_GRAIN_HOUR",
     "TIME_GRAIN_MINUTE",
-    "TIME_GRAIN_SECOND"
+    "TIME_GRAIN_SECOND",
 ]
 
 # Time grain transformation functions
@@ -54,13 +50,16 @@ TIME_GRAIN_ORDER = [
     "TIME_GRAIN_YEAR",
 ]
 
+
 @dataclass
 class Join:
     """Join definition for semantic model relationships."""
+
     alias: str
     model: "SemanticModel"
     on: Callable[[Expr, Expr], Expr]
     how: str = "inner"
+
 
 @dataclass
 class Filter:
@@ -91,6 +90,7 @@ class Filter:
         # Callable function
         Filter(filter=lambda t: t.amount > 1000)
     """
+
     filter: Union[Dict, str, Callable[[Expr], Expr]]
 
     # Class level constants
@@ -118,7 +118,9 @@ class Filter:
         if not isinstance(self.filter, (dict, str, Callable)):
             raise ValueError("Filter must be a dict, string, or callable")
 
-    def _get_field_expr(self, field: str, table: Optional[Expr], model: Optional["SemanticModel"] = None) -> Expr:
+    def _get_field_expr(
+        self, field: str, table: Optional[Expr], model: Optional["SemanticModel"] = None
+    ) -> Expr:
         """Get field expression with proper error handling and join support."""
         if "." in field:
             table_name, field_name = field.split(".", 1)
@@ -127,7 +129,9 @@ class Filter:
                     raise KeyError(f"Unknown join alias: {table_name}")
                 join = model.joins[table_name]
                 if field_name not in join.model.dimensions:
-                    raise KeyError(f"Unknown dimension '{field_name}' in joined model '{table_name}'")
+                    raise KeyError(
+                        f"Unknown dimension '{field_name}' in joined model '{table_name}'"
+                    )
                 return join.model.dimensions[field_name](table)
             else:
                 # Unbound expression for table.field reference
@@ -141,10 +145,18 @@ class Filter:
                 # Unbound expression for field reference
                 return getattr(_, field)
 
-    def _parse_json_filter(self, filter_obj: Dict, table: Optional[Expr] = None, model: Optional["SemanticModel"] = None) -> Expr:
+    def _parse_json_filter(
+        self,
+        filter_obj: Dict,
+        table: Optional[Expr] = None,
+        model: Optional["SemanticModel"] = None,
+    ) -> Expr:
         """Convert a JSON filter to an Ibis expression."""
         # Handle compound filters (AND/OR)
-        if "operator" in filter_obj and filter_obj["operator"] in self.COMPOUND_OPERATORS:
+        if (
+            "operator" in filter_obj
+            and filter_obj["operator"] in self.COMPOUND_OPERATORS
+        ):
             if "conditions" not in filter_obj or not filter_obj["conditions"]:
                 raise ValueError("Compound filter must have non-empty conditions list")
 
@@ -157,7 +169,9 @@ class Filter:
             # Then combine with remaining conditions
             for condition in filter_obj["conditions"][1:]:
                 next_expr = self._parse_json_filter(condition, table, model)
-                result = self.OPERATOR_MAPPING[filter_obj["operator"]](result, next_expr)
+                result = self.OPERATOR_MAPPING[filter_obj["operator"]](
+                    result, next_expr
+                )
 
             return result
 
@@ -185,7 +199,9 @@ class Filter:
         # For null checks, value is not needed
         elif operator in ["is null", "is not null"]:
             if any(k in filter_obj for k in ["value", "values"]):
-                raise ValueError(f"Operator '{operator}' should not have 'value' or 'values' fields")
+                raise ValueError(
+                    f"Operator '{operator}' should not have 'value' or 'values' fields"
+                )
             return self.OPERATOR_MAPPING[operator](field_expr, None)
 
         # For all other operators, use the value field
@@ -261,7 +277,9 @@ class SemanticModel:
         # Validate smallestTimeGrain if provided
         if smallestTimeGrain is not None:
             if smallestTimeGrain not in TIME_GRAIN_TRANSFORMATIONS:
-                raise ValueError(f"Invalid smallestTimeGrain. Must be one of: {', '.join(TIME_GRAIN_TRANSFORMATIONS.keys())}")
+                raise ValueError(
+                    f"Invalid smallestTimeGrain. Must be one of: {', '.join(TIME_GRAIN_TRANSFORMATIONS.keys())}"
+                )
         self.smallestTimeGrain = smallestTimeGrain
 
         # Mapping of join alias to Join definitions
@@ -280,7 +298,9 @@ class SemanticModel:
                 f"Requested time grain '{time_grain}' is finer than the smallest allowed grain '{self.smallestTimeGrain}'"
             )
 
-    def _transform_time_dimension(self, table: Expr, time_grain: Optional[TimeGrain]) -> Tuple[Expr, Dict[str, Dimension]]:
+    def _transform_time_dimension(
+        self, table: Expr, time_grain: Optional[TimeGrain]
+    ) -> Tuple[Expr, Dict[str, Dimension]]:
         """Transform the time dimension based on the specified grain."""
         if not self.timeDimension or not time_grain:
             return table, self.dimensions.copy()
@@ -293,7 +313,9 @@ class SemanticModel:
             time_dim_func = dimensions[self.timeDimension]
         else:
             # Create a default time dimension function that accesses the column directly
-            time_dim_func = lambda t: getattr(t, self.timeDimension)
+            def time_dim_func(t: Expr) -> Expr:
+                return getattr(t, self.timeDimension)
+
             dimensions[self.timeDimension] = time_dim_func
 
         # Create the transformed dimension function
@@ -306,7 +328,9 @@ class SemanticModel:
         self,
         dims: Optional[List[str]] = None,
         measures: Optional[List[str]] = None,
-        filters: Optional[List[Union[Dict[str, Any], str, Callable[[Expr], Expr]]]] = None,
+        filters: Optional[
+            List[Union[Dict[str, Any], str, Callable[[Expr], Expr]]]
+        ] = None,
         order_by: Optional[List[Tuple[str, str]]] = None,
         limit: Optional[int] = None,
         time_range: Optional[Dict[str, str]] = None,
@@ -379,15 +403,29 @@ class SemanticModel:
 
         # Apply time range filter if specified and time dimension exists
         if time_range and self.timeDimension:
-            if not isinstance(time_range, dict) or "start" not in time_range or "end" not in time_range:
-                raise ValueError("time_range must be a dictionary with 'start' and 'end' keys")
+            if (
+                not isinstance(time_range, dict)
+                or "start" not in time_range
+                or "end" not in time_range
+            ):
+                raise ValueError(
+                    "time_range must be a dictionary with 'start' and 'end' keys"
+                )
 
             time_filter = {
                 "operator": "AND",
                 "conditions": [
-                    {"field": self.timeDimension, "operator": ">=", "value": time_range["start"]},
-                    {"field": self.timeDimension, "operator": "<=", "value": time_range["end"]}
-                ]
+                    {
+                        "field": self.timeDimension,
+                        "operator": ">=",
+                        "value": time_range["start"],
+                    },
+                    {
+                        "field": self.timeDimension,
+                        "operator": "<=",
+                        "value": time_range["end"],
+                    },
+                ],
             }
             if not filters:
                 filters = [time_filter]
@@ -499,20 +537,23 @@ class SemanticModel:
 
         # Query the min and max dates
         time_range = self.table.aggregate(
-            start=time_dim_func(self.table).min(),
-            end=time_dim_func(self.table).max()
+            start=time_dim_func(self.table).min(), end=time_dim_func(self.table).max()
         ).execute()
 
         # Convert to ISO format if not None
         # Access the first (and only) row's values directly
-        start_date = pd.Timestamp(time_range["start"].iloc[0]).isoformat() if pd.notna(time_range["start"].iloc[0]) else None
-        end_date = pd.Timestamp(time_range["end"].iloc[0]).isoformat() if pd.notna(time_range["end"].iloc[0]) else None
+        start_date = (
+            pd.Timestamp(time_range["start"].iloc[0]).isoformat()
+            if pd.notna(time_range["start"].iloc[0])
+            else None
+        )
+        end_date = (
+            pd.Timestamp(time_range["end"].iloc[0]).isoformat()
+            if pd.notna(time_range["end"].iloc[0])
+            else None
+        )
 
-        return {
-            "start": start_date,
-            "end": end_date
-        }
-
+        return {"start": start_date, "end": end_date}
 
     @property
     def available_dimensions(self) -> List[str]:
@@ -551,4 +592,3 @@ class SemanticModel:
             definition["smallestTimeGrain"] = self.smallestTimeGrain
 
         return definition
-
