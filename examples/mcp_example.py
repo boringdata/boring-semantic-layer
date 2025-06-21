@@ -1,9 +1,7 @@
 from mcp.server.fastmcp import FastMCP
-import pandas as pd
-from typing import Optional, Dict, List, Any, Union, Literal
+from typing import Optional, Dict, List, Union, Literal
 from example_semantic_model import flights_sm, carriers_sm
 from typing import Annotated
-from ibis import _
 
 
 mcp = FastMCP("Flight Semantic Layer")
@@ -13,10 +11,12 @@ models = {
     "carriers": carriers_sm,
 }
 
+
 @mcp.tool()
 def list_models() -> list[str]:
     """List all available semantic model names"""
     return list(models.keys())
+
 
 @mcp.tool()
 def get_model(model_name: str) -> dict:
@@ -25,24 +25,27 @@ def get_model(model_name: str) -> dict:
         raise ValueError(f"Model {model_name} not found")
     return models[model_name].json_definition
 
+
 @mcp.tool()
 def get_time_range(model_name: str) -> dict:
     """Get the available time range for a model's time dimension
-    
+
     Returns:
         A dictionary with 'start' and 'end' dates in ISO format, or an error if the model has no time dimension
     """
     if model_name not in models:
-        raise ValueError(f"Model {model_name} not found")    
+        raise ValueError(f"Model {model_name} not found")
     return models[model_name].get_time_range()
+
 
 @mcp.tool()
 def query_model(
-        model_name: str, 
-        dimensions: Optional[list[str]] = [], 
-        measures: Optional[list[str]] = [], 
-        filters: Annotated[Optional[Union[Dict, List[Dict]]],                        
-                            """
+    model_name: str,
+    dimensions: Optional[list[str]] = [],
+    measures: Optional[list[str]] = [],
+    filters: Annotated[
+        Optional[Union[Dict, List[Dict]]],
+        """
         List of JSON filter objects with the following structure:
            
         Simple Filter:
@@ -85,10 +88,16 @@ def query_model(
                 {"field": "carrier.country", "operator": "=", "value": "US"}
             ]
         }]
-        """] = [],
-        order_by: Annotated[list[tuple[str, str]], "The order by clause to apply to the query (list of tuples: [('field', 'asc|desc')]"] = [], 
-        limit: Annotated[int, "The limit to apply to the query"] = None,
-        time_range: Annotated[Optional[Dict[str, str]], """Optional time range filter with format:
+        """,
+    ] = [],
+    order_by: Annotated[
+        list[tuple[str, str]],
+        "The order by clause to apply to the query (list of tuples: [('field', 'asc|desc')]",
+    ] = [],
+    limit: Annotated[int, "The limit to apply to the query"] = None,
+    time_range: Annotated[
+        Optional[Dict[str, str]],
+        """Optional time range filter with format:
             {
                 "start": "2024-01-01T00:00:00Z",  # ISO 8601 format
                 "end": "2024-12-31T23:59:59Z"     # ISO 8601 format
@@ -99,10 +108,21 @@ def query_model(
             2. It ensures proper time zone handling with ISO 8601 format
             3. It's more concise than creating complex filter conditions
             4. It works seamlessly with time_grain parameter for time-based aggregations
-        """] = None,
-        time_grain: Annotated[Optional[Literal["TIME_GRAIN_MONTH", "TIME_GRAIN_DAY", "TIME_GRAIN_HOUR", "TIME_GRAIN_MINUTE", "TIME_GRAIN_SECOND"]], 
-                            "Optional time grain to use for time-based dimensions"] = None
-        ) -> list[dict]:
+        """,
+    ] = None,
+    time_grain: Annotated[
+        Optional[
+            Literal[
+                "TIME_GRAIN_MONTH",
+                "TIME_GRAIN_DAY",
+                "TIME_GRAIN_HOUR",
+                "TIME_GRAIN_MINUTE",
+                "TIME_GRAIN_SECOND",
+            ]
+        ],
+        "Optional time grain to use for time-based dimensions",
+    ] = None,
+) -> list[dict]:
     """Query a semantic model with JSON-based filtering.
 
     Args:
@@ -129,7 +149,7 @@ def query_model(
         time_grain="TIME_GRAIN_DAY",  # Automatically applies to time dimensions
         order_by=[("avg_delay", "desc")],
         limit=10
-    
+
     # Query combining time_range with regular filters
     query_model(
         model_name="flights",
@@ -160,28 +180,39 @@ def query_model(
             raise ValueError("Each order_by item must be a tuple of (field, direction)")
         field, direction = item
         if not isinstance(field, str) or direction not in ("asc", "desc"):
-            raise ValueError("Each order_by tuple must be (field: str, direction: 'asc' or 'desc')")
-    
+            raise ValueError(
+                "Each order_by tuple must be (field: str, direction: 'asc' or 'desc')"
+            )
+
     model = models[model_name]
-    
+
     # Validate time grain if provided
     if time_grain and model.smallestTimeGrain:
-        grain_order = ["TIME_GRAIN_SECOND", "TIME_GRAIN_MINUTE", "TIME_GRAIN_HOUR", "TIME_GRAIN_DAY", "TIME_GRAIN_MONTH"]
+        grain_order = [
+            "TIME_GRAIN_SECOND",
+            "TIME_GRAIN_MINUTE",
+            "TIME_GRAIN_HOUR",
+            "TIME_GRAIN_DAY",
+            "TIME_GRAIN_MONTH",
+        ]
         if grain_order.index(time_grain) < grain_order.index(model.smallestTimeGrain):
-            raise ValueError(f"Time grain {time_grain} is smaller than model's smallest allowed grain {model.smallestTimeGrain}")
-    
+            raise ValueError(
+                f"Time grain {time_grain} is smaller than model's smallest allowed grain {model.smallestTimeGrain}"
+            )
+
     output_df = model.query(
         dims=dimensions,
-        measures=measures, 
-        filters=filters,     
-        order_by=order_by, 
+        measures=measures,
+        filters=filters,
+        order_by=order_by,
         limit=limit,
         time_range=time_range,
-        time_grain=time_grain
+        time_grain=time_grain,
     ).execute()
     return output_df.to_dict(orient="records")
 
+
 if __name__ == "__main__":
     # Initialize and run the server
-    #mcp.run(transport='sse')
-    mcp.run(transport='stdio')
+    # mcp.run(transport='sse')
+    mcp.run(transport="stdio")

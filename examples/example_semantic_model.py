@@ -1,9 +1,13 @@
-from boring_semantic_layer.semantic_model import Join, SemanticModel
+import os
+
 import ibis
-import os 
+
+from boring_semantic_layer.semantic_model import SemanticModel, join_one
+
+
 con = ibis.duckdb.connect(":memory:")
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "malloy-samples", "data")
+DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "malloy-samples/data")
 
 flights_tbl = con.read_parquet(f"{DATA_DIR}/flights.parquet")
 carriers_tbl = con.read_parquet(f"{DATA_DIR}/carriers.parquet")
@@ -19,6 +23,7 @@ carriers_sm = SemanticModel(
     measures={
         "carrier_count": lambda t: t.count(),
     },
+    primary_key="code",
 )
 
 flights_sm = SemanticModel(
@@ -39,11 +44,18 @@ flights_sm = SemanticModel(
         "avg_distance": lambda t: t.distance.mean(),
     },
     joins={
-        "carriers": Join(
+        "carriers": join_one(
             alias="carriers",
             model=carriers_sm,
-            on=lambda left, right: left.carrier == right.code,
-            how="inner",
-        ),
-    }
+            with_=lambda t: t.carrier,
+        )
+    },
 )
+
+result_expr = flights_sm.query(
+    dims=["carriers.nickname", "origin"], measures=["flight_count"], limit=10
+)
+
+result_df = result_expr.execute()
+print("Flight counts by carrier nickname and origin:")
+print(result_df)
