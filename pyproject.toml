@@ -5,10 +5,12 @@ description = "A boring semantic layer built with Xorq"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "ipython>=9.3.0",
+    "ibis-framework>=10.6.0",
     "urllib3>=2.2.3",
-    "xorq>=2.2.0",
 ]
+
+[project.optional-dependencies]
+xorq = ["xorq>=2.2.0"]
 
 [project.scripts]
 hello = "boring_semantic_layer:hello"
@@ -21,6 +23,7 @@ build-backend = "hatchling.build"
 dev = [
     "ruff>=0.6.7",
     "pre-commit>=4.2.0",
+    "ipython>=9.3.0",
 ]
 [tool.uv.sources]
 xorq-benchmarks = {workspace = true}
