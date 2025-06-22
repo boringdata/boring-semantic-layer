@@ -1,3 +1,23 @@
+"""
+This is an example of a Model Context Protocol (MCP) server that provides a semantic layer
+for querying flight data through semantic models.
+
+The server exposes tools for:
+- Listing available semantic models
+- Getting model metadata and schema information  
+- Querying time ranges for time-series data
+- Executing queries with dimensions, measures, and filters
+
+To use this server:
+1. Install the mcp package: pip install mcp
+2. Run this script to start the MCP server
+3. Connect to it from an MCP client to query the semantic models
+
+The server provides a clean abstraction over the underlying data, allowing users to
+query business metrics without needing to understand the raw table structure.
+"""
+
+
 from mcp.server.fastmcp import FastMCP
 from typing import Optional, Dict, List, Union, Literal
 from example_semantic_model import flights_sm, carriers_sm
@@ -187,7 +207,7 @@ def query_model(
     model = models[model_name]
 
     # Validate time grain if provided
-    if time_grain and model.smallestTimeGrain:
+    if time_grain and model.smallest_time_grain:
         grain_order = [
             "TIME_GRAIN_SECOND",
             "TIME_GRAIN_MINUTE",
@@ -195,13 +215,13 @@ def query_model(
             "TIME_GRAIN_DAY",
             "TIME_GRAIN_MONTH",
         ]
-        if grain_order.index(time_grain) < grain_order.index(model.smallestTimeGrain):
+        if grain_order.index(time_grain) < grain_order.index(model.smallest_time_grain):
             raise ValueError(
-                f"Time grain {time_grain} is smaller than model's smallest allowed grain {model.smallestTimeGrain}"
+                f"Time grain {time_grain} is smaller than model's smallest allowed grain {model.smallest_time_grain}"
             )
 
     output_df = model.query(
-        dims=dimensions,
+        dimensions=dimensions,
         measures=measures,
         filters=filters,
         order_by=order_by,
