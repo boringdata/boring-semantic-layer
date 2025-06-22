@@ -1,4 +1,4 @@
-"""Lightweight semantic layer for BI-style queries using Xorq backend."""
+"""Lightweight semantic layer for Malloy-style data models using Ibis."""
 
 from attrs import frozen, field, evolve
 from types import MappingProxyType
@@ -27,6 +27,10 @@ except ImportError:
 
 Expr = ibis_mod.expr.types.core.Expr
 _ = ibis_mod._
+
+# Join strategies
+How = Literal["inner", "left", "cross"]
+Cardinality = Literal["one", "many", "cross"]
 
 Dimension = Callable[[Expr], Expr]
 Measure = Callable[[Expr], Expr]
@@ -69,14 +73,13 @@ TIME_GRAIN_ORDER = [
 
 @frozen(kw_only=True, slots=True)
 class Join:
-    """Join definition for semantic model relationships."""
+    """Definition of a join relationship in the semantic model."""
 
     alias: str
     model: "SemanticModel"
     on: Callable[[Expr, Expr], Expr]
-    how: str = "inner"
-    # Malloy-style join cardinality: one-to-one, one-to-many, or cross join
-    kind: Optional[Literal["one", "many", "cross"]] = None
+    how: How = "inner"
+    kind: Cardinality = "one"
 
 
 @frozen(kw_only=True, slots=True)
@@ -247,7 +250,6 @@ class Filter:
 
 
 def _compile_query(qe) -> Expr:
-    """Pure compilation of a QueryExpr into an Ibis expression."""
     model = qe.model
     # Validate time grain
     model._validate_time_grain(qe.time_grain)
@@ -342,11 +344,8 @@ def _compile_query(qe) -> Expr:
     return result
 
 
-# Deferred, chainable query specification
 @frozen(kw_only=True, slots=True)
 class QueryExpr:
-    """Immutable, composable query specification."""
-
     model: "SemanticModel"
     dims: Tuple[str, ...] = field(factory=tuple)
     measures: Tuple[str, ...] = field(factory=tuple)
@@ -752,7 +751,8 @@ def join_one(
     def on_expr(left, right):
         return with_(left) == getattr(right, model.primary_key)
 
-    return Join(alias=alias, model=model, on=on_expr, how="left", kind="one")
+    # use inner join for one-to-one relationships
+    return Join(alias=alias, model=model, on=on_expr, how="inner", kind="one")
 
 
 def join_many(
