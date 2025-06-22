@@ -59,6 +59,8 @@ class Join:
     model: "SemanticModel"
     on: Callable[[Expr, Expr], Expr]
     how: str = "inner"
+    # Malloy-style join cardinality: one-to-one, one-to-many, or cross join
+    kind: Optional[Literal["one", "many", "cross"]] = None
 
 
 @dataclass
@@ -264,6 +266,8 @@ class SemanticModel:
         dimensions: Dict[str, Dimension],
         measures: Dict[str, Measure],
         joins: Optional[Dict[str, Join]] = None,
+        # Optional primary key name for foreign key joins
+        primary_key: Optional[str] = None,
         name: Optional[str] = None,
         timeDimension: Optional[str] = None,
         smallestTimeGrain: Optional[TimeGrain] = None,
@@ -284,6 +288,8 @@ class SemanticModel:
 
         # Mapping of join alias to Join definitions
         self.joins: Dict[str, Join] = joins or {}
+        # Optional primary key for this model (used in foreign key joins)
+        self.primary_key: Optional[str] = primary_key
 
     def _validate_time_grain(self, time_grain: Optional[TimeGrain]) -> None:
         """Validate that the requested time grain is not finer than the smallest allowed grain."""
@@ -395,8 +401,12 @@ class SemanticModel:
         # Apply defined joins
         for alias, join in self.joins.items():
             right = join.model.table
-            cond = join.on(t, right)
-            t = t.join(right, cond, how=join.how)
+            # Support cross joins separately
+            if join.how == "cross":
+                t = t.cross_join(right)
+            else:
+                cond = join.on(t, right)
+                t = t.join(right, cond, how=join.how)
 
         # Transform time dimension if needed
         t, dimensions = self._transform_time_dimension(t, time_grain)
@@ -592,3 +602,52 @@ class SemanticModel:
             definition["smallestTimeGrain"] = self.smallestTimeGrain
 
         return definition
+
+
+# functions for Malloy-style joins
+def join_one(
+    alias: str,
+    model: SemanticModel,
+    with_: Optional[Callable[[Expr], Expr]] = None,
+) -> Join:
+    if with_ is None:
+        raise ValueError("join_one requires a 'with_' callable for foreign key mapping")
+    if not callable(with_):
+        raise TypeError(
+            "'with_' must be a callable mapping the left table to a column expression"
+        )
+    if not model.primary_key:
+        raise ValueError(f"Model does not have 'primary_key' defined for join: {alias}")
+
+    def on_expr(left, right):
+        return with_(left) == getattr(right, model.primary_key)
+
+    return Join(alias=alias, model=model, on=on_expr, how="left", kind="one")
+
+
+def join_many(
+    alias: str,
+    model: SemanticModel,
+    with_: Optional[Callable[[Expr], Expr]] = None,
+) -> Join:
+    if with_ is None:
+        raise ValueError(
+            "join_many requires a 'with_' callable for foreign key mapping"
+        )
+    if not callable(with_):
+        raise TypeError(
+            "'with_' must be a callable mapping the left table to a column expression"
+        )
+    if not model.primary_key:
+        raise ValueError(f"Model does not have 'primary_key' defined for join: {alias}")
+
+    def on_expr(left, right):
+        return with_(left) == getattr(right, model.primary_key)
+
+    return Join(alias=alias, model=model, on=on_expr, how="left", kind="many")
+
+
+def join_cross(alias: str, model: SemanticModel) -> Join:
+    return Join(
+        alias=alias, model=model, on=lambda left, right: None, how="cross", kind="cross"
+    )
