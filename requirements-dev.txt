@@ -7,7 +7,9 @@ annotated-types==0.7.0
 asttokens==3.0.0
     # via stack-data
 atpublic==6.0.1
-    # via xorq
+    # via
+    #   ibis-framework
+    #   xorq
 attrs==25.3.0 ; python_full_version < '4.0'
     # via xorq
 beniget==0.4.2.post1 ; sys_platform == 'darwin'
@@ -65,6 +67,8 @@ greenlet==3.2.3 ; (python_full_version < '3.14' and platform_machine == 'AMD64')
     # via sqlalchemy
 grpcio==1.73.0
     # via opentelemetry-exporter-otlp-proto-grpc
+ibis-framework==10.6.0
+    # via boring-semantic-layer
 identify==2.6.12
     # via pre-commit
 idna==3.10
@@ -74,7 +78,6 @@ importlib-metadata==8.7.0
 iniconfig==2.1.0 ; python_full_version < '4.0'
     # via pytest
 ipython==9.3.0
-    # via boring-semantic-layer
 ipython-pygments-lexers==1.1.1
     # via ipython
 jedi==0.19.2
@@ -132,7 +135,9 @@ pandas==2.3.0 ; python_full_version < '4.0'
 parso==0.8.4
     # via jedi
 parsy==2.1
-    # via xorq
+    # via
+    #   ibis-framework
+    #   xorq
 partd==1.4.2 ; python_full_version < '4.0'
     # via dask
 pexpect==4.9.0 ; sys_platform != 'emscripten' and sys_platform != 'win32'
@@ -182,6 +187,7 @@ pytest-mock==3.14.1 ; python_full_version < '4.0'
     # via xorq
 python-dateutil==2.9.0.post0
     # via
+    #   ibis-framework
     #   pandas
     #   strictyaml
     #   xorq
@@ -213,7 +219,9 @@ sortedcontainers==2.4.0
 sqlalchemy==2.0.41
     # via pyiceberg
 sqlglot==25.20.2
-    # via xorq
+    # via
+    #   ibis-framework
+    #   xorq
 stack-data==0.6.3
     # via ipython
 strictyaml==1.7.3
@@ -225,6 +233,7 @@ tenacity==9.1.2
 toolz==1.0.0
     # via
     #   dask
+    #   ibis-framework
     #   partd
     #   xorq
 traitlets==5.14.3
@@ -233,6 +242,7 @@ traitlets==5.14.3
     #   matplotlib-inline
 typing-extensions==4.14.0
     # via
+    #   ibis-framework
     #   opentelemetry-api
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
@@ -245,8 +255,10 @@ typing-extensions==4.14.0
     #   xorq
 typing-inspection==0.4.1
     # via pydantic
-tzdata==2025.2 ; python_full_version < '4.0'
-    # via pandas
+tzdata==2025.2
+    # via
+    #   ibis-framework
+    #   pandas
 urllib3==2.4.0
     # via
     #   boring-semantic-layer
