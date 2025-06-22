@@ -379,15 +379,22 @@ class QueryExpr:
     def clone(self, **changes) -> "QueryExpr":
         return evolve(self, **changes)
 
-    def to_ibis(self) -> Expr:
+    def to_expr(self) -> Expr:
         return _compile_query(self)
 
+    to_ibis = to_expr
+
     def execute(self, *args, **kwargs):
-        return self.to_ibis().execute(*args, **kwargs)
+        return self.to_expr().execute(*args, **kwargs)
 
     def sql(self) -> str:
-        """Render the SQL for debugging or logging."""
-        return ibis_mod.to_sql(self.to_ibis())
+        return ibis_mod.to_sql(self.to_expr())
+
+    def maybe_to_expr(self) -> Optional[Expr]:
+        try:
+            return self.to_expr()
+        except Exception:
+            return None
 
 
 @frozen(kw_only=True, slots=True)
@@ -421,7 +428,6 @@ class SemanticModel:
         )
     """
 
-    # Immutable fields
     table: Expr = field()
     dimensions: Mapping[str, Dimension] = field(
         converter=lambda d: MappingProxyType(dict(d))
@@ -456,7 +462,6 @@ class SemanticModel:
             )
 
     def build_query(self) -> "QueryExpr":
-        """Return a deferred, composable QueryExpr."""
         return QueryExpr(model=self)
 
     def _validate_time_grain(self, time_grain: Optional[TimeGrain]) -> None:
@@ -510,7 +515,6 @@ class SemanticModel:
         time_range: Optional[Dict[str, str]] = None,
         time_grain: Optional[TimeGrain] = None,
     ) -> "QueryExpr":
-        """Return a deferred, composable QueryExpr."""
         # Validate time grain
         self._validate_time_grain(time_grain)
         # Prepare components
