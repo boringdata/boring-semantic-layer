@@ -1,7 +1,19 @@
 """Lightweight semantic layer for BI-style queries using Xorq backend."""
 
-from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Literal, ClassVar
+from attrs import frozen, field, evolve
+from types import MappingProxyType
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Union,
+    Literal,
+    ClassVar,
+    Mapping,
+)
 import pandas as pd
 
 try:
@@ -55,7 +67,7 @@ TIME_GRAIN_ORDER = [
 ]
 
 
-@dataclass
+@frozen(kw_only=True, slots=True)
 class Join:
     """Join definition for semantic model relationships."""
 
@@ -67,7 +79,7 @@ class Join:
     kind: Optional[Literal["one", "many", "cross"]] = None
 
 
-@dataclass
+@frozen(kw_only=True, slots=True)
 class Filter:
     """
     Unified filter class that handles all filter types and returns an unbound ibis expression.
@@ -119,9 +131,9 @@ class Filter:
     OPERATORS: ClassVar[set] = set(OPERATOR_MAPPING.keys())
     COMPOUND_OPERATORS: ClassVar[set] = {"AND", "OR"}
 
-    def __post_init__(self):
+    def __attrs_post_init__(self):
         """Validate filter after initialization."""
-        if not isinstance(self.filter, (dict, str, Callable)):
+        if not isinstance(self.filter, (dict, str)) and not callable(self.filter):
             raise ValueError("Filter must be a dict, string, or callable")
 
     def _get_field_expr(
@@ -234,6 +246,152 @@ class Filter:
             raise ValueError("Filter must be a dict, string, or callable")
 
 
+def _compile_query(qe) -> Expr:
+    """Pure compilation of a QueryExpr into an Ibis expression."""
+    model = qe.model
+    # Validate time grain
+    model._validate_time_grain(qe.time_grain)
+    # Start with the base table
+    t = model.table
+    # Apply joins
+    for alias, join in model.joins.items():
+        right = join.model.table
+        if join.how == "cross":
+            t = t.cross_join(right)
+        else:
+            cond = join.on(t, right)
+            t = t.join(right, cond, how=join.how)
+    # Transform time dimension if needed
+    t, dimensions = model._transform_time_dimension(t, qe.time_grain)
+    # Apply time range filter if provided
+    if qe.time_range and model.timeDimension:
+        start, end = qe.time_range
+        time_filter = {
+            "operator": "AND",
+            "conditions": [
+                {"field": model.timeDimension, "operator": ">=", "value": start},
+                {"field": model.timeDimension, "operator": "<=", "value": end},
+            ],
+        }
+        t = t.filter(Filter(filter=time_filter).to_ibis(t, model))
+    # Apply other filters
+    for flt in qe.filters:
+        t = t.filter(flt.to_ibis(t, model))
+    # Prepare dimensions and measures lists
+    dims = list(qe.dims)
+    if qe.time_grain and model.timeDimension and model.timeDimension not in dims:
+        dims.append(model.timeDimension)
+    measures = list(qe.measures)
+    # Validate dimensions
+    for d in dims:
+        if "." in d:
+            alias, field = d.split(".", 1)
+            join = model.joins.get(alias)
+            if not join or field not in join.model.dimensions:
+                raise KeyError(f"Unknown dimension: {d}")
+        elif d not in dimensions:
+            raise KeyError(f"Unknown dimension: {d}")
+    # Validate measures
+    for m in measures:
+        if "." in m:
+            alias, field = m.split(".", 1)
+            join = model.joins.get(alias)
+            if not join or field not in join.model.measures:
+                raise KeyError(f"Unknown measure: {m}")
+        elif m not in model.measures:
+            raise KeyError(f"Unknown measure: {m}")
+    # Build aggregate expressions
+    agg_kwargs: Dict[str, Expr] = {}
+    for m in measures:
+        if "." in m:
+            alias, field = m.split(".", 1)
+            join = model.joins[alias]
+            expr = join.model.measures[field](t)
+            name = f"{alias}_{field}"
+            agg_kwargs[name] = expr.name(name)
+        else:
+            expr = model.measures[m](t)
+            agg_kwargs[m] = expr.name(m)
+    # Group and aggregate
+    if dims:
+        dim_exprs = []
+        for d in dims:
+            if "." in d:
+                alias, field = d.split(".", 1)
+                name = f"{alias}_{field}"
+                expr = model.joins[alias].model.dimensions[field](t).name(name)
+            else:
+                expr = dimensions[d](t).name(d)
+            dim_exprs.append(expr)
+        result = t.aggregate(by=dim_exprs, **agg_kwargs)
+    else:
+        result = t.aggregate(**agg_kwargs)
+    # Ordering
+    if qe.order_by:
+        order_exprs = []
+        for field, direction in qe.order_by:
+            col_name = field.replace(".", "_")
+            col = result[col_name]
+            order_exprs.append(
+                col.desc() if direction.lower().startswith("desc") else col.asc()
+            )
+        result = result.order_by(order_exprs)
+    # Limit
+    if qe.limit is not None:
+        result = result.limit(qe.limit)
+    return result
+
+
+# Deferred, chainable query specification
+@frozen(kw_only=True, slots=True)
+class QueryExpr:
+    """Immutable, composable query specification."""
+
+    model: "SemanticModel"
+    dims: Tuple[str, ...] = field(factory=tuple)
+    measures: Tuple[str, ...] = field(factory=tuple)
+    filters: Tuple[Filter, ...] = field(factory=tuple)
+    order_by: Tuple[Tuple[str, str], ...] = field(factory=tuple)
+    limit: Optional[int] = None
+    time_range: Optional[Tuple[str, str]] = None
+    time_grain: Optional[TimeGrain] = None
+
+    def with_dims(self, *dims: str) -> "QueryExpr":
+        return self.clone(dims=self.dims + dims)
+
+    def with_measures(self, *measures: str) -> "QueryExpr":
+        return self.clone(measures=self.measures + measures)
+
+    def with_filters(
+        self, *f: Union[Filter, Dict[str, Any], str, Callable[[Expr], Expr]]
+    ) -> "QueryExpr":
+        wrapped = tuple(fi if isinstance(fi, Filter) else Filter(filter=fi) for fi in f)
+        return self.clone(filters=self.filters + wrapped)
+
+    def sorted(self, *order: Tuple[str, str]) -> "QueryExpr":
+        return self.clone(order_by=self.order_by + order)
+
+    def top(self, n: int) -> "QueryExpr":
+        return self.clone(limit=n)
+
+    def grain(self, g: TimeGrain) -> "QueryExpr":
+        return self.clone(time_grain=g)
+
+    def clone(self, **changes) -> "QueryExpr":
+        return evolve(self, **changes)
+
+    def to_ibis(self) -> Expr:
+        return _compile_query(self)
+
+    def execute(self, *args, **kwargs):
+        return self.to_ibis().execute(*args, **kwargs)
+
+    def sql(self) -> str:
+        """Render the SQL for debugging or logging."""
+        return ibis_mod.to_sql(self.to_ibis())
+
+
+@frozen(kw_only=True, slots=True)
 class SemanticModel:
     """
     Define a semantic model over an Ibis table expression with reusable dimensions and measures.
@@ -264,36 +422,43 @@ class SemanticModel:
         )
     """
 
-    def __init__(
-        self,
-        table: Expr,
-        dimensions: Dict[str, Dimension],
-        measures: Dict[str, Measure],
-        joins: Optional[Dict[str, Join]] = None,
-        # Optional primary key name for foreign key joins
-        primary_key: Optional[str] = None,
-        name: Optional[str] = None,
-        timeDimension: Optional[str] = None,
-        smallestTimeGrain: Optional[TimeGrain] = None,
-    ) -> None:
-        self.name = name or table.get_name()
-        self.table = table
-        self.dimensions = dimensions
-        self.measures = measures
-        self.timeDimension = timeDimension
+    # Immutable fields
+    table: Expr = field()
+    dimensions: Mapping[str, Dimension] = field(
+        converter=lambda d: MappingProxyType(dict(d))
+    )
+    measures: Mapping[str, Measure] = field(
+        converter=lambda m: MappingProxyType(dict(m))
+    )
+    joins: Mapping[str, Join] = field(
+        converter=lambda j: MappingProxyType(dict(j or {})),
+        default=MappingProxyType({}),
+    )
+    primary_key: Optional[str] = field(default=None)
+    name: Optional[str] = field(default=None)
+    timeDimension: Optional[str] = field(default=None)
+    smallestTimeGrain: Optional[TimeGrain] = field(default=None)
 
-        # Validate smallestTimeGrain if provided
-        if smallestTimeGrain is not None:
-            if smallestTimeGrain not in TIME_GRAIN_TRANSFORMATIONS:
-                raise ValueError(
-                    f"Invalid smallestTimeGrain. Must be one of: {', '.join(TIME_GRAIN_TRANSFORMATIONS.keys())}"
-                )
-        self.smallestTimeGrain = smallestTimeGrain
+    def __attrs_post_init__(self):
+        # Derive model name if not provided
+        if self.name is None:
+            try:
+                nm = self.table.get_name()
+            except Exception:
+                nm = None
+            object.__setattr__(self, "name", nm)
+        # Validate smallestTimeGrain
+        if (
+            self.smallestTimeGrain is not None
+            and self.smallestTimeGrain not in TIME_GRAIN_TRANSFORMATIONS
+        ):
+            raise ValueError(
+                f"Invalid smallestTimeGrain. Must be one of: {', '.join(TIME_GRAIN_TRANSFORMATIONS.keys())}"
+            )
 
-        # Mapping of join alias to Join definitions
-        self.joins: Dict[str, Join] = joins or {}
-        # Optional primary key for this model (used in foreign key joins)
-        self.primary_key: Optional[str] = primary_key
+    def build_query(self) -> "QueryExpr":
+        """Return a deferred, composable QueryExpr."""
+        return QueryExpr(model=self)
 
     def _validate_time_grain(self, time_grain: Optional[TimeGrain]) -> None:
         """Validate that the requested time grain is not finer than the smallest allowed grain."""
@@ -345,78 +510,40 @@ class SemanticModel:
         limit: Optional[int] = None,
         time_range: Optional[Dict[str, str]] = None,
         time_grain: Optional[TimeGrain] = None,
-    ) -> Expr:
-        """
-        Build an Ibis expression that groups by dimensions and aggregates measures.
-
-        Args:
-            dims: List of dimension keys to group by.
-            measures: List of measure keys to compute.
-            filters: List of filters that can be:
-                - Dictionary defining a filter in JSON format with the following structure:
-
-                  Simple Filter:
-                  {
-                      "field": "column_name",     # Can include table references like "table.column"
-                      "operator": "=",            # One of: =, !=, >, >=, <, <=, in, not in, like, not like, is null, is not null
-                      "value": "value"            # For non-'in' operators
-                      # OR
-                      "values": ["val1", "val2"]  # For 'in' operator only
-                  }
-
-                  Compound Filter (AND/OR):
-                  {
-                      "operator": "AND",          # or "OR"
-                      "conditions": [             # Non-empty list of other filter objects
-                          {
-                              "field": "country",
-                              "operator": "=",
-                              "value": "US"
-                          },
-                          {
-                              "field": "tier",
-                              "operator": "in",
-                              "values": ["gold", "platinum"]
-                          }
-                      ]
-                  }
-                - String that can be evaluated to an ibis expression
-                - Callable that takes a table expression and returns a boolean expression
-            order_by: List of tuples (field, 'asc'|'desc') for ordering.
-            limit: Row limit.
-            time_range: Optional time range filter for the time dimension, with format:
-                {
-                    "start": "2008-01-01T00:00:00Z",  # ISO 8601 format
-                    "end": "2025-12-31T23:59:59Z"     # ISO 8601 format
-                }
-            time_grain: Optional time grain to use for the time dimension.
-                Must be one of: TIME_GRAIN_YEAR, TIME_GRAIN_QUARTER, TIME_GRAIN_MONTH,
-                TIME_GRAIN_WEEK, TIME_GRAIN_DAY, TIME_GRAIN_HOUR, TIME_GRAIN_MINUTE,
-                TIME_GRAIN_SECOND. Cannot be finer than smallestTimeGrain.
-
-        Returns:
-            Ibis Expr representing the query.
-        """
-        # Validate time grain if specified
+    ) -> "QueryExpr":
+        """Return a deferred, composable QueryExpr."""
+        # Validate time grain
         self._validate_time_grain(time_grain)
-
-        t = self.table
-
-        # Apply defined joins
-        for alias, join in self.joins.items():
-            right = join.model.table
-            # Support cross joins separately
-            if join.how == "cross":
-                t = t.cross_join(right)
+        # Prepare components
+        dims_list = list(dims) if dims else []
+        measures_list = list(measures) if measures else []
+        # Validate dimensions
+        for d in dims_list:
+            if isinstance(d, str) and "." in d:
+                alias, field = d.split(".", 1)
+                join = self.joins.get(alias)
+                if not join or field not in join.model.dimensions:
+                    raise KeyError(f"Unknown dimension: {d}")
             else:
-                cond = join.on(t, right)
-                t = t.join(right, cond, how=join.how)
-
-        # Transform time dimension if needed
-        t, dimensions = self._transform_time_dimension(t, time_grain)
-
-        # Apply time range filter if specified and time dimension exists
-        if time_range and self.timeDimension:
+                if d not in self.dimensions:
+                    raise KeyError(f"Unknown dimension: {d}")
+        # Validate measures
+        for m in measures_list:
+            if isinstance(m, str) and "." in m:
+                alias, field = m.split(".", 1)
+                join = self.joins.get(alias)
+                if not join or field not in join.model.measures:
+                    raise KeyError(f"Unknown measure: {m}")
+            else:
+                if m not in self.measures:
+                    raise KeyError(f"Unknown measure: {m}")
+        # Normalize filters to list
+        if filters is None:
+            filters_list = []
+        else:
+            filters_list = filters if isinstance(filters, list) else [filters]
+        # Validate time_range format
+        if time_range is not None:
             if (
                 not isinstance(time_range, dict)
                 or "start" not in time_range
@@ -425,117 +552,39 @@ class SemanticModel:
                 raise ValueError(
                     "time_range must be a dictionary with 'start' and 'end' keys"
                 )
-
-            time_filter = {
-                "operator": "AND",
-                "conditions": [
-                    {
-                        "field": self.timeDimension,
-                        "operator": ">=",
-                        "value": time_range["start"],
-                    },
-                    {
-                        "field": self.timeDimension,
-                        "operator": "<=",
-                        "value": time_range["end"],
-                    },
-                ],
-            }
-            if not filters:
-                filters = [time_filter]
-            else:
-                if not isinstance(filters, list):
-                    filters = [filters]
-                filters.append(time_filter)
-
-        # Apply filters
-        if filters:
-            if not isinstance(filters, list):
-                filters = [filters]
-
-            for filter_ in filters:
-                # Convert filter to Filter object
-                filter_obj = Filter(filter=filter_)
-                t = t.filter(filter_obj.to_ibis(t, self))
-
-        dims = dims or []
-
-        # If time_grain is specified and timeDimension exists, automatically include it in dimensions
-        if time_grain and self.timeDimension and self.timeDimension not in dims:
-            dims.append(self.timeDimension)
-
-        measures = measures or []
-
-        # Validate keys (dimensions and measures), including joins
-        for d in dims:
-            if isinstance(d, str) and "." in d:
-                alias, field = d.split(".", 1)
-                join = self.joins.get(alias)
-                if not join or field not in join.model.dimensions:
-                    raise KeyError(f"Unknown dimension: {d}")
-            elif d not in dimensions:
-                raise KeyError(f"Unknown dimension: {d}")
-
-        for m in measures:
-            if isinstance(m, str) and "." in m:
-                alias, field = m.split(".", 1)
-                join = self.joins.get(alias)
-                if not join or field not in join.model.measures:
-                    raise KeyError(f"Unknown measure: {m}")
-            elif m not in self.measures:
-                raise KeyError(f"Unknown measure: {m}")
-
-        # Build aggregate expressions, including join measures
-        agg_kwargs: Dict[str, Expr] = {}
-        for m in measures:
-            if isinstance(m, str) and "." in m:
-                alias, field = m.split(".", 1)
-                join = self.joins[alias]
-                expr = join.model.measures[field](t)
-                name = f"{alias}_{field}"
-                agg_kwargs[name] = expr.name(name)
-            else:
-                expr = self.measures[m](t)
-                agg_kwargs[m] = expr.name(m)
-
-        # Grouping and aggregation
-        if dims:
-            # Prepare dimension expressions for grouping
-            dim_exprs = []
-            for d in dims:
-                if isinstance(d, str) and "." in d:
-                    alias, field = d.split(".", 1)
-                    join = self.joins[alias]
-                    name = f"{alias}_{field}"
-                    expr = join.model.dimensions[field](t).name(name)
-                else:
-                    expr = dimensions[d](t).name(d)
-                dim_exprs.append(expr)
-            # Use direct aggregate with grouping keys
-            result = t.aggregate(by=dim_exprs, **agg_kwargs)
-        else:
-            result = t.aggregate(**agg_kwargs)
-
-        # Ordering
-        if order_by:
-            order_exprs = []
-            for field, direction in order_by:
-                if isinstance(field, str) and "." in field:
-                    alias, fname = field.split(".", 1)
-                    col_name = f"{alias}_{fname}"
-                else:
-                    col_name = field
-                col = result[col_name]
-                order_exprs.append(
-                    col.desc() if direction.lower().startswith("desc") else col.asc()
-                )
-            result = result.order_by(order_exprs)
-
-        # Limit
-        if limit is not None:
-            result = result.limit(limit)
-
-        return result
+        # Normalize order_by to list
+        order_list = list(order_by) if order_by else []
+        # Normalize time_range to tuple
+        time_range_tuple = None
+        if time_range:
+            time_range_tuple = (time_range.get("start"), time_range.get("end"))
+        # Early JSON filter validation to catch invalid specs
+        # - Simple filters require 'field' and 'operator'; compound filters deferred
+        for f in filters_list:
+            if not isinstance(f, dict):
+                continue
+            # Skip compound filters here
+            if f.get("operator") in Filter.COMPOUND_OPERATORS and "conditions" in f:
+                continue
+            # Validate required keys for simple filters
+            required = {"field", "operator"}
+            missing = required - set(f.keys())
+            if missing:
+                raise KeyError(f"Missing required keys in filter: {missing}")
+            # Validate via Ibis parse to catch invalid operators or field refs
+            Filter(filter=f).to_ibis(self.table, self)
+        return QueryExpr(
+            model=self,
+            dims=tuple(dims_list),
+            measures=tuple(measures_list),
+            filters=tuple(
+                f if isinstance(f, Filter) else Filter(filter=f) for f in filters_list
+            ),
+            order_by=tuple(tuple(o) for o in order_list),
+            limit=limit,
+            time_range=time_range_tuple,
+            time_grain=time_grain,
+        )
 
     def get_time_range(self) -> Dict[str, Any]:
         """Get the available time range for the model's time dimension.
@@ -683,6 +732,7 @@ class SemanticModel:
             timeDimension=self.timeDimension,
             smallestTimeGrain=time_grain,
         )
+
 
 # functions for Malloy-style joins
 def join_one(
