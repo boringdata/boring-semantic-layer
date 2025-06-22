@@ -1,7 +1,6 @@
 import os
 
 import ibis
-<<<<<<< HEAD
 
 from boring_semantic_layer.semantic_model import SemanticModel, join_one
 
@@ -53,24 +52,3 @@ flights_sm = SemanticModel(
         ),
     },
 )
-
-
-def query_flights():
-    from xorq.caching import ParquetStorage
-
-    con = xo.duckdb.connect(":memory:")
-    storage = ParquetStorage(source=con, path="cache")
-
-    cube = flights_sm.materialize(
-        time_grain="TIME_GRAIN_DAY",
-        cutoff="2030-01-01",
-        dims=["origin", "arr_time"],
-        storage=storage,
-    )
-    print("Cube model definition:", cube.json_definition)
-    df = cube.query(dims=["arr_time", "origin"], measures=["flight_count"]).execute()
-    print("\nSample cube output:")
-    print(df.head())
-
-
-query_flights()
