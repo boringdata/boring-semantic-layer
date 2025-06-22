@@ -6,8 +6,12 @@ import pandas as pd
 
 try:
     import xorq.vendor.ibis as ibis_mod
+
+    IS_XORQ_USED = True
 except ImportError:
     import ibis as ibis_mod
+
+    IS_XORQ_USED = False
 
 Expr = ibis_mod.expr.types.core.Expr
 _ = ibis_mod._
@@ -496,7 +500,7 @@ class SemanticModel:
 
         # Grouping and aggregation
         if dims:
-            # Name and prepare dimension expressions
+            # Prepare dimension expressions for grouping
             dim_exprs = []
             for d in dims:
                 if isinstance(d, str) and "." in d:
@@ -507,8 +511,8 @@ class SemanticModel:
                 else:
                     expr = dimensions[d](t).name(d)
                 dim_exprs.append(expr)
-            grouped = t.group_by(*dim_exprs)
-            result = grouped.aggregate(**agg_kwargs)
+            # Use direct aggregate with grouping keys
+            result = t.aggregate(by=dim_exprs, **agg_kwargs)
         else:
             result = t.aggregate(**agg_kwargs)
 
@@ -603,6 +607,82 @@ class SemanticModel:
 
         return definition
 
+    @staticmethod
+    def _is_additive(expr: Expr) -> bool:
+        op = expr.op()
+        name = type(op).__name__
+        if name not in ("Sum", "Count", "Min", "Max"):
+            return False
+        if getattr(op, "distinct", False):
+            return False
+        return True
+
+    def materialize(
+        self,
+        *,
+        time_grain: TimeGrain = "TIME_GRAIN_DAY",
+        cutoff: Union[str, pd.Timestamp, None] = None,
+        dims: Optional[List[str]] = None,
+        storage: Any = None,
+    ) -> "SemanticModel":
+        if not IS_XORQ_USED:
+            raise RuntimeError("materialize() requires xorq vendor ibis backend")
+        mod = self.table.__class__.__module__
+        if not mod.startswith("xorq.vendor.ibis"):
+            raise RuntimeError(
+                f"materialize() requires xorq.vendor.ibis expressions, got module {mod}"
+            )
+        flat = self.table
+        for alias, join in self.joins.items():
+            right = join.model.table
+            cond = join.on(flat, right)
+            flat = flat.join(right, cond, how=join.how)
+
+        if cutoff is not None and self.timeDimension:
+            cutoff_ts = pd.to_datetime(cutoff)
+            flat = flat.filter(getattr(flat, self.timeDimension) <= cutoff_ts)
+
+        keys = dims if dims is not None else list(self.dimensions.keys())
+
+        group_exprs: List[Expr] = []
+        for key in keys:
+            if key == self.timeDimension:
+                col = flat[self.timeDimension]
+                transform = TIME_GRAIN_TRANSFORMATIONS[time_grain]
+                grouped_col = transform(col).name(key)
+            else:
+                grouped_col = self.dimensions[key](flat).name(key)
+            group_exprs.append(grouped_col)
+
+        agg_kwargs: Dict[str, Expr] = {}
+        for name, fn in self.measures.items():
+            expr = fn(flat)
+            if self._is_additive(expr):
+                agg_kwargs[name] = expr.name(name)
+
+        if agg_kwargs:
+            cube_expr = flat.group_by(*group_exprs).aggregate(**agg_kwargs)
+        else:
+            cube_expr = flat
+        cube_table = cube_expr.cache(storage=storage)
+
+        new_dims = {key: (lambda t, c=key: t[c]) for key in keys}
+        new_measures: Dict[str, Measure] = {}
+        for name in agg_kwargs:
+            new_measures[name] = lambda t, c=name: t[c]
+        for name, fn in self.measures.items():
+            if name not in agg_kwargs:
+                new_measures[name] = fn
+
+        return SemanticModel(
+            table=cube_table,
+            dimensions=new_dims,
+            measures=new_measures,
+            joins={},
+            name=f"{self.name}_cube_{time_grain.lower()}",
+            timeDimension=self.timeDimension,
+            smallestTimeGrain=time_grain,
+        )
 
 # functions for Malloy-style joins
 def join_one(
