@@ -94,7 +94,9 @@ def test_join_behaviour_inner(db_con, customers_model, orders_model):
         joins={"cust": j},
     )
     # Query by customer name
-    expr = model.query(dims=["customer_id", "cust.name"], measures=["order_count"])
+    expr = model.query(
+        dimensions=["customer_id", "cust.name"], measures=["order_count"]
+    )
     result = expr.execute().sort_values(["customer_id"]).reset_index(drop=True)
     # Only two matching customers
     assert list(result["customer_id"]) == [1, 2]
@@ -111,7 +113,9 @@ def test_join_behaviour_left(db_con, customers_model, orders_model):
         measures=model.measures,
         joins={"cust": j},
     )
-    expr = model.query(dims=["customer_id", "cust.name"], measures=["order_count"])
+    expr = model.query(
+        dimensions=["customer_id", "cust.name"], measures=["order_count"]
+    )
     result = expr.execute().sort_values(["customer_id"]).reset_index(drop=True)
     # Expect three rows: for customer_id 1,2 and 3 (name None)
     assert list(result["customer_id"]) == [1, 2, 3]

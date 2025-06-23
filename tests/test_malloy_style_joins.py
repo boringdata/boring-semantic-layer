@@ -36,7 +36,7 @@ def test_join_one_with_callable_foreign_key():
         joins={"cust": j},
     )
     expr = orders_model.query(
-        dims=["customer_id", "cust.name"], measures=["order_count"]
+        dimensions=["customer_id", "cust.name"], measures=["order_count"]
     )
     result = expr.execute().sort_values("customer_id").reset_index(drop=True)
     expected = pd.DataFrame(
@@ -73,7 +73,7 @@ def test_join_many_counts_children():
         joins={"emp": j},
     )
 
-    expr = d_model.query(dims=["dept_name"], measures=["emp.child_count"])
+    expr = d_model.query(dimensions=["dept_name"], measures=["emp.child_count"])
     result = expr.execute().sort_values("dept_name").reset_index(drop=True)
 
     expected = pd.DataFrame({"dept_name": ["Eng", "HR"], "emp_child_count": [1, 2]})

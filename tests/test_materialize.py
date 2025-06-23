@@ -78,7 +78,7 @@ def test_non_additive_only_materialization():
     names = set(m2.table.schema().names)
     assert names == set(df.columns)
     result = (
-        m2.query(dims=["key"], measures=["avg_val"])
+        m2.query(dimensions=["key"], measures=["avg_val"])
         .execute()
         .sort_values("key")
         .reset_index(drop=True)
@@ -87,16 +87,16 @@ def test_non_additive_only_materialization():
     pd.testing.assert_frame_equal(result, expected)
 
 
-def test_dims_override_materialization():
+def test_dimensions_override_materialization():
     df = pd.DataFrame({"k1": ["x", "y", "x"], "k2": ["u", "u", "v"], "val": [1, 2, 3]})
     con = xo.connect()
-    tbl = con.create_table("t_dims", df)
+    tbl = con.create_table("t_dimensions", df)
     model = SemanticModel(
         table=tbl,
         dimensions={"k1": lambda t: t.k1, "k2": lambda t: t.k2},
         measures={"sum_val": lambda t: t.val.sum()},
     )
-    m2 = model.materialize(dims=["k2"])
+    m2 = model.materialize(dimensions=["k2"])
     names = set(m2.table.schema().names)
     assert names == {"k2", "sum_val"}
     result = m2.table.execute().sort_values("k2").reset_index(drop=True)
@@ -113,7 +113,7 @@ def test_cutoff_with_time_dimension():
         table=tbl,
         dimensions={"date": lambda t: t.date},
         measures={"sum_val": lambda t: t.val.sum()},
-        timeDimension="date",
+        time_dimension="date",
     )
     m2 = model.materialize(cutoff="2025-01-03")
     result = m2.table.execute().sort_values("date").reset_index(drop=True)

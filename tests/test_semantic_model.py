@@ -13,7 +13,7 @@ def test_group_by_sum_and_count():
         dimensions={"group": lambda t: t.group},
         measures={"sum_val": lambda t: t.val.sum(), "count": lambda t: t.val.count()},
     )
-    expr = model.query(dims=["group"], measures=["sum_val", "count"])
+    expr = model.query(dimensions=["group"], measures=["sum_val", "count"])
     result = expr.execute()
     result = result.sort_values("group").reset_index(drop=True)
     expected = pd.DataFrame(
@@ -32,7 +32,7 @@ def test_filter_and_order():
         measures={"sum_val": lambda t: t.val.sum()},
     )
     expr = model.query(
-        dims=["group"], measures=["sum_val"], filters=lambda t: t.group == "a"
+        dimensions=["group"], measures=["sum_val"], filters=lambda t: t.group == "a"
     )
     result = expr.execute().reset_index(drop=True)
     expected = pd.DataFrame({"group": ["a"], "sum_val": [40]})
@@ -45,7 +45,7 @@ def test_unknown_dimension_raises():
     table = con.create_table("test3", df)
     model = SemanticModel(table=table, dimensions={"a": lambda t: t.a}, measures={})
     with pytest.raises(KeyError):
-        _ = model.query(dims=["b"], measures=[])
+        _ = model.query(dimensions=["b"], measures=[])
 
 
 @pytest.fixture
@@ -111,7 +111,7 @@ def joined_model():
 
 
 @pytest.mark.parametrize(
-    "test_id,model_fixture,filters,dims,measures,expected_data,expected_error",
+    "test_id,model_fixture,filters,dimensions,measures,expected_data,expected_error",
     [
         # # Test 1: Simple lambda function filter
         # (
@@ -321,7 +321,7 @@ def test_filters(
     test_id,
     model_fixture,
     filters,
-    dims,
+    dimensions,
     measures,
     expected_data,
     expected_error,
@@ -334,7 +334,7 @@ def test_filters(
         test_id: Unique identifier for the test case
         model_fixture: Name of the fixture providing the model
         filters: Filter specification (lambda, string, ibis expression, or JSON)
-        dims: Dimensions to group by
+        dimensions: Dimensions to group by
         measures: Measures to compute
         expected_data: Expected DataFrame result
         expected_error: Expected error type if the test should raise an error
@@ -344,16 +344,16 @@ def test_filters(
 
     if expected_error is not None:
         with pytest.raises(expected_error):
-            model.query(dims=dims, measures=measures, filters=filters)
+            model.query(dimensions=dimensions, measures=measures, filters=filters)
     else:
-        expr = model.query(dims=dims, measures=measures, filters=filters)
+        expr = model.query(dimensions=dimensions, measures=measures, filters=filters)
         result = (
             expr.execute()
-            .sort_values([dim.replace(".", "_") for dim in dims])
+            .sort_values([dim.replace(".", "_") for dim in dimensions])
             .reset_index(drop=True)
         )
         expected = expected_data.sort_values(
-            [dim.replace(".", "_") for dim in dims]
+            [dim.replace(".", "_") for dim in dimensions]
         ).reset_index(drop=True)
         pd.testing.assert_frame_equal(result, expected)
 
@@ -419,7 +419,7 @@ def test_json_filters_with_joins():
     }
 
     expr = orders_model.query(
-        dims=["customer_id", "customer.country", "customer.tier"],
+        dimensions=["customer_id", "customer.country", "customer.tier"],
         measures=["total_amount"],
         filters=[json_filter],
     )
@@ -445,7 +445,7 @@ def test_json_filter_errors():
     # Test invalid operator
     with pytest.raises(ValueError, match="Unsupported operator"):
         model.query(
-            dims=["group"],
+            dimensions=["group"],
             measures=["sum_val"],
             filters=[{"field": "group", "operator": "invalid", "value": "a"}],
         )
@@ -453,7 +453,7 @@ def test_json_filter_errors():
     # Test unknown field
     with pytest.raises(KeyError, match="Unknown dimension"):
         model.query(
-            dims=["group"],
+            dimensions=["group"],
             measures=["sum_val"],
             filters=[{"field": "unknown", "operator": "=", "value": "a"}],
         )
@@ -461,7 +461,7 @@ def test_json_filter_errors():
     # Test invalid join reference
     with pytest.raises(KeyError, match="Unknown join alias"):
         model.query(
-            dims=["group"],
+            dimensions=["group"],
             measures=["sum_val"],
             filters=[{"field": "unknown.field", "operator": "=", "value": "a"}],
         )
@@ -469,7 +469,7 @@ def test_json_filter_errors():
     # Test missing required keys in filter dict
     with pytest.raises(KeyError):
         model.query(
-            dims=["group"],
+            dimensions=["group"],
             measures=["sum_val"],
             filters=[{"operator": "=", "value": "a"}],  # Missing "field"
         )
@@ -502,8 +502,8 @@ def time_model():
             "total_value": lambda t: t.value.sum(),
             "avg_value": lambda t: t.value.mean(),
         },
-        timeDimension="date",
-        smallestTimeGrain="TIME_GRAIN_DAY",
+        time_dimension="date",
+        smallest_time_grain="TIME_GRAIN_DAY",
     )
 
 
@@ -525,13 +525,13 @@ def test_time_range_filtering():
         measures={
             "total_value": lambda t: t.value.sum(),
         },
-        timeDimension="date",
-        smallestTimeGrain="TIME_GRAIN_DAY",
+        time_dimension="date",
+        smallest_time_grain="TIME_GRAIN_DAY",
     )
 
     # Test with time range
     expr = model.query(
-        dims=["date"],
+        dimensions=["date"],
         measures=["total_value"],
         time_range={"start": "2023-06-01T00:00:00Z", "end": "2023-06-30T23:59:59Z"},
     )
@@ -547,7 +547,7 @@ def test_time_range_with_other_filters(time_model):
     """Test combining time range with other filters."""
     # First get the total for category A without time filter
     total_expr = time_model.query(
-        dims=["category"],
+        dimensions=["category"],
         measures=["total_value"],
         filters=[{"field": "category", "operator": "=", "value": "A"}],
     )
@@ -556,7 +556,7 @@ def test_time_range_with_other_filters(time_model):
 
     # Then get filtered result
     expr = time_model.query(
-        dims=["category"],
+        dimensions=["category"],
         measures=["total_value"],
         filters=[{"field": "category", "operator": "=", "value": "A"}],
         time_range={"start": "2023-03-01T00:00:00Z", "end": "2023-03-31T23:59:59Z"},
@@ -589,8 +589,8 @@ def test_invalid_time_range():
         measures={
             "total_value": lambda t: t.value.sum(),
         },
-        timeDimension="date",
-        smallestTimeGrain="TIME_GRAIN_DAY",
+        time_dimension="date",
+        smallest_time_grain="TIME_GRAIN_DAY",
     )
 
     # Test missing start
@@ -598,7 +598,7 @@ def test_invalid_time_range():
         ValueError, match="time_range must be a dictionary with 'start' and 'end' keys"
     ):
         model.query(
-            dims=["date"],
+            dimensions=["date"],
             measures=["total_value"],
             time_range={"end": "2023-12-31T23:59:59Z"},
         )
@@ -608,7 +608,7 @@ def test_invalid_time_range():
         ValueError, match="time_range must be a dictionary with 'start' and 'end' keys"
     ):
         model.query(
-            dims=["date"],
+            dimensions=["date"],
             measures=["total_value"],
             time_range={"start": "2023-01-01T00:00:00Z"},
         )
@@ -618,7 +618,9 @@ def test_invalid_time_range():
         ValueError, match="time_range must be a dictionary with 'start' and 'end' keys"
     ):
         model.query(
-            dims=["date"], measures=["total_value"], time_range="2023-01-01/2023-12-31"
+            dimensions=["date"],
+            measures=["total_value"],
+            time_range="2023-01-01/2023-12-31",
         )
 
 
@@ -634,7 +636,7 @@ def test_time_dimension_validation():
     table = con.create_table("time_test", df)
 
     # Test with invalid time grain
-    with pytest.raises(ValueError, match="Invalid smallestTimeGrain"):
+    with pytest.raises(ValueError, match="Invalid smallest_time_grain"):
         SemanticModel(
             table=table,
             dimensions={
@@ -643,8 +645,8 @@ def test_time_dimension_validation():
             measures={
                 "total_value": lambda t: t.value.sum(),
             },
-            timeDimension="date",
-            smallestTimeGrain="INVALID_GRAIN",
+            time_dimension="date",
+            smallest_time_grain="INVALID_GRAIN",
         )
 
     # Test with time range but no time dimension
@@ -660,7 +662,7 @@ def test_time_dimension_validation():
 
     # Should not raise error, just ignore time range
     expr = model.query(
-        dims=["date"],
+        dimensions=["date"],
         measures=["total_value"],
         time_range={"start": "2023-01-01T00:00:00Z", "end": "2023-12-31T23:59:59Z"},
     )
@@ -672,7 +674,7 @@ def test_time_grain_transformation(time_model):
     """Test time grain transformation functionality."""
     # Test monthly aggregation
     expr = time_model.query(
-        dims=["date"], measures=["total_value"], time_grain="TIME_GRAIN_MONTH"
+        dimensions=["date"], measures=["total_value"], time_grain="TIME_GRAIN_MONTH"
     )
     result = expr.execute()
 
@@ -681,7 +683,7 @@ def test_time_grain_transformation(time_model):
 
     # Test quarterly aggregation
     expr = time_model.query(
-        dims=["date"], measures=["total_value"], time_grain="TIME_GRAIN_QUARTER"
+        dimensions=["date"], measures=["total_value"], time_grain="TIME_GRAIN_QUARTER"
     )
     result = expr.execute()
 
@@ -692,7 +694,7 @@ def test_time_grain_transformation(time_model):
 def test_time_grain_with_time_range(time_model):
     """Test combining time grain with time range."""
     expr = time_model.query(
-        dims=["date"],
+        dimensions=["date"],
         measures=["total_value"],
         time_grain="TIME_GRAIN_MONTH",
         time_range={"start": "2023-04-01T00:00:00Z", "end": "2023-06-30T23:59:59Z"},
@@ -723,8 +725,8 @@ def test_time_grain_validation():
         measures={
             "total_value": lambda t: t.value.sum(),
         },
-        timeDimension="date",
-        smallestTimeGrain="TIME_GRAIN_DAY",
+        time_dimension="date",
+        smallest_time_grain="TIME_GRAIN_DAY",
     )
 
     # Test valid time grains
@@ -734,7 +736,9 @@ def test_time_grain_validation():
         "TIME_GRAIN_QUARTER",
         "TIME_GRAIN_YEAR",
     ]:
-        expr = model.query(dims=["date"], measures=["total_value"], time_grain=grain)
+        expr = model.query(
+            dimensions=["date"], measures=["total_value"], time_grain=grain
+        )
         result = expr.execute()
         assert len(result) > 0
 
@@ -743,13 +747,13 @@ def test_time_grain_validation():
         with pytest.raises(
             ValueError, match="is finer than the smallest allowed grain"
         ):
-            model.query(dims=["date"], measures=["total_value"], time_grain=grain)
+            model.query(dimensions=["date"], measures=["total_value"], time_grain=grain)
 
 
 def test_time_grain_with_other_dimensions(time_model):
     """Test time grain aggregation with other dimensions."""
     expr = time_model.query(
-        dims=["date", "category"],
+        dimensions=["date", "category"],
         measures=["total_value"],
         time_grain="TIME_GRAIN_MONTH",
     )
@@ -817,7 +821,7 @@ def test_get_time_range_with_null_dates():
         measures={
             "total_value": lambda t: t.value.sum(),
         },
-        timeDimension="date",
+        time_dimension="date",
     )
 
     time_range = model.get_time_range()
@@ -843,7 +847,7 @@ def test_get_time_range_single_date():
         measures={
             "total_value": lambda t: t.value.sum(),
         },
-        timeDimension="date",
+        time_dimension="date",
     )
 
     time_range = model.get_time_range()
@@ -871,7 +875,7 @@ def test_get_time_range_empty_table():
         measures={
             "total_value": lambda t: t.value.sum(),
         },
-        timeDimension="date",
+        time_dimension="date",
     )
 
     time_range = model.get_time_range()

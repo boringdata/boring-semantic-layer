@@ -266,13 +266,13 @@ def _compile_query(qe) -> Expr:
     # Transform time dimension if needed
     t, dimensions = model._transform_time_dimension(t, qe.time_grain)
     # Apply time range filter if provided
-    if qe.time_range and model.timeDimension:
+    if qe.time_range and model.time_dimension:
         start, end = qe.time_range
         time_filter = {
             "operator": "AND",
             "conditions": [
-                {"field": model.timeDimension, "operator": ">=", "value": start},
-                {"field": model.timeDimension, "operator": "<=", "value": end},
+                {"field": model.time_dimension, "operator": ">=", "value": start},
+                {"field": model.time_dimension, "operator": "<=", "value": end},
             ],
         }
         t = t.filter(Filter(filter=time_filter).to_ibis(t, model))
@@ -280,12 +280,16 @@ def _compile_query(qe) -> Expr:
     for flt in qe.filters:
         t = t.filter(flt.to_ibis(t, model))
     # Prepare dimensions and measures lists
-    dims = list(qe.dims)
-    if qe.time_grain and model.timeDimension and model.timeDimension not in dims:
-        dims.append(model.timeDimension)
+    dimensions = list(qe.dimensions)
+    if (
+        qe.time_grain
+        and model.time_dimension
+        and model.time_dimension not in dimensions
+    ):
+        dimensions.append(model.time_dimension)
     measures = list(qe.measures)
     # Validate dimensions
-    for d in dims:
+    for d in dimensions:
         if "." in d:
             alias, field = d.split(".", 1)
             join = model.joins.get(alias)
@@ -315,9 +319,9 @@ def _compile_query(qe) -> Expr:
             expr = model.measures[m](t)
             agg_kwargs[m] = expr.name(m)
     # Group and aggregate
-    if dims:
+    if dimensions:
         dim_exprs = []
-        for d in dims:
+        for d in dimensions:
             if "." in d:
                 alias, field = d.split(".", 1)
                 name = f"{alias}_{field}"
@@ -347,7 +351,7 @@ def _compile_query(qe) -> Expr:
 @frozen(kw_only=True, slots=True)
 class QueryExpr:
     model: "SemanticModel"
-    dims: Tuple[str, ...] = field(factory=tuple)
+    dimensions: Tuple[str, ...] = field(factory=tuple)
     measures: Tuple[str, ...] = field(factory=tuple)
     filters: Tuple[Filter, ...] = field(factory=tuple)
     order_by: Tuple[Tuple[str, str], ...] = field(factory=tuple)
@@ -355,8 +359,8 @@ class QueryExpr:
     time_range: Optional[Tuple[str, str]] = None
     time_grain: Optional[TimeGrain] = None
 
-    def with_dims(self, *dims: str) -> "QueryExpr":
-        return self.clone(dims=self.dims + dims)
+    def with_dimensions(self, *dimensions: str) -> "QueryExpr":
+        return self.clone(dimensions=self.dimensions + dimensions)
 
     def with_measures(self, *measures: str) -> "QueryExpr":
         return self.clone(measures=self.measures + measures)
@@ -406,8 +410,8 @@ class SemanticModel:
         table: Base Ibis table expression.
         dimensions: Mapping of dimension names to callables producing column expressions.
         measures: Mapping of measure names to callables producing aggregate expressions.
-        timeDimension: Optional name of the time dimension column.
-        smallestTimeGrain: Optional smallest time grain for the time dimension.
+        time_dimension: Optional name of the time dimension column.
+        smallest_time_grain: Optional smallest time grain for the time dimension.
 
     Example:
         con = xo.duckdb.connect()
@@ -423,8 +427,8 @@ class SemanticModel:
                 'flight_count': lambda t: t.count(),
                 'avg_distance': lambda t: t.distance.mean(),
             },
-            timeDimension='date',
-            smallestTimeGrain='TIME_GRAIN_DAY'
+            time_dimension='date',
+            smallest_time_grain='TIME_GRAIN_DAY'
         )
     """
 
@@ -441,8 +445,8 @@ class SemanticModel:
     )
     primary_key: Optional[str] = field(default=None)
     name: Optional[str] = field(default=None)
-    timeDimension: Optional[str] = field(default=None)
-    smallestTimeGrain: Optional[TimeGrain] = field(default=None)
+    time_dimension: Optional[str] = field(default=None)
+    smallest_time_grain: Optional[TimeGrain] = field(default=None)
 
     def __attrs_post_init__(self):
         # Derive model name if not provided
@@ -452,11 +456,12 @@ class SemanticModel:
             except Exception:
                 nm = None
             object.__setattr__(self, "name", nm)
-        # Validate smallestTimeGrain
+        # Validate smallest_time_grain
         if (
-            self.smallestTimeGrain is not None
-            and self.smallestTimeGrain not in TIME_GRAIN_TRANSFORMATIONS
+            self.smallest_time_grain is not None
+            and self.smallest_time_grain not in TIME_GRAIN_TRANSFORMATIONS
         ):
+            # Error message uses legacy 'smallestTimeGrain' naming for compatibility
             raise ValueError(
                 f"Invalid smallestTimeGrain. Must be one of: {', '.join(TIME_GRAIN_TRANSFORMATIONS.keys())}"
             )
@@ -466,46 +471,46 @@ class SemanticModel:
 
     def _validate_time_grain(self, time_grain: Optional[TimeGrain]) -> None:
         """Validate that the requested time grain is not finer than the smallest allowed grain."""
-        if time_grain is None or self.smallestTimeGrain is None:
+        if time_grain is None or self.smallest_time_grain is None:
             return
 
         requested_idx = TIME_GRAIN_ORDER.index(time_grain)
-        smallest_idx = TIME_GRAIN_ORDER.index(self.smallestTimeGrain)
+        smallest_idx = TIME_GRAIN_ORDER.index(self.smallest_time_grain)
 
         if requested_idx < smallest_idx:
             raise ValueError(
-                f"Requested time grain '{time_grain}' is finer than the smallest allowed grain '{self.smallestTimeGrain}'"
+                f"Requested time grain '{time_grain}' is finer than the smallest allowed grain '{self.smallest_time_grain}'"
             )
 
     def _transform_time_dimension(
         self, table: Expr, time_grain: Optional[TimeGrain]
     ) -> Tuple[Expr, Dict[str, Dimension]]:
         """Transform the time dimension based on the specified grain."""
-        if not self.timeDimension or not time_grain:
+        if not self.time_dimension or not time_grain:
             return table, self.dimensions.copy()
 
         # Create a copy of dimensions
         dimensions = self.dimensions.copy()
 
         # Get or create the time dimension function
-        if self.timeDimension in dimensions:
-            time_dim_func = dimensions[self.timeDimension]
+        if self.time_dimension in dimensions:
+            time_dim_func = dimensions[self.time_dimension]
         else:
             # Create a default time dimension function that accesses the column directly
             def time_dim_func(t: Expr) -> Expr:
-                return getattr(t, self.timeDimension)
+                return getattr(t, self.time_dimension)
 
-            dimensions[self.timeDimension] = time_dim_func
+            dimensions[self.time_dimension] = time_dim_func
 
         # Create the transformed dimension function
         transform_func = TIME_GRAIN_TRANSFORMATIONS[time_grain]
-        dimensions[self.timeDimension] = lambda t: transform_func(time_dim_func(t))
+        dimensions[self.time_dimension] = lambda t: transform_func(time_dim_func(t))
 
         return table, dimensions
 
     def query(
         self,
-        dims: Optional[List[str]] = None,
+        dimensions: Optional[List[str]] = None,
         measures: Optional[List[str]] = None,
         filters: Optional[
             List[Union[Dict[str, Any], str, Callable[[Expr], Expr]]]
@@ -517,11 +522,11 @@ class SemanticModel:
     ) -> "QueryExpr":
         # Validate time grain
         self._validate_time_grain(time_grain)
-        # Prepare components
-        dims_list = list(dims) if dims else []
+        # Prepare components, alias 'dimensions' to dimension names
+        dimensions_list = list(dimensions) if dimensions else []
         measures_list = list(measures) if measures else []
         # Validate dimensions
-        for d in dims_list:
+        for d in dimensions_list:
             if isinstance(d, str) and "." in d:
                 alias, field = d.split(".", 1)
                 join = self.joins.get(alias)
@@ -578,7 +583,7 @@ class SemanticModel:
             Filter(filter=f).to_ibis(self.table, self)
         return QueryExpr(
             model=self,
-            dims=tuple(dims_list),
+            dimensions=tuple(dimensions_list),
             measures=tuple(measures_list),
             filters=tuple(
                 f if isinstance(f, Filter) else Filter(filter=f) for f in filters_list
@@ -595,11 +600,11 @@ class SemanticModel:
         Returns:
             A dictionary with 'start' and 'end' dates in ISO format, or an error if no time dimension
         """
-        if not self.timeDimension:
+        if not self.time_dimension:
             return {"error": "Model does not have a time dimension"}
 
         # Get the original time dimension function
-        time_dim_func = self.dimensions[self.timeDimension]
+        time_dim_func = self.dimensions[self.time_dimension]
 
         # Query the min and max dates
         time_range = self.table.aggregate(
@@ -626,8 +631,8 @@ class SemanticModel:
         """List available dimension keys, including joined model dimensions."""
         keys = list(self.dimensions.keys())
         # Include time dimension if it exists and is not already in dimensions
-        if self.timeDimension and self.timeDimension not in keys:
-            keys.append(self.timeDimension)
+        if self.time_dimension and self.time_dimension not in keys:
+            keys.append(self.time_dimension)
         for alias, join in self.joins.items():
             keys.extend([f"{alias}.{d}" for d in join.model.dimensions.keys()])
         return keys
@@ -650,12 +655,12 @@ class SemanticModel:
         }
 
         # Add time dimension info if present
-        if self.timeDimension:
-            definition["timeDimension"] = self.timeDimension
+        if self.time_dimension:
+            definition["time_dimension"] = self.time_dimension
 
         # Add smallest time grain if present
-        if self.smallestTimeGrain:
-            definition["smallestTimeGrain"] = self.smallestTimeGrain
+        if self.smallest_time_grain:
+            definition["smallest_time_grain"] = self.smallest_time_grain
 
         return definition
 
@@ -674,7 +679,7 @@ class SemanticModel:
         *,
         time_grain: TimeGrain = "TIME_GRAIN_DAY",
         cutoff: Union[str, pd.Timestamp, None] = None,
-        dims: Optional[List[str]] = None,
+        dimensions: Optional[List[str]] = None,
         storage: Any = None,
     ) -> "SemanticModel":
         if not IS_XORQ_USED:
@@ -690,16 +695,16 @@ class SemanticModel:
             cond = join.on(flat, right)
             flat = flat.join(right, cond, how=join.how)
 
-        if cutoff is not None and self.timeDimension:
+        if cutoff is not None and self.time_dimension:
             cutoff_ts = pd.to_datetime(cutoff)
-            flat = flat.filter(getattr(flat, self.timeDimension) <= cutoff_ts)
+            flat = flat.filter(getattr(flat, self.time_dimension) <= cutoff_ts)
 
-        keys = dims if dims is not None else list(self.dimensions.keys())
+        keys = dimensions if dimensions is not None else list(self.dimensions.keys())
 
         group_exprs: List[Expr] = []
         for key in keys:
-            if key == self.timeDimension:
-                col = flat[self.timeDimension]
+            if key == self.time_dimension:
+                col = flat[self.time_dimension]
                 transform = TIME_GRAIN_TRANSFORMATIONS[time_grain]
                 grouped_col = transform(col).name(key)
             else:
@@ -718,7 +723,7 @@ class SemanticModel:
             cube_expr = flat
         cube_table = cube_expr.cache(storage=storage)
 
-        new_dims = {key: (lambda t, c=key: t[c]) for key in keys}
+        new_dimensions = {key: (lambda t, c=key: t[c]) for key in keys}
         new_measures: Dict[str, Measure] = {}
         for name in agg_kwargs:
             new_measures[name] = lambda t, c=name: t[c]
@@ -728,12 +733,12 @@ class SemanticModel:
 
         return SemanticModel(
             table=cube_table,
-            dimensions=new_dims,
+            dimensions=new_dimensions,
             measures=new_measures,
             joins={},
             name=f"{self.name}_cube_{time_grain.lower()}",
-            timeDimension=self.timeDimension,
-            smallestTimeGrain=time_grain,
+            time_dimension=self.time_dimension,
+            smallest_time_grain=time_grain,
         )
 
 
