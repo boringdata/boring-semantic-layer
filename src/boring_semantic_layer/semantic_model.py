@@ -225,7 +225,6 @@ class Filter:
                 )
             return self.OPERATOR_MAPPING[operator](field_expr, None)
 
-        # For all other operators, use the value field
         else:
             if "value" not in filter_obj:
                 raise ValueError(f"Operator '{operator}' requires 'value' field")
@@ -264,7 +263,7 @@ def _compile_query(qe) -> Expr:
             cond = join.on(t, right)
             t = t.join(right, cond, how=join.how)
     # Transform time dimension if needed
-    t, dimensions = model._transform_time_dimension(t, qe.time_grain)
+    t, dim_map = model._transform_time_dimension(t, qe.time_grain)
     # Apply time range filter if provided
     if qe.time_range and model.time_dimension:
         start, end = qe.time_range
@@ -279,7 +278,7 @@ def _compile_query(qe) -> Expr:
     # Apply other filters
     for flt in qe.filters:
         t = t.filter(flt.to_ibis(t, model))
-    # Prepare dimensions and measures lists
+    # Prepare dimensions (names) and measures lists
     dimensions = list(qe.dimensions)
     if (
         qe.time_grain
@@ -327,7 +326,8 @@ def _compile_query(qe) -> Expr:
                 name = f"{alias}_{field}"
                 expr = model.joins[alias].model.dimensions[field](t).name(name)
             else:
-                expr = dimensions[d](t).name(d)
+                # Use possibly transformed dimension function
+                expr = dim_map[d](t).name(d)
             dim_exprs.append(expr)
         result = t.aggregate(by=dim_exprs, **agg_kwargs)
     else:
@@ -461,9 +461,10 @@ class SemanticModel:
             self.smallest_time_grain is not None
             and self.smallest_time_grain not in TIME_GRAIN_TRANSFORMATIONS
         ):
-            # Error message uses legacy 'smallestTimeGrain' naming for compatibility
+            # Error message indicates invalid smallest_time_grain
+            valid_grains = ", ".join(TIME_GRAIN_TRANSFORMATIONS.keys())
             raise ValueError(
-                f"Invalid smallestTimeGrain. Must be one of: {', '.join(TIME_GRAIN_TRANSFORMATIONS.keys())}"
+                f"Invalid smallest_time_grain. Must be one of: {valid_grains}"
             )
 
     def build_query(self) -> "QueryExpr":
