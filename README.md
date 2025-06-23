@@ -3,27 +3,72 @@
 The Boring Semantic Layer (BSL) is a lightweight semantic layer based on [Ibis](https://ibis-project.org/). 
 
 **Key Features:**
-- **Lightweight**: Just `pip install boring-semantic-layer`
+- **Lightweight**: `pip install boring-semantic-layer`
 - **Ibis-powered**: Built on top of [Ibis](https://ibis-project.org/), supporting any database engine that Ibis integrates with (DuckDB, Snowflake, BigQuery, PostgreSQL, and more)
 - **MCP-friendly**: Perfect for connecting Large Language Models to structured data sources
 
-*This project is a joint effort by [xorq-labs](https://github.com/xorq-labs) and [boringdata](https://www.boringdata.io/). We welcome feedback and contributions!*
+
+*This project is a joint effort by [xorq-labs](https://github.com/xorq-labs) and [boringdata](https://www.boringdata.io/).*
+
+We welcome feedback and contributions!
+
+# Quick Example
+
+**1. Define your ibis input table**
+
+```python
+import ibis
+
+flights_tbl = ibis.table(
+    name="flights",
+    schema={"origin": "string", "carrier": "string"}
+)
+```
+
+**2. Define a semantic model**
+
+```python
+from boring_semantic_layer import SemanticModel
+
+flights_sm = SemanticModel(
+    table=flights_tbl,
+    dimensions={"origin": lambda t: t.origin},
+    measures={"flight_count": lambda t: t.count()}
+)
+```
+
+**3. Query it**
+
+```python
+flights_sm.query(
+    dimensions=["origin"],
+    measures=["flight_count"]
+).execute()
+```
+
+**Example output (dataframe):**
+
+| origin | flight_count |
+|--------|--------------|
+| JFK    | 3689         |
+| LGA    | 2941         |
+| ...    | ...          |
+
 
 -----
 
 ## Table of Contents
 
-- [Why Choose Boring Semantic Layer?](#why-choose-boring-semantic-layer)
 - [How It Works](#how-it-works)
 - [Installation](#installation)
 - [Get Started](#get-started)
   1. [Get Sample Data](#1-get-sample-data)
-  2. [Query a Semantic Model](#2-query-a-semantic-model)
-  3. [Advanced Usage](#3-advanced-usage)
+  2. [Build a Semantic Model](#2-build-a-semantic-model)
+  3. [Query a Semantic Model](#3-query-a-semantic-model)
 - [Features](#features)
   - [Filters](#filters)
     - [Ibis Expression](#ibis-expression)
-    - [JSON-based](#json-based)
+    - [JSON-based (MCP & LLM friendly)](#json-based-mcp-llm-friendly)
   - [Time-Based Dimensions and Queries](#time-based-dimensions-and-queries)
   - [Joins Across Semantic Models](#joins-across-semantic-models)
     - [Classic SQL Joins](#classic-sql-joins)
@@ -33,69 +78,6 @@ The Boring Semantic Layer (BSL) is a lightweight semantic layer based on [Ibis](
 - [Reference](#reference)
   - [SemanticModel](#semanticmodel)
   - [Query (SemanticModel.query / QueryExpr)](#query-semanticmodelquery--queryexpr)
-
------
-
-## Why Choose Boring Semantic Layer?
-
-Semantic layers are becoming essential for connecting Large Language Models (LLMs) with data, making data interaction more intuitive and powerful.
-
-Our Ibis-based Semantic Layer offers:
-
-  * **Embeddable in any Python environment**: Use BSL in any Python tool, be it a BI platform, an ML pipeline, or a simple Jupyter notebook.
-  * **Wide Backend Support**: Powered by Ibis, BSL connects to numerous data warehouses and databases like **DuckDB**, **Snowflake**, **BigQuery**, and **PostgreSQL**.
-  * **Simple Pythonic API**: Define dimensions and measures with an easy-to-use Python API, simplifying the creation and maintenance of your semantic definitions.
-
------
-
-## How It Works
-
-BSL lets you define a `SemanticModel` on your data tables. This gives you a structured and consistent way to view your data for analysis.
-
-BSL's core is the `SemanticModel` class, where you define your dimensions and measures:
-
-```python
-flights_sm = SemanticModel(
-    name="flights", # Optional: A human-readable name for your model
-    table=flights_tbl, # Your Ibis table expression
-    dimensions={
-        "origin": lambda t: t.origin,
-        "destination": lambda t: t.destination,
-    },
-    measures={
-        "flight_count": lambda t: t.count(),
-    }
-)
-```
-
-**Understanding Dimensions and Measures:**
-
-  * **Dimensions**: These are attributes you use to group, segment, and filter your data (e.g., `country`, `user_cohort`, `time_of_day`). Think of them as the "by" clauses in your analysis – for example, analyzing flights "by origin" or "by destination."
-  * **Measures**: These are numerical values that you aggregate or calculate (e.g., `total_revenue`, `unique_users`, `average_order_value`). They represent the "what" you're measuring.
-
-**Ibis Under the Hood**: BSL uses Ibis expressions for all queries and data transformations. When you query a `SemanticModel`, your request becomes an Ibis expression. Ibis then translates it into optimized SQL for your data backend. This means your semantic models work across different backends without changes.
-
-**Example Query**:
-
-```python
-# Querying for the flight count by origin
-result_df = flights_sm.query(
-    dims=["origin"],
-    measures=["flight_count"]
-).execute() # .execute() materializes the query into a pandas DataFrame (by default)
-print(result_df)
-```
-
-Example output:
-
-| origin | flight_count |
-| :----- | :----------- |
-| PHL    | 7708         |
-| JFK    | 3689         |
-| JAX    | 1599         |
-| FNT    | 83           |
-| MLB    | 10           |
-| ...    | ...          |
 
 -----
 
@@ -144,10 +126,23 @@ flights_sm = SemanticModel(
         'avg_distance': lambda t: t.distance.mean(),
     }
 )
-```
 
 - **Dimensions** are attributes to group or filter by (e.g., origin, destination).
 - **Measures** are aggregations or calculations (e.g., total flights, average distance).
+
+All dimensions and measures are defined as Ibis expressions.
+
+Ibis expressions are Python functions that represent database operations.
+
+They allow you to write database queries using familiar Python syntax while Ibis handles the translation to optimized SQL for your specific database backend (like DuckDB, PostgreSQL, BigQuery, etc.).
+
+For example, in our semantic model:
+
+- `lambda t: t.origin` is an Ibis expression that references the "origin" column
+- `lambda t: t.count()` is an Ibis expression that counts rows
+- `lambda t: t.distance.mean()` is an Ibis expression that calculates the average distance
+
+The `t` parameter represents the table, and you can chain operations like `t.origin.upper()` or `t.dep_delay > 0` to create complex expressions. Ibis ensures these expressions are translated to efficient SQL queries.
 
 ---
 
@@ -175,12 +170,6 @@ Example output:
 
 ## Features
 
-Explore more features for advanced data analysis.
-
-- [Filters](#filters): Filter data using Ibis expressions or a flexible JSON format, ideal for LLM integration.
-- [Time-Based Dimensions and Queries](#time-based-dimensions-and-queries): Easily aggregate data over specific time ranges and granularities.
-- [Joins Across Semantic Models](#joins-across-semantic-models): Enrich your data by defining seamless joins between different `SemanticModel` instances.
-
 ### Filters
 
 #### Ibis Expression
@@ -202,7 +191,7 @@ flights_sm.query(
 |--------|---------------|
 | JFK    | 3689          |
 
-#### JSON-based
+#### JSON-based (MCP & LLM friendly)
 
 A format that's easy to serialize, good for dynamic queries or LLM integration.
 ```python
