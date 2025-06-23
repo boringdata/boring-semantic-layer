@@ -189,7 +189,7 @@ class Filter:
             # Then combine with remaining conditions
             for condition in filter_obj["conditions"][1:]:
                 next_expr = self._parse_json_filter(condition, table, model)
-                result = self.OPERATOR_MAPPING[filter_obj["operator"]](
+                result = OPERATOR_MAPPING[filter_obj["operator"]](
                     result, next_expr
                 )
 
@@ -214,7 +214,7 @@ class Filter:
         if operator in ["in", "not in"]:
             if "values" not in filter_obj:
                 raise ValueError(f"Operator '{operator}' requires 'values' field")
-            return self.OPERATOR_MAPPING[operator](field_expr, filter_obj["values"])
+            return OPERATOR_MAPPING[operator](field_expr, filter_obj["values"])
 
         # For null checks, value is not needed
         elif operator in ["is null", "is not null"]:
@@ -222,12 +222,12 @@ class Filter:
                 raise ValueError(
                     f"Operator '{operator}' should not have 'value' or 'values' fields"
                 )
-            return self.OPERATOR_MAPPING[operator](field_expr, None)
+            return OPERATOR_MAPPING[operator](field_expr, None)
 
         else:
             if "value" not in filter_obj:
                 raise ValueError(f"Operator '{operator}' requires 'value' field")
-            return self.OPERATOR_MAPPING[operator](field_expr, filter_obj["value"])
+            return OPERATOR_MAPPING[operator](field_expr, filter_obj["value"])
 
     def to_ibis(self, table: Expr, model: Optional["SemanticModel"] = None) -> Expr:
         """
