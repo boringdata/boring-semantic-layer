@@ -19,7 +19,7 @@ query business metrics without needing to understand the raw table structure.
 
 from mcp.server.fastmcp import FastMCP
 from typing import Optional, Dict, List, Union, Literal
-from example_semantic_model import flights_sm, carriers_sm
+from example_flight_semantic_model import flights_sm, carriers_sm
 from typing import Annotated
 
 

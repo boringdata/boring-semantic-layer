@@ -125,6 +125,7 @@ flights_sm = SemanticModel(
         'avg_distance': lambda t: t.distance.mean(),
     }
 )
+```
 
 - **Dimensions** are attributes to group or filter by (e.g., origin, destination).
 - **Measures** are aggregations or calculations (e.g., total flights, average distance).

@@ -1,7 +1,7 @@
 [project]
 name = "boring-semantic-layer"
-version = "0.0.0"
-description = "A boring semantic layer built with Xorq"
+version = "0.0.1"
+description = "A boring semantic layer built with ibis"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
