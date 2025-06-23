@@ -3,16 +3,6 @@ Example: Basic Query with Semantic Model
 
 This example demonstrates how to use a semantic model (`flights_sm`) to perform a basic query, retrieving available dimensions and measures, and running a grouped and aggregated query with ordering and limiting.
 
-Sample Input Data (flights table):
-
-| flight_id | carrier | destination | dep_time           | distance |
-|-----------|---------|-------------|-------------------|----------|
-| 1         | AA      | JFK         | 2024-01-01 08:00  | 1450     |
-| 2         | DL      | LAX         | 2024-01-01 09:30  | 2100     |
-| 3         | UA      | ORD         | 2024-01-01 10:15  | 980      |
-| 4         | AA      | JFK         | 2024-01-01 11:00  | 1450     |
-| ...       | ...     | ...         | ...               | ...      |
-
 Semantic Model: `flights_sm`
 - Represents a flights dataset with dimensions such as destination and measures such as flight count and average distance.
 
@@ -32,19 +22,22 @@ Expected Output (example):
 |    ...      |    ...      |     ...      |
 
 """
-from examples.example_flight_semantic_model import flights_sm
+import sys
+import os
+
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+from example_flight_semantic_model import flights_sm
 
 print("Available dimensions:", flights_sm.available_dimensions)
 print("Available measures:", flights_sm.available_measures)
 
 expr = flights_sm.query(
-    dims=["destination"],
+    dimensions=["destination"],
     measures=["flight_count", "avg_distance"],
     order_by=[("flight_count", "desc")],
-    # filters=[lambda t: t.dep_time.year() == 2024],
     limit=10,
 )
 
 df = expr.execute()
 print("\nTop 10 carriers by flight count:")
-print(df) 
+print(df)
