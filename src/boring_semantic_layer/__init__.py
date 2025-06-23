@@ -1,2 +1,1 @@
-def hello() -> None:
-    print("Hello from hello-world!")
+from .semantic_model import SemanticModel

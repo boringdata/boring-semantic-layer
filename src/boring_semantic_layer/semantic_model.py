@@ -70,6 +70,22 @@ TIME_GRAIN_ORDER = [
     "TIME_GRAIN_YEAR",
 ]
 
+OPERATOR_MAPPING = {
+    "=": lambda x, y: x == y,
+    "!=": lambda x, y: x != y,
+    ">": lambda x, y: x > y,
+    ">=": lambda x, y: x >= y,
+    "<": lambda x, y: x < y,
+    "<=": lambda x, y: x <= y,
+    "in": lambda x, y: x.isin(y),
+    "not in": lambda x, y: ~x.isin(y),
+    "like": lambda x, y: x.like(y),
+    "not like": lambda x, y: ~x.like(y),
+    "is null": lambda x, _: x.isnull(),
+    "is not null": lambda x, _: x.notnull(),
+    "AND": lambda x, y: x & y,
+    "OR": lambda x, y: x | y,
+}
 
 @frozen(kw_only=True, slots=True)
 class Join:
@@ -114,23 +130,6 @@ class Filter:
 
     filter: Union[Dict, str, Callable[[Expr], Expr]]
 
-    # Class level constants
-    OPERATOR_MAPPING = {
-        "=": lambda x, y: x == y,
-        "!=": lambda x, y: x != y,
-        ">": lambda x, y: x > y,
-        ">=": lambda x, y: x >= y,
-        "<": lambda x, y: x < y,
-        "<=": lambda x, y: x <= y,
-        "in": lambda x, y: x.isin(y),
-        "not in": lambda x, y: ~x.isin(y),
-        "like": lambda x, y: x.like(y),
-        "not like": lambda x, y: ~x.like(y),
-        "is null": lambda x, _: x.isnull(),
-        "is not null": lambda x, _: x.notnull(),
-        "AND": lambda x, y: x & y,
-        "OR": lambda x, y: x | y,
-    }
     OPERATORS: ClassVar[set] = set(OPERATOR_MAPPING.keys())
     COMPOUND_OPERATORS: ClassVar[set] = {"AND", "OR"}
 
@@ -360,41 +359,124 @@ class QueryExpr:
     time_grain: Optional[TimeGrain] = None
 
     def with_dimensions(self, *dimensions: str) -> "QueryExpr":
+        """
+        Return a new QueryExpr with additional dimensions added.
+
+        Args:
+            *dimensions: Dimension names to add.
+        Returns:
+            QueryExpr: A new QueryExpr with the specified dimensions.
+        """
         return self.clone(dimensions=self.dimensions + dimensions)
 
     def with_measures(self, *measures: str) -> "QueryExpr":
+        """
+        Return a new QueryExpr with additional measures added.
+
+        Args:
+            *measures: Measure names to add.
+        Returns:
+            QueryExpr: A new QueryExpr with the specified measures.
+        """
         return self.clone(measures=self.measures + measures)
 
     def with_filters(
         self, *f: Union[Filter, Dict[str, Any], str, Callable[[Expr], Expr]]
     ) -> "QueryExpr":
+        """
+        Return a new QueryExpr with additional filters added.
+
+        Args:
+            *f: Filters to add (Filter, dict, str, or callable).
+        Returns:
+            QueryExpr: A new QueryExpr with the specified filters.
+        """
         wrapped = tuple(fi if isinstance(fi, Filter) else Filter(filter=fi) for fi in f)
         return self.clone(filters=self.filters + wrapped)
 
     def sorted(self, *order: Tuple[str, str]) -> "QueryExpr":
+        """
+        Return a new QueryExpr with additional order by clauses.
+
+        Args:
+            *order: Tuples of (field, direction) to order by.
+        Returns:
+            QueryExpr: A new QueryExpr with the specified ordering.
+        """
         return self.clone(order_by=self.order_by + order)
 
     def top(self, n: int) -> "QueryExpr":
+        """
+        Return a new QueryExpr with a row limit applied.
+
+        Args:
+            n: The maximum number of rows to return.
+        Returns:
+            QueryExpr: A new QueryExpr with the specified row limit.
+        """
         return self.clone(limit=n)
 
     def grain(self, g: TimeGrain) -> "QueryExpr":
+        """
+        Return a new QueryExpr with a specified time grain.
+
+        Args:
+            g: The time grain to use.
+        Returns:
+            QueryExpr: A new QueryExpr with the specified time grain.
+        """
         return self.clone(time_grain=g)
 
     def clone(self, **changes) -> "QueryExpr":
+        """
+        Return a copy of this QueryExpr with the specified changes applied.
+
+        Args:
+            **changes: Fields to override in the new QueryExpr.
+        Returns:
+            QueryExpr: A new QueryExpr with the changes applied.
+        """
         return evolve(self, **changes)
 
     def to_expr(self) -> Expr:
+        """
+        Compile this QueryExpr into an Ibis expression.
+
+        Returns:
+            Expr: The compiled Ibis expression representing the query.
+        """
         return _compile_query(self)
 
     to_ibis = to_expr
 
     def execute(self, *args, **kwargs):
+        """
+        Execute the compiled Ibis expression and return the result.
+
+        Args:
+            *args: Positional arguments passed to Ibis execute().
+            **kwargs: Keyword arguments passed to Ibis execute().
+        Returns:
+            The result of executing the query.
+        """
         return self.to_expr().execute(*args, **kwargs)
 
     def sql(self) -> str:
+        """
+        Return the SQL string for the compiled query.
+
+        Returns:
+            str: The SQL representation of the query.
+        """
         return ibis_mod.to_sql(self.to_expr())
 
     def maybe_to_expr(self) -> Optional[Expr]:
+        """
+        Try to compile this QueryExpr to an Ibis expression, returning None if it fails.
+
+        Returns:
+            Optional[Expr]: The compiled Ibis expression, or None if compilation fails.
+        """
         try:
             return self.to_expr()
         except Exception:
@@ -468,6 +550,12 @@ class SemanticModel:
             )
 
     def build_query(self) -> "QueryExpr":
+        """
+        Create a new QueryExpr for this SemanticModel.
+
+        Returns:
+            QueryExpr: A new QueryExpr instance for building queries.
+        """
         return QueryExpr(model=self)
 
     def _validate_time_grain(self, time_grain: Optional[TimeGrain]) -> None:
@@ -521,6 +609,20 @@ class SemanticModel:
         time_range: Optional[Dict[str, str]] = None,
         time_grain: Optional[TimeGrain] = None,
     ) -> "QueryExpr":
+        """
+        Build a QueryExpr for this model with the specified query parameters.
+
+        Args:
+            dimensions: List of dimension names to include.
+            measures: List of measure names to include.
+            filters: List of filters (dict, str, callable, or Filter).
+            order_by: List of (field, direction) tuples for ordering.
+            limit: Maximum number of rows to return.
+            time_range: Dict with 'start' and 'end' keys for time filtering.
+            time_grain: The time grain to use for the time dimension.
+        Returns:
+            QueryExpr: The constructed QueryExpr.
+        """
         # Validate time grain
         self._validate_time_grain(time_grain)
         # Prepare components, alias 'dimensions' to dimension names
@@ -629,7 +731,12 @@ class SemanticModel:
 
     @property
     def available_dimensions(self) -> List[str]:
-        """List available dimension keys, including joined model dimensions."""
+        """
+        List all available dimension keys, including joined model dimensions.
+
+        Returns:
+            List[str]: The available dimension names.
+        """
         keys = list(self.dimensions.keys())
         # Include time dimension if it exists and is not already in dimensions
         if self.time_dimension and self.time_dimension not in keys:
@@ -640,7 +747,12 @@ class SemanticModel:
 
     @property
     def available_measures(self) -> List[str]:
-        """List available measure keys, including joined model measures."""
+        """
+        List all available measure keys, including joined model measures.
+
+        Returns:
+            List[str]: The available measure names.
+        """
         keys = list(self.measures.keys())
         for alias, join in self.joins.items():
             keys.extend([f"{alias}.{m}" for m in join.model.measures.keys()])
@@ -648,7 +760,12 @@ class SemanticModel:
 
     @property
     def json_definition(self) -> Dict[str, Any]:
-        """Return model metadata including name, dimensions, measures, time dimension, and time grain."""
+        """
+        Return a JSON-serializable definition of the model, including name, dimensions, measures, time dimension, and time grain.
+
+        Returns:
+            Dict[str, Any]: The model metadata.
+        """
         definition = {
             "name": self.name,
             "dimensions": self.available_dimensions,
@@ -683,6 +800,19 @@ class SemanticModel:
         dimensions: Optional[List[str]] = None,
         storage: Any = None,
     ) -> "SemanticModel":
+        """
+        Materialize the model at a specified time grain, optionally filtering by cutoff and restricting dimensions.
+
+        Args:
+            time_grain: The time grain to use for materialization.
+            cutoff: Optional cutoff date/time for filtering.
+            dimensions: Optional list of dimensions to include.
+            storage: Optional storage backend for caching.
+        Returns:
+            SemanticModel: A new materialized SemanticModel.
+        Raises:
+            RuntimeError: If not using the xorq vendor ibis backend.
+        """
         if not IS_XORQ_USED:
             raise RuntimeError("materialize() requires xorq vendor ibis backend")
         mod = self.table.__class__.__module__
@@ -749,6 +879,19 @@ def join_one(
     model: SemanticModel,
     with_: Optional[Callable[[Expr], Expr]] = None,
 ) -> Join:
+    """
+    Create a one-to-one join relationship for a semantic model.
+
+    Args:
+        alias: Alias for the join.
+        model: The joined SemanticModel.
+        with_: Callable mapping the left table to a column expression (foreign key).
+    Returns:
+        Join: The Join object representing the relationship.
+    Raises:
+        ValueError: If 'with_' is not provided or model has no primary key.
+        TypeError: If 'with_' is not callable.
+    """
     if with_ is None:
         raise ValueError("join_one requires a 'with_' callable for foreign key mapping")
     if not callable(with_):
@@ -770,6 +913,19 @@ def join_many(
     model: SemanticModel,
     with_: Optional[Callable[[Expr], Expr]] = None,
 ) -> Join:
+    """
+    Create a one-to-many join relationship for a semantic model.
+
+    Args:
+        alias: Alias for the join.
+        model: The joined SemanticModel.
+        with_: Callable mapping the left table to a column expression (foreign key).
+    Returns:
+        Join: The Join object representing the relationship.
+    Raises:
+        ValueError: If 'with_' is not provided or model has no primary key.
+        TypeError: If 'with_' is not callable.
+    """
     if with_ is None:
         raise ValueError(
             "join_many requires a 'with_' callable for foreign key mapping"
@@ -788,6 +944,15 @@ def join_many(
 
 
 def join_cross(alias: str, model: SemanticModel) -> Join:
+    """
+    Create a cross join relationship for a semantic model.
+
+    Args:
+        alias: Alias for the join.
+        model: The joined SemanticModel.
+    Returns:
+        Join: The Join object representing the cross join relationship.
+    """
     return Join(
         alias=alias, model=model, on=lambda left, right: None, how="cross", kind="cross"
     )
