@@ -22,6 +22,7 @@ Expected Output (example):
 |    ...      |    ...      |     ...      |
 
 """
+
 import sys
 import os
 

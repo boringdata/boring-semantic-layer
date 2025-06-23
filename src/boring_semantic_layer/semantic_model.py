@@ -87,6 +87,7 @@ OPERATOR_MAPPING = {
     "OR": lambda x, y: x | y,
 }
 
+
 @frozen(kw_only=True, slots=True)
 class Join:
     """Definition of a join relationship in the semantic model."""
@@ -96,6 +97,105 @@ class Join:
     on: Callable[[Expr, Expr], Expr]
     how: How = "inner"
     kind: Cardinality = "one"
+
+    @classmethod
+    def one(
+        cls,
+        alias: str,
+        model: "SemanticModel",
+        with_: Optional[Callable[[Expr], Expr]] = None,
+    ) -> "Join":
+        """
+        Create a one-to-one join relationship for a semantic model.
+
+        Args:
+            alias: Alias for the join.
+            model: The joined SemanticModel.
+            with_: Callable mapping the left table to a column expression (foreign key).
+        Returns:
+            Join: The Join object representing the relationship.
+        Raises:
+            ValueError: If 'with_' is not provided or model has no primary key.
+            TypeError: If 'with_' is not callable.
+        """
+        if with_ is None:
+            raise ValueError(
+                "Join.one requires a 'with_' callable for foreign key mapping"
+            )
+        if not callable(with_):
+            raise TypeError(
+                "'with_' must be a callable mapping the left table to a column expression"
+            )
+        if not model.primary_key:
+            raise ValueError(
+                f"Model does not have 'primary_key' defined for join: {alias}"
+            )
+
+        def on_expr(left, right):
+            return with_(left) == getattr(right, model.primary_key)
+
+        return cls(alias=alias, model=model, on=on_expr, how="inner", kind="one")
+
+    @classmethod
+    def many(
+        cls,
+        alias: str,
+        model: "SemanticModel",
+        with_: Optional[Callable[[Expr], Expr]] = None,
+    ) -> "Join":
+        """
+        Create a one-to-many join relationship for a semantic model.
+
+        Args:
+            alias: Alias for the join.
+            model: The joined SemanticModel.
+            with_: Callable mapping the left table to a column expression (foreign key).
+        Returns:
+            Join: The Join object representing the relationship.
+        Raises:
+            ValueError: If 'with_' is not provided or model has no primary key.
+            TypeError: If 'with_' is not callable.
+        """
+        if with_ is None:
+            raise ValueError(
+                "Join.many requires a 'with_' callable for foreign key mapping"
+            )
+        if not callable(with_):
+            raise TypeError(
+                "'with_' must be a callable mapping the left table to a column expression"
+            )
+        if not model.primary_key:
+            raise ValueError(
+                f"Model does not have 'primary_key' defined for join: {alias}"
+            )
+
+        def on_expr(left, right):
+            return with_(left) == getattr(right, model.primary_key)
+
+        return cls(alias=alias, model=model, on=on_expr, how="left", kind="many")
+
+    @classmethod
+    def cross(
+        cls,
+        alias: str,
+        model: "SemanticModel",
+    ) -> "Join":
+        """
+        Create a cross join relationship for a semantic model.
+
+        Args:
+            alias: Alias for the join.
+            model: The joined SemanticModel.
+        Returns:
+            Join: The Join object representing the cross join relationship.
+        """
+        return cls(
+            alias=alias,
+            model=model,
+            on=lambda left, right: None,
+            how="cross",
+            kind="cross",
+        )
 
 
 @frozen(kw_only=True, slots=True)
@@ -189,9 +289,7 @@ class Filter:
             # Then combine with remaining conditions
             for condition in filter_obj["conditions"][1:]:
                 next_expr = self._parse_json_filter(condition, table, model)
-                result = OPERATOR_MAPPING[filter_obj["operator"]](
-                    result, next_expr
-                )
+                result = OPERATOR_MAPPING[filter_obj["operator"]](result, next_expr)
 
             return result
 
@@ -248,11 +346,15 @@ class Filter:
 
 
 def _compile_query(qe) -> Expr:
+    """Compile a QueryExpr into an Ibis expression."""
     model = qe.model
+    
     # Validate time grain
     model._validate_time_grain(qe.time_grain)
+    
     # Start with the base table
     t = model.table
+    
     # Apply joins
     for alias, join in model.joins.items():
         right = join.model.table
@@ -261,8 +363,10 @@ def _compile_query(qe) -> Expr:
         else:
             cond = join.on(t, right)
             t = t.join(right, cond, how=join.how)
+    
     # Transform time dimension if needed
     t, dim_map = model._transform_time_dimension(t, qe.time_grain)
+    
     # Apply time range filter if provided
     if qe.time_range and model.time_dimension:
         start, end = qe.time_range
@@ -274,10 +378,12 @@ def _compile_query(qe) -> Expr:
             ],
         }
         t = t.filter(Filter(filter=time_filter).to_ibis(t, model))
+    
     # Apply other filters
     for flt in qe.filters:
         t = t.filter(flt.to_ibis(t, model))
-    # Prepare dimensions (names) and measures lists
+    
+    # Prepare dimensions and measures lists
     dimensions = list(qe.dimensions)
     if (
         qe.time_grain
@@ -286,6 +392,7 @@ def _compile_query(qe) -> Expr:
     ):
         dimensions.append(model.time_dimension)
     measures = list(qe.measures)
+    
     # Validate dimensions
     for d in dimensions:
         if "." in d:
@@ -295,6 +402,7 @@ def _compile_query(qe) -> Expr:
                 raise KeyError(f"Unknown dimension: {d}")
         elif d not in dimensions:
             raise KeyError(f"Unknown dimension: {d}")
+    
     # Validate measures
     for m in measures:
         if "." in m:
@@ -304,6 +412,7 @@ def _compile_query(qe) -> Expr:
                 raise KeyError(f"Unknown measure: {m}")
         elif m not in model.measures:
             raise KeyError(f"Unknown measure: {m}")
+    
     # Build aggregate expressions
     agg_kwargs: Dict[str, Expr] = {}
     for m in measures:
@@ -316,6 +425,7 @@ def _compile_query(qe) -> Expr:
         else:
             expr = model.measures[m](t)
             agg_kwargs[m] = expr.name(m)
+    
     # Group and aggregate
     if dimensions:
         dim_exprs = []
@@ -331,7 +441,8 @@ def _compile_query(qe) -> Expr:
         result = t.aggregate(by=dim_exprs, **agg_kwargs)
     else:
         result = t.aggregate(**agg_kwargs)
-    # Ordering
+    
+    # Apply ordering
     if qe.order_by:
         order_exprs = []
         for field, direction in qe.order_by:
@@ -341,11 +452,12 @@ def _compile_query(qe) -> Expr:
                 col.desc() if direction.lower().startswith("desc") else col.asc()
             )
         result = result.order_by(order_exprs)
-    # Limit
+    
+    # Apply limit
     if qe.limit is not None:
         result = result.limit(qe.limit)
+    
     return result
-
 
 @frozen(kw_only=True, slots=True)
 class QueryExpr:
@@ -871,88 +983,3 @@ class SemanticModel:
             time_dimension=self.time_dimension,
             smallest_time_grain=time_grain,
         )
-
-
-# functions for Malloy-style joins
-def join_one(
-    alias: str,
-    model: SemanticModel,
-    with_: Optional[Callable[[Expr], Expr]] = None,
-) -> Join:
-    """
-    Create a one-to-one join relationship for a semantic model.
-
-    Args:
-        alias: Alias for the join.
-        model: The joined SemanticModel.
-        with_: Callable mapping the left table to a column expression (foreign key).
-    Returns:
-        Join: The Join object representing the relationship.
-    Raises:
-        ValueError: If 'with_' is not provided or model has no primary key.
-        TypeError: If 'with_' is not callable.
-    """
-    if with_ is None:
-        raise ValueError("join_one requires a 'with_' callable for foreign key mapping")
-    if not callable(with_):
-        raise TypeError(
-            "'with_' must be a callable mapping the left table to a column expression"
-        )
-    if not model.primary_key:
-        raise ValueError(f"Model does not have 'primary_key' defined for join: {alias}")
-
-    def on_expr(left, right):
-        return with_(left) == getattr(right, model.primary_key)
-
-    # use inner join for one-to-one relationships
-    return Join(alias=alias, model=model, on=on_expr, how="inner", kind="one")
-
-
-def join_many(
-    alias: str,
-    model: SemanticModel,
-    with_: Optional[Callable[[Expr], Expr]] = None,
-) -> Join:
-    """
-    Create a one-to-many join relationship for a semantic model.
-
-    Args:
-        alias: Alias for the join.
-        model: The joined SemanticModel.
-        with_: Callable mapping the left table to a column expression (foreign key).
-    Returns:
-        Join: The Join object representing the relationship.
-    Raises:
-        ValueError: If 'with_' is not provided or model has no primary key.
-        TypeError: If 'with_' is not callable.
-    """
-    if with_ is None:
-        raise ValueError(
-            "join_many requires a 'with_' callable for foreign key mapping"
-        )
-    if not callable(with_):
-        raise TypeError(
-            "'with_' must be a callable mapping the left table to a column expression"
-        )
-    if not model.primary_key:
-        raise ValueError(f"Model does not have 'primary_key' defined for join: {alias}")
-
-    def on_expr(left, right):
-        return with_(left) == getattr(right, model.primary_key)
-
-    return Join(alias=alias, model=model, on=on_expr, how="left", kind="many")
-
-
-def join_cross(alias: str, model: SemanticModel) -> Join:
-    """
-    Create a cross join relationship for a semantic model.
-
-    Args:
-        alias: Alias for the join.
-        model: The joined SemanticModel.
-    Returns:
-        Join: The Join object representing the cross join relationship.
-    """
-    return Join(
-        alias=alias, model=model, on=lambda left, right: None, how="cross", kind="cross"
-    )

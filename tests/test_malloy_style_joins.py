@@ -4,9 +4,7 @@ import xorq as xo
 
 from boring_semantic_layer.semantic_model import (
     SemanticModel,
-    join_one,
-    join_many,
-    join_cross,
+    Join,
 )
 
 
@@ -25,7 +23,7 @@ def test_join_one_with_callable_foreign_key():
         primary_key="customer_id",
     )
     # Use callable to specify foreign key expression
-    j = join_one("cust", customers_model, with_=lambda t: t.customer_id)
+    j = Join.one("cust", customers_model, with_=lambda t: t.customer_id)
     orders_model = SemanticModel(
         table=orders_tbl,
         dimensions={
@@ -65,7 +63,7 @@ def test_join_many_counts_children():
         primary_key="dept_id",
     )
     # One-to-many join using foreign key mapping
-    j = join_many("emp", emp_model, with_=lambda t: t.dept_id)
+    j = Join.many("emp", emp_model, with_=lambda t: t.dept_id)
     d_model = SemanticModel(
         table=dept_tbl,
         dimensions={"dept_name": lambda t: t.dept_name},
@@ -94,7 +92,7 @@ def test_join_cross_cartesian_product():
         measures={},
     )
     # Cross join
-    j = join_cross("b", b_model)
+    j = Join.cross("b", b_model)
     c_model = SemanticModel(
         table=a_tbl,
         dimensions={},
@@ -112,12 +110,12 @@ def test_join_cross_cartesian_product():
 @pytest.mark.parametrize(
     "factory,args,kwargs",
     [
-        (join_one, (), {}),
-        (join_many, (), {}),
+        (Join.one, (), {}),
+        (Join.many, (), {}),
     ],
 )
 def test_join_factory_missing_arguments(factory, args, kwargs):
-    # Must provide either on or with_
+    # Must provide with_
     dummy_model = SemanticModel(
         table=xo.connect().create_table("t", pd.DataFrame({"x": [1]})),
         dimensions={"x": lambda t: t.x},
@@ -138,6 +136,6 @@ def test_join_with_missing_primary_key():
         measures={},
     )
     with pytest.raises(ValueError):
-        join_one("x", model_no_pk, with_=lambda t: t.y)
+        Join.one("x", model_no_pk, with_=lambda t: t.y)
     with pytest.raises(ValueError):
-        join_many("x", model_no_pk, with_=lambda t: t.y)
+        Join.many("x", model_no_pk, with_=lambda t: t.y)

@@ -5,7 +5,7 @@ Example: Demonstrate SemanticModel.materialize() using a xorq backend.
 import pandas as pd
 import xorq as xo
 
-from boring_semantic_layer.semantic_model import SemanticModel
+from boring_semantic_layer import SemanticModel
 
 df = pd.DataFrame(
     {
@@ -25,21 +25,21 @@ sales_model = SemanticModel(
         "total_sales": lambda t: t.sales.sum(),
         "order_count": lambda t: t.sales.count(),
     },
-    timeDimension="date",
-    smallestTimeGrain="TIME_GRAIN_DAY",
+    time_dimension="date",
+    smallest_time_grain="TIME_GRAIN_DAY",
 )
 
 cube = sales_model.materialize(
     time_grain="TIME_GRAIN_DAY",
     cutoff="2025-01-04",
-    dims=["region"],
+    dimensions=["region", "date"],
     storage=None,
 )
 
 print("Cube model definition:", cube.json_definition)
 
 df_cube = cube.query(
-    dims=["date", "region"], measures=["total_sales", "order_count"]
+    dimensions=["date", "region"], measures=["total_sales", "order_count"]
 ).execute()
 print("\nSample cube output:")
 print(df_cube)

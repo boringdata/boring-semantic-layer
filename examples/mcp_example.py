@@ -1,3 +1,22 @@
+"""
+This is an example of a Model Context Protocol (MCP) server that provides a semantic layer
+for querying flight data through semantic models.
+
+The server exposes tools for:
+- Listing available semantic models
+- Getting model metadata and schema information
+- Querying time ranges for time-series data
+- Executing queries with dimensions, measures, and filters
+
+To use this server:
+1. Install the mcp package: pip install mcp
+2. Run this script to start the MCP server
+3. Connect to it from an MCP client to query the semantic models
+
+The server provides a clean abstraction over the underlying data, allowing users to
+query business metrics without needing to understand the raw table structure.
+"""
+
 from mcp.server.fastmcp import FastMCP
 from typing import Optional, Dict, List, Union, Literal
 from example_semantic_model import flights_sm, carriers_sm

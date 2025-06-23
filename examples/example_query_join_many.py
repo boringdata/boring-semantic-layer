@@ -29,9 +29,10 @@ Expected Output:
 |    Eng    |        1       |
 |    HR     |        2       |
 """
+
 import pandas as pd
 import ibis
-from boring_semantic_layer.semantic_model import SemanticModel, join_many
+from boring_semantic_layer.semantic_model import SemanticModel, Join
 
 # Create a DuckDB connection for in-memory table creation
 con = ibis.duckdb.connect()
@@ -63,7 +64,7 @@ dept_model = SemanticModel(
     table=dept_tbl,
     dimensions={"dept_name": lambda t: t.dept_name},
     measures={},
-    joins={"emp": join_many(alias="emp", model=emp_model, with_=lambda t: t.dept_id)},
+    joins={"emp": Join.many(alias="emp", model=emp_model, with_=lambda t: t.dept_id)},
 )
 
 # Query: Get department name and employee count per department
@@ -76,4 +77,3 @@ emp_counts_df = (
 
 print("Employee counts by department:")
 print(emp_counts_df)
-

@@ -2,7 +2,10 @@
 
 The Boring Semantic Layer (BSL) is a lightweight semantic layer based on [Ibis](https://ibis-project.org/). 
 
-It's designed to integrate easily into your Python environment and be compatible with any backend where your data is stored.
+**Key Features:**
+- **Lightweight**: Just `pip install boring-semantic-layer`
+- **Ibis-powered**: Built on top of [Ibis](https://ibis-project.org/), supporting any database engine that Ibis integrates with (DuckDB, Snowflake, BigQuery, PostgreSQL, and more)
+- **MCP-friendly**: Perfect for connecting Large Language Models to structured data sources
 
 *This project is a joint effort by [xorq-labs](https://github.com/xorq-labs) and [boringdata](https://www.boringdata.io/). We welcome feedback and contributions!*
 
@@ -13,11 +16,23 @@ It's designed to integrate easily into your Python environment and be compatible
 - [Why Choose Boring Semantic Layer?](#why-choose-boring-semantic-layer)
 - [How It Works](#how-it-works)
 - [Installation](#installation)
-- [Quickstart: Your First Semantic Model](#quickstart-your-first-semantic-model)
-- [Advanced Usage](#advanced-usage)
+- [Get Started](#get-started)
+  0. [Get Sample Data](#0-get-sample-data)
+  2. [Query a Semantic Model](#2-query-a-semantic-model)
+  3. [Advanced Usage](#3-advanced-usage)
+- [Features](#features)
   - [Filters](#filters)
+    - [Ibis Expression](#ibis-expression)
+    - [JSON-based](#json-based)
   - [Time-Based Dimensions and Queries](#time-based-dimensions-and-queries)
   - [Joins Across Semantic Models](#joins-across-semantic-models)
+    - [Classic SQL Joins](#classic-sql-joins)
+    - [join_one](#join_one)
+    - [join_many](#join_many)
+    - [join_cross](#join_cross)
+- [Reference](#reference)
+  - [SemanticModel](#semanticmodel)
+  - [Query (SemanticModel.query / QueryExpr)](#query-semanticmodelquery--queryexpr)
 
 -----
 
@@ -86,56 +101,42 @@ This simple query gives you a DataFrame, hiding the complex SQL:
 
 ## Installation
 
-Getting started with Boring Semantic Layer is straightforward:
-
 ```bash
 pip install boring-semantic-layer
 ```
 
 -----
 
-## Quickstart: Your First Semantic Model
+## Get Started
 
-Let's create a `SemanticModel` and run a query.
-
-### 1. Get Sample Data
+### 0. Get Sample Data
 
 We'll use a public flight dataset from the [Malloy Samples repository](https://github.com/malloydata/malloy-samples/tree/main/data).
 
-First, clone the data directory:
-
 ```bash
-git clone https://github.com/malloydata/malloy-samples/tree/main/data
+git clone https://github.com/malloydata/malloy-samples
 ```
 
-### 2. Connect to Your Data Source with Ibis
+### 2. Build a Semantic Model
 
-Define your data tables with Ibis. We'll use DuckDB with an in-memory connection and load a Parquet file.
+Define your data source and create a semantic model that describes your data in terms of dimensions and measures.
 
 ```python
 import ibis
-import os
-from boring_semantic_layer.semantic_model import SemanticModel
+from boring_semantic_layer import SemanticModel
 
-# Connect to an in-memory DuckDB database
+# Connect to your database (here, DuckDB in-memory for demo)
 con = ibis.duckdb.connect(":memory:")
-
-# Load the flights.parquet file into an Ibis table expression
 flights_tbl = con.read_parquet("malloy-samples/data/flights.parquet")
-```
 
-### 3. Define Your Semantic Model
-
-Now, define your `SemanticModel`. We'll add dimensions for origin and destination, and measures for total flights, total distance, and average distance.
-
-```python
+# Define the semantic model
 flights_sm = SemanticModel(
     name="flights",
     table=flights_tbl,
     dimensions={
         'origin': lambda t: t.origin,
-        'destination': lambda t: t.dest, # Note: using 'dest' as per actual column in the dataset
-        'year': lambda t: t.year, # Add year as a dimension for richer analysis
+        'destination': lambda t: t.dest,
+        'year': lambda t: t.year
     },
     measures={
         'total_flights': lambda t: t.count(),
@@ -145,16 +146,19 @@ flights_sm = SemanticModel(
 )
 ```
 
+- **Dimensions** are attributes to group or filter by (e.g., origin, destination).
+- **Measures** are aggregations or calculations (e.g., total flights, average distance).
 
-### 4. Query Your Semantic Model
+---
 
-Finally, use the `query` method to get data. You can specify dimensions, measures, filters, and a limit.
+### 3. Query a Semantic Model
+
+Use your semantic model to run queries—selecting dimensions, measures, and applying filters or limits.
 
 ```python
-# Query total flights and average distance for flights originating from JFK,
-# grouped by origin, with a limit of 10 results.
-query_result_df = flights_sm.query(
-    dims=['origin'],
+# Query: total flights and average distance by origin, limit 10
+flights_sm.query(
+    dimensions=['origin'],
     measures=['total_flights', 'avg_distance'],
     filters=[{'field': 'origin', 'operator': '=', 'value': 'JFK'}],
     limit=10
@@ -163,20 +167,17 @@ query_result_df = flights_sm.query(
 print(query_result_df)
 ```
 
-This returns a DataFrame. BSL makes complex queries simple:
+This returns a DataFrame like:
 
-| origin | total\_flights | avg\_distance |
-| :----- | :------------ | :----------- |
-| JFK | 3689 | 1047.71 |
-| PHL | 7708 | 1044.97 |
-| JAX | 1599 | 1044.00 |
-| FNT | 83 | 1044.00 |
-| MLB | 10 | 1044.00 |
-| ... | ... | ... |
+| origin | total_flights | avg_distance |
+|--------|---------------|--------------|
+| JFK    | 3689          | 1047.71      |
+| PHL    | 7708          | 1044.97      |
+| ...    | ...           | ...          |
 
 -----
 
-## Advanced Usage
+## Features
 
 Explore more features for advanced data analysis.
 
@@ -186,39 +187,39 @@ Explore more features for advanced data analysis.
 
 ### Filters
 
-The `query` method can filter data.
+#### Ibis Expression
 
-Filters can be of 2 types:
-- **Ibis expression**: Use raw Ibis expressions for full flexibility.
-  ```python
-  # Example of an Ibis expression filter to find flights from 'JFK'
-  ibis_filter_df = flights_sm.query(
-      dims=['origin'],
-      measures=['total_flights'],
-      filters=[
-          lambda t: t.origin == 'JFK'
-      ]
-  ).execute()
-  print(ibis_filter_df)
-  ```
+The `query` method can filter data using raw Ibis expressions for full flexibility.
+  
+```python
+flights_sm.query(
+    dimensions=['origin'],
+    measures=['total_flights'],
+    filters=[
+        lambda t: t.origin == 'JFK'
+    ]
+)
+```
 
-- **JSON-based** (for easy LLM integration): A format that's easy to serialize, good for dynamic queries or LLM integration.
-  ```python
-  # Example of a compound filter using 'AND' logic
-  compound_filter_df = flights_sm.query(
-      dims=['origin'],
-      measures=['total_flights'],
-      filters=[
-          {
-              'operator': 'AND',
-              'conditions': [
-                  {'field': 'origin', 'operator': 'in', 'values': ['JFK', 'LGA', 'PHL']},
-                  {'field': 'total_flights', 'operator': '>', 'value': 5000}
-              ]
-          }
-      ]
-  ).execute()
-  ```
+#### JSON-based
+
+A format that's easy to serialize, good for dynamic queries or LLM integration.
+```python
+flights_sm.query(
+    dimensions=['origin'],
+    measures=['total_flights'],
+    filters=[
+        {
+            'operator': 'AND',
+            'conditions': [
+                {'field': 'origin', 'operator': 'in', 'values': ['JFK', 'LGA', 'PHL']},
+                {'field': 'total_flights', 'operator': '>', 'value': 5000}
+            ]
+        }
+    ]
+).execute()
+```
+BSL supports the following operators: `=`, `!=`, `>`, `>=`, `in`, `not in`, `like`, `not like`, `is null`, `is not null`, `AND`, `OR`
 
 ### Time-Based Dimensions and Queries
 
@@ -265,7 +266,17 @@ The query aggregates the number of flights by origin and day:
 
 ### Joins Across Semantic Models
 
-Join different `SemanticModel` instances to query across related datasets.
+BSL allows you to join multiple `SemanticModel` instances to enrich your data. Joins are defined in the `joins` parameter of a `SemanticModel`.
+
+There are four main ways to define joins:
+
+#### Classic SQL Joins
+
+For full control, you can create a `Join` object directly, specifying the join condition with an `on` lambda function and the join type with `how` (e.g., `'inner'`, `'left'`).
+
+First, let's define two semantic models: one for flights and one for carriers.
+
+The flight model resulting from a join with the carriers model:
 
 ```python
 from boring_semantic_layer.semantic_model import Join, SemanticModel
@@ -330,5 +341,135 @@ print(query_joined_df)
 | American Airlines | DFW | 8742 |
 | American Eagle Airlines | JFK | 418 |
 
+#### join_one
 
------
+For common join patterns, BSL provides helper class methods inspired by [Malloy](https://docs.malloydata.dev/documentation/language/join): `Join.one`, `Join.many`, and `Join.cross`.
+
+These simplify joins based on primary/foreign key relationships.
+
+To use them, first define a `primary_key` on the model you are joining to. The primary key should be one of the model's dimensions.
+
+```python
+carriers_pk_sm = SemanticModel(
+    name="carriers",
+    table=con.read_parquet("malloy-samples/data/carriers.parquet"),
+    primary_key="code",
+    dimensions={
+        'code': lambda t: t.code,
+        'name': lambda t: t.name
+    },
+    measures={'carrier_count': lambda t: t.count()}
+)
+```
+
+Now, you can use `Join.one` in the `flights` model to link to `carriers_pk_sm`. The `with_` parameter specifies the foreign key on the `flights` model.
+
+```python
+from boring_semantic_layer.semantic_model import Join
+
+flights_with_join_one_sm = SemanticModel(
+    name="flights",
+    table=flights_tbl,
+    dimensions={'origin': lambda t: t.origin},
+    measures={'flight_count': lambda t: t.count()},
+    joins={
+        "carriers": Join.one(
+            alias="carriers",
+            model=carriers_pk_sm,
+            with_=lambda t: t.carrier
+        )
+    }
+)
+```
+
+- **`Join.one(alias, model, with_)`**: Use for one-to-one or many-to-one relationships. It joins where the foreign key specified in `with_` matches the `primary_key` of the joined `model`.
+
+#### join_many
+
+- **`Join.many(alias, model, with_)`**: Similar to `Join.one`, but semantically represents a one-to-many relationship.
+
+#### join_cross
+
+- **`Join.cross(alias, model)`**: Creates a cross product, joining every row from the left model with every row of the right `model`.
+
+Querying remains the same—just reference the joined fields using the alias.
+
+```python
+flights_with_join_one_sm.query(
+    dimensions=["carriers.name"],
+    measures=["flight_count"],
+    limit=5
+).execute()
+```
+
+## Reference
+
+### SemanticModel
+
+| Field                | Type                                      | Required | Allowed Values / Notes                                                                                      |
+|----------------------|-------------------------------------------|----------|------------------------------------------------------------------------------------------------------------|
+| `table`              | Ibis table expression                     | Yes      | Any Ibis table or view                                                                                     |
+| `dimensions`         | dict[str, callable]                       | Yes      | Keys: dimension names; Values: functions mapping table → column                                             |
+| `measures`           | dict[str, callable]                       | Yes      | Keys: measure names; Values: functions mapping table → aggregation                                          |
+| `joins`              | dict[str, Join]                           | No       | Keys: join alias; Values: `Join` object (see below)                                                         |
+| `primary_key`        | str                                       | No       | Name of the primary key dimension (required for certain join types)                                         |
+| `name`               | str                                       | No       | Optional model name (inferred from table if omitted)                                                        |
+| `time_dimension`     | str                                       | No       | Name of the column to use as the time dimension                                                             |
+| `smallest_time_grain`| str                                       | No       | One of:<br>`TIME_GRAIN_SECOND`, `TIME_GRAIN_MINUTE`, `TIME_GRAIN_HOUR`, `TIME_GRAIN_DAY`,<br>`TIME_GRAIN_WEEK`, `TIME_GRAIN_MONTH`, `TIME_GRAIN_QUARTER`, `TIME_GRAIN_YEAR` |
+
+#### Join object (for `joins`)
+- Use `Join.one(alias, model, with_)` for one-to-one/many-to-one
+- Use `Join.many(alias, model, with_)` for one-to-many
+- Use `Join.cross(alias, model)` for cross join
+
+---
+
+### Query (SemanticModel.query / QueryExpr)
+
+| Parameter      | Type                                              | Required | Allowed Values / Notes                                                                                      |
+|----------------|---------------------------------------------------|----------|------------------------------------------------------------------------------------------------------------|
+| `dimensions`   | list[str]                                         | No       | List of dimension names (can include joined fields, e.g. `"carriers.name"`)                                 |
+| `measures`     | list[str]                                         | No       | List of measure names (can include joined fields)                                                           |
+| `filters`      | list[dict/str/callable] or dict/str/callable      | No       | See below for filter formats and operators                                                                  |
+| `order_by`     | list[tuple[str, str]]                             | No       | List of (field, direction) tuples, e.g. `[("avg_delay", "desc")]`                                           |
+| `limit`        | int                                               | No       | Maximum number of rows to return                                                                            |
+| `time_range`   | dict with `start` and `end` (ISO 8601 strings)    | No       | Example: `{'start': '2024-01-01', 'end': '2024-12-31'}`                                                     |
+| `time_grain`   | str                                               | No       | One of:<br>`TIME_GRAIN_SECOND`, `TIME_GRAIN_MINUTE`, `TIME_GRAIN_HOUR`, `TIME_GRAIN_DAY`,<br>`TIME_GRAIN_WEEK`, `TIME_GRAIN_MONTH`, `TIME_GRAIN_QUARTER`, `TIME_GRAIN_YEAR` |
+
+#### Filters
+
+- **Simple filter (dict):**
+  ```python
+  {"field": "origin", "operator": "=", "value": "JFK"}
+  ```
+- **Compound filter (dict):**
+  ```python
+  {
+    "operator": "AND",
+    "conditions": [
+      {"field": "origin", "operator": "in", "values": ["JFK", "LGA"]},
+      {"field": "year", "operator": ">", "value": 2010}
+    ]
+  }
+  ```
+- **Callable:** `lambda t: t.origin == 'JFK'`
+- **String:** `"_.origin == 'JFK'"`
+
+**Supported operators:** `=`, `!=`, `>`, `>=`, `<`, `<=`, `in`, `not in`, `like`, `not like`, `is null`, `is not null`, `AND`, `OR`
+
+#### Example
+
+```python
+flights_sm.query(
+    dimensions=['origin', 'year'],
+    measures=['total_flights'],
+    filters=[
+        {"field": "origin", "operator": "in", "values": ["JFK", "LGA"]},
+        {"field": "year", "operator": ">", "value": 2010}
+    ],
+    order_by=[('total_flights', 'desc')],
+    limit=10,
+    time_range={'start': '2015-01-01', 'end': '2015-12-31'},
+    time_grain='TIME_GRAIN_MONTH'
+)
+```

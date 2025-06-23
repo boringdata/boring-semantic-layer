@@ -4,8 +4,6 @@ import xorq as xo
 
 from boring_semantic_layer.semantic_model import (
     SemanticModel,
-    join_one,
-    join_many,
     Join,
 )
 
@@ -48,15 +46,15 @@ def orders_model(db_con):
 def test_join_one_errors(customers_model):
     # Missing with_ parameter
     with pytest.raises(ValueError):
-        join_one("cust", customers_model)
+        Join.one("cust", customers_model)
     # Non-callable with_
     with pytest.raises(TypeError):
-        join_one("cust", customers_model, with_="not callable")
+        Join.one("cust", customers_model, with_="not callable")
 
 
 def test_join_one_properties(customers_model):
     # Correct Join object attributes for inner join
-    j = join_one("cust", customers_model, with_=lambda t: t.customer_id)
+    j = Join.one("cust", customers_model, with_=lambda t: t.customer_id)
     assert isinstance(j, Join)
     assert j.alias == "cust"
     assert j.model is customers_model
@@ -67,15 +65,15 @@ def test_join_one_properties(customers_model):
 def test_join_many_errors(customers_model):
     # Missing with_
     with pytest.raises(ValueError):
-        join_many("cust", customers_model)
+        Join.many("cust", customers_model)
     # Non-callable with_
     with pytest.raises(TypeError):
-        join_many("cust", customers_model, with_=123)
+        Join.many("cust", customers_model, with_=123)
 
 
 def test_join_many_properties(customers_model):
     # Correct Join object attributes for left join
-    j = join_many("cust", customers_model, with_=lambda t: t.customer_id)
+    j = Join.many("cust", customers_model, with_=lambda t: t.customer_id)
     assert isinstance(j, Join)
     assert j.alias == "cust"
     assert j.how == "left"
@@ -84,7 +82,7 @@ def test_join_many_properties(customers_model):
 
 def test_join_behaviour_inner(db_con, customers_model, orders_model):
     # Apply join_one: should drop orders with no matching customer
-    j = join_one("cust", customers_model, with_=lambda t: t.customer_id)
+    j = Join.one("cust", customers_model, with_=lambda t: t.customer_id)
     model = orders_model
     # Attach join
     model = SemanticModel(
@@ -105,7 +103,7 @@ def test_join_behaviour_inner(db_con, customers_model, orders_model):
 
 def test_join_behaviour_left(db_con, customers_model, orders_model):
     # Apply join_many: should retain all orders including unmatched
-    j = join_many("cust", customers_model, with_=lambda t: t.customer_id)
+    j = Join.many("cust", customers_model, with_=lambda t: t.customer_id)
     model = orders_model
     model = SemanticModel(
         table=model.table,

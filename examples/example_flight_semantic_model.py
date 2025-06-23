@@ -2,7 +2,7 @@ import os
 
 import ibis
 
-from boring_semantic_layer.semantic_model import SemanticModel, join_one
+from boring_semantic_layer import SemanticModel, Join
 
 
 con = ibis.duckdb.connect(":memory:")
@@ -44,7 +44,7 @@ flights_sm = SemanticModel(
         "avg_distance": lambda t: t.distance.mean(),
     },
     joins={
-        "carriers": join_one(
+        "carriers": Join.one(
             alias="carriers",
             model=carriers_sm,
             with_=lambda left: left.carrier,
