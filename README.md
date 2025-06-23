@@ -17,7 +17,7 @@ The Boring Semantic Layer (BSL) is a lightweight semantic layer based on [Ibis](
 - [How It Works](#how-it-works)
 - [Installation](#installation)
 - [Get Started](#get-started)
-  0. [Get Sample Data](#0-get-sample-data)
+  1. [Get Sample Data](#1-get-sample-data)
   2. [Query a Semantic Model](#2-query-a-semantic-model)
   3. [Advanced Usage](#3-advanced-usage)
 - [Features](#features)
@@ -86,16 +86,16 @@ result_df = flights_sm.query(
 print(result_df)
 ```
 
-This simple query gives you a DataFrame, hiding the complex SQL:
+Example output:
 
-| origin | flight\_count |
+| origin | flight_count |
 | :----- | :----------- |
-| PHL | 7708 |
-| JFK | 3689 |
-| JAX | 1599 |
-| FNT | 83 |
-| MLB | 10 |
-| ... | ... |
+| PHL    | 7708         |
+| JFK    | 3689         |
+| JAX    | 1599         |
+| FNT    | 83           |
+| MLB    | 10           |
+| ...    | ...          |
 
 -----
 
@@ -109,7 +109,7 @@ pip install boring-semantic-layer
 
 ## Get Started
 
-### 0. Get Sample Data
+### 1. Get Sample Data
 
 We'll use a public flight dataset from the [Malloy Samples repository](https://github.com/malloydata/malloy-samples/tree/main/data).
 
@@ -156,18 +156,14 @@ flights_sm = SemanticModel(
 Use your semantic model to run queries—selecting dimensions, measures, and applying filters or limits.
 
 ```python
-# Query: total flights and average distance by origin, limit 10
 flights_sm.query(
     dimensions=['origin'],
     measures=['total_flights', 'avg_distance'],
-    filters=[{'field': 'origin', 'operator': '=', 'value': 'JFK'}],
     limit=10
-).execute() # Execute the query to get a pandas DataFrame
-
-print(query_result_df)
+).execute()
 ```
 
-This returns a DataFrame like:
+Example output:
 
 | origin | total_flights | avg_distance |
 |--------|---------------|--------------|
@@ -201,6 +197,11 @@ flights_sm.query(
 )
 ```
 
+
+| origin | total_flights |
+|--------|---------------|
+| JFK    | 3689          |
+
 #### JSON-based
 
 A format that's easy to serialize, good for dynamic queries or LLM integration.
@@ -225,9 +226,9 @@ BSL supports the following operators: `=`, `!=`, `>`, `>=`, `in`, `not in`, `lik
 
 BSL has built-in support for flexible time-based analysis. 
 
-To use it, define a `timeDimension` in your `SemanticModel` that points to a timestamp column. 
+To use it, define a `time_dimension` in your `SemanticModel` that points to a timestamp column. 
 
-You can also set `smallestTimeGrain` to prevent incorrect time aggregations.
+You can also set `smallest_time_grain` to prevent incorrect time aggregations.
 
 ```python
 flights_sm_with_time = SemanticModel(
@@ -241,8 +242,8 @@ flights_sm_with_time = SemanticModel(
     measures={
         'total_flights': lambda t: t.count(),
     },
-    timeDimension='dep_time', # The column containing timestamps. Crucial for time-based queries.
-    smallestTimeGrain='TIME_GRAIN_SECOND' # Optional: sets the lowest granularity (e.g., DAY, MONTH).
+    time_dimension='dep_time', # The column containing timestamps. Crucial for time-based queries.
+    smallest_time_grain='TIME_GRAIN_SECOND' # Optional: sets the lowest granularity (e.g., DAY, MONTH).
 )
 
 # With the time dimension defined, you can query using a specific time range and grain.
@@ -255,14 +256,15 @@ query_time_based_df = flights_sm_with_time.query(
 
 print(query_time_based_df)
 ```
-The query aggregates the number of flights by origin and day:
+Example output:
+
 | origin | arr_time   | flight_count |
 |--------|------------|--------------|
-| PHL    | 2004-07-27 | 5            |
-| CLE    | 2004-05-19 | 5            |
-| DFW    | 2004-04-27 | 7            |
-| DFW    | 2004-03-18 | 9            |
-| DFW    | 2004-01-08 | 13           |
+| PHL    | 2013-01-01 | 5            |
+| CLE    | 2013-01-01 | 5            |
+| DFW    | 2013-01-01 | 7            |
+| DFW    | 2013-01-02 | 9            |
+| DFW    | 2013-01-03 | 13           |
 
 ### Joins Across Semantic Models
 
@@ -279,7 +281,7 @@ First, let's define two semantic models: one for flights and one for carriers.
 The flight model resulting from a join with the carriers model:
 
 ```python
-from boring_semantic_layer.semantic_model import Join, SemanticModel
+from boring_semantic_layer import  Join, SemanticModel
 import ibis
 import os 
 
@@ -301,7 +303,7 @@ carriers_sm = SemanticModel(
     },
     measures={
         "carrier_count": lambda t: t.count(),
-    },
+    }
 )
 
 # Now, define the 'flights' semantic model with a join to 'carriers'
@@ -330,16 +332,14 @@ query_joined_df = flight_sm.query(
     measures=['flight_count'],
     limit=10
 ).execute()
-
-print(query_joined_df)
 ```
-| carriers_name | origin | flight_count |
-|---------------|--------|--------------|
-| Delta Air Lines | MDT | 235 |
-| Delta Air Lines | ATL | 8419 |
-| Comair (Delta Connections) | ATL | 239 |
-| American Airlines | DFW | 8742 |
-| American Eagle Airlines | JFK | 418 |
+| carriers_name              | origin | flight_count |
+|---------------------------|--------|--------------|
+| Delta Air Lines           | MDT    | 235          |
+| Delta Air Lines           | ATL    | 8419         |
+| Comair (Delta Connections)| ATL    | 239          |
+| American Airlines         | DFW    | 8742         |
+| American Eagle Airlines   | JFK    | 418          |
 
 #### join_one
 
@@ -365,7 +365,7 @@ carriers_pk_sm = SemanticModel(
 Now, you can use `Join.one` in the `flights` model to link to `carriers_pk_sm`. The `with_` parameter specifies the foreign key on the `flights` model.
 
 ```python
-from boring_semantic_layer.semantic_model import Join
+from boring_semantic_layer import Join
 
 flights_with_join_one_sm = SemanticModel(
     name="flights",
@@ -401,6 +401,16 @@ flights_with_join_one_sm.query(
     limit=5
 ).execute()
 ```
+
+Example output:
+
+| carriers_name            | flight_count |
+|-------------------------|--------------|
+| Delta Air Lines         | 10000        |
+| American Airlines       | 9000         |
+| United Airlines         | 8500         |
+| Southwest Airlines      | 8000         |
+| JetBlue Airways         | 7500         |
 
 ## Reference
 
@@ -473,3 +483,10 @@ flights_sm.query(
     time_grain='TIME_GRAIN_MONTH'
 )
 ```
+
+Example output:
+
+| origin | year | total_flights |
+|--------|------|---------------|
+| JFK    | 2015 | 350           |
+| LGA    | 2015 | 300           |
