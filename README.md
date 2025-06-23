@@ -59,7 +59,6 @@ flights_sm.query(
 
 ## Table of Contents
 
-- [How It Works](#how-it-works)
 - [Installation](#installation)
 - [Get Started](#get-started)
   1. [Get Sample Data](#1-get-sample-data)
