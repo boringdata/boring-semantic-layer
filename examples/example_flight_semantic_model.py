@@ -36,8 +36,8 @@ flights_sm = SemanticModel(
         "tail_num": lambda t: t.tail_num,
         "arr_time": lambda t: t.arr_time,
     },
-    timeDimension="arr_time",
-    smallestTimeGrain="TIME_GRAIN_SECOND",
+    time_dimension="arr_time",
+    smallest_time_grain="TIME_GRAIN_SECOND",
     measures={
         "flight_count": lambda t: t.count(),
         "avg_dep_delay": lambda t: t.dep_delay.mean(),
@@ -47,15 +47,7 @@ flights_sm = SemanticModel(
         "carriers": join_one(
             alias="carriers",
             model=carriers_sm,
-            with_=lambda t: t.carrier,
-        )
+            with_=lambda left: left.carrier,
+        ),
     },
 )
-
-result_expr = flights_sm.query(
-    dims=["carriers.nickname", "origin"], measures=["flight_count"], limit=10
-)
-
-result_df = result_expr.execute()
-print("Flight counts by carrier nickname and origin:")
-print(result_df)
