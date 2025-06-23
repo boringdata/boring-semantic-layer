@@ -17,8 +17,7 @@ We welcome feedback and contributions!*
 ## Table of Contents
 
 - [Installation](#installation)
-- [How It Works](#how-it-works)
-- [Quickstart: Your First Semantic Model](#quickstart-your-first-semantic-model)
+- [How It Works & Quickstart](#how-it-works--quickstart)
 - [Advanced Usage](#advanced-usage)
   - [Filters](#filters)
   - [Time-Based Dimensions and Queries](#time-based-dimensions-and-queries)
@@ -36,85 +35,9 @@ pip install boring-semantic-layer
 
 -----
 
-## How It Works
+## How It Works & Quickstart
 
 *Note: All documentation examples in this guide are based on the [flight dataset](https://github.com/malloydata/malloy-samples/tree/main/data) to demonstrate real-world usage patterns.*
-
-### Defining a Semantic Model
-
-BSL's core is the `SemanticModel` class, where you define your dimensions and measures using familiar Python syntax:
-
-Let's have a look at an example of a `SemanticModel` for the flight dataset:
-
-```python
-flights_sm = SemanticModel(
-    name="flights",
-    table=flights_tbl,
-    dimensions={
-        "origin": lambda t: t.origin,
-        "destination": lambda t: t.destination,
-    },
-    measures={
-        "flight_count": lambda t: t.count(),
-    }
-)
-```
-
-The semantic model defines the following:
-
-* **Table**: The Ibis table that the semantic model is based on.
-
-* **Dimensions**: These are attributes you use to group, segment, and filter your data (e.g., `origin`, `destination`). Think of them as the "by" clauses in your analysis – for example, analyzing flights "by origin" or "by destination."
-
-* **Measures**: These are numerical values that you aggregate or calculate (e.g., `flight_count`). They represent the "what" you're measuring.
-
-
-All dimensions and measures are defined as Ibis expressions.
-
-Ibis expressions are Python functions that represent database operations.
-
-They allow you to write database queries using familiar Python syntax while Ibis handles the translation to optimized SQL for your specific database backend (like DuckDB, PostgreSQL, BigQuery, etc.).
-
-For example, in our semantic model:
-- `lambda t: t.origin` is an Ibis expression that references the "origin" column
-- `lambda t: t.count()` is an Ibis expression that counts rows
-- `lambda t: t.distance.mean()` is an Ibis expression that calculates the average distance
-
-The `t` parameter represents the table, and you can chain operations like `t.origin.upper()` or `t.dep_delay > 0` to create complex expressions. Ibis ensures these expressions are translated to efficient SQL queries.
-
-### Querying a Semantic Model
-
-When you query a `SemanticModel`, your request becomes an Ibis expression.
-
-Ibis then translates it into optimized SQL for your data backend. 
-
-This means your semantic models work across different backends without changes.
-
-Let's have a look at an example query:
-
-```python
-flights_sm.query(
-    dimensions=["origin"],
-    measures=["flight_count"]
-).execute()
-```
-
-The user specifies the dimensions and measures they want to query and get a dataframe as a result:
-
-| origin | flight\_count |
-| :----- | :----------- |
-| PHL | 7708 |
-| JFK | 3689 |
-| JAX | 1599 |
-| FNT | 83 |
-| MLB | 10 |
-| ... | ... |
-
------
-
-## Quickstart: Your First Semantic Model
-
-Let's create a `SemanticModel` and run a query.
 
 ### 1. Get Sample Data
 
@@ -142,9 +65,11 @@ con = ibis.duckdb.connect(":memory:")
 flights_tbl = con.read_parquet("malloy-samples/data/flights.parquet")
 ```
 
-### 3. Define Your Semantic Model
+### 3. Defining a Semantic Model
 
-Now, define your `SemanticModel`. We'll add dimensions for origin and destination, and measures for total flights, total distance, and average distance.
+BSL's core is the `SemanticModel` class, where you define your dimensions and measures using familiar Python syntax:
+
+Let's have a look at an example of a `SemanticModel` for the flight dataset:
 
 ```python
 flights_sm = SemanticModel(
@@ -163,10 +88,34 @@ flights_sm = SemanticModel(
 )
 ```
 
+The semantic model defines the following:
 
-### 4. Query Your Semantic Model
+* **Table**: The Ibis table that the semantic model is based on.
 
-Finally, use the `query` method to get data. You can specify dimensions, measures, filters, and a limit.
+* **Dimensions**: These are attributes you use to group, segment, and filter your data (e.g., `origin`, `destination`). Think of them as the "by" clauses in your analysis – for example, analyzing flights "by origin" or "by destination."
+
+* **Measures**: These are numerical values that you aggregate or calculate (e.g., `flight_count`). They represent the "what" you're measuring.
+
+All dimensions and measures are defined as Ibis expressions.
+
+Ibis expressions are Python functions that represent database operations.
+
+They allow you to write database queries using familiar Python syntax while Ibis handles the translation to optimized SQL for your specific database backend (like DuckDB, PostgreSQL, BigQuery, etc.).
+
+For example, in our semantic model:
+- `lambda t: t.origin` is an Ibis expression that references the "origin" column
+- `lambda t: t.count()` is an Ibis expression that counts rows
+- `lambda t: t.distance.mean()` is an Ibis expression that calculates the average distance
+
+The `t` parameter represents the table, and you can chain operations like `t.origin.upper()` or `t.dep_delay > 0` to create complex expressions. Ibis ensures these expressions are translated to efficient SQL queries.
+
+### 4. Querying a Semantic Model
+
+When you query a `SemanticModel`, your request becomes an Ibis expression.
+
+Ibis then translates it into optimized SQL for your data backend. 
+
+This means your semantic models work across different backends without changes.
 
 Let's query the semantic model to get:
 - the total flights and average distance 
