@@ -49,12 +49,11 @@ wheels = [
 
 [[package]]
 name = "boring-semantic-layer"
-version = "0.0.9"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "attrs" },
-    { name = "duckdb" },
-    { name = "ibis-framework" },
+    { name = "ibis-framework", extra = ["duckdb"] },
 ]
 
 [package.optional-dependencies]
@@ -80,9 +79,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "attrs", specifier = ">=25.3.0" },
-    { name = "duckdb", specifier = ">=1.0.0" },
     { name = "duckdb", marker = "extra == 'examples'", specifier = ">=1.3.1" },
-    { name = "ibis-framework", specifier = ">=10.6.0" },
+    { name = "ibis-framework", extras = ["duckdb"], specifier = ">=10.6.0" },
     { name = "xorq", marker = "extra == 'examples'" },
     { name = "xorq", marker = "extra == 'xorq'" },
 ]
@@ -500,6 +498,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b5/f0/9973b5a0cf6df44dd6c4bd2a98c32ef559df96277b62f350a975b1bcbe3d/ibis_framework-10.6.0.tar.gz", hash = "sha256:58dae8c926f4cef611e90e289ce8ff3ff00a06c1be32ecae4d9bede68f806f8a", size = 1229322, upload-time = "2025-06-16T14:40:52.704Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a4/87/3d495c6c53e09ac85cfb3979b0a5a9c8a12f7ae085bbe9cc4a1c9c3bc302/ibis_framework-10.6.0-py3-none-any.whl", hash = "sha256:f33b73075710425548f474c60489ac33adee499fa71736a4583f77b21b6f7ab8", size = 1932922, upload-time = "2025-06-16T14:40:50.173Z" },
+]
+
+[package.optional-dependencies]
+duckdb = [
+    { name = "duckdb" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "packaging" },
+    { name = "pandas" },
+    { name = "pyarrow" },
+    { name = "pyarrow-hotfix" },
+    { name = "rich" },
 ]
 
 [[package]]
