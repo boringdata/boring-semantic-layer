@@ -8,7 +8,7 @@ The Boring Semantic Layer (BSL) is a lightweight semantic layer based on [Ibis](
 - **MCP-friendly**: Perfect for connecting Large Language Models to structured data sources
 
 
-*This project is a joint effort by [xorq-labs](https://github.com/xorq-labs) and [boringdata](https://www.boringdata.io/).*
+*This project is a joint effort by [xorq-labs](https://github.com/xorq-labs/xorq) and [boringdata](https://www.boringdata.io/).*
 
 We welcome feedback and contributions!
 
@@ -215,6 +215,13 @@ flights_sm.query(
     ]
 ).execute()
 ```
+**Example output (dataframe):**
+
+| origin | total_flights |
+|--------|---------------|
+| LGA    | 7000          |
+| PHL    | 7708          |
+
 BSL supports the following operators: `=`, `!=`, `>`, `>=`, `in`, `not in`, `like`, `not like`, `is null`, `is not null`, `AND`, `OR`
 
 ### Time-Based Dimensions and Queries
