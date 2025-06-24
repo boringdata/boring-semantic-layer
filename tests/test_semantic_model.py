@@ -1,47 +1,47 @@
 import pandas as pd
 import pytest
-import xorq as xo
-from boring_semantic_layer.semantic_model import SemanticModel, Join
+import ibis
+from boring_semantic_layer import SemanticModel, Join
 
 
 def test_group_by_sum_and_count():
-    df = pd.DataFrame({"group": ["a", "b", "a", "b", "c"], "val": [1, 2, 3, 4, 5]})
-    con = xo.connect()
+    df = pd.DataFrame({"grp": ["a", "b", "a", "b", "c"], "val": [1, 2, 3, 4, 5]})
+    con = ibis.duckdb.connect(":memory:")
     table = con.create_table("test", df)
     model = SemanticModel(
         table=table,
-        dimensions={"group": lambda t: t.group},
+        dimensions={"grp": lambda t: t.grp},
         measures={"sum_val": lambda t: t.val.sum(), "count": lambda t: t.val.count()},
     )
-    expr = model.query(dimensions=["group"], measures=["sum_val", "count"])
+    expr = model.query(dimensions=["grp"], measures=["sum_val", "count"])
     result = expr.execute()
-    result = result.sort_values("group").reset_index(drop=True)
+    result = result.sort_values("grp").reset_index(drop=True)
     expected = pd.DataFrame(
-        {"group": ["a", "b", "c"], "sum_val": [4, 6, 5], "count": [2, 2, 1]}
+        {"grp": ["a", "b", "c"], "sum_val": [4, 6, 5], "count": [2, 2, 1]}
     )
     pd.testing.assert_frame_equal(result, expected)
 
 
 def test_filter_and_order():
-    df = pd.DataFrame({"group": ["a", "b", "a"], "val": [10, 20, 30]})
-    con = xo.connect()
+    df = pd.DataFrame({"grp": ["a", "b", "a"], "val": [10, 20, 30]})
+    con = ibis.duckdb.connect(":memory:")
     table = con.create_table("test2", df)
     model = SemanticModel(
         table=table,
-        dimensions={"group": lambda t: t.group},
+        dimensions={"grp": lambda t: t.grp},
         measures={"sum_val": lambda t: t.val.sum()},
     )
     expr = model.query(
-        dimensions=["group"], measures=["sum_val"], filters=lambda t: t.group == "a"
+        dimensions=["grp"], measures=["sum_val"], filters=lambda t: t.grp == "a"
     )
     result = expr.execute().reset_index(drop=True)
-    expected = pd.DataFrame({"group": ["a"], "sum_val": [40]})
+    expected = pd.DataFrame({"grp": ["a"], "sum_val": [40]})
     pd.testing.assert_frame_equal(result, expected)
 
 
 def test_unknown_dimension_raises():
     df = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
-    con = xo.connect()
+    con = ibis.duckdb.connect(":memory:")
     table = con.create_table("test3", df)
     model = SemanticModel(table=table, dimensions={"a": lambda t: t.a}, measures={})
     with pytest.raises(KeyError):
@@ -52,7 +52,7 @@ def test_unknown_dimension_raises():
 def simple_model():
     """Fixture providing a simple model for testing."""
     df = pd.DataFrame({"col_test": ["a", "b", "a", "b", "c"], "val": [1, 2, 3, 4, 5]})
-    con = xo.connect()
+    con = ibis.duckdb.connect(":memory:")
     table = con.create_table("test_filters", df)
     return SemanticModel(
         table=table,
@@ -79,7 +79,7 @@ def joined_model():
         }
     )
 
-    con = xo.connect()
+    con = ibis.duckdb.connect(":memory:")
     orders_table = con.create_table("orders", orders_df)
     customers_table = con.create_table("customers", customers_df)
 
@@ -113,108 +113,112 @@ def joined_model():
 @pytest.mark.parametrize(
     "test_id,model_fixture,filters,dimensions,measures,expected_data,expected_error",
     [
-        # # Test 1: Simple lambda function filter
-        # (
-        #     "lambda_simple",
-        #     "simple_model",
-        #     lambda t: t.col_test == "a",
-        #     ["col_test"],
-        #     ["sum_val"],
-        #     pd.DataFrame({"col_test": ["a"], "sum_val": [4]}),
-        #     None
-        # ),
-        # # Test 2: Multiple lambda filters
-        # (
-        #     "lambda_multiple",
-        #     "simple_model",
-        #     [lambda t: t.col_test != "b", lambda t: t.val <= 5],
-        #     ["col_test"],
-        #     ["sum_val"],
-        #     pd.DataFrame({"col_test": ["a", "c"], "sum_val": [4, 5]}),
-        #     None
-        # ),
-        # # Test 3: String filter (evaluated ibis expression)
-        # (
-        #     "string_eval",
-        #     "simple_model",
-        #     ["lambda t: t.col_test == 'a'"],
-        #     ["col_test"],
-        #     ["sum_val"],
-        #     pd.DataFrame({"col_test": ["a"], "sum_val": [4]}),
-        #     None
-        # ),
-        # # Test 4: Unbound ibis expression
-        # (
-        #     "ibis_unbound",
-        #     "simple_model",
-        #     lambda t: t.col_test == "a",  # Changed from list to single expression
-        #     ["col_test"],
-        #     ["sum_val"],
-        #     pd.DataFrame({"col_test": ["a"], "sum_val": [4]}),
-        #     None
-        # ),
-        # # Test 5: Simple JSON filter (equals)
-        # (
-        #     "json_equals",
-        #     "simple_model",
-        #     [{"field": "col_test", "operator": "=", "value": "a"}],
-        #     ["col_test"],
-        #     ["sum_val"],
-        #     pd.DataFrame({"col_test": ["a"], "sum_val": [4]}),
-        #     None
-        # ),
-        # # Test 6: JSON filter with IN operator
-        # (
-        #     "json_in",
-        #     "simple_model",
-        #     [{"field": "col_test", "operator": "in", "values": ["a", "b"]}],
-        #     ["col_test"],
-        #     ["sum_val"],
-        #     pd.DataFrame({"col_test": ["a", "b"], "sum_val": [4, 6]}),
-        #     None
-        # ),
-        # # Test 7: JSON filter with comparison operators
-        # (
-        #     "json_comparison",
-        #     "simple_model",
-        #     [{"field": "val", "operator": ">=", "value": 3}],
-        #     ["col_test"],
-        #     ["sum_val"],
-        #     pd.DataFrame({"col_test": ["a", "b", "c"], "sum_val": [3, 4, 5]}),
-        #     None
-        # ),
-        # # Test 8: JSON filter with AND condition
-        # (
-        #     "json_and",
-        #     "simple_model",
-        #     [{
-        #         "operator": "AND",
-        #         "conditions": [
-        #             {"field": "col_test", "operator": "in", "values": ["a", "b"]},
-        #             {"field": "val", "operator": ">=", "value": 3}
-        #         ]
-        #     }],
-        #     ["col_test"],
-        #     ["sum_val"],
-        #     pd.DataFrame({"col_test": ["a", "b"], "sum_val": [3, 4]}),
-        #     None
-        # ),
-        # # Test 9: JSON filter with OR condition
-        # (
-        #     "json_or",
-        #     "simple_model",
-        #     [{
-        #         "operator": "OR",
-        #         "conditions": [
-        #             {"field": "col_test", "operator": "=", "value": "c"},
-        #             {"field": "val", "operator": "<=", "value": 2}
-        #         ]
-        #     }],
-        #     ["col_test"],
-        #     ["sum_val"],
-        #     pd.DataFrame({"col_test": ["a", "b", "c"], "sum_val": [1, 2, 5]}),
-        #     None
-        # ),
+        # Test 1: Simple lambda function filter
+        (
+            "lambda_simple",
+            "simple_model",
+            lambda t: t.col_test == "a",
+            ["col_test"],
+            ["sum_val"],
+            pd.DataFrame({"col_test": ["a"], "sum_val": [4]}),
+            None,
+        ),
+        # Test 2: Multiple lambda filters
+        (
+            "lambda_multiple",
+            "simple_model",
+            [lambda t: t.col_test != "b", lambda t: t.val <= 5],
+            ["col_test"],
+            ["sum_val"],
+            pd.DataFrame({"col_test": ["a", "c"], "sum_val": [4, 5]}),
+            None,
+        ),
+        # Test 3: String filter (evaluated ibis expression)
+        (
+            "string_eval",
+            "simple_model",
+            ["lambda t: t.col_test == 'a'"],
+            ["col_test"],
+            ["sum_val"],
+            pd.DataFrame({"col_test": ["a"], "sum_val": [4]}),
+            None,
+        ),
+        # Test 4: Unbound ibis expression
+        (
+            "ibis_unbound",
+            "simple_model",
+            lambda t: t.col_test == "a",  # Changed from list to single expression
+            ["col_test"],
+            ["sum_val"],
+            pd.DataFrame({"col_test": ["a"], "sum_val": [4]}),
+            None,
+        ),
+        # Test 5: Simple JSON filter (equals)
+        (
+            "json_equals",
+            "simple_model",
+            [{"field": "col_test", "operator": "=", "value": "a"}],
+            ["col_test"],
+            ["sum_val"],
+            pd.DataFrame({"col_test": ["a"], "sum_val": [4]}),
+            None,
+        ),
+        # Test 6: JSON filter with IN operator
+        (
+            "json_in",
+            "simple_model",
+            [{"field": "col_test", "operator": "in", "values": ["a", "b"]}],
+            ["col_test"],
+            ["sum_val"],
+            pd.DataFrame({"col_test": ["a", "b"], "sum_val": [4, 6]}),
+            None,
+        ),
+        # Test 7: JSON filter with comparison operators
+        (
+            "json_comparison",
+            "simple_model",
+            [{"field": "val", "operator": ">=", "value": 3}],
+            ["col_test"],
+            ["sum_val"],
+            pd.DataFrame({"col_test": ["a", "b", "c"], "sum_val": [3, 4, 5]}),
+            None,
+        ),
+        # Test 8: JSON filter with AND condition
+        (
+            "json_and",
+            "simple_model",
+            [
+                {
+                    "operator": "AND",
+                    "conditions": [
+                        {"field": "col_test", "operator": "in", "values": ["a", "b"]},
+                        {"field": "val", "operator": ">=", "value": 3},
+                    ],
+                }
+            ],
+            ["col_test"],
+            ["sum_val"],
+            pd.DataFrame({"col_test": ["a", "b"], "sum_val": [3, 4]}),
+            None,
+        ),
+        # Test 9: JSON filter with OR condition
+        (
+            "json_or",
+            "simple_model",
+            [
+                {
+                    "operator": "OR",
+                    "conditions": [
+                        {"field": "col_test", "operator": "=", "value": "c"},
+                        {"field": "val", "operator": "<=", "value": 2},
+                    ],
+                }
+            ],
+            ["col_test"],
+            ["sum_val"],
+            pd.DataFrame({"col_test": ["a", "b", "c"], "sum_val": [1, 2, 5]}),
+            None,
+        ),
         # Test 10: Complex nested JSON filter
         (
             "json_nested",
@@ -377,7 +381,7 @@ def test_json_filters_with_joins():
             "tier": ["gold", "silver", "silver", "gold"],
         }
     )
-    con = xo.connect()
+    con = ibis.duckdb.connect(":memory:")
     orders_table = con.create_table("orders", orders_df)
     customers_table = con.create_table("customers", customers_df)
 
@@ -433,27 +437,27 @@ def test_json_filters_with_joins():
 
 def test_json_filter_errors():
     """Test error cases for JSON filters."""
-    df = pd.DataFrame({"group": ["a", "b"], "val": [1, 2]})
-    con = xo.connect()
+    df = pd.DataFrame({"grp": ["a", "b"], "val": [1, 2]})
+    con = ibis.duckdb.connect(":memory:")
     table = con.create_table("test_errors", df)
     model = SemanticModel(
         table=table,
-        dimensions={"group": lambda t: t.group},
+        dimensions={"grp": lambda t: t.grp},
         measures={"sum_val": lambda t: t.val.sum()},
     )
 
     # Test invalid operator
     with pytest.raises(ValueError, match="Unsupported operator"):
         model.query(
-            dimensions=["group"],
+            dimensions=["grp"],
             measures=["sum_val"],
-            filters=[{"field": "group", "operator": "invalid", "value": "a"}],
+            filters=[{"field": "grp", "operator": "invalid", "value": "a"}],
         )
 
     # Test unknown field
     with pytest.raises(KeyError, match="Unknown dimension"):
         model.query(
-            dimensions=["group"],
+            dimensions=["grp"],
             measures=["sum_val"],
             filters=[{"field": "unknown", "operator": "=", "value": "a"}],
         )
@@ -461,7 +465,7 @@ def test_json_filter_errors():
     # Test invalid join reference
     with pytest.raises(KeyError, match="Unknown join alias"):
         model.query(
-            dimensions=["group"],
+            dimensions=["grp"],
             measures=["sum_val"],
             filters=[{"field": "unknown.field", "operator": "=", "value": "a"}],
         )
@@ -469,7 +473,7 @@ def test_json_filter_errors():
     # Test missing required keys in filter dict
     with pytest.raises(KeyError):
         model.query(
-            dimensions=["group"],
+            dimensions=["grp"],
             measures=["sum_val"],
             filters=[{"operator": "=", "value": "a"}],  # Missing "field"
         )
@@ -490,7 +494,7 @@ def time_model():
         {"event_time": dates, "value": range(len(dates)), "category": categories}
     )
 
-    con = xo.connect()
+    con = ibis.duckdb.connect(":memory:")
     table = con.create_table("time_test", df)
     return SemanticModel(
         table=table,
@@ -515,7 +519,7 @@ def test_time_range_filtering():
             "value": range(365),
         }
     )
-    con = xo.connect()
+    con = ibis.duckdb.connect(":memory:")
     table = con.create_table("time_test", df)
     model = SemanticModel(
         table=table,
@@ -579,7 +583,7 @@ def test_invalid_time_range():
             "value": range(365),
         }
     )
-    con = xo.connect()
+    con = ibis.duckdb.connect(":memory:")
     table = con.create_table("time_test", df)
     model = SemanticModel(
         table=table,
@@ -632,7 +636,7 @@ def test_time_dimension_validation():
             "value": range(365),
         }
     )
-    con = xo.connect()
+    con = ibis.duckdb.connect(":memory:")
     table = con.create_table("time_test", df)
 
     # Test with invalid time grain
@@ -713,7 +717,7 @@ def test_time_grain_validation():
             "value": range(365),
         }
     )
-    con = xo.connect()
+    con = ibis.duckdb.connect(":memory:")
     table = con.create_table("time_test", df)
 
     # Create model with DAY as smallest grain
@@ -787,7 +791,7 @@ def test_get_time_range(time_model):
 def test_get_time_range_no_time_dimension():
     """Test getting time range from a model without time dimension."""
     df = pd.DataFrame({"category": ["A", "B", "C"], "value": [1, 2, 3]})
-    con = xo.connect()
+    con = ibis.duckdb.connect(":memory:")
     table = con.create_table("no_time", df)
     model = SemanticModel(
         table=table,
@@ -811,7 +815,7 @@ def test_get_time_range_with_null_dates():
     dates.extend([None] * 5)  # Add some nulls
     df = pd.DataFrame({"event_time": dates, "value": range(len(dates))})
 
-    con = xo.connect()
+    con = ibis.duckdb.connect(":memory:")
     table = con.create_table("null_dates", df)
     model = SemanticModel(
         table=table,
@@ -837,7 +841,7 @@ def test_get_time_range_single_date():
     """Test getting time range when all records have the same date."""
     single_date = pd.Timestamp("2023-01-01")
     df = pd.DataFrame({"event_time": [single_date], "value": [1]})
-    con = xo.connect()
+    con = ibis.duckdb.connect(":memory:")
     table = con.create_table("single_date", df)
     model = SemanticModel(
         table=table,
@@ -865,7 +869,7 @@ def test_get_time_range_empty_table():
             "value": pd.Series([], dtype="int64"),
         }
     )
-    con = xo.connect()
+    con = ibis.duckdb.connect(":memory:")
     table = con.create_table("empty", df)
     model = SemanticModel(
         table=table,
@@ -883,5 +887,14 @@ def test_get_time_range_empty_table():
     # Should handle null results
     assert "start" in time_range
     assert "end" in time_range
-    assert time_range["start"] is None
-    assert time_range["end"] is None
+
+    # Accept both None and pandas NaT (Not-a-Time)
+    def is_null_or_nat(val):
+        return (
+            val is None
+            or (isinstance(val, str) and val == "NaT")
+            or (hasattr(pd, "isna") and pd.isna(val))
+        )
+
+    assert is_null_or_nat(time_range["start"])
+    assert is_null_or_nat(time_range["end"])

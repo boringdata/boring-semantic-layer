@@ -100,6 +100,12 @@ git clone https://github.com/malloydata/malloy-samples
 
 ### 2. Build a Semantic Model
 
+In this example we will use DuckDB as the database backend. Install the required ibis backend:
+
+```bash
+pip install 'ibis-framework[duckdb]'
+```
+
 Define your data source and create a semantic model that describes your data in terms of dimensions and measures.
 
 ```python

@@ -14,7 +14,7 @@ from typing import (
     ClassVar,
     Mapping,
 )
-import pandas as pd
+import datetime
 
 try:
     import xorq.vendor.ibis as ibis_mod
@@ -348,13 +348,13 @@ class Filter:
 def _compile_query(qe) -> Expr:
     """Compile a QueryExpr into an Ibis expression."""
     model = qe.model
-    
+
     # Validate time grain
     model._validate_time_grain(qe.time_grain)
-    
+
     # Start with the base table
     t = model.table
-    
+
     # Apply joins
     for alias, join in model.joins.items():
         right = join.model.table
@@ -363,10 +363,10 @@ def _compile_query(qe) -> Expr:
         else:
             cond = join.on(t, right)
             t = t.join(right, cond, how=join.how)
-    
+
     # Transform time dimension if needed
     t, dim_map = model._transform_time_dimension(t, qe.time_grain)
-    
+
     # Apply time range filter if provided
     if qe.time_range and model.time_dimension:
         start, end = qe.time_range
@@ -378,11 +378,11 @@ def _compile_query(qe) -> Expr:
             ],
         }
         t = t.filter(Filter(filter=time_filter).to_ibis(t, model))
-    
+
     # Apply other filters
     for flt in qe.filters:
         t = t.filter(flt.to_ibis(t, model))
-    
+
     # Prepare dimensions and measures lists
     dimensions = list(qe.dimensions)
     if (
@@ -392,7 +392,7 @@ def _compile_query(qe) -> Expr:
     ):
         dimensions.append(model.time_dimension)
     measures = list(qe.measures)
-    
+
     # Validate dimensions
     for d in dimensions:
         if "." in d:
@@ -402,7 +402,7 @@ def _compile_query(qe) -> Expr:
                 raise KeyError(f"Unknown dimension: {d}")
         elif d not in dimensions:
             raise KeyError(f"Unknown dimension: {d}")
-    
+
     # Validate measures
     for m in measures:
         if "." in m:
@@ -412,7 +412,7 @@ def _compile_query(qe) -> Expr:
                 raise KeyError(f"Unknown measure: {m}")
         elif m not in model.measures:
             raise KeyError(f"Unknown measure: {m}")
-    
+
     # Build aggregate expressions
     agg_kwargs: Dict[str, Expr] = {}
     for m in measures:
@@ -425,7 +425,7 @@ def _compile_query(qe) -> Expr:
         else:
             expr = model.measures[m](t)
             agg_kwargs[m] = expr.name(m)
-    
+
     # Group and aggregate
     if dimensions:
         dim_exprs = []
@@ -441,7 +441,7 @@ def _compile_query(qe) -> Expr:
         result = t.aggregate(by=dim_exprs, **agg_kwargs)
     else:
         result = t.aggregate(**agg_kwargs)
-    
+
     # Apply ordering
     if qe.order_by:
         order_exprs = []
@@ -452,12 +452,13 @@ def _compile_query(qe) -> Expr:
                 col.desc() if direction.lower().startswith("desc") else col.asc()
             )
         result = result.order_by(order_exprs)
-    
+
     # Apply limit
     if qe.limit is not None:
         result = result.limit(qe.limit)
-    
+
     return result
+
 
 @frozen(kw_only=True, slots=True)
 class QueryExpr:
@@ -828,16 +829,10 @@ class SemanticModel:
 
         # Convert to ISO format if not None
         # Access the first (and only) row's values directly
-        start_date = (
-            pd.Timestamp(time_range["start"].iloc[0]).isoformat()
-            if pd.notna(time_range["start"].iloc[0])
-            else None
-        )
-        end_date = (
-            pd.Timestamp(time_range["end"].iloc[0]).isoformat()
-            if pd.notna(time_range["end"].iloc[0])
-            else None
-        )
+        start_val = time_range["start"].iloc[0]
+        end_val = time_range["end"].iloc[0]
+        start_date = start_val.isoformat() if start_val is not None else None
+        end_date = end_val.isoformat() if end_val is not None else None
 
         return {"start": start_date, "end": end_date}
 
@@ -908,7 +903,7 @@ class SemanticModel:
         self,
         *,
         time_grain: TimeGrain = "TIME_GRAIN_DAY",
-        cutoff: Union[str, pd.Timestamp, None] = None,
+        cutoff: Union[str, datetime.datetime, datetime.date, None] = None,
         dimensions: Optional[List[str]] = None,
         storage: Any = None,
     ) -> "SemanticModel":
@@ -939,7 +934,13 @@ class SemanticModel:
             flat = flat.join(right, cond, how=join.how)
 
         if cutoff is not None and self.time_dimension:
-            cutoff_ts = pd.to_datetime(cutoff)
+            if isinstance(cutoff, str):
+                try:
+                    cutoff_ts = datetime.datetime.fromisoformat(cutoff)
+                except ValueError:
+                    cutoff_ts = datetime.datetime.strptime(cutoff, "%Y-%m-%d")
+            else:
+                cutoff_ts = cutoff
             flat = flat.filter(getattr(flat, self.time_dimension) <= cutoff_ts)
 
         keys = dimensions if dimensions is not None else list(self.dimensions.keys())
