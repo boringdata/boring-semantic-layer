@@ -155,9 +155,6 @@
 
         # Custom package override for xorq
         xorq = prev.xorq.overrideAttrs (old: {
-          src = ./dist/xorq-0.2.2-py3-none-any.whl;
-          format = "wheel";
-
           nativeBuildInputs =
             (old.nativeBuildInputs or [])
             ++ final.resolveBuildSystem {
