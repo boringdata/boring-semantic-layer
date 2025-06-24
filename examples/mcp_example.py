@@ -4,7 +4,7 @@ for querying flight data through semantic models.
 
 The server exposes tools for:
 - Listing available semantic models
-- Getting model metadata and schema information  
+- Getting model metadata and schema information
 - Querying time ranges for time-series data
 - Executing queries with dimensions, measures, and filters
 
@@ -12,6 +12,21 @@ To use this server:
 1. Install the mcp package: pip install mcp
 2. Run this script to start the MCP server
 3. Connect to it from an MCP client to query the semantic models
+
+Example config for Claude:
+{
+  "mcpServers": {
+    "flight_sm": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "path/to/directory/",
+        "run",
+        "mcp_example.py"
+      ]
+    }
+  }
+}
 
 The server provides a clean abstraction over the underlying data, allowing users to
 query business metrics without needing to understand the raw table structure.
