@@ -74,6 +74,7 @@ flights_sm.query(
     - [join_one](#join_one)
     - [join_many](#join_many)
     - [join_cross](#join_cross)
+- [Model Context Protocol (MCP) Integration](#model-context-protocol-mcp-integration)
 - [Reference](#reference)
   - [SemanticModel](#semanticmodel)
   - [Query (SemanticModel.query / QueryExpr)](#query-semanticmodelquery--queryexpr)
@@ -407,6 +408,91 @@ Example output:
 | United Airlines         | 8500         |
 | Southwest Airlines      | 8000         |
 | JetBlue Airways         | 7500         |
+
+## Model Context Protocol (MCP) Integration
+
+BSL includes built-in support for the [Model Context Protocol (MCP)](https://github.com/modelcontextprotocol/python-sdk), allowing you to expose your semantic models to LLMs like Claude.
+
+### Installation
+
+To use MCP functionality, install with the `mcp` extra:
+
+```bash
+pip install 'boring-semantic-layer[mcp]'
+```
+
+### Setting up an MCP Server
+
+Create an MCP server script that exposes your semantic models:
+
+```python
+# example_mcp.py
+import ibis
+from boring_semantic_layer import SemanticModel, MCPSemanticModel
+
+# Connect to your database
+con = ibis.duckdb.connect(":memory:")
+flights_tbl = con.read_parquet("path/to/flights.parquet")
+
+# Define your semantic model
+flights_sm = SemanticModel(
+    name="flights",
+    table=flights_tbl,
+    dimensions={
+        'origin': lambda t: t.origin,
+        'destination': lambda t: t.dest,
+        'carrier': lambda t: t.carrier,
+    },
+    measures={
+        'total_flights': lambda t: t.count(),
+        'avg_distance': lambda t: t.distance.mean(),
+    }
+)
+
+# Create and run the MCP server
+mcp_server = MCPSemanticModel(
+    models={"flights": flights_sm},
+    name="Flight Data Server"
+)
+
+if __name__ == "__main__":
+    mcp_server.run(transport="stdio")
+```
+
+### Configuring Claude Desktop
+
+To use your MCP server with Claude Desktop, add it to your configuration file:
+
+**Location:** `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
+
+```json
+{
+  "mcpServers": {
+    "flight_sm": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/path/to/your/project/examples/",
+        "run",
+        "example_mcp.py"
+      ]
+    }
+  }
+}
+```
+
+Replace `/path/to/your/project/` with the actual path to your project directory.
+
+### Available MCP Tools
+
+Once configured, Claude will have access to these tools:
+
+- `list_models`: List all available semantic model names
+- `get_model`: Get details about a specific model including dimensions and measures
+- `get_time_range`: Get the available time range for time-series data
+- `query_model`: Execute queries with dimensions, measures, and filters
+
+For more information on running MCP servers, see the [MCP Python SDK documentation](https://github.com/modelcontextprotocol/python-sdk).
 
 ## Reference
 
