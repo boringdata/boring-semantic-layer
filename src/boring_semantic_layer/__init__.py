@@ -10,7 +10,7 @@ __all__ = [
 
 # Conditional import for MCP functionality
 try:
-    from .semantic_mcp import MCPSemanticModel
+    from .semantic_model import MCPSemanticModel
 
     __all__.append("MCPSemanticModel")
 except ImportError:
