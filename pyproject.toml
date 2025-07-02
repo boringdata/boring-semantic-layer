@@ -1,16 +1,19 @@
 [project]
 name = "boring-semantic-layer"
-version = "0.1.0"
+version = "0.1.1"
 description = "A boring semantic layer built with ibis"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "attrs>=25.3.0",
-    "ibis-framework[duckdb]>=10.6.0",
+    "ibis-framework[duckdb]>=10.6.0", 
 ]
 urls = {Homepage = "https://github.com/boringdata/boring-semantic-layer/tree/main"}
 
 [project.optional-dependencies]
+mcp = [
+    "mcp>=1.10.1"
+]
 examples = ["duckdb>=1.3.1", "xorq"]
 xorq = ["xorq"]
 
@@ -29,5 +32,7 @@ dev = [
     "pytest",
     "pandas>=2.3.0",
     "xorq",
-    "urllib3>=2.2.3" 
+    "urllib3>=2.2.3",
+    "pytest-asyncio",
+    "mcp>=1.10.1"
 ]

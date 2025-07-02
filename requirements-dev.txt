@@ -2,6 +2,12 @@
 #    uv export --frozen --no-hashes --no-emit-project --all-groups --all-extras --output-file=requirements-dev.txt
 annotated-types==0.7.0
     # via pydantic
+anyio==4.9.0
+    # via
+    #   httpx
+    #   mcp
+    #   sse-starlette
+    #   starlette
 atpublic==6.0.1
     # via
     #   ibis-framework
@@ -9,13 +15,18 @@ atpublic==6.0.1
 attrs==25.3.0
     # via
     #   boring-semantic-layer
+    #   jsonschema
+    #   referencing
     #   xorq
 beniget==0.4.2.post1 ; sys_platform == 'darwin'
     # via pythran
 cachetools==5.5.2
     # via pyiceberg
 certifi==2025.6.15
-    # via requests
+    # via
+    #   httpcore
+    #   httpx
+    #   requests
 cfgv==3.4.0
     # via pre-commit
 charset-normalizer==3.4.2
@@ -26,6 +37,7 @@ click==8.2.1
     # via
     #   dask
     #   pyiceberg
+    #   uvicorn
 cloudpickle==3.1.1
     # via
     #   dask
@@ -45,7 +57,9 @@ duckdb==1.3.1
 envyaml==1.10.211231
     # via xorq
 exceptiongroup==1.3.0 ; python_full_version < '3.11'
-    # via pytest
+    # via
+    #   anyio
+    #   pytest
 filelock==3.18.0
     # via virtualenv
 fsspec==2025.5.1
@@ -66,22 +80,41 @@ greenlet==3.2.3 ; (python_full_version < '3.14' and platform_machine == 'AMD64')
     # via sqlalchemy
 grpcio==1.73.0
     # via opentelemetry-exporter-otlp-proto-grpc
+h11==0.16.0
+    # via
+    #   httpcore
+    #   uvicorn
+httpcore==1.0.9
+    # via httpx
+httpx==0.28.1
+    # via mcp
+httpx-sse==0.4.1
+    # via mcp
 ibis-framework==10.6.0
     # via boring-semantic-layer
 identify==2.6.12
     # via pre-commit
 idna==3.10
-    # via requests
+    # via
+    #   anyio
+    #   httpx
+    #   requests
 importlib-metadata==8.7.0
     # via
     #   dask
     #   opentelemetry-api
 iniconfig==2.1.0
     # via pytest
+jsonschema==4.24.0
+    # via mcp
+jsonschema-specifications==2025.4.1
+    # via jsonschema
 locket==1.0.0 ; python_full_version < '4.0'
     # via partd
 markdown-it-py==3.0.0
     # via rich
+mcp==1.10.1
+    # via boring-semantic-layer
 mdurl==0.1.2
     # via markdown-it-py
 mmh3==5.1.0
@@ -164,9 +197,14 @@ pyarrow-hotfix==0.7
     #   ibis-framework
     #   xorq
 pydantic==2.11.7
-    # via pyiceberg
+    # via
+    #   mcp
+    #   pydantic-settings
+    #   pyiceberg
 pydantic-core==2.33.2
     # via pydantic
+pydantic-settings==2.10.1
+    # via mcp
 pygments==2.19.2
     # via
     #   pytest
@@ -176,7 +214,10 @@ pyiceberg==0.9.1
 pyparsing==3.2.3
     # via pyiceberg
 pytest==8.4.1
-    # via pytest-mock
+    # via
+    #   pytest-asyncio
+    #   pytest-mock
+pytest-asyncio==1.0.0
 pytest-mock==3.14.1 ; python_full_version < '4.0'
     # via xorq
 python-dateutil==2.9.0.post0
@@ -185,6 +226,10 @@ python-dateutil==2.9.0.post0
     #   pandas
     #   strictyaml
     #   xorq
+python-dotenv==1.1.1
+    # via pydantic-settings
+python-multipart==0.0.20
+    # via mcp
 pythran==0.18.0 ; sys_platform == 'darwin'
     # via xorq
 pytz==2025.2
@@ -197,6 +242,10 @@ pyyaml==6.0.2
     #   envyaml
     #   pre-commit
     #   xorq
+referencing==0.36.2
+    # via
+    #   jsonschema
+    #   jsonschema-specifications
 requests==2.32.4
     # via
     #   opentelemetry-exporter-otlp-proto-http
@@ -205,11 +254,17 @@ rich==13.9.4
     # via
     #   ibis-framework
     #   pyiceberg
+rpds-py==0.26.0
+    # via
+    #   jsonschema
+    #   referencing
 ruff==0.12.0
 setuptools==80.9.0 ; sys_platform == 'darwin'
     # via pythran
 six==1.17.0
     # via python-dateutil
+sniffio==1.3.1
+    # via anyio
 sortedcontainers==2.4.0
     # via pyiceberg
 sqlalchemy==2.0.41
@@ -218,6 +273,10 @@ sqlglot==25.20.2
     # via
     #   ibis-framework
     #   xorq
+sse-starlette==2.3.6
+    # via mcp
+starlette==0.47.1
+    # via mcp
 strictyaml==1.7.3
     # via pyiceberg
 structlog==25.4.0 ; python_full_version < '4.0'
@@ -234,6 +293,7 @@ toolz==1.0.0
     #   xorq
 typing-extensions==4.14.0
     # via
+    #   anyio
     #   exceptiongroup
     #   ibis-framework
     #   opentelemetry-api
@@ -243,19 +303,26 @@ typing-extensions==4.14.0
     #   opentelemetry-semantic-conventions
     #   pydantic
     #   pydantic-core
+    #   referencing
     #   rich
     #   sqlalchemy
+    #   starlette
     #   structlog
     #   typing-inspection
+    #   uvicorn
     #   xorq
 typing-inspection==0.4.1
-    # via pydantic
+    # via
+    #   pydantic
+    #   pydantic-settings
 tzdata==2025.2
     # via
     #   ibis-framework
     #   pandas
 urllib3==2.5.0
     # via requests
+uvicorn==0.35.0 ; sys_platform != 'emscripten'
+    # via mcp
 virtualenv==20.31.2
     # via pre-commit
 xorq==0.2.2
