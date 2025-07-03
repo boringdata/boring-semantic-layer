@@ -93,10 +93,11 @@ pip install boring-semantic-layer
 
 ### 1. Get Sample Data
 
-We'll use a public flight dataset from the [Malloy Samples repository](https://github.com/malloydata/malloy-samples/tree/main/data).
+We expose some test data in a public bucket. You can download it with:
 
 ```bash
-git clone https://github.com/malloydata/malloy-samples
+curl -L https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/flights.parquet -o flights.parquet
+curl -L https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/carriers.parquet -o carriers.parquet
 ```
 
 ### 2. Build a Semantic Model
@@ -109,7 +110,8 @@ from boring_semantic_layer import SemanticModel
 
 # Connect to your database (here, DuckDB in-memory for demo)
 con = ibis.duckdb.connect(":memory:")
-flights_tbl = con.read_parquet("malloy-samples/data/flights.parquet")
+flights_tbl = con.read_parquet("flights.parquet")
+carriers_tbl = con.read_parquet("carriers.parquet")
 
 # Define the semantic model
 flights_sm = SemanticModel(
@@ -147,7 +149,7 @@ The `t` parameter represents the table, and you can chain operations like `t.ori
 
 ---
 
-### 3. Query a Semantic Model
+### 2. Query a Semantic Model
 
 Use your semantic model to run queries—selecting dimensions, measures, and applying filters or limits.
 
