@@ -496,6 +496,117 @@ Once configured, Claude will have access to these tools:
 
 For more information on running MCP servers, see the [MCP Python SDK documentation](https://github.com/modelcontextprotocol/python-sdk).
 
+## Chart Visualization
+
+BSL includes built-in support for generating data visualizations using Vega-Lite specifications. You can either provide explicit chart specifications or let BSL auto-detect appropriate chart types based on your query.
+
+### Installation
+
+To use chart visualization functionality, install with the `visualization` extra:
+
+```bash
+pip install 'boring-semantic-layer[visualization]'
+```
+
+### Basic Chart Example
+
+Add a `chart` parameter to your query to specify a Vega-Lite visualization:
+
+```python
+# Query with explicit chart specification
+query = flights_sm.query(
+    dimensions=["carrier"],
+    measures=["flight_count"],
+    chart={
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "carrier", "type": "nominal"},
+            "y": {"field": "flight_count", "type": "quantitative"}
+        }
+    }
+)
+
+# Get the Vega-Lite spec with data injected
+chart_spec = query.chart()
+
+# Or render directly with Altair (requires altair installation)
+altair_chart = query.render()
+```
+
+### Automatic Chart Detection
+
+If you don't specify a chart type, BSL can automatically detect an appropriate visualization based on your query:
+
+```python
+# Query without chart specification
+query = flights_sm.query(
+    dimensions=["date"],
+    measures=["flight_count"],
+    time_grain="TIME_GRAIN_MONTH"
+)
+
+# Auto-detect chart type (will choose line chart for time series)
+chart_spec = query.chart()  # auto_detect=True by default
+```
+
+BSL's auto-detection logic:
+- **Time series** (time dimension + measure) → Line chart
+- **Categorical** (1 dimension + 1 measure) → Bar chart
+- **Multiple measures** (1 dimension + 2+ measures) → Grouped bar chart
+- **Two dimensions** (2 dimensions + 1 measure) → Heatmap
+- **Single value** (0 dimensions + 1 measure) → Text display
+
+### Advanced Chart Examples
+
+```python
+# Time series with custom styling
+time_series_query = flights_sm.query(
+    dimensions=["date"],
+    measures=["avg_delay"],
+    time_grain="TIME_GRAIN_WEEK",
+    time_range={"start": "2023-01-01", "end": "2023-03-31"},
+    chart={
+        "mark": {"type": "line", "point": True},
+        "encoding": {
+            "x": {"field": "date", "type": "temporal", "title": "Week"},
+            "y": {"field": "avg_delay", "type": "quantitative", "title": "Average Delay (minutes)"}
+        },
+        "title": "Weekly Average Flight Delays Q1 2023"
+    }
+)
+
+# Heatmap for two-dimensional analysis
+heatmap_query = flights_sm.query(
+    dimensions=["origin", "destination"],
+    measures=["flight_count"],
+    chart={
+        "mark": "rect",
+        "encoding": {
+            "x": {"field": "origin", "type": "nominal"},
+            "y": {"field": "destination", "type": "nominal"},
+            "color": {
+                "field": "flight_count",
+                "type": "quantitative",
+                "scale": {"scheme": "viridis"}
+            }
+        }
+    }
+)
+```
+
+### Chart API Reference
+
+The `QueryExpr` object has two chart-related methods:
+
+- **`chart(auto_detect=True)`**: Returns a Vega-Lite specification with query results injected
+  - `auto_detect`: If True and no mark type specified, automatically detects appropriate chart type
+  - Returns: Dictionary containing the complete Vega-Lite specification
+
+- **`render()`**: Creates an Altair Chart object (requires altair installation)
+  - Returns: Altair Chart object that can be displayed in Jupyter notebooks or saved
+
+For more examples, see `examples/example_chart.py` in the repository.
+
 ## Reference
 
 ### SemanticModel
@@ -529,6 +640,7 @@ For more information on running MCP servers, see the [MCP Python SDK documentati
 | `limit`        | int                                               | No       | Maximum number of rows to return                                                                            |
 | `time_range`   | dict with `start` and `end` (ISO 8601 strings)    | No       | Example: `{'start': '2024-01-01', 'end': '2024-12-31'}`                                                     |
 | `time_grain`   | str                                               | No       | One of:<br>`TIME_GRAIN_SECOND`, `TIME_GRAIN_MINUTE`, `TIME_GRAIN_HOUR`, `TIME_GRAIN_DAY`,<br>`TIME_GRAIN_WEEK`, `TIME_GRAIN_MONTH`, `TIME_GRAIN_QUARTER`, `TIME_GRAIN_YEAR` |
+| `chart`        | dict                                              | No       | Vega-Lite specification for visualization (see Chart Visualization section)                                  |
 
 #### Filters
 
