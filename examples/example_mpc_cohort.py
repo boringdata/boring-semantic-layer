@@ -25,20 +25,15 @@ import os
 import pandas as pd
 import ibis
 from boring_semantic_layer.semantic_model import SemanticModel, Join
+from boring_semantic_layer import MCPSemanticModel
 
 # Create a DuckDB connection for in-memory table creation
 con = ibis.duckdb.connect()
 
-# Get the data directory path
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
-# Load CSV files into pandas DataFrames
-customers_df = pd.read_csv(os.path.join(DATA_DIR, "customers.csv"))
-orders_df = pd.read_csv(os.path.join(DATA_DIR, "orders.csv"))
-
-# Register the dataframes as DuckDB tables
-customers_tbl = con.create_table("customers_tbl", customers_df)
-orders_tbl = con.create_table("orders_tbl", orders_df)
+BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
+customers_tbl = con.read_parquet(f"{BASE_URL}/cohort_customers.parquet")
+orders_tbl = con.read_parquet(f"{BASE_URL}/cohort_orders.parquet")
 
 # Create cohort analysis table using SQL
 # First, create a table with customer first order dates (cohort definition)
@@ -166,3 +161,15 @@ cohort_model = SemanticModel(
     },
 )
 
+
+server = MCPSemanticModel(
+    models={
+        "customers": customers_model,
+        "orders": orders_model,
+        "cohorts": cohort_model,
+    },
+    name="Cohort Data Semantic Layer Server",
+)
+
+if __name__ == "__main__":
+    server.run()
