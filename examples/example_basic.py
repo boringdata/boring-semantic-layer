@@ -23,17 +23,14 @@ Expected Output (example):
 
 """
 
-import os
 import ibis
 from boring_semantic_layer import SemanticModel, Join
 
 con = ibis.duckdb.connect(":memory:")
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "malloy-samples/data")
-
-flights_tbl = con.read_parquet(f"{DATA_DIR}/flights.parquet")
-
-carriers_tbl = con.read_parquet(f"{DATA_DIR}/carriers.parquet")
+BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
+flights_tbl = con.read_parquet(f"{BASE_URL}/flights.parquet")
+carriers_tbl = con.read_parquet(f"{BASE_URL}/carriers.parquet")
 
 carriers_sm = SemanticModel(
     name="carriers",
