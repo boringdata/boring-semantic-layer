@@ -24,8 +24,54 @@ The server will start and listen for MCP connections.
 
 """
 
-from boring_semantic_layer import MCPSemanticModel
-from example_basic import flights_sm, carriers_sm
+from boring_semantic_layer import MCPSemanticModel, SemanticModel, Join
+import ibis
+
+con = ibis.duckdb.connect(":memory:")
+
+BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
+flights_tbl = con.read_parquet(f"{BASE_URL}/flights.parquet")
+carriers_tbl = con.read_parquet(f"{BASE_URL}/carriers.parquet")
+
+carriers_sm = SemanticModel(
+    name="carriers",
+    table=carriers_tbl,
+    dimensions={
+        "code": lambda t: t.code,
+        "name": lambda t: t.name,
+        "nickname": lambda t: t.nickname,
+    },
+    measures={
+        "carrier_count": lambda t: t.count(),
+    },
+    primary_key="code",
+)
+
+flights_sm = SemanticModel(
+    name="flights",
+    table=flights_tbl,
+    dimensions={
+        "origin": lambda t: t.origin,
+        "destination": lambda t: t.destination,
+        "carrier": lambda t: t.carrier,
+        "tail_num": lambda t: t.tail_num,
+        "arr_time": lambda t: t.arr_time,
+    },
+    time_dimension="arr_time",
+    smallest_time_grain="TIME_GRAIN_SECOND",
+    measures={
+        "flight_count": lambda t: t.count(),
+        "avg_dep_delay": lambda t: t.dep_delay.mean(),
+        "avg_distance": lambda t: t.distance.mean(),
+    },
+    joins={
+        "carriers": Join.one(
+            alias="carriers",
+            model=carriers_sm,
+            with_=lambda left: left.carrier,
+        ),
+    },
+)
 
 server = MCPSemanticModel(
     models={
