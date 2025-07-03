@@ -1,4 +1,10 @@
-#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "boring-semantic-layer"
+# ]
+# ///
+
 """
 Basic MCP server example using semantic models.
 
