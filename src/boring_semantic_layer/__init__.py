@@ -1,11 +1,14 @@
 from .semantic_model import SemanticModel
 from .semantic_model import Join, Filter, QueryExpr
+from .visualization import ChartProcessor, ChartTypeDetector
 
 __all__ = [
     "SemanticModel",
     "Join",
     "Filter",
     "QueryExpr",
+    "ChartProcessor",
+    "ChartTypeDetector",
 ]
 
 # Conditional import for MCP functionality

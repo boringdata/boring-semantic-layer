@@ -898,3 +898,199 @@ def test_get_time_range_empty_table():
 
     assert is_null_or_nat(time_range["start"])
     assert is_null_or_nat(time_range["end"])
+
+
+def test_query_with_chart_specification():
+    """Test creating a query with chart specification."""
+    df = pd.DataFrame({"category": ["A", "B", "C"], "value": [10, 20, 30]})
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("chart_test", df)
+    model = SemanticModel(
+        table=table,
+        dimensions={"category": lambda t: t.category},
+        measures={"total_value": lambda t: t.value.sum()},
+    )
+
+    chart_spec = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "category", "type": "nominal"},
+            "y": {"field": "total_value", "type": "quantitative"},
+        },
+    }
+
+    # Create query with chart specification
+    expr = model.query(
+        dimensions=["category"], measures=["total_value"], chart=chart_spec
+    )
+
+    # Check that chart is stored
+    assert expr.chart_spec == chart_spec
+
+    # Check that chart() method returns spec with data
+    chart_result = expr.chart()
+    assert "data" in chart_result
+    assert "values" in chart_result["data"]
+    assert len(chart_result["data"]["values"]) == 3
+    assert chart_result["mark"] == "bar"
+
+
+def test_query_chart_auto_detection():
+    """Test automatic chart type detection."""
+    df = pd.DataFrame({"category": ["A", "B", "C"], "value": [10, 20, 30]})
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("chart_test", df)
+    model = SemanticModel(
+        table=table,
+        dimensions={"category": lambda t: t.category},
+        measures={"total_value": lambda t: t.value.sum()},
+    )
+
+    # Create query without chart specification
+    expr = model.query(dimensions=["category"], measures=["total_value"])
+
+    # Call chart() with auto_detect=True (default)
+    chart_result = expr.chart()
+
+    # Should auto-detect bar chart for categorical dimension + measure
+    assert chart_result["mark"] == "bar"
+    assert "data" in chart_result
+    assert chart_result["encoding"]["x"]["field"] == "category"
+    assert chart_result["encoding"]["y"]["field"] == "total_value"
+
+
+def test_query_chart_with_time_series():
+    """Test chart auto-detection with time series data."""
+    dates = pd.date_range(start="2023-01-01", end="2023-01-31", freq="D")
+    df = pd.DataFrame({"date": dates, "sales": range(31)})
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("time_chart_test", df)
+    model = SemanticModel(
+        table=table,
+        dimensions={"date": lambda t: t.date},
+        measures={"total_sales": lambda t: t.sales.sum()},
+        time_dimension="date",
+    )
+
+    # Create query
+    expr = model.query(dimensions=["date"], measures=["total_sales"])
+
+    # Call chart() - should detect line chart for time series
+    chart_result = expr.chart()
+
+    assert chart_result["mark"] == "line"
+    assert chart_result["encoding"]["x"]["type"] == "temporal"
+
+
+def test_query_chart_field_validation():
+    """Test chart field validation against query results."""
+    df = pd.DataFrame({"category": ["A", "B", "C"], "value": [10, 20, 30]})
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("chart_test", df)
+    model = SemanticModel(
+        table=table,
+        dimensions={"category": lambda t: t.category},
+        measures={"total_value": lambda t: t.value.sum()},
+    )
+
+    # Create chart spec referencing a field not in the query
+    invalid_chart_spec = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "category", "type": "nominal"},
+            "y": {"field": "missing_field", "type": "quantitative"},
+        },
+    }
+
+    expr = model.query(
+        dimensions=["category"], measures=["total_value"], chart=invalid_chart_spec
+    )
+
+    # Should raise error when trying to process chart
+    with pytest.raises(ValueError, match="fields not found in data: missing_field"):
+        expr.chart()
+
+
+def test_query_chart_with_joins():
+    """Test chart functionality with joined data."""
+    orders_df = pd.DataFrame(
+        {
+            "order_id": [1, 2, 3],
+            "customer_id": [101, 101, 102],
+            "amount": [100, 200, 300],
+        }
+    )
+    customers_df = pd.DataFrame({"customer_id": [101, 102], "country": ["US", "UK"]})
+
+    con = ibis.duckdb.connect(":memory:")
+    orders_table = con.create_table("orders", orders_df)
+    customers_table = con.create_table("customers", customers_df)
+
+    customers_model = SemanticModel(
+        table=customers_table,
+        dimensions={"country": lambda t: t.country},
+        measures={},
+        primary_key="customer_id",
+    )
+
+    orders_model = SemanticModel(
+        table=orders_table,
+        dimensions={"customer_id": lambda t: t.customer_id},
+        measures={"total_amount": lambda t: t.amount.sum()},
+        joins={
+            "customer": Join.one("customer", customers_model, lambda t: t.customer_id)
+        },
+    )
+
+    # Query with joined dimension
+    expr = orders_model.query(
+        dimensions=["customer.country"],
+        measures=["total_amount"],
+        chart={
+            "mark": "bar",
+            "encoding": {
+                "x": {"field": "customer_country", "type": "nominal"},
+                "y": {"field": "total_amount", "type": "quantitative"},
+            },
+        },
+    )
+
+    chart_result = expr.chart()
+
+    # Check data is injected correctly
+    assert len(chart_result["data"]["values"]) == 2
+    assert any(
+        row["customer_country"] == "US" for row in chart_result["data"]["values"]
+    )
+    assert any(
+        row["customer_country"] == "UK" for row in chart_result["data"]["values"]
+    )
+
+
+def test_query_render_requires_altair():
+    """Test that render() method requires Altair."""
+    df = pd.DataFrame({"category": ["A", "B", "C"], "value": [10, 20, 30]})
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("chart_test", df)
+    model = SemanticModel(
+        table=table,
+        dimensions={"category": lambda t: t.category},
+        measures={"total_value": lambda t: t.value.sum()},
+    )
+
+    expr = model.query(
+        dimensions=["category"], measures=["total_value"], chart={"mark": "bar"}
+    )
+
+    # Try to render without Altair installed
+    try:
+        import altair  # noqa: F401
+
+        # If Altair is installed, this test won't work as expected
+        # But we can still check that render() returns an Altair chart
+        chart = expr.render()
+        assert hasattr(chart, "mark")  # Altair charts have a mark attribute
+    except ImportError:
+        # If Altair is not installed, should raise helpful error
+        with pytest.raises(ImportError, match="Altair is required for chart rendering"):
+            expr.render()

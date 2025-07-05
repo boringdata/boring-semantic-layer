@@ -51,7 +51,7 @@ TIME_GRAIN_TRANSFORMATIONS = {
     "TIME_GRAIN_YEAR": lambda t: t.year(),
     "TIME_GRAIN_QUARTER": lambda t: t.quarter(),
     "TIME_GRAIN_MONTH": lambda t: t.month(),
-    "TIME_GRAIN_WEEK": lambda t: t.week(),
+    "TIME_GRAIN_WEEK": lambda t: t.week_of_year(),
     "TIME_GRAIN_DAY": lambda t: t.date(),
     "TIME_GRAIN_HOUR": lambda t: t.hour(),
     "TIME_GRAIN_MINUTE": lambda t: t.minute(),
@@ -470,6 +470,7 @@ class QueryExpr:
     limit: Optional[int] = None
     time_range: Optional[Tuple[str, str]] = None
     time_grain: Optional[TimeGrain] = None
+    chart_spec: Optional[Dict[str, Any]] = None
 
     def with_dimensions(self, *dimensions: str) -> "QueryExpr":
         """
@@ -594,6 +595,92 @@ class QueryExpr:
             return self.to_expr()
         except Exception:
             return None
+
+    def chart(self, auto_detect: bool = True) -> Dict[str, Any]:
+        """
+        Return a Vega-Lite specification with query results injected.
+
+        Args:
+            auto_detect: Whether to auto-detect chart type if not specified
+
+        Returns:
+            Dict containing the Vega-Lite specification with data
+
+        Raises:
+            ValueError: If no chart specification is provided
+        """
+        # Import here to avoid circular imports and support lazy loading
+        from .visualization import ChartProcessor, ChartTypeDetector
+
+        # Execute the query to get the data
+        df = self.execute()
+
+        # Determine the chart specification
+        if self.chart_spec is None:
+            if auto_detect:
+                # Auto-detect chart type based on query
+                spec = ChartTypeDetector.detect_chart_type(
+                    dimensions=list(self.dimensions),
+                    measures=list(self.measures),
+                    df=df,
+                    time_dimension=self.model.time_dimension,
+                )
+            else:
+                raise ValueError(
+                    "No chart specification provided. Use the 'chart' parameter when building the query."
+                )
+        else:
+            spec = self.chart_spec
+
+            # If mark type is not specified and auto_detect is True, detect it
+            if (
+                auto_detect
+                and "mark" not in spec
+                and "layer" not in spec
+                and "hconcat" not in spec
+                and "vconcat" not in spec
+            ):
+                detected_spec = ChartTypeDetector.detect_chart_type(
+                    dimensions=list(self.dimensions),
+                    measures=list(self.measures),
+                    df=df,
+                    time_dimension=self.model.time_dimension,
+                )
+                # Merge detected mark with provided spec
+                spec = {**detected_spec, **spec}
+
+        # Process the chart specification with the data
+        return ChartProcessor.process_chart(spec, df)
+
+    def render(self):
+        """
+        Render the chart using Altair.
+
+        Returns:
+            Altair Chart object
+
+        Raises:
+            ImportError: If Altair is not installed
+            ValueError: If no chart specification is provided
+        """
+        if self.chart_spec is None:
+            raise ValueError(
+                "No chart specification provided. Use the 'chart' parameter when building the query."
+            )
+
+        try:
+            import altair as alt
+        except ImportError:
+            raise ImportError(
+                "Altair is required for chart rendering. "
+                "Install it with: pip install 'boring-semantic-layer[visualization]'"
+            )
+
+        # Get the Vega-Lite spec with data
+        spec_with_data = self.chart()
+
+        # Create Altair chart from spec
+        return alt.Chart.from_dict(spec_with_data)
 
 
 @frozen(kw_only=True, slots=True)
@@ -721,6 +808,7 @@ class SemanticModel:
         limit: Optional[int] = None,
         time_range: Optional[Dict[str, str]] = None,
         time_grain: Optional[TimeGrain] = None,
+        chart: Optional[Dict[str, Any]] = None,
     ) -> "QueryExpr":
         """
         Build a QueryExpr for this model with the specified query parameters.
@@ -733,6 +821,7 @@ class SemanticModel:
             limit: Maximum number of rows to return.
             time_range: Dict with 'start' and 'end' keys for time filtering.
             time_grain: The time grain to use for the time dimension.
+            chart: Optional Vega-Lite specification for chart visualization.
         Returns:
             QueryExpr: The constructed QueryExpr.
         """
@@ -808,6 +897,7 @@ class SemanticModel:
             limit=limit,
             time_range=time_range_tuple,
             time_grain=time_grain,
+            chart_spec=chart,
         )
 
     def get_time_range(self) -> Dict[str, Any]:
