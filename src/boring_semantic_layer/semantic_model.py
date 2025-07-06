@@ -364,6 +364,13 @@ def _compile_query(qe) -> Expr:
             cond = join.on(t, right)
             t = t.join(right, cond, how=join.how)
 
+    # Apply calculated columns to the table
+    if model.calculated_columns:
+        calc_cols = {}
+        for name, calc_func in model.calculated_columns.items():
+            calc_cols[name] = calc_func(t)
+        t = t.mutate(**calc_cols)
+
     # Transform time dimension if needed
     t, dim_map = model._transform_time_dimension(t, qe.time_grain)
 
@@ -393,24 +400,24 @@ def _compile_query(qe) -> Expr:
         dimensions.append(model.time_dimension)
     measures = list(qe.measures)
 
-    # Validate dimensions
+    # Validate dimensions (including calculated columns)
     for d in dimensions:
         if "." in d:
             alias, field = d.split(".", 1)
             join = model.joins.get(alias)
             if not join or field not in join.model.dimensions:
                 raise KeyError(f"Unknown dimension: {d}")
-        elif d not in dimensions:
+        elif d not in model.dimensions and d not in model.calculated_columns:
             raise KeyError(f"Unknown dimension: {d}")
 
-    # Validate measures
+    # Validate measures (including calculated measures)
     for m in measures:
         if "." in m:
             alias, field = m.split(".", 1)
             join = model.joins.get(alias)
             if not join or field not in join.model.measures:
                 raise KeyError(f"Unknown measure: {m}")
-        elif m not in model.measures:
+        elif m not in model.measures and m not in model.calculated_measures:
             raise KeyError(f"Unknown measure: {m}")
 
     # Build aggregate expressions
@@ -422,6 +429,10 @@ def _compile_query(qe) -> Expr:
             expr = join.model.measures[field](t)
             name = f"{alias}_{field}"
             agg_kwargs[name] = expr.name(name)
+        elif m in model.calculated_measures:
+            # Handle calculated measures
+            expr = model.calculated_measures[m](t)
+            agg_kwargs[m] = expr.name(m)
         else:
             expr = model.measures[m](t)
             agg_kwargs[m] = expr.name(m)
@@ -434,6 +445,9 @@ def _compile_query(qe) -> Expr:
                 alias, field = d.split(".", 1)
                 name = f"{alias}_{field}"
                 expr = model.joins[alias].model.dimensions[field](t).name(name)
+            elif d in model.calculated_columns:
+                # Handle calculated columns
+                expr = model.calculated_columns[d](t).name(d)
             else:
                 # Use possibly transformed dimension function
                 expr = dim_map[d](t).name(d)
@@ -596,6 +610,10 @@ class QueryExpr:
             return None
 
 
+# Add these new type definitions after the existing ones
+CalculatedColumn = Callable[[Expr], Expr]
+CalculatedMeasure = Callable[[Expr], Expr]
+
 @frozen(kw_only=True, slots=True)
 class SemanticModel:
     """
@@ -605,6 +623,9 @@ class SemanticModel:
         table: Base Ibis table expression.
         dimensions: Mapping of dimension names to callables producing column expressions.
         measures: Mapping of measure names to callables producing aggregate expressions.
+        calculated_columns: Mapping of calculated column names to callables.
+        calculated_measures: Mapping of calculated measure names to callables.
+        hierarchies: Mapping of hierarchy names to dimension lists.
         time_dimension: Optional name of the time dimension column.
         smallest_time_grain: Optional smallest time grain for the time dimension.
 
@@ -622,6 +643,14 @@ class SemanticModel:
                 'flight_count': lambda t: t.count(),
                 'avg_distance': lambda t: t.distance.mean(),
             },
+            calculated_columns={
+                'route': lambda t: t.origin + ' to ' + t.destination,
+                'is_delayed': lambda t: t.dep_delay > 0,
+            },
+            calculated_measures={
+                'on_time_percentage': lambda t: (t.filter(t.dep_delay <= 0).count() / t.count()) * 100,
+                'total_delay_minutes': lambda t: t.dep_delay.sum(),
+            },
             time_dimension='date',
             smallest_time_grain='TIME_GRAIN_DAY'
         )
@@ -633,6 +662,18 @@ class SemanticModel:
     )
     measures: Mapping[str, Measure] = field(
         converter=lambda m: MappingProxyType(dict(m))
+    )
+    calculated_columns: Mapping[str, CalculatedColumn] = field(
+        converter=lambda c: MappingProxyType(dict(c or {})),
+        default=MappingProxyType({}),
+    )
+    calculated_measures: Mapping[str, CalculatedMeasure] = field(
+        converter=lambda c: MappingProxyType(dict(c or {})),
+        default=MappingProxyType({}),
+    )
+    hierarchies: Mapping[str, List[str]] = field(
+        converter=lambda h: MappingProxyType(dict(h or {})),
+        default=MappingProxyType({}),
     )
     joins: Mapping[str, Join] = field(
         converter=lambda j: MappingProxyType(dict(j or {})),
@@ -839,12 +880,14 @@ class SemanticModel:
     @property
     def available_dimensions(self) -> List[str]:
         """
-        List all available dimension keys, including joined model dimensions.
+        List all available dimension keys, including joined model dimensions and calculated columns.
 
         Returns:
             List[str]: The available dimension names.
         """
         keys = list(self.dimensions.keys())
+        # Include calculated columns
+        keys.extend(list(self.calculated_columns.keys()))
         # Include time dimension if it exists and is not already in dimensions
         if self.time_dimension and self.time_dimension not in keys:
             keys.append(self.time_dimension)
@@ -855,12 +898,14 @@ class SemanticModel:
     @property
     def available_measures(self) -> List[str]:
         """
-        List all available measure keys, including joined model measures.
+        List all available measure keys, including joined model measures and calculated measures.
 
         Returns:
             List[str]: The available measure names.
         """
         keys = list(self.measures.keys())
+        # Include calculated measures
+        keys.extend(list(self.calculated_measures.keys()))
         for alias, join in self.joins.items():
             keys.extend([f"{alias}.{m}" for m in join.model.measures.keys()])
         return keys
