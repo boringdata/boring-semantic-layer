@@ -241,10 +241,12 @@ class TestQueryModelTool:
             )
 
             # Check result format
-            assert isinstance(result, list)
-            assert len(result) == 3
-            assert result[0]["carrier"] == "AA"
-            assert result[0]["flight_count"] == 100
+            assert isinstance(result, dict)
+            assert "records" in result
+            assert isinstance(result["records"], list)
+            assert len(result["records"]) == 3
+            assert result["records"][0]["carrier"] == "AA"
+            assert result["records"][0]["flight_count"] == 100
 
     @pytest.mark.asyncio
     async def test_query_model_with_filters(self, sample_models, mock_query_result):
@@ -414,3 +416,163 @@ class TestQueryModelTool:
                     "measures": ["flight_count"],
                 },
             )
+
+    @pytest.mark.asyncio
+    async def test_query_model_with_chart_spec(self, sample_models, mock_query_result):
+        """Test query with chart_spec returns both data and chart."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        with patch(
+            "boring_semantic_layer.semantic_model.SemanticModel.query"
+        ) as mock_query:
+            mock_query_expr = Mock()
+            mock_query_expr.execute.return_value = mock_query_result
+            # Mock chart method to return a simple chart spec
+            mock_chart = {"mark": "bar", "encoding": {"x": {"field": "carrier"}}}
+            mock_query_expr.chart.return_value = mock_chart
+            mock_query.return_value = mock_query_expr
+
+            content_blocks, result_dict = await mcp.call_tool(
+                "query_model",
+                {
+                    "model_name": "flights",
+                    "dimensions": ["carrier"],
+                    "measures": ["flight_count"],
+                    "chart_spec": True,  # Request chart with auto-detection
+                },
+            )
+            result = result_dict["result"]
+
+            # Should return combined data and chart
+            assert isinstance(result, dict)
+            assert "records" in result
+            assert "chart" in result
+
+            # Check records
+            assert isinstance(result["records"], list)
+            assert len(result["records"]) == 3
+            assert result["records"][0]["carrier"] == "AA"
+            assert result["records"][0]["flight_count"] == 100
+
+            # Check chart
+            assert result["chart"]["mark"] == "bar"
+            assert "encoding" in result["chart"]
+
+            # Verify chart was called with correct parameters
+            mock_query_expr.chart.assert_called_once_with(spec=None, format="json")
+
+    @pytest.mark.asyncio
+    async def test_query_model_with_custom_chart_spec(
+        self, sample_models, mock_query_result
+    ):
+        """Test query with custom chart_spec."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        with patch(
+            "boring_semantic_layer.semantic_model.SemanticModel.query"
+        ) as mock_query:
+            mock_query_expr = Mock()
+            mock_query_expr.execute.return_value = mock_query_result
+            # Mock chart method to return a custom chart spec
+            mock_chart = {
+                "mark": "line",
+                "title": "Custom Title",
+                "encoding": {"x": {"field": "carrier"}},
+            }
+            mock_query_expr.chart.return_value = mock_chart
+            mock_query.return_value = mock_query_expr
+
+            custom_spec = {"title": "Custom Title", "mark": "line"}
+            content_blocks, result_dict = await mcp.call_tool(
+                "query_model",
+                {
+                    "model_name": "flights",
+                    "dimensions": ["carrier"],
+                    "measures": ["flight_count"],
+                    "chart_spec": custom_spec,
+                    "chart_format": "interactive",
+                },
+            )
+            result = result_dict["result"]
+
+            # Should return combined data and chart
+            assert isinstance(result, dict)
+            assert "records" in result
+            assert "chart" in result
+
+            # Check that chart was called with custom spec and format
+            mock_query_expr.chart.assert_called_once_with(
+                spec=custom_spec, format="interactive"
+            )
+
+    @pytest.mark.asyncio
+    async def test_query_model_with_png_format(self, sample_models, mock_query_result):
+        """Test query with PNG chart format."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        with patch(
+            "boring_semantic_layer.semantic_model.SemanticModel.query"
+        ) as mock_query:
+            mock_query_expr = Mock()
+            mock_query_expr.execute.return_value = mock_query_result
+            # Mock chart method to return PNG bytes
+            mock_png_bytes = b"fake_png_data"
+            mock_query_expr.chart.return_value = mock_png_bytes
+            mock_query.return_value = mock_query_expr
+
+            content_blocks, result_dict = await mcp.call_tool(
+                "query_model",
+                {
+                    "model_name": "flights",
+                    "dimensions": ["carrier"],
+                    "measures": ["flight_count"],
+                    "chart_spec": True,
+                    "chart_format": "png",
+                },
+            )
+            result = result_dict["result"]
+
+            # Should return combined data and chart
+            assert isinstance(result, dict)
+            assert "records" in result
+            assert "chart" in result
+
+            # Check PNG format - should be raw bytes decoded to string
+            chart = result["chart"]
+            assert chart == mock_png_bytes.decode("utf-8")
+
+    @pytest.mark.asyncio
+    async def test_query_model_with_svg_format(self, sample_models, mock_query_result):
+        """Test query with SVG chart format."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        with patch(
+            "boring_semantic_layer.semantic_model.SemanticModel.query"
+        ) as mock_query:
+            mock_query_expr = Mock()
+            mock_query_expr.execute.return_value = mock_query_result
+            # Mock chart method to return SVG string
+            mock_svg_string = "<svg>fake svg</svg>"
+            mock_query_expr.chart.return_value = mock_svg_string
+            mock_query.return_value = mock_query_expr
+
+            content_blocks, result_dict = await mcp.call_tool(
+                "query_model",
+                {
+                    "model_name": "flights",
+                    "dimensions": ["carrier"],
+                    "measures": ["flight_count"],
+                    "chart_spec": True,
+                    "chart_format": "svg",
+                },
+            )
+            result = result_dict["result"]
+
+            # Should return combined data and chart
+            assert isinstance(result, dict)
+            assert "records" in result
+            assert "chart" in result
+
+            # Check SVG format - should be raw string
+            chart = result["chart"]
+            assert chart == mock_svg_string

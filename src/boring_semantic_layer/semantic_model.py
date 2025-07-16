@@ -13,8 +13,12 @@ from typing import (
     Literal,
     ClassVar,
     Mapping,
+    TYPE_CHECKING,
 )
 import datetime
+
+if TYPE_CHECKING:
+    import altair
 
 try:
     import xorq.vendor.ibis as ibis_mod
@@ -48,14 +52,14 @@ TimeGrain = Literal[
 
 # Time grain transformation functions
 TIME_GRAIN_TRANSFORMATIONS = {
-    "TIME_GRAIN_YEAR": lambda t: t.year(),
-    "TIME_GRAIN_QUARTER": lambda t: t.quarter(),
-    "TIME_GRAIN_MONTH": lambda t: t.month(),
-    "TIME_GRAIN_WEEK": lambda t: t.week(),
-    "TIME_GRAIN_DAY": lambda t: t.date(),
-    "TIME_GRAIN_HOUR": lambda t: t.hour(),
-    "TIME_GRAIN_MINUTE": lambda t: t.minute(),
-    "TIME_GRAIN_SECOND": lambda t: t.second(),
+    "TIME_GRAIN_YEAR": lambda t: t.truncate("Y"),
+    "TIME_GRAIN_QUARTER": lambda t: t.truncate("Q"),
+    "TIME_GRAIN_MONTH": lambda t: t.truncate("M"),
+    "TIME_GRAIN_WEEK": lambda t: t.truncate("W"),
+    "TIME_GRAIN_DAY": lambda t: t.truncate("D"),
+    "TIME_GRAIN_HOUR": lambda t: t.truncate("h"),
+    "TIME_GRAIN_MINUTE": lambda t: t.truncate("m"),
+    "TIME_GRAIN_SECOND": lambda t: t.truncate("s"),
 }
 
 # Time grain ordering for validation
@@ -460,6 +464,190 @@ def _compile_query(qe) -> Expr:
     return result
 
 
+def _detect_chart_spec(
+    dimensions: List[str],
+    measures: List[str],
+    time_dimension: Optional[str] = None,
+    time_grain: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Detect an appropriate chart type and return a Vega-Lite specification.
+
+    Args:
+        dimensions: List of dimension names
+        measures: List of measure names
+        time_dimension: Optional name of the time dimension
+        time_grain: Optional time grain for temporal formatting
+
+    Returns:
+        A Vega-Lite specification dict with appropriate chart type
+    """
+    num_dims = len(dimensions)
+    num_measures = len(measures)
+
+    # Single value - text display
+    if num_dims == 0 and num_measures == 1:
+        return {
+            "mark": {"type": "text", "size": 40},
+            "encoding": {"text": {"field": measures[0], "type": "quantitative"}},
+        }
+
+    # Check if we have a time dimension
+    has_time = time_dimension and time_dimension in dimensions
+    time_dim_index = dimensions.index(time_dimension) if has_time else -1
+
+    # Determine appropriate date format and axis config based on time grain
+    if has_time and time_grain:
+        if "YEAR" in time_grain:
+            date_format = "%Y"
+            axis_config = {"format": date_format, "labelAngle": 0}
+        elif "QUARTER" in time_grain:
+            date_format = "%Y Q%q"
+            axis_config = {"format": date_format, "labelAngle": -45}
+        elif "MONTH" in time_grain:
+            date_format = "%Y-%m"
+            axis_config = {"format": date_format, "labelAngle": -45}
+        elif "WEEK" in time_grain:
+            date_format = "%Y W%W"
+            axis_config = {"format": date_format, "labelAngle": -45, "tickCount": 10}
+        elif "DAY" in time_grain:
+            date_format = "%Y-%m-%d"
+            axis_config = {"format": date_format, "labelAngle": -45}
+        elif "HOUR" in time_grain:
+            date_format = "%m-%d %H:00"
+            axis_config = {"format": date_format, "labelAngle": -45, "tickCount": 12}
+        else:
+            date_format = "%Y-%m-%d"
+            axis_config = {"format": date_format, "labelAngle": -45}
+    else:
+        date_format = "%Y-%m-%d"
+        axis_config = {"format": date_format, "labelAngle": -45}
+
+    # Single dimension, single measure
+    if num_dims == 1 and num_measures == 1:
+        if has_time:
+            # Time series - line chart
+            return {
+                "mark": "line",
+                "encoding": {
+                    "x": {
+                        "field": dimensions[0],
+                        "type": "temporal",
+                        "axis": axis_config,
+                    },
+                    "y": {"field": measures[0], "type": "quantitative"},
+                    "tooltip": [
+                        {
+                            "field": dimensions[0],
+                            "type": "temporal",
+                            "format": date_format,
+                        },
+                        {"field": measures[0], "type": "quantitative"},
+                    ],
+                },
+            }
+        else:
+            # Categorical - bar chart
+            return {
+                "mark": "bar",
+                "encoding": {
+                    "x": {"field": dimensions[0], "type": "nominal"},
+                    "y": {"field": measures[0], "type": "quantitative"},
+                    "tooltip": [
+                        {"field": dimensions[0], "type": "nominal"},
+                        {"field": measures[0], "type": "quantitative"},
+                    ],
+                },
+            }
+
+    # Single dimension, multiple measures - grouped bar chart
+    if num_dims == 1 and num_measures >= 2:
+        # Need to reshape data for multiple measures
+        # This requires a transform to fold the measures into a single column
+        return {
+            "transform": [{"fold": measures, "as": ["measure", "value"]}],
+            "mark": "bar",
+            "encoding": {
+                "x": {"field": dimensions[0], "type": "nominal"},
+                "y": {"field": "value", "type": "quantitative"},
+                "color": {"field": "measure", "type": "nominal"},
+                "xOffset": {"field": "measure"},  # Groups bars side by side
+                "tooltip": [
+                    {"field": dimensions[0], "type": "nominal"},
+                    {"field": "measure", "type": "nominal"},
+                    {"field": "value", "type": "quantitative"},
+                ],
+            },
+        }
+
+    # Time series with additional dimension(s) - multi-line chart
+    if has_time and num_dims >= 2 and num_measures == 1:
+        # Get non-time dimensions for color encoding
+        non_time_dims = [d for i, d in enumerate(dimensions) if i != time_dim_index]
+
+        # Build tooltip fields
+        tooltip_fields = [
+            {"field": time_dimension, "type": "temporal", "format": date_format},
+            {"field": non_time_dims[0], "type": "nominal"},
+            {"field": measures[0], "type": "quantitative"},
+        ]
+
+        return {
+            "mark": "line",
+            "encoding": {
+                "x": {"field": time_dimension, "type": "temporal", "axis": axis_config},
+                "y": {"field": measures[0], "type": "quantitative"},
+                "color": {
+                    "field": non_time_dims[0],
+                    "type": "nominal",
+                },  # Color by first non-time dimension
+                "tooltip": tooltip_fields,
+            },
+        }
+
+    # Time series with multiple measures
+    if has_time and num_dims == 1 and num_measures >= 2:
+        # Multi-line chart with one line per measure
+        return {
+            "transform": [{"fold": measures, "as": ["measure", "value"]}],
+            "mark": "line",
+            "encoding": {
+                "x": {"field": dimensions[0], "type": "temporal", "axis": axis_config},
+                "y": {"field": "value", "type": "quantitative"},
+                "color": {"field": "measure", "type": "nominal"},
+                "tooltip": [
+                    {"field": dimensions[0], "type": "temporal", "format": date_format},
+                    {"field": "measure", "type": "nominal"},
+                    {"field": "value", "type": "quantitative"},
+                ],
+            },
+        }
+
+    # Two dimensions, one measure - heatmap
+    if num_dims == 2 and num_measures == 1:
+        return {
+            "mark": "rect",
+            "encoding": {
+                "x": {"field": dimensions[0], "type": "nominal"},
+                "y": {"field": dimensions[1], "type": "nominal"},
+                "color": {"field": measures[0], "type": "quantitative"},
+                "tooltip": [
+                    {"field": dimensions[0], "type": "nominal"},
+                    {"field": dimensions[1], "type": "nominal"},
+                    {"field": measures[0], "type": "quantitative"},
+                ],
+            },
+        }
+
+    # Default for complex queries
+    return {
+        "mark": "text",
+        "encoding": {
+            "text": {"value": "Complex query - consider custom visualization"}
+        },
+    }
+
+
 @frozen(kw_only=True, slots=True)
 class QueryExpr:
     model: "SemanticModel"
@@ -594,6 +782,92 @@ class QueryExpr:
             return self.to_expr()
         except Exception:
             return None
+
+    def chart(
+        self,
+        spec: Optional[Dict[str, Any]] = None,
+        format: str = "altair",
+    ) -> Union["altair.Chart", Dict[str, Any], bytes, str]:
+        """
+        Create a chart from the query using native Ibis-Altair integration.
+
+        Args:
+            spec: Optional Vega-Lite specification for the chart.
+                  If not provided, will auto-detect chart type based on query.
+                  If partial spec is provided (e.g., only encoding or only mark),
+                  missing parts will be auto-detected and merged.
+            format: The output format of the chart:
+                - "altair" (default): Returns Altair Chart object
+                - "interactive": Returns interactive Altair Chart with tooltip
+                - "json": Returns Vega-Lite JSON specification
+                - "png": Returns PNG image bytes
+                - "svg": Returns SVG string
+
+        Returns:
+            Chart in the requested format:
+                - altair/interactive: Altair Chart object
+                - json: Dict containing Vega-Lite specification
+                - png: bytes of PNG image
+                - svg: str containing SVG markup
+
+        Raises:
+            ImportError: If Altair is not installed
+            ValueError: If an unsupported format is specified
+        """
+        try:
+            import altair as alt
+        except ImportError:
+            raise ImportError(
+                "Altair is required for chart creation. "
+                "Install it with: pip install 'boring-semantic-layer[visualization]'"
+            )
+
+        # Always start with auto-detected spec as base
+        base_spec = _detect_chart_spec(
+            dimensions=list(self.dimensions),
+            measures=list(self.measures),
+            time_dimension=self.model.time_dimension,
+            time_grain=self.time_grain,
+        )
+
+        if spec is None:
+            spec = base_spec
+        else:
+            if "mark" not in spec.keys():
+                spec["mark"] = base_spec.get("mark", "point")
+
+            if "encoding" not in spec.keys():
+                spec["encoding"] = base_spec.get("encoding", {})
+
+            if "transform" not in spec.keys():
+                spec["transform"] = base_spec.get("transform", [])
+
+        chart = alt.Chart(self.to_expr(), **spec)
+
+        # Handle different output formats
+        if format == "altair":
+            return chart
+        elif format == "interactive":
+            return chart.interactive()
+        elif format == "json":
+            return chart.to_dict()
+        elif format in ["png", "svg"]:
+            try:
+                import io
+
+                buffer = io.BytesIO()
+                chart.save(buffer, format=format)
+                return buffer.getvalue()
+            except Exception as e:
+                raise ImportError(
+                    f"{format} export requires additional dependencies: {e}. "
+                    "Install with: pip install 'altair[all]' or pip install vl-convert-python"
+                )
+        else:
+            raise ValueError(
+                f"Unsupported format: {format}. "
+                "Supported formats: 'altair', 'interactive', 'json', 'png', 'svg'"
+            )
 
 
 @frozen(kw_only=True, slots=True)
@@ -999,7 +1273,7 @@ try:
         - list_models: List all available semantic model names
         - get_model: Get model metadata and schema information
         - get_time_range: Get available time range for time-series data
-        - query_model: Execute queries with dimensions, measures, and filters
+        - query_model: Execute queries and optionally return visualizations
 
         Example:
             >>> from boring_semantic_layer import SemanticModel, MCPSemanticModel
@@ -1154,8 +1428,44 @@ try:
                     ],
                     "Optional time grain to use for time-based dimensions",
                 ] = None,
-            ) -> List[Dict[str, Any]]:
-                """Query a semantic model with JSON-based filtering.
+                chart_spec: Annotated[
+                    Optional[Union[bool, Dict[str, Any]]],
+                    """Controls chart generation:
+                    - None/False: Returns {"records": [...]} (default)
+                    - True: Returns {"records": [...], "chart": {...}} with auto-detected chart
+                    - Dict: Returns {"records": [...], "chart": {...}} with custom Vega-Lite specification
+                      Can be partial (e.g., just {"mark": "line"} or {"encoding": {"y": {"scale": {"zero": False}}}}).
+                      BSL intelligently merges partial specs with auto-detected defaults.
+                    
+                    Common chart specifications:
+                    - {"mark": "bar"} - Bar chart
+                    - {"mark": "line"} - Line chart  
+                    - {"mark": "point"} - Scatter plot
+                    - {"mark": "rect"} - Heatmap
+                    - {"title": "My Chart"} - Add title
+                    - {"width": 600, "height": 400} - Set size
+                    - {"encoding": {"color": {"field": "category"}}} - Color by field
+                    - {"encoding": {"y": {"scale": {"zero": False}}}} - Don't start Y-axis at zero
+                    
+                    BSL auto-detection logic:
+                    - Time series (time dimension + measure) → Line chart
+                    - Categorical (1 dimension + 1 measure) → Bar chart
+                    - Multiple measures → Multi-series chart
+                    - Two dimensions → Heatmap
+                    """,
+                ] = None,
+                chart_format: Annotated[
+                    Optional[Literal["altair", "interactive", "json", "png", "svg"]],
+                    """Chart output format when chart_spec is provided:
+                    - "altair": Altair Chart object (default)
+                    - "interactive": Interactive Altair Chart with tooltips
+                    - "json": Vega-Lite JSON specification
+                    - "png": Base64-encoded PNG image {"format": "png", "data": "base64..."} (requires altair[all])
+                    - "svg": SVG string {"format": "svg", "data": "svg..."} (requires altair[all])
+                    """,
+                ] = "json",
+            ) -> Dict[str, Any]:
+                """Query a semantic model with JSON-based filtering and optional visualization.
 
                 Args:
                     model_name: The name of the model to query.
@@ -1166,40 +1476,52 @@ try:
                     limit: The limit to apply to the query (integer).
                     time_range: Optional time range filter for time dimensions. Preferred over using filters for time-based filtering.
                     time_grain: Optional time grain for time-based dimensions (YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, SECOND).
+                    chart_spec: Controls chart generation - None/False for data, True for auto-detected chart, or Dict for custom spec.
+                    chart_format: Output format when chart_spec is provided.
 
                 Example queries:
                 ```python
-                # Query with time dimension grouping and time range (preferred approach)
+                # 1. Get data as records (default)
                 query_model(
                     model_name="flights",
-                    dimensions=["flight_month", "carrier"],  # Group by month and carrier
+                    dimensions=["flight_month", "carrier"],
                     measures=["total_delay", "avg_delay"],
-                    time_range={
-                        "start": "2024-01-01T00:00:00Z",  # ISO 8601 format ensures proper timezone handling
-                        "end": "2024-03-31T23:59:59Z"
-                    },
-                    time_grain="TIME_GRAIN_DAY",  # Automatically applies to time dimensions
+                    time_range={"start": "2024-01-01", "end": "2024-03-31"},
+                    time_grain="TIME_GRAIN_MONTH",
                     order_by=[("avg_delay", "desc")],
                     limit=10
+                )  # Returns {"records": [...]}
+
+                # 2. Get data with auto-detected chart
+                query_model(
+                    model_name="flights",
+                    dimensions=["date"],
+                    measures=["flight_count"],
+                    time_grain="TIME_GRAIN_WEEK",
+                    chart_spec=True  # Returns {"records": [...], "chart": {...}}
                 )
 
-                # Query combining time_range with regular filters
+                # 3. Get data with custom chart styling
                 query_model(
                     model_name="flights",
-                    dimensions=["carrier", "destination"],
-                    measures=["total_delay", "avg_delay"],
-                    time_range={
-                        "start": "2024-01-01T00:00:00Z",
-                        "end": "2024-03-31T23:59:59Z"
+                    dimensions=["date", "carrier"],
+                    measures=["on_time_rate"],
+                    filters=[{"field": "carrier", "operator": "in", "values": ["AA", "UA", "DL"]}],
+                    time_grain="TIME_GRAIN_MONTH",
+                    chart_spec={
+                        "encoding": {"y": {"scale": {"zero": False}}},
+                        "title": "Carrier Performance Comparison"
                     },
-                    time_grain="TIME_GRAIN_DAY",
-                    filters=[{
-                        "field": "carrier.country",
-                        "operator": "=",
-                        "value": "US"
-                    }],
-                    order_by=[("avg_delay", "desc")],
-                    limit=10
+                    chart_format="interactive"  # Chart format in the response
+                )
+
+                # 4. Get data with PNG chart image
+                query_model(
+                    model_name="flights",
+                    dimensions=["carrier"],
+                    measures=["flight_count"],
+                    chart_spec={"mark": "bar", "title": "Flight Count by Carrier"},
+                    chart_format="png"  # Chart will be {"format": "png", "data": "base64..."}
                 )
                 ```
 
@@ -1243,7 +1565,7 @@ try:
                             f"Time grain {time_grain} is smaller than model's smallest allowed grain {model.smallest_time_grain}"
                         )
 
-                output_df = model.query(
+                query = model.query(
                     dimensions=dimensions,
                     measures=measures,
                     filters=filters,
@@ -1251,8 +1573,23 @@ try:
                     limit=limit,
                     time_range=time_range,
                     time_grain=time_grain,
-                ).execute()
-                return output_df.to_dict(orient="records")
+                )
+
+                output = {
+                    "records": query.execute().to_dict(orient="records"),
+                }
+                # Check if chart is requested
+                if chart_spec is not None:
+                    # Handle boolean True for auto-detection
+                    spec = None if chart_spec is True else chart_spec
+
+                    # Generate the chart
+                    chart = query.chart(spec=spec, format=chart_format)
+
+                    output["chart"] = chart
+
+                return output
+
 
 except ImportError:
     # MCP not available, this is fine

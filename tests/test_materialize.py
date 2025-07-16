@@ -118,5 +118,6 @@ def test_cutoff_with_time_dimension():
     m2 = model.materialize(cutoff="2025-01-03")
     result = m2.table.execute().sort_values("date").reset_index(drop=True)
     expected = pd.DataFrame({"date": dates[:3], "sum_val": [1, 2, 3]})
-    expected["date"] = expected["date"].dt.date
+    # After using truncate, we get timestamps truncated to day, not date objects
+    expected["date"] = pd.to_datetime(expected["date"]).dt.floor("D")
     pd.testing.assert_frame_equal(result, expected)

@@ -75,9 +75,15 @@ flights_sm.query(
     - [join_many](#join_many)
     - [join_cross](#join_cross)
 - [Model Context Protocol (MCP) Integration](#model-context-protocol-mcp-integration)
+- [Chart Visualization](#chart-visualization)
+  - [Installation](#installation-1)
+  - [Smart Chart Creation](#smart-chart-creation)
+  - [Automatic Chart Detection](#automatic-chart-detection)
+  - [Advanced Chart Examples](#advanced-chart-examples)
 - [Reference](#reference)
   - [SemanticModel](#semanticmodel)
   - [Query (SemanticModel.query / QueryExpr)](#query-semanticmodelquery--queryexpr)
+  - [Chart API Reference](#chart-api-reference)
 
 -----
 
@@ -247,7 +253,7 @@ flights_sm_with_time = SemanticModel(
 
 # With the time dimension defined, you can query using a specific time range and grain.
 query_time_based_df = flights_sm_with_time.query(
-    dims=['origin'],
+    dimensions=['origin'],
     measures=['total_flights'],
     time_range={'start': '2013-01-01', 'end': '2013-01-31'},
     time_grain='TIME_GRAIN_DAY' # Use specific TIME_GRAIN constants
@@ -327,7 +333,7 @@ flight_sm = SemanticModel(
 
 # Querying across the joined models to get flight counts by carrier name
 query_joined_df = flight_sm.query(
-    dims=['carriers.name', 'origin'],
+    dimensions=['carriers.name', 'origin'],
     measures=['flight_count'],
     limit=10
 ).execute()
@@ -493,8 +499,198 @@ Once configured, Claude will have access to these tools:
 - `get_model`: Get details about a specific model including dimensions and measures
 - `get_time_range`: Get the available time range for time-series data
 - `query_model`: Execute queries with dimensions, measures, and filters
+  - When `chart_spec` is provided, returns both data and chart: `{"records": [...], "chart": {...}}`
+  - When `chart_spec` is not provided, returns only data: `{"records": [...]}`
 
 For more information on running MCP servers, see the [MCP Python SDK documentation](https://github.com/modelcontextprotocol/python-sdk).
+
+## Chart Visualization
+
+BSL includes built-in support for generating data visualizations using native Ibis-Altair integration. This allows you to create Altair charts directly from Ibis expressions without converting to pandas DataFrames first.
+
+### Installation
+
+To use chart visualization functionality, install with the `visualization` extra:
+
+```bash
+pip install 'boring-semantic-layer[visualization]'
+```
+
+### How BSL Charting Works
+
+BSL's charting system is built on top of **[Vega-Lite](https://vega.github.io/vega-lite/)** and its Python wrapper **[Altair](https://altair-viz.github.io/)**. 
+
+Vega-Lite is a JSON-based grammar for creating interactive visualizations that provides a declarative approach to chart creation. 
+
+BSL supports multiple output formats including interactive Altair charts, static images (PNG/SVG), and raw JSON specifications for web embedding.
+
+#### Quick Start Example
+
+Here's a minimal example showing how to create a chart with custom styling:
+
+```python
+from examples.example_basic import flights_sm
+
+# Query with custom styling
+chart = flights_sm.query(
+    dimensions=["origin"], 
+    measures=["flight_count"],
+    limit=5
+).chart(spec={
+    "mark": {"type": "bar", "color": "steelblue"},
+    "title": "Flights by Origin"
+})
+```
+
+![Quick Start Chart](docs/chart_quickstart.png)
+
+#### How It Works
+
+BSL exposes a `chart()` method on query results that accepts a Vega-Lite JSON specification and returns charts in various formats:
+
+- **Auto-detection**: If you don't provide a spec, BSL automatically selects the best chart type
+- **Partial specs**: Provide only what you want to customize, BSL fills in the rest
+- **Multiple formats**: Output as Altair objects, PNG/SVG images, or JSON specifications
+
+This design enables you to work at any level of abstraction - from full auto-detection to complete manual control.
+
+### Smart Chart Creation
+
+BSL automatically detects appropriate chart types and intelligently merges any specifications you provide. 
+
+BSL's detection logic:
+- **Time series** (time dimension + measure) → Line chart with time-grain aware formatting
+- **Categorical** (1 dimension + 1 measure) → Bar chart
+- **Multiple measures** → Multi-series chart with automatic color encoding
+- **Two dimensions** → Heatmap
+- **Multiple dimensions with time** → Multi-line chart colored by dimension
+
+Here are examples showing different chart types and customization options:
+
+#### 1. Auto-detected Bar Chart
+
+BSL automatically creates a bar chart for categorical data:
+
+```python
+from examples.example_basic import flights_sm
+
+# Query top destinations by flight count
+query = flights_sm.query(
+    dimensions=["destination"],
+    measures=["flight_count"],
+    order_by=[("flight_count", "desc")],
+    limit=10
+)
+
+# Auto-detects bar chart
+chart = query.chart()
+```
+
+![Bar Chart](docs/chart_bar.png)
+
+#### 2. Auto-detected Time Series Chart
+
+For time-based queries, BSL automatically creates line charts with proper time formatting:
+
+```python
+# Time series query
+time_query = flights_sm.query(
+    dimensions=["arr_time"],
+    measures=["flight_count"],
+    time_range={"start": "2003-01-01", "end": "2003-03-31"},
+    time_grain="TIME_GRAIN_WEEK"
+)
+
+# Auto-detects time series line chart
+chart = time_query.chart()
+```
+
+![Time Series Chart](docs/chart_timeseries.png)
+
+#### 3. Auto-detected Heatmap
+
+When querying two categorical dimensions with a measure, BSL creates a heatmap:
+
+```python
+# Two dimensions create a heatmap
+heatmap_query = flights_sm.query(
+    dimensions=["destination", "origin"],
+    measures=["flight_count"],
+    limit=50
+)
+
+# Auto-detects heatmap with custom sizing
+chart = heatmap_query.chart(spec={
+    "height": 300,
+    "width": 400
+})
+```
+
+![Heatmap Chart](docs/chart_heatmap.png)
+
+#### 4. Custom Mark with Auto-detection
+
+Mix your preferences with BSL's auto-detection by specifying only what you want to change:
+
+```python
+# Change only the mark type, keep auto-detected encoding
+line_query = flights_sm.query(
+    dimensions=["destination"],
+    measures=["avg_distance"],
+    order_by=[("avg_distance", "desc")],
+    limit=15
+)
+
+# Just change to line chart, encoding auto-detected
+chart = line_query.chart(spec={"mark": "line"})
+```
+
+![Line Chart](docs/chart_line.png)
+
+#### 5. Full Custom Specification
+
+For complete control, specify everything you need:
+
+```python
+# Full custom specification
+custom_query = flights_sm.query(
+    dimensions=["carriers.name"],
+    measures=["flight_count"],
+    order_by=[("flight_count", "desc")],
+    limit=8
+)
+
+# Complete custom chart specification
+chart = custom_query.chart(spec={
+    "title": "Top Airlines by Flight Count",
+    "mark": {"type": "bar", "color": "steelblue"},
+    "encoding": {
+        "x": {"field": "carriers_name", "type": "nominal", "sort": "-y"},
+        "y": {"field": "flight_count", "type": "quantitative"}
+    },
+    "width": 500,
+    "height": 300
+})
+```
+
+![Custom Chart](docs/chart_custom.png)
+
+#### Export Formats
+
+BSL supports multiple export formats:
+
+```python
+# Different export formats
+altair_chart = query.chart()                # Altair Chart object (default)
+interactive = query.chart(format="interactive")  # With interactive tooltips
+json_spec = query.chart(format="json")      # Vega-Lite specification
+png_bytes = query.chart(format="png")       # PNG image (requires altair[all])
+svg_str = query.chart(format="svg")         # SVG markup (requires altair[all])
+
+# Save as file
+with open("my_chart.png", "wb") as f:
+    f.write(png_bytes)
+```
 
 ## Reference
 
@@ -574,3 +770,16 @@ Example output:
 |--------|------|---------------|
 | JFK    | 2015 | 350           |
 | LGA    | 2015 | 300           |
+
+### Chart API Reference
+
+The `QueryExpr` object provides the `chart()` method for visualization:
+
+| Parameter | Type                     | Required | Allowed Values / Notes                                                                                      |
+|-----------|--------------------------|----------|------------------------------------------------------------------------------------------------------------|
+| `spec`    | dict or None             | No       | Vega-Lite specification dict. If not provided, will auto-detect chart type.<br>If partial spec is provided (e.g., only encoding or only mark), missing parts will be auto-detected and merged. |
+| `format`  | str                      | No       | Output format of the chart:<br>- `"altair"` (default): Returns Altair Chart object<br>- `"interactive"`: Returns interactive Altair Chart with tooltip<br>- `"json"`: Returns Vega-Lite JSON specification<br>- `"png"`: Returns PNG image bytes (requires `pip install altair[all]`)<br>- `"svg"`: Returns SVG string (requires `pip install altair[all]`) |
+
+**Returns:** Chart in the requested format (Altair Chart object, dict, bytes, or str depending on format)
+
+For more examples, see `examples/example_chart.py` in the repository.

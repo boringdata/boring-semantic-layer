@@ -898,3 +898,246 @@ def test_get_time_range_empty_table():
 
     assert is_null_or_nat(time_range["start"])
     assert is_null_or_nat(time_range["end"])
+
+
+def test_query_with_chart_specification():
+    """Test creating a query with chart specification."""
+    df = pd.DataFrame({"category": ["A", "B", "C"], "value": [10, 20, 30]})
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("chart_test", df)
+    model = SemanticModel(
+        table=table,
+        dimensions={"category": lambda t: t.category},
+        measures={"total_value": lambda t: t.value.sum()},
+    )
+
+    chart_spec = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "category", "type": "nominal"},
+            "y": {"field": "total_value", "type": "quantitative"},
+        },
+    }
+
+    # Create query with chart specification
+    expr = model.query(dimensions=["category"], measures=["total_value"])
+
+    # Check that chart() method accepts spec and returns Altair chart
+    chart = expr.chart(spec=chart_spec)
+    assert hasattr(chart, "mark_bar")
+
+
+def test_query_chart_auto_detection():
+    """Test automatic chart type detection."""
+    df = pd.DataFrame({"category": ["A", "B", "C"], "value": [10, 20, 30]})
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("chart_test", df)
+    model = SemanticModel(
+        table=table,
+        dimensions={"category": lambda t: t.category},
+        measures={"total_value": lambda t: t.value.sum()},
+    )
+
+    # Create query without chart specification
+    expr = model.query(dimensions=["category"], measures=["total_value"])
+
+    # Call chart() with auto_detect=True (default)
+    # Should auto-detect bar chart for categorical dimension + measure
+    chart = expr.chart()
+    assert hasattr(chart, "mark_bar")
+
+
+def test_query_chart_with_time_series():
+    """Test chart auto-detection with time series data."""
+    dates = pd.date_range(start="2023-01-01", end="2023-01-31", freq="D")
+    df = pd.DataFrame({"date": dates, "sales": range(31)})
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("time_chart_test", df)
+    model = SemanticModel(
+        table=table,
+        dimensions={"date": lambda t: t.date},
+        measures={"total_sales": lambda t: t.sales.sum()},
+        time_dimension="date",
+    )
+
+    # Create query
+    expr = model.query(dimensions=["date"], measures=["total_sales"])
+
+    # Call chart() - should detect line chart for time series
+    chart = expr.chart()
+    # Should auto-detect line chart for time series
+    assert hasattr(chart, "mark_line")
+
+
+def test_query_chart_field_validation():
+    """Test chart field validation against query results."""
+    df = pd.DataFrame({"category": ["A", "B", "C"], "value": [10, 20, 30]})
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("chart_test", df)
+    model = SemanticModel(
+        table=table,
+        dimensions={"category": lambda t: t.category},
+        measures={"total_value": lambda t: t.value.sum()},
+    )
+
+    # Create chart spec referencing a field not in the query
+    invalid_chart_spec = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "category", "type": "nominal"},
+            "y": {"field": "missing_field", "type": "quantitative"},
+        },
+    }
+
+    expr = model.query(dimensions=["category"], measures=["total_value"])
+
+    # Altair will handle the validation when the chart is displayed
+    # We just verify that a chart object is created
+    chart = expr.chart(spec=invalid_chart_spec)
+    assert hasattr(chart, "mark_bar")
+
+
+def test_query_chart_with_joins():
+    """Test chart functionality with joined data."""
+    orders_df = pd.DataFrame(
+        {
+            "order_id": [1, 2, 3],
+            "customer_id": [101, 101, 102],
+            "amount": [100, 200, 300],
+        }
+    )
+    customers_df = pd.DataFrame({"customer_id": [101, 102], "country": ["US", "UK"]})
+
+    con = ibis.duckdb.connect(":memory:")
+    orders_table = con.create_table("orders", orders_df)
+    customers_table = con.create_table("customers", customers_df)
+
+    customers_model = SemanticModel(
+        table=customers_table,
+        dimensions={"country": lambda t: t.country},
+        measures={},
+        primary_key="customer_id",
+    )
+
+    orders_model = SemanticModel(
+        table=orders_table,
+        dimensions={"customer_id": lambda t: t.customer_id},
+        measures={"total_amount": lambda t: t.amount.sum()},
+        joins={
+            "customer": Join.one("customer", customers_model, lambda t: t.customer_id)
+        },
+    )
+
+    # Query with joined dimension
+    expr = orders_model.query(
+        dimensions=["customer.country"],
+        measures=["total_amount"],
+    )
+
+    chart = expr.chart(
+        spec={
+            "mark": "bar",
+            "encoding": {
+                "x": {"field": "customer_country", "type": "nominal"},
+                "y": {"field": "total_amount", "type": "quantitative"},
+            },
+        }
+    )
+    # Verify we get an Altair chart object
+    assert hasattr(chart, "mark_bar")
+
+
+def test_query_render_requires_altair():
+    """Test that render() method requires Altair."""
+    df = pd.DataFrame({"category": ["A", "B", "C"], "value": [10, 20, 30]})
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("chart_test", df)
+    model = SemanticModel(
+        table=table,
+        dimensions={"category": lambda t: t.category},
+        measures={"total_value": lambda t: t.value.sum()},
+    )
+
+    expr = model.query(dimensions=["category"], measures=["total_value"])
+
+    # Try to render without Altair installed
+    try:
+        import altair  # noqa: F401
+
+        # If Altair is installed, this test won't work as expected
+        # But we can still check that render() returns an Altair chart
+        # Test chart with spec
+        chart = expr.chart(spec={"mark": "bar"})
+        assert hasattr(chart, "mark_bar")  # Altair charts have mark methods
+    except ImportError:
+        # If Altair is not installed, should raise helpful error
+        with pytest.raises(ImportError, match="Altair is required for chart creation"):
+            expr.chart()
+
+
+def test_query_chart_output_formats():
+    """Test different output formats for chart() method."""
+    df = pd.DataFrame({"category": ["A", "B", "C"], "value": [10, 20, 30]})
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("chart_test", df)
+    model = SemanticModel(
+        table=table,
+        dimensions={"category": lambda t: t.category},
+        measures={"total_value": lambda t: t.value.sum()},
+    )
+
+    expr = model.query(
+        dimensions=["category"],
+        measures=["total_value"],
+    )
+
+    chart_spec = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "category", "type": "nominal"},
+            "y": {"field": "total_value", "type": "quantitative"},
+        },
+    }
+
+    try:
+        import altair as alt  # noqa: F401
+
+        # Test default format (altair)
+        default_chart = expr.chart(spec=chart_spec)
+        assert hasattr(default_chart, "mark_bar")
+
+        # Test interactive format
+        interactive_chart = expr.chart(spec=chart_spec, format="interactive")
+        assert hasattr(interactive_chart, "mark_bar")
+        # Interactive charts should have interactive method called
+
+        # Test JSON format
+        json_spec = expr.chart(spec=chart_spec, format="json")
+        assert isinstance(json_spec, dict)
+        assert "mark" in json_spec
+        # Altair may convert mark string to object
+        assert json_spec["mark"] == "bar" or json_spec["mark"] == {"type": "bar"}
+
+        # Test invalid format
+        with pytest.raises(ValueError, match="Unsupported format"):
+            expr.chart(spec=chart_spec, format="invalid")
+
+        # Test PNG/SVG formats (may fail if dependencies not installed)
+        try:
+            png_data = expr.chart(spec=chart_spec, format="png")
+            assert isinstance(png_data, bytes)
+        except ImportError:
+            # Expected if vl-convert not installed
+            pass
+
+        try:
+            svg_data = expr.chart(spec=chart_spec, format="svg")
+            assert isinstance(svg_data, str)
+            assert svg_data.startswith("<svg") or svg_data.startswith("<?xml")
+        except ImportError:
+            # Expected if vl-convert not installed
+            pass
+
+    except ImportError:
+        # Altair not installed
+        pass

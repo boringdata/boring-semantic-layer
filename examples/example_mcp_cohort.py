@@ -27,8 +27,6 @@ Orders table:
 The example shows how to query customer and order data with joins for cohort analysis.
 """
 
-import os
-import pandas as pd
 import ibis
 from boring_semantic_layer.semantic_model import SemanticModel, Join
 from boring_semantic_layer import MCPSemanticModel
@@ -94,7 +92,6 @@ cohort_base_query = """
 cohort_tbl = con.sql(cohort_base_query)
 
 
-
 # Define the customers semantic model
 # - Primary key: customer_id
 # - Dimensions: customer_id, country_name
@@ -146,7 +143,6 @@ orders_model = SemanticModel(
 )
 
 
-
 # Define the cohort semantic model
 # - Dimensions: cohort_month, cohort_period (month_1, month_2, etc.), period_number
 # - Measures: total_revenue, total_product, avg_order_value, churn percentage
@@ -166,8 +162,19 @@ cohort_model = SemanticModel(
         "avg_order_value": lambda t: t.order_amount.mean(),
         "active_customers": lambda t: t.customer_id.nunique(),
         "initial_cohort_size": lambda t: t.cohort_size.max(),
-        "retention_rate": lambda t: (t.customer_id.nunique().cast('float') / t.cohort_size.max().cast('float') * 100),
-        "churn_rate": lambda t: (100 - (t.customer_id.nunique().cast('float') / t.cohort_size.max().cast('float') * 100)),
+        "retention_rate": lambda t: (
+            t.customer_id.nunique().cast("float")
+            / t.cohort_size.max().cast("float")
+            * 100
+        ),
+        "churn_rate": lambda t: (
+            100
+            - (
+                t.customer_id.nunique().cast("float")
+                / t.cohort_size.max().cast("float")
+                * 100
+            )
+        ),
     },
 )
 
