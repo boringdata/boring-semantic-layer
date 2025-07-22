@@ -211,8 +211,7 @@ flights_sm.query(
         {
             'operator': 'AND',
             'conditions': [
-                {'field': 'origin', 'operator': 'in', 'values': ['JFK', 'LGA', 'PHL']},
-                {'field': 'total_flights', 'operator': '>', 'value': 5000}
+                {'field': 'origin', 'operator': 'in', 'values': ['JFK', 'LGA', 'PHL']}
             ]
         }
     ]
@@ -226,6 +225,9 @@ flights_sm.query(
 | PHL    | 7708          |
 
 BSL supports the following operators: `=`, `!=`, `>`, `>=`, `in`, `not in`, `like`, `not like`, `is null`, `is not null`, `AND`, `OR`
+
+**Note on filtering measures:** filters only work with dimensions. 
+```
 
 ### Time-Based Dimensions and Queries
 
