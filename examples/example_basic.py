@@ -1,10 +1,12 @@
 """
-Example: Basic Query with Semantic Model
+Example: Basic Query with Semantic Model (YAML Loading)
 
-This example demonstrates how to use a semantic model (`flights_sm`) to perform a basic query, retrieving available dimensions and measures, and running a grouped and aggregated query with ordering and limiting.
+This example demonstrates how to use semantic models loaded from YAML to perform a basic query, retrieving available dimensions and measures, and running a grouped and aggregated query with ordering and limiting.
 
-Semantic Model: `flights_sm`
-- Represents a flights dataset with dimensions such as destination and measures such as flight count and average distance.
+YAML File: `example_basic.yml`
+- Defines both `carriers` and `flights` models
+- Includes joins between models
+- Uses Ibis deferred expressions with `_` placeholder
 
 Query:
 - Dimensions: destination
@@ -24,58 +26,26 @@ Expected Output (example):
 """
 
 import ibis
-from boring_semantic_layer import SemanticModel, Join
+from boring_semantic_layer import SemanticModel
 
 con = ibis.duckdb.connect(":memory:")
 
 BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
-flights_tbl = con.read_parquet(f"{BASE_URL}/flights.parquet")
-carriers_tbl = con.read_parquet(f"{BASE_URL}/carriers.parquet")
+tables = {
+    "flights_tbl": con.read_parquet(f"{BASE_URL}/flights.parquet"),
+    "carriers_tbl": con.read_parquet(f"{BASE_URL}/carriers.parquet"),
+}
 
-carriers_sm = SemanticModel(
-    name="carriers",
-    table=carriers_tbl,
-    dimensions={
-        "code": lambda t: t.code,
-        "name": lambda t: t.name,
-        "nickname": lambda t: t.nickname,
-    },
-    measures={
-        "carrier_count": lambda t: t.count(),
-    },
-    primary_key="code",
-)
+models = SemanticModel.from_yaml("example_basic.yml", tables=tables)
 
-flights_sm = SemanticModel(
-    name="flights",
-    table=flights_tbl,
-    dimensions={
-        "origin": lambda t: t.origin,
-        "destination": lambda t: t.destination,
-        "carrier": lambda t: t.carrier,
-        "tail_num": lambda t: t.tail_num,
-        "arr_time": lambda t: t.arr_time,
-    },
-    time_dimension="arr_time",
-    smallest_time_grain="TIME_GRAIN_SECOND",
-    measures={
-        "flight_count": lambda t: t.count(),
-        "avg_dep_delay": lambda t: t.dep_delay.mean(),
-        "avg_distance": lambda t: t.distance.mean(),
-    },
-    joins={
-        "carriers": Join.one(
-            alias="carriers",
-            model=carriers_sm,
-            with_=lambda left: left.carrier,
-        ),
-    },
-)
+carriers_sm = models["carriers"]
+flights_sm = models["flights"]
 
 if __name__ == "__main__":
     print("Available dimensions:", flights_sm.available_dimensions)
     print("Available measures:", flights_sm.available_measures)
 
+    print("\n=== Example Query ===")
     expr = flights_sm.query(
         dimensions=["destination"],
         measures=["flight_count", "avg_distance"],
@@ -83,5 +53,16 @@ if __name__ == "__main__":
         limit=10,
     )
     df = expr.execute()
-    print("\nTop 10 carriers by flight count:")
+    print("Top 10 destinations by flight count:")
     print(df)
+
+    print("\n=== Query with Join ===")
+    expr_join = flights_sm.query(
+        dimensions=["carrier", "carriers.name"],
+        measures=["flight_count"],
+        order_by=[("flight_count", "desc")],
+        limit=5,
+    )
+    df_join = expr_join.execute()
+    print("Top 5 carriers by flight count:")
+    print(df_join)
