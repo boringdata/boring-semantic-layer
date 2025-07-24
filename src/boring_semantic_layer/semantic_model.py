@@ -425,10 +425,10 @@ def _compile_query(qe) -> Expr:
             join = model.joins[alias]
             expr = join.model.measures[field](t)
             name = f"{alias}_{field}"
-            agg_kwargs[name] = expr.name(name)
+            agg_kwargs[name] = expr
         else:
             expr = model.measures[m](t)
-            agg_kwargs[m] = expr.name(m)
+            agg_kwargs[m] = expr
 
     # Group and aggregate
     if dimensions:
@@ -658,6 +658,23 @@ class QueryExpr:
     limit: Optional[int] = None
     time_range: Optional[Tuple[str, str]] = None
     time_grain: Optional[TimeGrain] = None
+
+    def as_table(self) -> Expr:
+        """
+        Returns:
+            Expr: The Ibis table expression or the materialized table.
+        """
+        if (
+            not self.filters
+            and not self.order_by
+            and self.limit is None
+            and self.time_range is None
+            and self.time_grain == self.model.smallest_time_grain
+            and set(self.dimensions) == set(self.model.dimensions.keys())
+            and set(self.measures) == set(self.model.measures.keys())
+        ):
+            return self.model.table
+        return self.to_expr()
 
     def with_dimensions(self, *dimensions: str) -> "QueryExpr":
         """
@@ -1397,7 +1414,8 @@ class SemanticModel:
         for name, fn in self.measures.items():
             expr = fn(flat)
             if self._is_additive(expr):
-                agg_kwargs[name] = expr.name(name)
+                # Use raw expression; aggregate will use mapping key as alias
+                agg_kwargs[name] = expr
 
         if agg_kwargs:
             cube_expr = flat.group_by(*group_exprs).aggregate(**agg_kwargs)
@@ -1514,7 +1532,7 @@ try:
                     Optional[Union[Dict, List[Dict]]],
                     """
                     List of JSON filter objects with the following structure:
-                       
+
                     Simple Filter:
                     {
                         "field": "dimension_name",  # Can include join references like "customer.country" or time dimensions like "order_date"
@@ -1523,7 +1541,7 @@ try:
                         # OR
                         "values": ["val1", "val2"]  # For 'in' operator only
                     }
-                       
+
                     Compound Filter (AND/OR):
                     {
                         "operator": "AND",          # or "OR"
@@ -1540,7 +1558,7 @@ try:
                             }
                         ]
                     }
-                       
+
                     Example of a complex nested filter with time ranges:
                     [{
                         "operator": "AND",
@@ -1569,7 +1587,7 @@ try:
                             "start": "2024-01-01T00:00:00Z",  # ISO 8601 format
                             "end": "2024-12-31T23:59:59Z"     # ISO 8601 format
                         }
-                        
+
                         Using time_range is preferred over using filters for time-based filtering because:
                         1. It automatically applies to the model's primary time dimension
                         2. It ensures proper time zone handling with ISO 8601 format
@@ -1600,17 +1618,17 @@ try:
                     - Dict: Returns {"records": [...], "chart": {...}} with custom Vega-Lite specification
                       Can be partial (e.g., just {"mark": "line"} or {"encoding": {"y": {"scale": {"zero": False}}}}).
                       BSL intelligently merges partial specs with auto-detected defaults.
-                    
+
                     Common chart specifications:
                     - {"mark": "bar"} - Bar chart
-                    - {"mark": "line"} - Line chart  
+                    - {"mark": "line"} - Line chart
                     - {"mark": "point"} - Scatter plot
                     - {"mark": "rect"} - Heatmap
                     - {"title": "My Chart"} - Add title
                     - {"width": 600, "height": 400} - Set size
                     - {"encoding": {"color": {"field": "category"}}} - Color by field
                     - {"encoding": {"y": {"scale": {"zero": False}}}} - Don't start Y-axis at zero
-                    
+
                     BSL auto-detection logic:
                     - Time series (time dimension + measure) → Line chart
                     - Categorical (1 dimension + 1 measure) → Bar chart

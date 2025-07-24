@@ -5,8 +5,10 @@ description = "A boring semantic layer built with ibis"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "altair>=5.5.0",
     "attrs>=25.3.0",
-    "ibis-framework[duckdb]>=10.6.0", 
+    "ibis-framework[duckdb]>=10.6.0",
+    "xorq>=0.2.2",
 ]
 urls = {Homepage = "https://github.com/boringdata/boring-semantic-layer/tree/main"}
 
@@ -35,5 +37,6 @@ dev = [
     "xorq",
     "urllib3>=2.2.3",
     "pytest-asyncio",
-    "mcp>=1.10.1"
+    "mcp>=1.10.1",
+    "ipython>=8.37.0",
 ]
