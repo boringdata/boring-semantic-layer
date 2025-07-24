@@ -1110,6 +1110,170 @@ class SemanticModel:
 
         return {"start": start_date, "end": end_date}
 
+    @classmethod
+    def from_yaml(
+        cls,
+        yaml_path: str,
+        tables: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, "SemanticModel"]:
+        """
+        Load all semantic models from YAML file using Ibis deferred expressions.
+
+        Args:
+            yaml_path: Path to YAML file
+            tables: Dictionary containing tables and models referenced in YAML
+
+        Returns:
+            Dict[str, SemanticModel]: Dictionary mapping model names to SemanticModel instances
+
+        Raises:
+            FileNotFoundError: If YAML file doesn't exist
+            KeyError: If referenced table or model not found
+            ValueError: If YAML structure is invalid
+
+        Examples:
+            # Load all models from file
+            models = SemanticModel.from_yaml("models.yml", tables={"flights_tbl": table})
+            flights_model = models["flights"]
+            carriers_model = models["carriers"]
+        """
+        import yaml
+
+        if tables is None:
+            tables = {}
+
+        with open(yaml_path, "r") as f:
+            yaml_configs = yaml.safe_load(f)
+
+        models = {}
+
+        # First pass: Create all models without joins
+        for name, config in yaml_configs.items():
+            if not isinstance(config, dict):
+                continue
+
+            # Get table from tables
+            table_name = config.get("table")
+            if not table_name:
+                raise ValueError(f"Model '{name}' must specify 'table' field")
+
+            if table_name not in tables:
+                available = ", ".join(
+                    sorted(k for k in tables.keys() if hasattr(tables[k], "execute"))
+                )
+                raise KeyError(
+                    f"Table '{table_name}' not found in tables.\n"
+                    f"Available tables: {available}"
+                )
+            table = tables[table_name]
+
+            # Parse dimensions and measures
+            dimensions = cls._parse_expressions(config.get("dimensions", {}))
+            measures = cls._parse_expressions(config.get("measures", {}))
+
+            # Create model without joins first
+            models[name] = cls(
+                name=name,
+                table=table,
+                dimensions=dimensions,
+                measures=measures,
+                joins={},
+                primary_key=config.get("primary_key"),
+                time_dimension=config.get("time_dimension"),
+                smallest_time_grain=config.get("smallest_time_grain"),
+            )
+
+        # Second pass: Add joins now that all models exist
+        for name, config in yaml_configs.items():
+            if not isinstance(config, dict):
+                continue
+
+            if "joins" in config and config["joins"]:
+                # Create combined tables with loaded models
+                extended_tables = {**tables, **models}
+                joins = cls._parse_joins(
+                    config["joins"], extended_tables, yaml_configs, name
+                )
+
+                # Update the model with joins
+                models[name] = evolve(models[name], joins=joins)
+
+        return models
+
+    @classmethod
+    def _parse_expressions(cls, expressions: Dict[str, str]) -> Dict[str, Callable]:
+        """Parse dimension or measure expressions."""
+        result = {}
+        for name, expr_str in expressions.items():
+            deferred = eval(expr_str, {"_": ibis_mod._, "__builtins__": {}})
+            result[name] = lambda t, d=deferred: d.resolve(t)
+        return result
+
+    @classmethod
+    def _parse_joins(
+        cls,
+        joins_config: Dict[str, Dict[str, Any]],
+        tables: Dict[str, Any],
+        yaml_configs: Dict[str, Any],
+        current_model_name: str,
+    ) -> Dict[str, Join]:
+        """Parse join configurations."""
+        joins = {}
+
+        for alias, join_config in joins_config.items():
+            join_model_name = join_config.get("model")
+            if not join_model_name:
+                raise ValueError(f"Join '{alias}' must specify 'model' field")
+
+            # Look for model in tables (includes both external models and loaded models)
+            if join_model_name in tables:
+                model = tables[join_model_name]
+                if not isinstance(model, SemanticModel):
+                    raise TypeError(
+                        f"Join '{alias}' references '{join_model_name}' which is not a SemanticModel"
+                    )
+            else:
+                # Check if it's a model defined in the same YAML file
+                available_models = list(yaml_configs.keys()) + [
+                    k for k in tables.keys() if isinstance(tables[k], SemanticModel)
+                ]
+                if join_model_name in yaml_configs:
+                    raise ValueError(
+                        f"Model '{join_model_name}' referenced in join '{alias}' is defined in the same YAML file "
+                        f"but not yet loaded. Use SemanticModel.from_yaml() without model_name to load all models together."
+                    )
+                else:
+                    raise KeyError(
+                        f"Model '{join_model_name}' referenced in join '{alias}' not found.\n"
+                        f"Available models: {', '.join(sorted(available_models))}"
+                    )
+
+            join_type = join_config.get("type", "one")
+
+            if join_type in ["one", "many"]:
+                with_expr_str = join_config.get("with")
+                if not with_expr_str:
+                    raise ValueError(
+                        f"Join '{alias}' of type '{join_type}' must specify 'with' field"
+                    )
+                with_expr = eval(with_expr_str, {"_": ibis_mod._, "__builtins__": {}})
+
+                def with_func(t, e=with_expr):
+                    return e.resolve(t)
+
+                if join_type == "one":
+                    joins[alias] = Join.one(alias, model, with_func)
+                else:
+                    joins[alias] = Join.many(alias, model, with_func)
+            elif join_type == "cross":
+                joins[alias] = Join.cross(alias, model)
+            else:
+                raise ValueError(
+                    f"Invalid join type '{join_type}'. Must be 'one', 'many', or 'cross'"
+                )
+
+        return joins
+
     @property
     def available_dimensions(self) -> List[str]:
         """
