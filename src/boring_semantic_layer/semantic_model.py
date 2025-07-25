@@ -76,6 +76,8 @@ TIME_GRAIN_ORDER = [
 
 OPERATOR_MAPPING = {
     "=": lambda x, y: x == y,
+    "eq": lambda x, y: x == y,
+    "equals": lambda x, y: x == y,
     "!=": lambda x, y: x != y,
     ">": lambda x, y: x > y,
     ">=": lambda x, y: x >= y,
@@ -85,6 +87,8 @@ OPERATOR_MAPPING = {
     "not in": lambda x, y: ~x.isin(y),
     "like": lambda x, y: x.like(y),
     "not like": lambda x, y: ~x.like(y),
+    "ilike": lambda x, y: x.ilike(y),
+    "not ilike": lambda x, y: ~x.ilike(y),
     "is null": lambda x, _: x.isnull(),
     "is not null": lambda x, _: x.notnull(),
     "AND": lambda x, y: x & y,
@@ -1517,12 +1521,39 @@ try:
                        
                     Simple Filter:
                     {
-                        "field": "dimension_name",  # Can include join references like "customer.country" or time dimensions like "order_date"
-                        "operator": "=",            # One of: =, !=, >, >=, <, <=, in, not in, like, not like, is null, is not null
-                        "value": "value"            # For non-'in' operators. For dates use ISO format: "2024-03-21" or "2024-03-21T14:30:00"
-                        # OR
-                        "values": ["val1", "val2"]  # For 'in' operator only
+                        "field": "dimension_name",  # Must be an existing dimension (check model schema first!).
+                        "operator": "=",            # See operator list below
+                        "value": "single_value"     # For single-value operators (=, !=, >, >=, <, <=, ilike, not ilike, like, not like)
+                        # OR for 'in'/'not in' operators only:
+                        "values": ["val1", "val2"]  # REQUIRED for 'in' and 'not in' operators
                     }
+                    
+                    IMPORTANT OPERATOR GUIDELINES:
+                    - Equality: Use "=" (preferred), "eq", or "equals" - all work identically
+                    - Text matching: Use "ilike" (case-insensitive) instead of "like" for better results
+                    - List membership: "in" requires "values" field (array), NOT "value"
+                    - Negated list: "not in" requires "values" field (array), NOT "value"
+                    - Pattern matching: "ilike" and "not ilike" support wildcards (%, _)
+                    - Null checks: "is null" and "is not null" need no value/values field
+                    
+                    Available operators:
+                    - "=" / "eq" / "equals": exact match (use "value")
+                    - "!=": not equal (use "value") 
+                    - ">", ">=", "<", "<=": comparisons (use "value")
+                    - "in": value is in list (use "values" array)
+                    - "not in": value not in list (use "values" array)
+                    - "ilike": case-insensitive pattern match (use "value" with % wildcards)
+                    - "not ilike": negated case-insensitive pattern (use "value" with % wildcards)  
+                    - "like": case-sensitive pattern match (use "value" with % wildcards)
+                    - "not like": negated case-sensitive pattern (use "value" with % wildcards)
+                    - "is null": field is null (no value/values needed)
+                    - "is not null": field is not null (no value/values needed)
+                    
+                    COMMON MISTAKES TO AVOID:
+                    1. Don't use "value" with "in"/"not in" - use "values" array instead
+                    2. Don't filter on measures - only filter on dimensions
+                    3. Don't use .month(), .year() etc. - use time_grain parameter instead
+                    4. For case-insensitive text search, prefer "ilike" over "like"
                        
                     Compound Filter (AND/OR):
                     {
@@ -1530,17 +1561,29 @@ try:
                         "conditions": [             # Non-empty list of other filter objects
                             {
                                 "field": "country",
-                                "operator": "=",
+                                "operator": "equals",   # or "=" or "eq" - all equivalent
                                 "value": "US"
                             },
                             {
                                 "field": "tier",
-                                "operator": "in",
-                                "values": ["gold", "platinum"]
+                                "operator": "in",       # MUST use "values" array for "in"
+                                "values": ["gold", "platinum"]  # NOT "value"
+                            },
+                            {
+                                "field": "name",
+                                "operator": "ilike",    # Case-insensitive pattern matching
+                                "value": "%john%"       # Wildcards supported
                             }
                         ]
                     }
                        
+                    Example filters:
+                    [
+                        {"field": "status", "operator": "in", "values": ["active", "pending"]},
+                        {"field": "name", "operator": "ilike", "value": "%smith%"},
+                        {"field": "created_date", "operator": ">=", "value": "2024-01-01"},
+                        {"field": "email", "operator": "not ilike", "value": "%spam%"}
+                    ]
                     Example of a complex nested filter with time ranges:
                     [{
                         "operator": "AND",
@@ -1552,7 +1595,7 @@ try:
                                     {"field": "flight_date", "operator": "<", "value": "2024-04-01"}
                                 ]
                             },
-                            {"field": "carrier.country", "operator": "=", "value": "US"}
+                            {"field": "carrier.country", "operator": "eq", "value": "US"}
                         ]
                     }]
                     """,
@@ -1590,7 +1633,20 @@ try:
                             "TIME_GRAIN_SECOND",
                         ]
                     ],
-                    "Optional time grain to use for time-based dimensions",
+                    """Time grain for aggregating time-based dimensions.
+                    
+                    IMPORTANT: Instead of trying to use .month(), .year(), .quarter() etc. in filters,
+                    use this time_grain parameter to aggregate by time periods. The system will 
+                    automatically handle time dimension transformations.
+                    
+                    Examples:
+                    - For monthly data: time_grain="TIME_GRAIN_MONTH" 
+                    - For yearly data: time_grain="TIME_GRAIN_YEAR"
+                    - For daily data: time_grain="TIME_GRAIN_DAY"
+                    
+                    Then filter using the time_range parameter or regular date filters like:
+                    {"field": "date_column", "operator": ">=", "value": "2024-01-01"}
+                    """,
                 ] = None,
                 chart_spec: Annotated[
                     Optional[Union[bool, Dict[str, Any]]],

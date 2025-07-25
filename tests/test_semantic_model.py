@@ -1141,3 +1141,279 @@ def test_query_chart_output_formats():
     except ImportError:
         # Altair not installed
         pass
+
+
+def test_new_operator_mappings():
+    """Test the new operator mappings: eq, equals, ilike, not ilike"""
+    # Create test data with text fields suitable for string matching
+    df = pd.DataFrame({
+        "name": ["Alice", "Bob", "charlie", "DAVID", "Eve"],
+        "email": ["alice@example.com", "bob@test.org", "charlie@example.com", "david@TEST.ORG", "eve@example.com"],
+        "value": [10, 20, 30, 40, 50]
+    })
+    
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("test_operators", df)
+    
+    model = SemanticModel(
+        table=table,
+        dimensions={
+            "name": lambda t: t.name,
+            "email": lambda t: t.email
+        },
+        measures={
+            "sum_value": lambda t: t.value.sum(),
+            "count": lambda t: t.count()
+        }
+    )
+
+    # Test "eq" operator (should work same as "=")
+    result = model.query(
+        dimensions=["name"],
+        measures=["sum_value"],
+        filters=[{"field": "name", "operator": "eq", "value": "Alice"}]
+    ).execute().reset_index(drop=True)
+    
+    expected = pd.DataFrame({"name": ["Alice"], "sum_value": [10]})
+    pd.testing.assert_frame_equal(result, expected)
+
+    # Test "equals" operator (should work same as "=")
+    result = model.query(
+        dimensions=["name"],
+        measures=["sum_value"],
+        filters=[{"field": "name", "operator": "equals", "value": "Bob"}]
+    ).execute().reset_index(drop=True)
+    
+    expected = pd.DataFrame({"name": ["Bob"], "sum_value": [20]})
+    pd.testing.assert_frame_equal(result, expected)
+
+    # Test "ilike" operator (case-insensitive LIKE)
+    result = model.query(
+        dimensions=["name"],
+        measures=["sum_value"],
+        filters=[{"field": "name", "operator": "ilike", "value": "charlie"}]
+    ).execute().reset_index(drop=True)
+    
+    expected = pd.DataFrame({"name": ["charlie"], "sum_value": [30]})
+    pd.testing.assert_frame_equal(result, expected)
+
+    # Test "ilike" with pattern matching (case-insensitive)
+    result = model.query(
+        dimensions=["name"],
+        measures=["sum_value"],
+        filters=[{"field": "name", "operator": "ilike", "value": "david"}]
+    ).execute().reset_index(drop=True)
+    
+    expected = pd.DataFrame({"name": ["DAVID"], "sum_value": [40]})
+    pd.testing.assert_frame_equal(result, expected)
+
+    # Test "not ilike" operator (negated case-insensitive LIKE)
+    result = model.query(
+        dimensions=["name"],
+        measures=["sum_value"],
+        filters=[{"field": "name", "operator": "not ilike", "value": "alice"}]
+    ).execute().sort_values("name").reset_index(drop=True)
+    
+    expected = pd.DataFrame({
+        "name": ["Bob", "DAVID", "Eve", "charlie"],
+        "sum_value": [20, 40, 50, 30]
+    }).sort_values("name").reset_index(drop=True)
+    pd.testing.assert_frame_equal(result, expected)
+
+    # Test "ilike" with email domain pattern
+    result = model.query(
+        dimensions=["name"],
+        measures=["sum_value"],
+        filters=[{"field": "email", "operator": "ilike", "value": "%example.com"}]
+    ).execute().sort_values("name").reset_index(drop=True)
+    
+    expected = pd.DataFrame({
+        "name": ["Alice", "Eve", "charlie"],
+        "sum_value": [10, 50, 30]
+    }).sort_values("name").reset_index(drop=True)
+    pd.testing.assert_frame_equal(result, expected)
+
+    # Test "not ilike" with pattern
+    result = model.query(
+        dimensions=["name"],
+        measures=["sum_value"],
+        filters=[{"field": "email", "operator": "not ilike", "value": "%example.com"}]
+    ).execute().sort_values("name").reset_index(drop=True)
+    
+    expected = pd.DataFrame({
+        "name": ["Bob", "DAVID"],
+        "sum_value": [20, 40]
+    }).sort_values("name").reset_index(drop=True)
+    pd.testing.assert_frame_equal(result, expected)
+
+
+def test_new_operators_in_compound_filters():
+    """Test new operators work correctly in compound (AND/OR) filters"""
+    df = pd.DataFrame({
+        "category": ["Tech", "Finance", "tech", "FINANCE", "Health"],
+        "product": ["Laptop", "Stock", "Phone", "BOND", "Medicine"],
+        "price": [1000, 500, 800, 300, 200]
+    })
+    
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("test_compound", df)
+    
+    model = SemanticModel(
+        table=table,
+        dimensions={
+            "category": lambda t: t.category,
+            "product": lambda t: t.product,
+            "price": lambda t: t.price  # Add price as a dimension for filtering
+        },
+        measures={
+            "avg_price": lambda t: t.price.mean(),
+            "count": lambda t: t.count()
+        }
+    )
+
+    # Test compound filter with "eq" and "ilike"
+    result = model.query(
+        dimensions=["category", "product"],
+        measures=["avg_price"],
+        filters=[{
+            "operator": "AND",
+            "conditions": [
+                {"field": "category", "operator": "ilike", "value": "tech"},
+                {"field": "price", "operator": ">=", "value": 800}
+            ]
+        }]
+    ).execute().sort_values("product").reset_index(drop=True)
+    
+    expected = pd.DataFrame({
+        "category": ["Tech", "tech"],
+        "product": ["Laptop", "Phone"],
+        "avg_price": [1000.0, 800.0]
+    }).sort_values("product").reset_index(drop=True)
+    pd.testing.assert_frame_equal(result, expected)
+
+    # Test compound filter with "equals" in OR condition
+    result = model.query(
+        dimensions=["category"],
+        measures=["count"],
+        filters=[{
+            "operator": "OR",
+            "conditions": [
+                {"field": "category", "operator": "equals", "value": "Health"},
+                {"field": "category", "operator": "ilike", "value": "finance"}
+            ]
+        }]
+    ).execute().sort_values("category").reset_index(drop=True)
+    
+    expected = pd.DataFrame({
+        "category": ["FINANCE", "Finance", "Health"],
+        "count": [1, 1, 1]
+    }).sort_values("category").reset_index(drop=True)
+    pd.testing.assert_frame_equal(result, expected)
+
+    # Test "not ilike" in compound filter
+    result = model.query(
+        dimensions=["category"],
+        measures=["count"],
+        filters=[{
+            "operator": "AND",
+            "conditions": [
+                {"field": "category", "operator": "not ilike", "value": "tech"},
+                {"field": "price", "operator": "<", "value": 400}
+            ]
+        }]
+    ).execute().sort_values("category").reset_index(drop=True)
+    
+    expected = pd.DataFrame({
+        "category": ["FINANCE", "Health"],
+        "count": [1, 1]
+    }).sort_values("category").reset_index(drop=True)
+    pd.testing.assert_frame_equal(result, expected)
+
+
+def test_operator_mapping_completeness():
+    """Test that all new operators are properly registered in OPERATOR_MAPPING"""
+    from boring_semantic_layer.semantic_model import OPERATOR_MAPPING
+    
+    # Check that new operators exist
+    assert "eq" in OPERATOR_MAPPING
+    assert "equals" in OPERATOR_MAPPING
+    assert "ilike" in OPERATOR_MAPPING
+    assert "not ilike" in OPERATOR_MAPPING
+    
+    # Test that they return callable functions
+    assert callable(OPERATOR_MAPPING["eq"])
+    assert callable(OPERATOR_MAPPING["equals"])
+    assert callable(OPERATOR_MAPPING["ilike"])
+    assert callable(OPERATOR_MAPPING["not ilike"])
+
+
+def test_new_operators_error_handling():
+    """Test error handling for new operators with invalid usage"""
+    df = pd.DataFrame({
+        "name": ["Alice", "Bob"],
+        "value": [10, 20]
+    })
+    
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("test_errors", df)
+    
+    model = SemanticModel(
+        table=table,
+        dimensions={"name": lambda t: t.name},
+        measures={"sum_value": lambda t: t.value.sum()}
+    )
+
+    # Test that "ilike" still requires a value
+    with pytest.raises(ValueError, match="requires 'value' field"):
+        model.query(
+            dimensions=["name"],
+            measures=["sum_value"],
+            filters=[{"field": "name", "operator": "ilike"}]  # Missing value
+        ).execute()
+
+    # Test that "not ilike" still requires a value  
+    with pytest.raises(ValueError, match="requires 'value' field"):
+        model.query(
+            dimensions=["name"],
+            measures=["sum_value"],
+            filters=[{"field": "name", "operator": "not ilike"}]  # Missing value
+        ).execute()
+
+    # Test that "eq" still requires a value
+    with pytest.raises(ValueError, match="requires 'value' field"):
+        model.query(
+            dimensions=["name"],
+            measures=["sum_value"],
+            filters=[{"field": "name", "operator": "eq"}]  # Missing value
+        ).execute()
+
+
+@pytest.mark.parametrize("operator,expected_count", [
+    ("=", 1),
+    ("eq", 1), 
+    ("equals", 1),
+])
+def test_equality_operators_equivalence(operator, expected_count):
+    """Test that =, eq, and equals operators produce identical results"""
+    df = pd.DataFrame({
+        "category": ["A", "B", "C"],
+        "value": [10, 20, 30]
+    })
+    
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("test_equality", df)
+    
+    model = SemanticModel(
+        table=table,
+        dimensions={"category": lambda t: t.category},
+        measures={"count": lambda t: t.count()}
+    )
+
+    result = model.query(
+        dimensions=["category"],
+        measures=["count"],
+        filters=[{"field": "category", "operator": operator, "value": "A"}]
+    ).execute().reset_index(drop=True)
+    
+    expected = pd.DataFrame({"category": ["A"], "count": [expected_count]})
+    pd.testing.assert_frame_equal(result, expected)
