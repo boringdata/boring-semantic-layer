@@ -38,10 +38,10 @@ jobs:
       - run: uv build
 
       - name: test (wheel)
-        run: uv run --isolated --no-project -p 3.12 --with dist/*.whl pytest tests
+        run: uv run --isolated --no-project -p 3.12 --with dist/*.whl --with pytest pytest tests
 
       - name: test (source distribution)
-        run: uv run --isolated --no-project -p 3.12 --with dist/*.tar.gz pytest tests
+        run: uv run --isolated --no-project -p 3.12 --with dist/*.tar.gz --with pytest pytest tests
 
       - name: publish package
         run: uv publish --trusted-publishing always
