@@ -76,6 +76,8 @@ TIME_GRAIN_ORDER = [
 
 OPERATOR_MAPPING = {
     "=": lambda x, y: x == y,
+    "eq": lambda x, y: x == y,
+    "equals": lambda x, y: x == y,
     "!=": lambda x, y: x != y,
     ">": lambda x, y: x > y,
     ">=": lambda x, y: x >= y,
@@ -85,6 +87,8 @@ OPERATOR_MAPPING = {
     "not in": lambda x, y: ~x.isin(y),
     "like": lambda x, y: x.like(y),
     "not like": lambda x, y: ~x.like(y),
+    "ilike": lambda x, y: x.ilike(y),
+    "not ilike": lambda x, y: ~x.ilike(y),
     "is null": lambda x, _: x.isnull(),
     "is not null": lambda x, _: x.notnull(),
     "AND": lambda x, y: x & y,
