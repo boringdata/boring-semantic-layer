@@ -1521,7 +1521,7 @@ try:
                        
                     Simple Filter:
                     {
-                        "field": "dimension_name",  # Must be an existing dimension (check model schema first!). Can include join references like "customer.country" or time dimensions like "order_date"
+                        "field": "dimension_name",  # Must be an existing dimension (check model schema first!).
                         "operator": "=",            # See operator list below
                         "value": "single_value"     # For single-value operators (=, !=, >, >=, <, <=, ilike, not ilike, like, not like)
                         # OR for 'in'/'not in' operators only:
