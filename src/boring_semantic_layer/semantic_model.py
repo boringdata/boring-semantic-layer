@@ -17,6 +17,9 @@ from typing import (
 )
 import datetime
 
+from boring_semantic_layer.specs import DimensionSpec, MeasureSpec
+from ibis.expr.api import desc
+
 if TYPE_CHECKING:
     import altair
 
@@ -36,8 +39,8 @@ _ = ibis_mod._
 How = Literal["inner", "left", "cross"]
 Cardinality = Literal["one", "many", "cross"]
 
-Dimension = Callable[[Expr], Expr]
-Measure = Callable[[Expr], Expr]
+Dimension = DimensionSpec
+Measure = MeasureSpec
 
 TimeGrain = Literal[
     "TIME_GRAIN_YEAR",
@@ -467,6 +470,29 @@ def _compile_query(qe) -> Expr:
 
     return result
 
+def _convert_dimensions(dimension_dict) -> dict:
+    """Convert plain callables to DimensionSpec with no description for backward compatibility."""
+    result = {}
+    for name, dim in dimension_dict.items():
+        if isinstance(dim, DimensionSpec):
+            result[name] = dim
+        elif callable(dim):
+            result[name] = DimensionSpec(expr=dim, description="")
+        else:
+            raise ValueError(f"Invalid dimension specification for {name}: {dim}. Must be a callable or DimensionSpec instance.")
+    return result
+
+def _convert_measures(measure_dict) -> dict:
+    """Convert plain callables to MeasureSpec with no description for backward compatibility."""
+    result = {}
+    for name, measure in measure_dict.items():
+        if isinstance(measure, MeasureSpec):
+            result[name] = measure
+        elif callable(measure):
+            result[name] = MeasureSpec(expr=measure, description="")
+        else:
+            raise ValueError(f"Invalid measure specification for {name}: {measure}. Must be a callable or MeasureSpec instance.")
+    return result
 
 def _detect_chart_spec(
     dimensions: List[str],
@@ -907,15 +933,16 @@ class SemanticModel:
 
     table: Expr = field()
     dimensions: Mapping[str, Dimension] = field(
-        converter=lambda d: MappingProxyType(dict(d))
+        converter=lambda d: MappingProxyType(_convert_dimensions(d))
     )
     measures: Mapping[str, Measure] = field(
-        converter=lambda m: MappingProxyType(dict(m))
+        converter=lambda m: MappingProxyType(_convert_measures(m))
     )
     joins: Mapping[str, Join] = field(
         converter=lambda j: MappingProxyType(dict(j or {})),
         default=MappingProxyType({}),
     )
+    description: Optional[str] = field(default=None)
     primary_key: Optional[str] = field(default=None)
     name: Optional[str] = field(default=None)
     time_dimension: Optional[str] = field(default=None)
@@ -1205,12 +1232,38 @@ class SemanticModel:
         return models
 
     @classmethod
-    def _parse_expressions(cls, expressions: Dict[str, str]) -> Dict[str, Callable]:
-        """Parse dimension or measure expressions."""
+    def _parse_expressions(cls, expressions: Dict[str, Union[str, Dict[str, str]]], spec_class) -> Dict[str, Callable]:
+        """Parse dimension or measure expressions, creating appropriate spec objects.
+
+        Supports both formats:
+        - Simple String format (backward compatible): {"name": "_.column"}
+        - Dictionary format with descriptions: {"name": {"expr": "_.column", "description": "Column description"}}
+
+        Args:
+            expressions: Dictionary of expressions to parse in either format.
+            spec_class: Either a DimensionSpec or a MeasureSpec class to create.
+
+        Returns:
+            Dictionary mapping names to spec objects.
+        """
         result = {}
-        for name, expr_str in expressions.items():
+        for name, config in expressions.items():
+            if isinstance(config, str):
+                expr_str = config
+                description = ""
+            elif isinstance(config, dict):
+                expr_str = config.get("expr")
+                if not expr_str:
+                    raise ValueError(f"Expression '{name}' must have 'expr' field when using dict format")
+                description = config.get("description", "")
+            else:
+                raise ValueError(f"Expression '{name}' must be either a string or a dictionary with 'expr' field")
+
             deferred = eval(expr_str, {"_": ibis_mod._, "__builtins__": {}})
-            result[name] = lambda t, d=deferred: d.resolve(t)
+            result[name] = spec_class(
+                expr=lambda t, d=deferred: d.resolve(t), description=description
+            )
+
         return result
 
     @classmethod
@@ -1321,6 +1374,9 @@ class SemanticModel:
             "measures": self.available_measures,
         }
 
+        if self.description:
+            definition["description"] = self.description
+
         # Add time dimension info if present
         if self.time_dimension:
             definition["time_dimension"] = self.time_dimension
@@ -1328,6 +1384,36 @@ class SemanticModel:
         # Add smallest time grain if present
         if self.smallest_time_grain:
             definition["smallest_time_grain"] = self.smallest_time_grain
+
+        # Extract dimension descriptions from spec objects
+        dimension_descriptions = {}
+        for name, dim_spec in self.dimensions.items():
+            if hasattr(dim_spec, "description"):
+                dimension_descriptions[name] = dim_spec.description
+
+        # Include joined model dimension descriptions
+        for alias, join in self.joins.items():
+            for name, dim_spec in join.model.dimensions.items():
+                if hasattr(dim_spec, "description"):
+                    dimension_descriptions[f"{alias}.{name}"] = dim_spec.description
+
+        if dimension_descriptions:
+            definition["dimension_descriptions"] = dimension_descriptions
+
+        # Extract measure descriptions from spec objects
+        measure_descriptions = {}
+        for name, measure_spec in self.measures.items():
+            if hasattr(measure_spec, "description"):
+                measure_descriptions[name] = measure_spec.description
+
+        # Include joined model measure descriptions
+        for alias, join in self.joins.items():
+            for name, measure_spec in join.model.measures.items():
+                if hasattr(measure_spec, "description"):
+                    measure_descriptions[f"{alias}.{name}"] = measure_spec.description
+
+        if measure_descriptions:
+            definition["measure_descriptions"] = measure_descriptions
 
         return definition
 
@@ -1518,7 +1604,7 @@ try:
                     Optional[Union[Dict, List[Dict]]],
                     """
                     List of JSON filter objects with the following structure:
-                       
+
                     Simple Filter:
                     {
                         "field": "dimension_name",  # Must be an existing dimension (check model schema first!).
@@ -1527,7 +1613,7 @@ try:
                         # OR for 'in'/'not in' operators only:
                         "values": ["val1", "val2"]  # REQUIRED for 'in' and 'not in' operators
                     }
-                    
+
                     IMPORTANT OPERATOR GUIDELINES:
                     - Equality: Use "=" (preferred), "eq", or "equals" - all work identically
                     - Text matching: Use "ilike" (case-insensitive) instead of "like" for better results
@@ -1535,26 +1621,26 @@ try:
                     - Negated list: "not in" requires "values" field (array), NOT "value"
                     - Pattern matching: "ilike" and "not ilike" support wildcards (%, _)
                     - Null checks: "is null" and "is not null" need no value/values field
-                    
+
                     Available operators:
                     - "=" / "eq" / "equals": exact match (use "value")
-                    - "!=": not equal (use "value") 
+                    - "!=": not equal (use "value")
                     - ">", ">=", "<", "<=": comparisons (use "value")
                     - "in": value is in list (use "values" array)
                     - "not in": value not in list (use "values" array)
                     - "ilike": case-insensitive pattern match (use "value" with % wildcards)
-                    - "not ilike": negated case-insensitive pattern (use "value" with % wildcards)  
+                    - "not ilike": negated case-insensitive pattern (use "value" with % wildcards)
                     - "like": case-sensitive pattern match (use "value" with % wildcards)
                     - "not like": negated case-sensitive pattern (use "value" with % wildcards)
                     - "is null": field is null (no value/values needed)
                     - "is not null": field is not null (no value/values needed)
-                    
+
                     COMMON MISTAKES TO AVOID:
                     1. Don't use "value" with "in"/"not in" - use "values" array instead
                     2. Don't filter on measures - only filter on dimensions
                     3. Don't use .month(), .year() etc. - use time_grain parameter instead
                     4. For case-insensitive text search, prefer "ilike" over "like"
-                       
+
                     Compound Filter (AND/OR):
                     {
                         "operator": "AND",          # or "OR"
@@ -1576,7 +1662,7 @@ try:
                             }
                         ]
                     }
-                       
+
                     Example filters:
                     [
                         {"field": "status", "operator": "in", "values": ["active", "pending"]},
@@ -1612,7 +1698,7 @@ try:
                             "start": "2024-01-01T00:00:00Z",  # ISO 8601 format
                             "end": "2024-12-31T23:59:59Z"     # ISO 8601 format
                         }
-                        
+
                         Using time_range is preferred over using filters for time-based filtering because:
                         1. It automatically applies to the model's primary time dimension
                         2. It ensures proper time zone handling with ISO 8601 format
@@ -1634,16 +1720,16 @@ try:
                         ]
                     ],
                     """Time grain for aggregating time-based dimensions.
-                    
+
                     IMPORTANT: Instead of trying to use .month(), .year(), .quarter() etc. in filters,
-                    use this time_grain parameter to aggregate by time periods. The system will 
+                    use this time_grain parameter to aggregate by time periods. The system will
                     automatically handle time dimension transformations.
-                    
+
                     Examples:
-                    - For monthly data: time_grain="TIME_GRAIN_MONTH" 
+                    - For monthly data: time_grain="TIME_GRAIN_MONTH"
                     - For yearly data: time_grain="TIME_GRAIN_YEAR"
                     - For daily data: time_grain="TIME_GRAIN_DAY"
-                    
+
                     Then filter using the time_range parameter or regular date filters like:
                     {"field": "date_column", "operator": ">=", "value": "2024-01-01"}
                     """,
@@ -1656,17 +1742,17 @@ try:
                     - Dict: Returns {"records": [...], "chart": {...}} with custom Vega-Lite specification
                       Can be partial (e.g., just {"mark": "line"} or {"encoding": {"y": {"scale": {"zero": False}}}}).
                       BSL intelligently merges partial specs with auto-detected defaults.
-                    
+
                     Common chart specifications:
                     - {"mark": "bar"} - Bar chart
-                    - {"mark": "line"} - Line chart  
+                    - {"mark": "line"} - Line chart
                     - {"mark": "point"} - Scatter plot
                     - {"mark": "rect"} - Heatmap
                     - {"title": "My Chart"} - Add title
                     - {"width": 600, "height": 400} - Set size
                     - {"encoding": {"color": {"field": "category"}}} - Color by field
                     - {"encoding": {"y": {"scale": {"zero": False}}}} - Don't start Y-axis at zero
-                    
+
                     BSL auto-detection logic:
                     - Time series (time dimension + measure) → Line chart
                     - Categorical (1 dimension + 1 measure) → Bar chart

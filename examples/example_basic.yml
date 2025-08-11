@@ -1,32 +1,58 @@
 carriers:
+  description: "Airline carrier information including code and display names"
   table: carriers_tbl
   primary_key: code
-  
+
   dimensions:
-    code: _.code
-    name: _.name
-    nickname: _.nickname
-    
+    code:
+      expr: _.code
+      description: "IATA airline code"
+    name:
+      expr: _.name
+      description: "Airline name"
+    nickname:
+      expr: _.nickname
+      description: "Common airline nickname or brand name"
+
   measures:
-    carrier_count: _.count()
+    carrier_count:
+      expr: _.count()
+      description: "Total number of carriers"
 
 flights:
+  description: "Flight operations data with timing, routing, and performance metrics"
   table: flights_tbl
   time_dimension: arr_time
   smallest_time_grain: TIME_GRAIN_SECOND
-  
+
   dimensions:
-    origin: _.origin
-    destination: _.destination
-    carrier: _.carrier
-    tail_num: _.tail_num
-    arr_time: _.arr_time
-    
+    origin:
+      expr: _.origin
+      description: "Airport code of the departure airport (IATA 3-letter code)"
+    destination:
+      expr: _.destination
+      description: "Airport code of the arrival airport (IATA 3-letter code)"
+    carrier:
+      expr: _.carrier
+      description: "IATA airline carrier code"
+    tail_num:
+      expr: _.tail_num
+      description: "Tail number of the aircraft"
+    arr_time:
+      expr: _.arr_time
+      description: "Actual arrival time of the flight"
+
   measures:
-    flight_count: _.count()
-    avg_dep_delay: _.dep_delay.mean()
-    avg_distance: _.distance.mean()
-    
+    flight_count:
+      expr: _.count()
+      description: "Total number of flights"
+    avg_dep_delay:
+      expr: _.dep_delay.mean()
+      description: "Average departure delay in minutes"
+    avg_distance:
+      expr: _.distance.mean()
+      description: "Average distance of flights in miles"
+
   joins:
     carriers:
       model: carriers
