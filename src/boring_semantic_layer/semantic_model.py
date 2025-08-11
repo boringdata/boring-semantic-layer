@@ -19,7 +19,6 @@ import datetime
 
 from boring_semantic_layer.specs import DimensionSpec, MeasureSpec
 from ibis.expr.api import desc
-from numpy import resize
 
 if TYPE_CHECKING:
     import altair
