@@ -34,6 +34,7 @@ from .filters import Filter
 
 Expr = ibis_mod.expr.types.core.Expr
 _ = ibis_mod._
+from .filters import OPERATOR_MAPPING
 
 from .time_grain import TimeGrain, TIME_GRAIN_TRANSFORMATIONS, TIME_GRAIN_ORDER
 
@@ -43,27 +44,6 @@ Cardinality = Literal["one", "many", "cross"]
 
 Dimension = Callable[[Expr], Expr]
 Measure = Callable[[Expr], Expr]
-
-OPERATOR_MAPPING = {
-    "=": lambda x, y: x == y,
-    "eq": lambda x, y: x == y,
-    "equals": lambda x, y: x == y,
-    "!=": lambda x, y: x != y,
-    ">": lambda x, y: x > y,
-    ">=": lambda x, y: x >= y,
-    "<": lambda x, y: x < y,
-    "<=": lambda x, y: x <= y,
-    "in": lambda x, y: x.isin(y),
-    "not in": lambda x, y: ~x.isin(y),
-    "like": lambda x, y: x.like(y),
-    "not like": lambda x, y: ~x.like(y),
-    "ilike": lambda x, y: x.ilike(y),
-    "not ilike": lambda x, y: ~x.ilike(y),
-    "is null": lambda x, _: x.isnull(),
-    "is not null": lambda x, _: x.notnull(),
-    "AND": lambda x, y: x & y,
-    "OR": lambda x, y: x | y,
-}
 
 
 
