@@ -823,18 +823,25 @@ class SemanticModel:
                 raise KeyError(f"Missing required keys in filter: {missing}")
             # Validate via Ibis parse to catch invalid operators or field refs
             Filter(filter=f).to_ibis(self.table, self)
-        return QueryExpr(
-            model=self,
-            dimensions=tuple(dimensions_list),
-            measures=tuple(measures_list),
-            filters=tuple(
-                f if isinstance(f, Filter) else Filter(filter=f) for f in filters_list
-            ),
-            order_by=tuple(tuple(o) for o in order_list),
-            limit=limit,
-            time_range=time_range_tuple,
-            time_grain=time_grain,
-        )
+
+        # Build the QueryExpr using fluent interface
+        q = self.build_query()
+        if dimensions_list:
+            q = q.with_dimensions(*dimensions_list)
+        if measures_list:
+            q = q.with_measures(*measures_list)
+        if filters_list:
+            q = q.with_filters(*filters_list)
+        if order_list:
+            q = q.sorted(*order_list)
+        if limit is not None:
+            q = q.top(limit)
+        if time_grain:
+            q = q.grain(time_grain)
+        if time_range_tuple:
+            q = q.clone(time_range=time_range_tuple)
+
+        return q
 
     def get_time_range(self) -> Dict[str, Any]:
         """Get the available time range for the model's time dimension.
