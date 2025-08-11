@@ -11,7 +11,6 @@ from typing import (
     Tuple,
     Union,
     Literal,
-    ClassVar,
     Mapping,
     TYPE_CHECKING,
 )
@@ -31,6 +30,7 @@ except ImportError:
 
 # Import Join class from separate module
 from .joins import Join
+from .filters import Filter
 
 Expr = ibis_mod.expr.types.core.Expr
 _ = ibis_mod._
@@ -99,151 +99,6 @@ OPERATOR_MAPPING = {
 }
 
 
-@frozen(kw_only=True, slots=True)
-class Filter:
-    """
-    Unified filter class that handles all filter types and returns an unbound ibis expression.
-
-    Supports:
-    1. JSON filter objects (simple or compound)
-    2. String expressions (eval as unbound ibis expressions)
-    3. Callable functions that take a table and return a boolean expression
-
-    Examples:
-        # JSON simple filter
-        Filter(filter={"field": "country", "operator": "=", "value": "US"})
-
-        # JSON compound filter with table reference
-        Filter(filter={
-            "operator": "AND",
-            "conditions": [
-                {"field": "orders.country", "operator": "=", "value": "US"},
-                {"field": "customers.tier", "operator": "in", "values": ["gold", "platinum"]}
-            ]
-        })
-
-        # String expression
-        Filter(filter="_.dep_time.year() == 2024")
-
-        # Callable function
-        Filter(filter=lambda t: t.amount > 1000)
-    """
-
-    filter: Union[Dict, str, Callable[[Expr], Expr]]
-
-    OPERATORS: ClassVar[set] = set(OPERATOR_MAPPING.keys())
-    COMPOUND_OPERATORS: ClassVar[set] = {"AND", "OR"}
-
-    def __attrs_post_init__(self):
-        """Validate filter after initialization."""
-        if not isinstance(self.filter, (dict, str)) and not callable(self.filter):
-            raise ValueError("Filter must be a dict, string, or callable")
-
-    def _get_field_expr(
-        self, field: str, table: Optional[Expr], model: Optional["SemanticModel"] = None
-    ) -> Expr:
-        """Get field expression with proper error handling and join support."""
-        if "." in field:
-            table_name, field_name = field.split(".", 1)
-            if model is not None and table is not None:
-                if table_name not in model.joins:
-                    raise KeyError(f"Unknown join alias: {table_name}")
-                join = model.joins[table_name]
-                if field_name not in join.model.dimensions:
-                    raise KeyError(
-                        f"Unknown dimension '{field_name}' in joined model '{table_name}'"
-                    )
-                return join.model.dimensions[field_name](table)
-            else:
-                # Unbound expression for table.field reference
-                return getattr(getattr(_, table_name), field_name)
-        else:
-            if model is not None and table is not None:
-                if field not in model.dimensions:
-                    raise KeyError(f"Unknown dimension: {field}")
-                return model.dimensions[field](table)
-            else:
-                # Unbound expression for field reference
-                return getattr(_, field)
-
-    def _parse_json_filter(
-        self,
-        filter_obj: Dict,
-        table: Optional[Expr] = None,
-        model: Optional["SemanticModel"] = None,
-    ) -> Expr:
-        """Convert a JSON filter to an Ibis expression."""
-        # Handle compound filters (AND/OR)
-        if (
-            "operator" in filter_obj
-            and filter_obj["operator"] in self.COMPOUND_OPERATORS
-        ):
-            if "conditions" not in filter_obj or not filter_obj["conditions"]:
-                raise ValueError("Compound filter must have non-empty conditions list")
-
-            # Process first condition
-            if not filter_obj["conditions"]:
-                raise ValueError("Compound filter must have at least one condition")
-
-            result = self._parse_json_filter(filter_obj["conditions"][0], table, model)
-
-            # Then combine with remaining conditions
-            for condition in filter_obj["conditions"][1:]:
-                next_expr = self._parse_json_filter(condition, table, model)
-                result = OPERATOR_MAPPING[filter_obj["operator"]](result, next_expr)
-
-            return result
-
-        # Handle simple filters
-        required_keys = {"field", "operator"}
-        missing_keys = required_keys - set(filter_obj.keys())
-        if missing_keys:
-            raise KeyError(f"Missing required keys in filter: {missing_keys}")
-
-        # Get field expression
-        field = filter_obj["field"]
-        field_expr = self._get_field_expr(field, table, model)
-
-        # Apply operator
-        operator = filter_obj["operator"]
-        if operator not in self.OPERATORS:
-            raise ValueError(f"Unsupported operator: {operator}")
-
-        # For 'in' and 'not in' operators, use values list
-        if operator in ["in", "not in"]:
-            if "values" not in filter_obj:
-                raise ValueError(f"Operator '{operator}' requires 'values' field")
-            return OPERATOR_MAPPING[operator](field_expr, filter_obj["values"])
-
-        # For null checks, value is not needed
-        elif operator in ["is null", "is not null"]:
-            if any(k in filter_obj for k in ["value", "values"]):
-                raise ValueError(
-                    f"Operator '{operator}' should not have 'value' or 'values' fields"
-                )
-            return OPERATOR_MAPPING[operator](field_expr, None)
-
-        else:
-            if "value" not in filter_obj:
-                raise ValueError(f"Operator '{operator}' requires 'value' field")
-            return OPERATOR_MAPPING[operator](field_expr, filter_obj["value"])
-
-    def to_ibis(self, table: Expr, model: Optional["SemanticModel"] = None) -> Expr:
-        """
-        Convert the filter to an Ibis expression.
-
-        Args:
-            table: The Ibis table expression to filter
-            model: Optional SemanticModel for validating field references
-        """
-        if isinstance(self.filter, dict):
-            return self._parse_json_filter(self.filter, table, model)
-        elif isinstance(self.filter, str):
-            return eval(self.filter)
-        elif callable(self.filter):
-            return self.filter(table)
-        else:
-            raise ValueError("Filter must be a dict, string, or callable")
 
 
 def _compile_query(qe) -> Expr:
