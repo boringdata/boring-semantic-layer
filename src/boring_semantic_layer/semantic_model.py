@@ -29,6 +29,9 @@ except ImportError:
 
     IS_XORQ_USED = False
 
+# Import Join class from separate module
+from .joins import Join
+
 Expr = ibis_mod.expr.types.core.Expr
 _ = ibis_mod._
 
@@ -94,116 +97,6 @@ OPERATOR_MAPPING = {
     "AND": lambda x, y: x & y,
     "OR": lambda x, y: x | y,
 }
-
-
-@frozen(kw_only=True, slots=True)
-class Join:
-    """Definition of a join relationship in the semantic model."""
-
-    alias: str
-    model: "SemanticModel"
-    on: Callable[[Expr, Expr], Expr]
-    how: How = "inner"
-    kind: Cardinality = "one"
-
-    @classmethod
-    def one(
-        cls,
-        alias: str,
-        model: "SemanticModel",
-        with_: Optional[Callable[[Expr], Expr]] = None,
-    ) -> "Join":
-        """
-        Create a one-to-one join relationship for a semantic model.
-
-        Args:
-            alias: Alias for the join.
-            model: The joined SemanticModel.
-            with_: Callable mapping the left table to a column expression (foreign key).
-        Returns:
-            Join: The Join object representing the relationship.
-        Raises:
-            ValueError: If 'with_' is not provided or model has no primary key.
-            TypeError: If 'with_' is not callable.
-        """
-        if with_ is None:
-            raise ValueError(
-                "Join.one requires a 'with_' callable for foreign key mapping"
-            )
-        if not callable(with_):
-            raise TypeError(
-                "'with_' must be a callable mapping the left table to a column expression"
-            )
-        if not model.primary_key:
-            raise ValueError(
-                f"Model does not have 'primary_key' defined for join: {alias}"
-            )
-
-        def on_expr(left, right):
-            return with_(left) == getattr(right, model.primary_key)
-
-        return cls(alias=alias, model=model, on=on_expr, how="inner", kind="one")
-
-    @classmethod
-    def many(
-        cls,
-        alias: str,
-        model: "SemanticModel",
-        with_: Optional[Callable[[Expr], Expr]] = None,
-    ) -> "Join":
-        """
-        Create a one-to-many join relationship for a semantic model.
-
-        Args:
-            alias: Alias for the join.
-            model: The joined SemanticModel.
-            with_: Callable mapping the left table to a column expression (foreign key).
-        Returns:
-            Join: The Join object representing the relationship.
-        Raises:
-            ValueError: If 'with_' is not provided or model has no primary key.
-            TypeError: If 'with_' is not callable.
-        """
-        if with_ is None:
-            raise ValueError(
-                "Join.many requires a 'with_' callable for foreign key mapping"
-            )
-        if not callable(with_):
-            raise TypeError(
-                "'with_' must be a callable mapping the left table to a column expression"
-            )
-        if not model.primary_key:
-            raise ValueError(
-                f"Model does not have 'primary_key' defined for join: {alias}"
-            )
-
-        def on_expr(left, right):
-            return with_(left) == getattr(right, model.primary_key)
-
-        return cls(alias=alias, model=model, on=on_expr, how="left", kind="many")
-
-    @classmethod
-    def cross(
-        cls,
-        alias: str,
-        model: "SemanticModel",
-    ) -> "Join":
-        """
-        Create a cross join relationship for a semantic model.
-
-        Args:
-            alias: Alias for the join.
-            model: The joined SemanticModel.
-        Returns:
-            Join: The Join object representing the cross join relationship.
-        """
-        return cls(
-            alias=alias,
-            model=model,
-            on=lambda left, right: None,
-            how="cross",
-            kind="cross",
-        )
 
 
 @frozen(kw_only=True, slots=True)
@@ -1518,7 +1411,7 @@ try:
                     Optional[Union[Dict, List[Dict]]],
                     """
                     List of JSON filter objects with the following structure:
-                       
+
                     Simple Filter:
                     {
                         "field": "dimension_name",  # Must be an existing dimension (check model schema first!).
@@ -1527,7 +1420,7 @@ try:
                         # OR for 'in'/'not in' operators only:
                         "values": ["val1", "val2"]  # REQUIRED for 'in' and 'not in' operators
                     }
-                    
+
                     IMPORTANT OPERATOR GUIDELINES:
                     - Equality: Use "=" (preferred), "eq", or "equals" - all work identically
                     - Text matching: Use "ilike" (case-insensitive) instead of "like" for better results
@@ -1535,26 +1428,26 @@ try:
                     - Negated list: "not in" requires "values" field (array), NOT "value"
                     - Pattern matching: "ilike" and "not ilike" support wildcards (%, _)
                     - Null checks: "is null" and "is not null" need no value/values field
-                    
+
                     Available operators:
                     - "=" / "eq" / "equals": exact match (use "value")
-                    - "!=": not equal (use "value") 
+                    - "!=": not equal (use "value")
                     - ">", ">=", "<", "<=": comparisons (use "value")
                     - "in": value is in list (use "values" array)
                     - "not in": value not in list (use "values" array)
                     - "ilike": case-insensitive pattern match (use "value" with % wildcards)
-                    - "not ilike": negated case-insensitive pattern (use "value" with % wildcards)  
+                    - "not ilike": negated case-insensitive pattern (use "value" with % wildcards)
                     - "like": case-sensitive pattern match (use "value" with % wildcards)
                     - "not like": negated case-sensitive pattern (use "value" with % wildcards)
                     - "is null": field is null (no value/values needed)
                     - "is not null": field is not null (no value/values needed)
-                    
+
                     COMMON MISTAKES TO AVOID:
                     1. Don't use "value" with "in"/"not in" - use "values" array instead
                     2. Don't filter on measures - only filter on dimensions
                     3. Don't use .month(), .year() etc. - use time_grain parameter instead
                     4. For case-insensitive text search, prefer "ilike" over "like"
-                       
+
                     Compound Filter (AND/OR):
                     {
                         "operator": "AND",          # or "OR"
@@ -1576,7 +1469,7 @@ try:
                             }
                         ]
                     }
-                       
+
                     Example filters:
                     [
                         {"field": "status", "operator": "in", "values": ["active", "pending"]},
@@ -1612,7 +1505,7 @@ try:
                             "start": "2024-01-01T00:00:00Z",  # ISO 8601 format
                             "end": "2024-12-31T23:59:59Z"     # ISO 8601 format
                         }
-                        
+
                         Using time_range is preferred over using filters for time-based filtering because:
                         1. It automatically applies to the model's primary time dimension
                         2. It ensures proper time zone handling with ISO 8601 format
@@ -1634,16 +1527,16 @@ try:
                         ]
                     ],
                     """Time grain for aggregating time-based dimensions.
-                    
+
                     IMPORTANT: Instead of trying to use .month(), .year(), .quarter() etc. in filters,
-                    use this time_grain parameter to aggregate by time periods. The system will 
+                    use this time_grain parameter to aggregate by time periods. The system will
                     automatically handle time dimension transformations.
-                    
+
                     Examples:
-                    - For monthly data: time_grain="TIME_GRAIN_MONTH" 
+                    - For monthly data: time_grain="TIME_GRAIN_MONTH"
                     - For yearly data: time_grain="TIME_GRAIN_YEAR"
                     - For daily data: time_grain="TIME_GRAIN_DAY"
-                    
+
                     Then filter using the time_range parameter or regular date filters like:
                     {"field": "date_column", "operator": ">=", "value": "2024-01-01"}
                     """,
@@ -1656,17 +1549,17 @@ try:
                     - Dict: Returns {"records": [...], "chart": {...}} with custom Vega-Lite specification
                       Can be partial (e.g., just {"mark": "line"} or {"encoding": {"y": {"scale": {"zero": False}}}}).
                       BSL intelligently merges partial specs with auto-detected defaults.
-                    
+
                     Common chart specifications:
                     - {"mark": "bar"} - Bar chart
-                    - {"mark": "line"} - Line chart  
+                    - {"mark": "line"} - Line chart
                     - {"mark": "point"} - Scatter plot
                     - {"mark": "rect"} - Heatmap
                     - {"title": "My Chart"} - Add title
                     - {"width": 600, "height": 400} - Set size
                     - {"encoding": {"color": {"field": "category"}}} - Color by field
                     - {"encoding": {"y": {"scale": {"zero": False}}}} - Don't start Y-axis at zero
-                    
+
                     BSL auto-detection logic:
                     - Time series (time dimension + measure) → Line chart
                     - Categorical (1 dimension + 1 measure) → Bar chart
@@ -1814,3 +1707,5 @@ try:
 except ImportError:
     # MCP not available, this is fine
     pass
+
+# Override Join with external implementation from joins.py (imported at top)
