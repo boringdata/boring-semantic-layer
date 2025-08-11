@@ -350,6 +350,51 @@ class SemanticModel:
             QueryExpr: A new QueryExpr instance for building queries.
         """
         return QueryExpr(model=self)
+    
+    # Fluent builder methods for immutably extending the model
+    def with_dimension(self, name: str, fn: Dimension) -> "SemanticModel":
+        """
+        Return a new SemanticModel with an added dimension.
+        """
+        dims = dict(self.dimensions)
+        dims[name] = fn
+        return evolve(self, dimensions=dims)
+
+    def with_measure(self, name: str, fn: Measure) -> "SemanticModel":
+        """
+        Return a new SemanticModel with an added measure.
+        """
+        meas = dict(self.measures)
+        meas[name] = fn
+        return evolve(self, measures=meas)
+
+    def with_join(self, join: Join) -> "SemanticModel":
+        """
+        Return a new SemanticModel with an added join.
+        """
+        js = dict(self.joins)
+        js[join.alias] = join
+        return evolve(self, joins=js)
+
+    def with_primary_key(self, pk: str) -> "SemanticModel":
+        """
+        Return a new SemanticModel with a primary key set.
+        """
+        return evolve(self, primary_key=pk)
+
+    def with_time_dimension(
+        self, col: str, smallest_time_grain: Optional[TimeGrain] = None
+    ) -> "SemanticModel":
+        """
+        Return a new SemanticModel with time dimension and optional smallest grain.
+        """
+        if smallest_time_grain is None:
+            return evolve(self, time_dimension=col)
+        return evolve(
+            self,
+            time_dimension=col,
+            smallest_time_grain=smallest_time_grain,
+        )
 
     def _validate_time_grain(self, time_grain: Optional[TimeGrain]) -> None:
         """Validate that the requested time grain is not finer than the smallest allowed grain."""
