@@ -31,16 +31,23 @@ class MCPSemanticModel(FastMCP):
     def _register_tools(self):
         @self.tool()
         def list_models() -> List[str]:
+            """List all available semantic model names."""
             return list(self.models.keys())
 
         @self.tool()
         def get_model(model_name: str) -> Dict[str, Any]:
+            """Get details about a specific semantic model including available dimensions and measures."""
             if model_name not in self.models:
                 raise ValueError(f"Model {model_name} not found")
             return self.models[model_name].json_definition
 
         @self.tool()
         def get_time_range(model_name: str) -> Dict[str, Any]:
+            """Get the available time range for a model's time dimension.
+
+            Returns:
+                A dictionary with 'start' and 'end' dates in ISO format, or an error if the model has no time dimension
+            """
             if model_name not in self.models:
                 raise ValueError(f"Model {model_name} not found")
             return self.models[model_name].get_time_range()
@@ -69,6 +76,26 @@ class MCPSemanticModel(FastMCP):
             chart_spec: Union[bool, Dict[str, Any], None] = None,
             chart_format: Literal["altair", "interactive", "json", "png", "svg"] = "json",
         ) -> Dict[str, Any]:
+            """Query a semantic model with JSON-based filtering and optional visualization.
+
+            Args:
+                model_name: The name of the model to query.
+                dimensions: The dimensions to group by.
+                measures: The measures to aggregate.
+                filters: List of JSON filter objects (see model docs).
+                order_by: The order by clause to apply (list of tuples: [('field', 'asc'|'desc')]).
+                limit: Maximum number of records to return.
+                time_range: Optional dict with 'start' and 'end' for time filtering.
+                time_grain: Optional time grain to use for time-dimensional aggregation.
+                chart_spec: True for auto-chart, False/None for no chart, or dict for custom spec.
+                chart_format: Output format for chart when chart_spec is provided.
+
+            Returns:
+                A dict containing 'records' and optionally 'chart'.
+
+            Raises:
+                ValueError: If model not found, time_grain finer than allowed, or invalid order_by.
+            """
             # Validate model existence
             if model_name not in self.models:
                 raise ValueError(f"Model {model_name} not found")
