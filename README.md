@@ -226,8 +226,20 @@ flights_sm.query(
 
 BSL supports the following operators: `=`, `!=`, `>`, `>=`, `in`, `not in`, `like`, `not like`, `is null`, `is not null`, `AND`, `OR`
 
-**Note on filtering measures:** filters only work with dimensions. 
+**Filtering on Measures:** You can now filter on both dimensions and measures. All filters are applied to the input table before aggregation.
+
+```python
+# Example: Filter by both dimension and measure
+flights_sm.query(
+    dimensions=['origin'],
+    measures=['total_flights', 'avg_distance'],
+    filters=[
+        {'field': 'origin', 'operator': 'in', 'values': ['JFK', 'LGA']},  # Dimension filter
+        {'field': 'total_flights', 'operator': '>', 'value': 1000}        # Measure filter
+    ]
+)
 ```
+
 
 ### Time-Based Dimensions and Queries
 
@@ -749,15 +761,18 @@ with open("my_chart.png", "wb") as f:
 
 **Supported operators:** `=`, `!=`, `>`, `>=`, `<`, `<=`, `in`, `not in`, `like`, `not like`, `is null`, `is not null`, `AND`, `OR`
 
+**Filter Fields:** You can filter on both dimensions and measures. All filters are applied to the input table before aggregation.
+
 #### Example
 
 ```python
 flights_sm.query(
     dimensions=['origin', 'year'],
-    measures=['total_flights'],
+    measures=['total_flights', 'avg_distance'],
     filters=[
-        {"field": "origin", "operator": "in", "values": ["JFK", "LGA"]},
-        {"field": "year", "operator": ">", "value": 2010}
+        {"field": "origin", "operator": "in", "values": ["JFK", "LGA"]},    # Dimension filter
+        {"field": "year", "operator": ">", "value": 2010},                  # Dimension filter
+        {"field": "total_flights", "operator": ">", "value": 100}           # Measure filter
     ],
     order_by=[('total_flights', 'desc')],
     limit=10,
@@ -768,10 +783,10 @@ flights_sm.query(
 
 Example output:
 
-| origin | year | total_flights |
-|--------|------|---------------|
-| JFK    | 2015 | 350           |
-| LGA    | 2015 | 300           |
+| origin | year | total_flights | avg_distance |
+|--------|------|---------------|--------------|
+| JFK    | 2015 | 350           | 1047.71      |
+| LGA    | 2015 | 300           | 892.45       |
 
 ### Chart API Reference
 
