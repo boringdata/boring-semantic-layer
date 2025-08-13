@@ -1,8 +1,9 @@
 """
 Auto-detect Vega-Lite chart specifications based on query dimensions and measures.
 """
+
 from typing import Any, Dict, List, Optional
-from .time_grain import TIME_GRAIN_TRANSFORMATIONS
+
 
 def _detect_chart_spec(
     dimensions: List[str],

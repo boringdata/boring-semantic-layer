@@ -1,9 +1,11 @@
 """
 YAML loader for Boring Semantic Layer models.
 """
-from typing import Any, Dict, Optional, List
+
+from typing import Any, Dict, Optional
 import yaml
 from attrs import evolve
+
 try:
     import xorq.vendor.ibis as ibis_mod
 except ImportError:
@@ -12,13 +14,15 @@ except ImportError:
 from .joins import Join
 from .semantic_model import SemanticModel
 
+
 def _parse_expressions(expressions: Dict[str, str]) -> Dict[str, Any]:
     """Parse dimension or measure expressions from strings."""
     result: Dict[str, Any] = {}
     for name, expr_str in expressions.items():
         deferred = eval(expr_str, {"_": ibis_mod._, "__builtins__": {}})
-        result[name] = (lambda t, d=deferred: d.resolve(t))
+        result[name] = lambda t, d=deferred: d.resolve(t)
     return result
+
 
 def _parse_joins(
     joins_config: Dict[str, Dict[str, Any]],
@@ -77,6 +81,7 @@ def _parse_joins(
                 f"Invalid join type '{join_type}'. Must be 'one', 'many', or 'cross'"
             )
     return joins
+
 
 def from_yaml(
     cls,
@@ -141,8 +146,6 @@ def from_yaml(
 
         if "joins" in config and config["joins"]:
             extended_tables = {**tables, **models}
-            joins = _parse_joins(
-                config["joins"], extended_tables, yaml_configs, name
-            )
+            joins = _parse_joins(config["joins"], extended_tables, yaml_configs, name)
             models[name] = evolve(models[name], joins=joins)
     return models

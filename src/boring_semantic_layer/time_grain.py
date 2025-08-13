@@ -1,11 +1,9 @@
 """
 Time grain definitions and transformations for Boring Semantic Layer.
 """
+
 from typing import Literal, Dict, Callable
-try:
-    import xorq.vendor.ibis as ibis_mod
-except ImportError:
-    import ibis as ibis_mod
+
 
 # Time grain type alias
 TimeGrain = Literal[

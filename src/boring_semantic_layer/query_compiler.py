@@ -1,21 +1,23 @@
 """
 Compile QueryExpr instances into Ibis expressions.
 """
-import datetime
-from typing import Any, Dict, List, Optional, Tuple
+
+from typing import Any, Dict
+
+from .filters import Filter
+
 try:
     import xorq.vendor.ibis as ibis_mod
+
     IS_XORQ_USED = True
 except ImportError:
     import ibis as ibis_mod
+
     IS_XORQ_USED = False
 
 Expr = ibis_mod.expr.types.core.Expr
 _ = ibis_mod._
 
-from .joins import Join
-from .filters import Filter
-from .time_grain import TIME_GRAIN_TRANSFORMATIONS, TIME_GRAIN_ORDER
 
 def _compile_query(qe: Any) -> Expr:
     """Compile a QueryExpr into an Ibis expression."""

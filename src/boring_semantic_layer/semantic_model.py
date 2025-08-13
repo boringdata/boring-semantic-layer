@@ -28,15 +28,15 @@ except ImportError:
 
     IS_XORQ_USED = False
 
-# Import Join class from separate module
+# Import from separate modules
 from .joins import Join
 from .filters import Filter
+from .time_grain import TimeGrain, TIME_GRAIN_TRANSFORMATIONS, TIME_GRAIN_ORDER
+from .query_compiler import _compile_query
+from .chart import _detect_chart_spec
 
 Expr = ibis_mod.expr.types.core.Expr
 _ = ibis_mod._
-from .filters import OPERATOR_MAPPING
-
-from .time_grain import TimeGrain, TIME_GRAIN_TRANSFORMATIONS, TIME_GRAIN_ORDER
 
 # Join strategies
 How = Literal["inner", "left", "cross"]
@@ -44,14 +44,6 @@ Cardinality = Literal["one", "many", "cross"]
 
 Dimension = Callable[[Expr], Expr]
 Measure = Callable[[Expr], Expr]
-
-
-
-
-from .query_compiler import _compile_query
-
-
-from .chart import _detect_chart_spec
 
 
 @frozen(kw_only=True, slots=True)
@@ -350,7 +342,7 @@ class SemanticModel:
             QueryExpr: A new QueryExpr instance for building queries.
         """
         return QueryExpr(model=self)
-    
+
     # Fluent builder methods for immutably extending the model
     def with_dimension(self, name: str, fn: Dimension) -> "SemanticModel":
         """
@@ -576,6 +568,7 @@ class SemanticModel:
     ) -> Dict[str, "SemanticModel"]:
         """Load semantic models from a YAML file."""
         from .yaml_loader import from_yaml as _from_yaml
+
         return _from_yaml(cls, yaml_path, tables)
 
     @property
@@ -726,13 +719,3 @@ class SemanticModel:
             time_dimension=self.time_dimension,
             smallest_time_grain=time_grain,
         )
-
-
-# MCP functionality moved to separate module
-try:
-    from .mcp import MCPSemanticModel
-except ImportError:
-    # MCP functionality requires extra dependencies
-    pass
-
-# Override Join with external implementation from joins.py (imported at top)

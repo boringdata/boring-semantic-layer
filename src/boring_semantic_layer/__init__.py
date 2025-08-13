@@ -9,5 +9,6 @@ __all__ = [
 ]
 
 # Import MCP functionality from separate module
-from .mcp import MCPSemanticModel
+from .mcp import MCPSemanticModel  # noqa: F401
+
 __all__.append("MCPSemanticModel")
