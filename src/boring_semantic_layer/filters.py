@@ -1,6 +1,7 @@
 """
 Filter module for Boring Semantic Layer.
 """
+
 from attrs import frozen
 from typing import (
     Any,
@@ -45,6 +46,7 @@ OPERATOR_MAPPING: Dict[str, Callable[[Expr, Any], Expr]] = {
 if TYPE_CHECKING:
     from .semantic_model import SemanticModel
 
+
 @frozen(kw_only=True, slots=True)
 class Filter:
     """
@@ -74,6 +76,7 @@ class Filter:
         # Callable function
         Filter(filter=lambda t: t.amount > 1000)
     """
+
     filter: Union[Dict[str, Any], str, Callable[[Expr], Expr]]
 
     OPERATORS: ClassVar[set] = set(OPERATOR_MAPPING.keys())
@@ -92,18 +95,36 @@ class Filter:
                 if table_name not in model.joins:
                     raise KeyError(f"Unknown join alias: {table_name}")
                 join = model.joins[table_name]
-                if field_name not in join.model.dimensions:
-                    raise KeyError(
-                        f"Unknown dimension '{field_name}' in joined model '{table_name}'"
-                    )
-                return join.model.dimensions[field_name](table)
+                # Check measures first, then dimensions, then raw columns
+                if field_name in join.model.measures:
+                    return join.model.measures[field_name](table)
+                elif field_name in join.model.dimensions:
+                    return join.model.dimensions[field_name](table)
+                elif hasattr(join.model.table, "schema") and hasattr(
+                    join.model.table.schema(), "names"
+                ):
+                    # Check if it's a raw column in the joined table
+                    if field_name in join.model.table.schema().names:
+                        return table[field_name]  # Use the joined table reference
+
+                raise KeyError(
+                    f"Unknown field '{field_name}' in joined model '{table_name}'"
+                )
             # Unbound expression for table.field reference
             return getattr(getattr(_, table_name), field_name)
         # Simple field reference
         if model is not None and table is not None:
-            if field not in model.dimensions:
-                raise KeyError(f"Unknown dimension: {field}")
-            return model.dimensions[field](table)
+            # Check measures first, then dimensions, then raw table columns
+            if field in model.measures:
+                return model.measures[field](table)
+            elif field in model.dimensions:
+                return model.dimensions[field](table)
+            elif hasattr(table, "schema") and hasattr(table.schema(), "names"):
+                # Check if it's a raw column in the table
+                if field in table.schema().names:
+                    return table[field]
+
+            raise KeyError(f"Unknown field: {field}")
         # Unbound expression for field reference
         return getattr(_, field)
 
@@ -127,7 +148,9 @@ class Filter:
         field = filter_obj.get("field")
         op = filter_obj.get("operator")
         if field is None or op is None:
-            raise KeyError("Missing required keys in filter: 'field' and 'operator' are required")
+            raise KeyError(
+                "Missing required keys in filter: 'field' and 'operator' are required"
+            )
         field_expr = self._get_field_expr(field, table, model)
         if op not in self.OPERATORS:
             raise ValueError(f"Unsupported operator: {op}")
@@ -140,7 +163,9 @@ class Filter:
         # Null checks
         if op in ("is null", "is not null"):
             if any(k in filter_obj for k in ("value", "values")):
-                raise ValueError(f"Operator '{op}' should not have 'value' or 'values' fields")
+                raise ValueError(
+                    f"Operator '{op}' should not have 'value' or 'values' fields"
+                )
             return OPERATOR_MAPPING[op](field_expr, None)
         # Single value operators
         value = filter_obj.get("value")

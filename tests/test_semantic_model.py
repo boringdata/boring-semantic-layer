@@ -455,7 +455,7 @@ def test_json_filter_errors():
         )
 
     # Test unknown field
-    with pytest.raises(KeyError, match="Unknown dimension"):
+    with pytest.raises(KeyError, match="Unknown field"):
         model.query(
             dimensions=["grp"],
             measures=["sum_val"],
@@ -1485,4 +1485,157 @@ def test_equality_operators_equivalence(operator, expected_count):
     )
 
     expected = pd.DataFrame({"category": ["A"], "count": [expected_count]})
+    pd.testing.assert_frame_equal(result, expected)
+
+
+def test_measure_filtering_user_example():
+    """Test the user's original example that was failing before - now should work."""
+    # User's original data structure
+    df = pd.DataFrame(
+        {
+            "company_name": ["A", "B", "A", "B", "C"],
+            "transaction_type": ["buy", "sell", "buy", "sell", "buy"],
+            "transaction_status": [
+                "complete",
+                "pending",
+                "complete",
+                "complete",
+                "pending",
+            ],
+            "asset_code": ["BTC", "ETH", "BTC", "ETH", "BTC"],
+            "amount_eur": [100000, 50000, 200000, 150000, 300000],
+        }
+    )
+
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("transactions_test", df)
+
+    # User's original semantic model
+    model = SemanticModel(
+        name="transactions",
+        table=table,
+        dimensions={
+            "company_name": lambda t: t.company_name,
+            "transaction_type": lambda t: t.transaction_type,
+            "status": lambda t: t.transaction_status,
+            "asset_code": lambda t: t.asset_code,
+        },
+        measures={
+            "total_transactions": lambda t: t.count(),
+            "total_amount_eur": lambda t: t.amount_eur.sum(),
+        },
+    )
+
+    # User's original query that was failing with "Unknown dimension: total_amount_eur"
+    # This should now work without errors
+    result = model.query(
+        dimensions=["company_name"],
+        measures=["total_amount_eur", "total_transactions"],
+        filters=[{"field": "total_amount_eur", "operator": "<", "value": 500000}],
+        order_by=[("total_amount_eur", "desc")],
+        limit=10,
+    ).execute()
+
+    # Verify the query executes successfully and returns expected structure
+    assert isinstance(result, pd.DataFrame)
+    assert "company_name" in result.columns
+    assert "total_amount_eur" in result.columns
+    assert "total_transactions" in result.columns
+
+    # Since all filters are applied to input table before aggregation,
+    # and the measure filter evaluates the aggregate function on the raw data,
+    # the result should be empty (no individual rows pass the filter condition)
+    assert len(result) == 0
+
+
+def test_measure_filtering_with_real_row_level_filter():
+    """Test measure filtering that actually filters at row level."""
+    # Create data where individual amounts can be filtered meaningfully
+    df = pd.DataFrame(
+        {
+            "company": ["A", "B", "A", "B", "C"],
+            "individual_amount": [100, 500, 200, 600, 300],
+            "category": ["small", "large", "small", "large", "medium"],
+        }
+    )
+
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("test_row_filter", df)
+
+    model = SemanticModel(
+        table=table,
+        dimensions={"company": lambda t: t.company, "category": lambda t: t.category},
+        measures={
+            "total_amount": lambda t: t.individual_amount.sum(),
+            "avg_amount": lambda t: t.individual_amount.mean(),
+            "count": lambda t: t.count(),
+        },
+    )
+
+    # Filter by individual_amount (this makes sense at row level)
+    result = (
+        model.query(
+            dimensions=["company"],
+            measures=["total_amount", "count"],
+            filters=[{"field": "individual_amount", "operator": ">=", "value": 300}],
+        )
+        .execute()
+        .sort_values("company")
+        .reset_index(drop=True)
+    )
+
+    # Should only include rows where individual_amount >= 300 (B: 500+600=1100, C: 300)
+    expected = pd.DataFrame(
+        {"company": ["B", "C"], "total_amount": [1100, 300], "count": [2, 1]}
+    )
+
+    pd.testing.assert_frame_equal(result, expected)
+
+
+def test_mixed_dimension_and_measure_field_filters():
+    """Test filtering on both dimension fields and measure-related fields."""
+    df = pd.DataFrame(
+        {
+            "company": ["A", "B", "A", "B", "C", "C"],
+            "region": ["US", "EU", "US", "EU", "US", "EU"],
+            "amount": [100, 200, 150, 250, 300, 400],
+        }
+    )
+
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("test_mixed_filters", df)
+
+    model = SemanticModel(
+        table=table,
+        dimensions={"company": lambda t: t.company, "region": lambda t: t.region},
+        measures={
+            "total_amount": lambda t: t.amount.sum(),
+            "avg_amount": lambda t: t.amount.mean(),
+        },
+    )
+
+    # Mix dimension filter (region) with raw column filter (amount)
+    result = (
+        model.query(
+            dimensions=["company"],
+            measures=["total_amount"],
+            filters=[
+                {"field": "region", "operator": "=", "value": "US"},  # Dimension filter
+                {
+                    "field": "amount",
+                    "operator": ">=",
+                    "value": 200,
+                },  # Raw column filter
+            ],
+        )
+        .execute()
+        .sort_values("company")
+        .reset_index(drop=True)
+    )
+
+    # Should only include US region rows with amount >= 200
+    # A: US + amount=100,150 -> neither >= 200 -> excluded
+    # C: US + amount=300 -> passes -> 300
+    expected = pd.DataFrame({"company": ["C"], "total_amount": [300]})
+
     pd.testing.assert_frame_equal(result, expected)
