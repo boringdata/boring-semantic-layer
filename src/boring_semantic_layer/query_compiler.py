@@ -53,8 +53,18 @@ def _compile_query(qe: Any) -> Expr:
         }
         t = t.filter(Filter(filter=time_filter).to_ibis(t, model))
 
-    # Apply other filters
+    # Separate filters using the Filter class's own analysis
+    pre_aggregation_filters = []
+    post_aggregation_filters = []
+
     for flt in qe.filters:
+        if flt.requires_post_aggregation(t, model):
+            post_aggregation_filters.append(flt)
+        else:
+            pre_aggregation_filters.append(flt)
+
+    # Apply pre-aggregation filters (dimensions and raw columns)
+    for flt in pre_aggregation_filters:
         t = t.filter(flt.to_ibis(t, model))
 
     # Prepare dimensions and measures lists
@@ -115,6 +125,10 @@ def _compile_query(qe: Any) -> Expr:
         result = t.aggregate(by=dim_exprs, **agg_kwargs)
     else:
         result = t.aggregate(**agg_kwargs)
+
+    # Apply post-aggregation filters (measures - HAVING clause equivalent)
+    for flt in post_aggregation_filters:
+        result = result.filter(flt.to_ibis(result, model))
 
     # Apply ordering
     if qe.order_by:

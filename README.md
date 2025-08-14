@@ -5,6 +5,7 @@ The Boring Semantic Layer (BSL) is a lightweight semantic layer based on [Ibis](
 **Key Features:**
 - **Lightweight**: `pip install boring-semantic-layer`
 - **Ibis-powered**: Built on top of [Ibis](https://ibis-project.org/), supporting any database engine that Ibis integrates with (DuckDB, Snowflake, BigQuery, PostgreSQL, and more)
+- **Smart Filtering**: Automatically applies filters at the right time - dimensions/columns before aggregation, measures after aggregation
 - **MCP-friendly**: Perfect for connecting Large Language Models to structured data sources
 
 
@@ -21,7 +22,7 @@ import ibis
 
 flights_tbl = ibis.table(
     name="flights",
-    schema={"origin": "string", "carrier": "string"}
+    schema={"origin": "string", "carrier": "string", "distance": "int64"}
 )
 ```
 
@@ -33,26 +34,32 @@ from boring_semantic_layer import SemanticModel
 flights_sm = SemanticModel(
     table=flights_tbl,
     dimensions={"origin": lambda t: t.origin},
-    measures={"flight_count": lambda t: t.count()}
+    measures={"flight_count": lambda t: t.count(), "avg_distance": lambda t: t.distance.mean()}
 )
 ```
 
-**3. Query it**
+**3. Query with smart filtering**
 
 ```python
+# Filter by raw column (pre-aggregation) and measure (post-aggregation)
 flights_sm.query(
     dimensions=["origin"],
-    measures=["flight_count"]
+    measures=["flight_count", "avg_distance"],
+    filters=[
+        {"field": "distance", "operator": ">", "value": 1000},      # Raw column filter
+        {"field": "flight_count", "operator": ">", "value": 100}   # Measure filter
+    ]
 ).execute()
 ```
 
 **Example output (dataframe):**
 
-| origin | flight_count |
-|--------|--------------|
-| JFK    | 3689         |
-| LGA    | 2941         |
-| ...    | ...          |
+| origin | flight_count | avg_distance |
+|--------|--------------|--------------|
+| JFK    | 1247         | 1456.2       |
+| LAX    | 892          | 1789.5       |
+
+*Only origins with long-distance flights (>1000 miles) AND high traffic (>100 flights)*
 
 
 -----
@@ -226,19 +233,27 @@ flights_sm.query(
 
 BSL supports the following operators: `=`, `!=`, `>`, `>=`, `in`, `not in`, `like`, `not like`, `is null`, `is not null`, `AND`, `OR`
 
-**Filtering on Measures:** You can now filter on both dimensions and measures. All filters are applied to the input table before aggregation.
+**Smart Filtering:** BSL intelligently applies filters at the optimal time for accurate results:
+
+- **Dimension & Raw Column Filters** → Applied before aggregation (WHERE clause)
+- **Measure Filters** → Applied after aggregation (HAVING clause equivalent)
 
 ```python
-# Example: Filter by both dimension and measure
-flights_sm.query(
-    dimensions=['origin'],
-    measures=['total_flights', 'avg_distance'],
+# Example: Realistic business filtering
+transactions_sm.query(
+    dimensions=['company_name'],
+    measures=['total_amount_eur', 'transaction_count'],
     filters=[
-        {'field': 'origin', 'operator': 'in', 'values': ['JFK', 'LGA']},  # Dimension filter
-        {'field': 'total_flights', 'operator': '>', 'value': 1000}        # Measure filter
+        {'field': 'transaction_type', 'operator': '=', 'value': 'purchase'},    # Raw column (pre-aggregation)
+        {'field': 'total_amount_eur', 'operator': '>', 'value': 100000}        # Measure (post-aggregation)
     ]
 )
 ```
+
+This query:
+1. **First** filters raw data to only purchase transactions  
+2. **Then** aggregates by company to calculate `total_amount_eur`
+3. **Finally** keeps only companies with total purchases > €100,000
 
 
 ### Time-Based Dimensions and Queries
@@ -761,32 +776,42 @@ with open("my_chart.png", "wb") as f:
 
 **Supported operators:** `=`, `!=`, `>`, `>=`, `<`, `<=`, `in`, `not in`, `like`, `not like`, `is null`, `is not null`, `AND`, `OR`
 
-**Filter Fields:** You can filter on both dimensions and measures. All filters are applied to the input table before aggregation.
+**Smart Filter Types:** BSL automatically determines the correct timing for each filter:
+
+- **Dimension & raw column filters** → Pre-aggregation (WHERE clause)
+- **Measure filters** → Post-aggregation (HAVING clause equivalent)
+
+This ensures accurate results for complex business queries.
 
 #### Example
 
 ```python
-flights_sm.query(
-    dimensions=['origin', 'year'],
-    measures=['total_flights', 'avg_distance'],
+# Complex business query with mixed filter types
+sales_sm.query(
+    dimensions=['region', 'product_category'],
+    measures=['total_revenue', 'order_count'],
     filters=[
-        {"field": "origin", "operator": "in", "values": ["JFK", "LGA"]},    # Dimension filter
-        {"field": "year", "operator": ">", "value": 2010},                  # Dimension filter
-        {"field": "total_flights", "operator": ">", "value": 100}           # Measure filter
+        {"field": "region", "operator": "in", "values": ["North", "South"]},     # Dimension (pre-aggregation)
+        {"field": "order_date", "operator": ">=", "value": "2024-01-01"},       # Raw column (pre-aggregation)
+        {"field": "order_amount", "operator": ">", "value": 50},                # Raw column (pre-aggregation)
+        {"field": "total_revenue", "operator": ">", "value": 10000}             # Measure (post-aggregation)
     ],
-    order_by=[('total_flights', 'desc')],
-    limit=10,
-    time_range={'start': '2015-01-01', 'end': '2015-12-31'},
-    time_grain='TIME_GRAIN_MONTH'
+    order_by=[('total_revenue', 'desc')],
+    limit=10
 )
 ```
 
+**Query execution:**
+1. Filter raw data: North/South regions, orders since 2024, amounts > $50
+2. Aggregate by region/category: calculate total_revenue, order_count  
+3. Filter results: keep only combinations with revenue > $10,000
+
 Example output:
 
-| origin | year | total_flights | avg_distance |
-|--------|------|---------------|--------------|
-| JFK    | 2015 | 350           | 1047.71      |
-| LGA    | 2015 | 300           | 892.45       |
+| region | product_category | total_revenue | order_count |
+|--------|-----------------|---------------|-------------|
+| North  | Electronics     | 25,450        | 142         |
+| South  | Home & Garden   | 18,200        | 89          |
 
 ### Chart API Reference
 
