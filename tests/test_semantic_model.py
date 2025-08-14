@@ -1489,7 +1489,7 @@ def test_equality_operators_equivalence(operator, expected_count):
 
 
 def test_measure_filtering_user_example():
-    """Test the user's original example that was failing before - now should work."""
+    """Test the user's original example with proper measure filtering that excludes some companies."""
     # User's original data structure
     df = pd.DataFrame(
         {
@@ -1527,11 +1527,11 @@ def test_measure_filtering_user_example():
     )
 
     # User's original query that was failing with "Unknown dimension: total_amount_eur"
-    # This should now work without errors
+    # Now using a filter that excludes company B to demonstrate proper measure filtering
     result = model.query(
         dimensions=["company_name"],
         measures=["total_amount_eur", "total_transactions"],
-        filters=[{"field": "total_amount_eur", "operator": "<", "value": 500000}],
+        filters=[{"field": "total_amount_eur", "operator": ">", "value": 250000}],
         order_by=[("total_amount_eur", "desc")],
         limit=10,
     ).execute()
@@ -1542,10 +1542,16 @@ def test_measure_filtering_user_example():
     assert "total_amount_eur" in result.columns
     assert "total_transactions" in result.columns
 
-    # Since all filters are applied to input table before aggregation,
-    # and the measure filter evaluates the aggregate function on the raw data,
-    # the result should be empty (no individual rows pass the filter condition)
-    assert len(result) == 0
+    # With proper measure filtering (post-aggregation), only companies with > 250000 should appear:
+    # A: 300000 > 250000 ✓
+    # B: 200000 > 250000 ✗ (excluded)
+    # C: 300000 > 250000 ✓
+    assert len(result) == 2
+
+    # Sort and verify the specific companies that should appear
+    result_sorted = result.sort_values("company_name").reset_index(drop=True)
+    expected_companies = ["A", "C"]
+    assert result_sorted["company_name"].tolist() == expected_companies
 
 
 def test_measure_filtering_with_real_row_level_filter():
@@ -1637,5 +1643,86 @@ def test_mixed_dimension_and_measure_field_filters():
     # A: US + amount=100,150 -> neither >= 200 -> excluded
     # C: US + amount=300 -> passes -> 300
     expected = pd.DataFrame({"company": ["C"], "total_amount": [300]})
+
+    pd.testing.assert_frame_equal(result, expected)
+
+
+def test_measure_filtering_post_aggregation():
+    """Test that measure filtering works post-aggregation (HAVING clause equivalent)."""
+    df = pd.DataFrame(
+        {"company": ["A", "B", "A", "B", "C"], "amount": [100, 50, 200, 150, 300]}
+    )
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("test_having", df)
+
+    model = SemanticModel(
+        table=table,
+        dimensions={"company": lambda t: t.company},
+        measures={"total_amount": lambda t: t.amount.sum()},
+    )
+
+    # Filter by measure - should work post-aggregation
+    result = (
+        model.query(
+            dimensions=["company"],
+            measures=["total_amount"],
+            filters=[{"field": "total_amount", "operator": ">", "value": 250}],
+        )
+        .execute()
+        .sort_values("company")
+        .reset_index(drop=True)
+    )
+
+    # A: 100+200=300 > 250 ✓, C: 300 > 250 ✓, B: 50+150=200 ≤ 250 ✗
+    expected = pd.DataFrame({"company": ["A", "C"], "total_amount": [300, 300]})
+    pd.testing.assert_frame_equal(result, expected)
+
+
+def test_mixed_pre_and_post_aggregation_filters():
+    """Test combining pre-aggregation (raw column) and post-aggregation (measure) filters."""
+    df = pd.DataFrame(
+        {
+            "company": ["A", "B", "A", "B", "C", "C"],
+            "region": ["US", "EU", "US", "EU", "US", "EU"],
+            "amount": [100, 200, 150, 250, 300, 400],
+        }
+    )
+
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("test_mixed_aggregation", df)
+
+    model = SemanticModel(
+        table=table,
+        dimensions={"company": lambda t: t.company, "region": lambda t: t.region},
+        measures={"total_amount": lambda t: t.amount.sum()},
+    )
+
+    # Combine pre-aggregation filter (region) with post-aggregation filter (total_amount)
+    result = (
+        model.query(
+            dimensions=["company"],
+            measures=["total_amount"],
+            filters=[
+                {
+                    "field": "region",
+                    "operator": "=",
+                    "value": "US",
+                },  # Pre-aggregation (raw column)
+                {
+                    "field": "total_amount",
+                    "operator": ">",
+                    "value": 200,
+                },  # Post-aggregation (measure)
+            ],
+        )
+        .execute()
+        .sort_values("company")
+        .reset_index(drop=True)
+    )
+
+    # First filter by US region: A(100,150), C(300)
+    # Then aggregate: A=250, C=300
+    # Then filter by total_amount > 200: A(250) ✓, C(300) ✓
+    expected = pd.DataFrame({"company": ["A", "C"], "total_amount": [250, 300]})
 
     pd.testing.assert_frame_equal(result, expected)

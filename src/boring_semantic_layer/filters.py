@@ -114,6 +114,11 @@ class Filter:
             return getattr(getattr(_, table_name), field_name)
         # Simple field reference
         if model is not None and table is not None:
+            # For aggregated tables, check if the field exists as a column first
+            if hasattr(table, "schema") and hasattr(table.schema(), "names"):
+                if field in table.schema().names:
+                    return table[field]
+
             # Check measures first, then dimensions, then raw table columns
             if field in model.measures:
                 return model.measures[field](table)
@@ -172,6 +177,33 @@ class Filter:
         if value is None:
             raise ValueError(f"Operator '{op}' requires 'value' field")
         return OPERATOR_MAPPING[op](field_expr, value)
+
+    def requires_post_aggregation(
+        self, raw_table: Expr, model: "SemanticModel"
+    ) -> bool:
+        """Check if this filter requires post-aggregation by analyzing the unbound expression."""
+        try:
+            # Get the unbound Ibis expression from this filter
+            ibis_expr = self.to_ibis(raw_table, model)
+
+            # Check if this expression is a scalar (measure-like) or column (dimension/raw-like)
+            # Scalar expressions indicate aggregation functions that need post-aggregation
+            expr_type = type(ibis_expr).__name__
+            if "Scalar" in expr_type:
+                # Scalar expression - contains measures/aggregations, needs post-aggregation
+                return True
+
+            # For column expressions, try to apply to raw table
+            try:
+                _ = raw_table.filter(ibis_expr)
+                return False  # Can work pre-aggregation
+            except Exception:
+                # If filtering fails, it likely needs post-aggregation
+                return True
+
+        except Exception:
+            # If we can't even create the expression, assume post-aggregation
+            return True
 
     def to_ibis(self, table: Expr, model: Optional["SemanticModel"] = None) -> Expr:
         if isinstance(self.filter, dict):
