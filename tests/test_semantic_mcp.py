@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 import pandas as pd
 
 from boring_semantic_layer import SemanticModel, MCPSemanticModel
+from boring_semantic_layer.semantic_model import DimensionSpec, MeasureSpec
 from mcp.server.fastmcp.exceptions import ToolError
 
 
@@ -28,6 +29,7 @@ def sample_models(mock_table):
     flights_model = SemanticModel(
         name="flights",
         table=mock_table,
+        description="Sample flights model",
         dimensions={
             "origin": lambda t: t.origin,
             "destination": lambda t: t.destination,
