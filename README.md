@@ -63,7 +63,7 @@ flights_sm.query(
 - [Get Started](#get-started)
   1. [Get Sample Data](#1-get-sample-data)
   2. [Build a Semantic Model](#2-build-a-semantic-model)
-  - [Adding Descriptions to Semantic Models, Dimensions, and Measures](#adding-descriptions-to-semantic-models-dimensions-and-measures)
+      - [Adding Descriptions to Semantic Models, Dimensions, and Measures](#adding-descriptions-to-semantic-models-dimensions-and-measures)
   3. [Query a Semantic Model](#3-query-a-semantic-model)
 - [Features](#features)
   - [Filters](#filters)
