@@ -1,11 +1,13 @@
 from .semantic_model import SemanticModel
-from .semantic_model import Join, Filter, QueryExpr
+from .semantic_model import Join, Filter, QueryExpr, DimensionSpec, MeasureSpec
 
 __all__ = [
     "SemanticModel",
     "Join",
     "Filter",
     "QueryExpr",
+    "DimensionSpec",
+    "MeasureSpec",
 ]
 
 # Import MCP functionality from separate module

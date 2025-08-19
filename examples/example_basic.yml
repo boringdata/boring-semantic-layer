@@ -1,12 +1,12 @@
 carriers:
   table: carriers_tbl
   primary_key: code
-  
+
   dimensions:
     code: _.code
     name: _.name
     nickname: _.nickname
-    
+
   measures:
     carrier_count: _.count()
 
@@ -14,19 +14,20 @@ flights:
   table: flights_tbl
   time_dimension: arr_time
   smallest_time_grain: TIME_GRAIN_SECOND
-  
+
   dimensions:
-    origin: _.origin
+    origin:
+      expr:
     destination: _.destination
     carrier: _.carrier
     tail_num: _.tail_num
     arr_time: _.arr_time
-    
+
   measures:
     flight_count: _.count()
     avg_dep_delay: _.dep_delay.mean()
     avg_distance: _.distance.mean()
-    
+
   joins:
     carriers:
       model: carriers

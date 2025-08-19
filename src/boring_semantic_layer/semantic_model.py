@@ -654,10 +654,15 @@ class SemanticModel:
         Returns:
             Dict[str, Any]: The model metadata.
         """
+
+        # Convert DimensionSpec and MeasureSpec objects to JSON-serializable format
+        dimensions_dict = { name: {"description": spec.description} for name, spec in self.available_dimensions.items()}
+        measures_dict = { name: {"description": spec.description} for name, spec in self.available_measures.items()}
+
         definition = {
             "name": self.name,
-            "dimensions": self.available_dimensions,
-            "measures": self.available_measures,
+            "dimensions": dimensions_dict,
+            "measures": measures_dict,
         }
 
         if self.description:

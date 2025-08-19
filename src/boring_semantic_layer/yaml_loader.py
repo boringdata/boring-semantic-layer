@@ -12,15 +12,38 @@ except ImportError:
     import ibis as ibis_mod
 
 from .joins import Join
-from .semantic_model import SemanticModel
+from .semantic_model import DimensionSpec, MeasureSpec, SemanticModel
 
 
-def _parse_expressions(expressions: Dict[str, str]) -> Dict[str, Any]:
-    """Parse dimension or measure expressions from strings."""
+def _parse_expressions(expressions: Dict[str, str], spec_class) -> Dict[str, Any]:
+    """Parse dimension or measure expressions from YAML configurations.
+
+    Supports two formats:
+    1. Simple format (backwards compatible): name: expression_string
+    2. Extended format with descriptions:
+        name: expression_string
+        description: "description text"
+    """
     result: Dict[str, Any] = {}
-    for name, expr_str in expressions.items():
-        deferred = eval(expr_str, {"_": ibis_mod._, "__builtins__": {}})
-        result[name] = lambda t, d=deferred: d.resolve(t)
+    for name, config in expressions.items():
+        if isinstance(config, str):
+            deferred = eval(config, {"_": ibis_mod._, "__builtins__": {}})
+            expr_func = lambda t, d=deferred: d.resolve(t)
+            result[name] = expr_func
+        elif isinstance(config, dict):
+            if "expr" not in config:
+                raise ValueError(f"Expression '{name}' must specify 'expr' field when using dict format")
+
+            expr_str = config["expr"]
+            description = config.get("description", "")
+
+            deferred = eval(expr_str, {"_": ibis_mod._, "__builtins__": {}})
+            expr_func = lambda t, d=deferred: d.resolve(t)
+
+            # Create appropriate spec class with description
+            result[name] = spec_class(expr=expr_func, description=description)
+        else:
+            raise ValueError(f"Invalid expression format for '{name}'. Must either be a string or a dictionary")
     return result
 
 
@@ -125,8 +148,8 @@ def from_yaml(
             )
         table = tables[table_name]
 
-        dimensions = _parse_expressions(config.get("dimensions", {}))
-        measures = _parse_expressions(config.get("measures", {}))
+        dimensions = _parse_expressions(config.get("dimensions", {}), DimensionSpec)
+        measures = _parse_expressions(config.get("measures", {}), MeasureSpec)
 
         models[name] = cls(
             name=name,
@@ -134,6 +157,7 @@ def from_yaml(
             dimensions=dimensions,
             measures=measures,
             joins={},
+            description=config.get("description"),
             primary_key=config.get("primary_key"),
             time_dimension=config.get("time_dimension"),
             smallest_time_grain=config.get("smallest_time_grain"),

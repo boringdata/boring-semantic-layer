@@ -4,8 +4,7 @@ import pytest
 from unittest.mock import Mock, patch
 import pandas as pd
 
-from boring_semantic_layer import SemanticModel, MCPSemanticModel
-from boring_semantic_layer.semantic_model import DimensionSpec, MeasureSpec
+from boring_semantic_layer import SemanticModel, MCPSemanticModel, DimensionSpec, MeasureSpec
 from mcp.server.fastmcp.exceptions import ToolError
 
 
@@ -150,6 +149,46 @@ class TestGetModelTool:
 
         with pytest.raises(ToolError, match="Model nonexistent not found"):
             await mcp.call_tool("get_model", {"model_name": "nonexistent"})
+
+
+    @pytest.mark.asyncio
+    async def test_get_model_with_descriptions(self, mock_table):
+        """Test that get_model correctly serialises models with descriptions"""
+
+        # Create model with mixed old and new style specs
+        model_with_descriptions = SemanticModel(
+            name="test_descriptions",
+            table=mock_table,
+            dimensions={
+                "old_dimension": lambda t: t.old_col,
+                "new_dimension": DimensionSpec(expr=lambda t: t.new_col, description="New dimension description")
+            },
+            measures={
+                "old_measure": lambda t: t.old_col,
+                "new_measure": MeasureSpec(expr=lambda t: t.new_col, description="New measure description")
+            },
+            description="This is a test model with descriptions",
+        )
+
+        models = {"test_descriptions": model_with_descriptions}
+        mcp = MCPSemanticModel(models=models)
+
+        content_blocks, result_dict = await mcp.call_tool(
+            "get_model", {"model_name": "test_descriptions"}
+        )
+
+        result = result_dict["result"]
+
+        # Verify model description
+        assert result["description"] == "This is a test model with descriptions"
+
+        # Verify dimension descriptions
+        assert result["dimensions"]["old_dimension"]["description"] == ""
+        assert result["dimensions"]["new_dimension"]["description"] == "New dimension description"
+
+        # Verify measure descriptions
+        assert result["measures"]["old_measure"]["description"] == ""
+        assert result["measures"]["new_measure"]["description"] == "New measure description"
 
 
 class TestGetTimeRangeTool:
