@@ -164,7 +164,7 @@ from boring_semantic_layer import SemanticModel
 
 flights_sm = SemanticModel(
     table=flights_tbl,
-    Descriptions="Flight data with departure and flight count information",
+    description="Flight data with departure and flight count information",
     dimensions={"origin": lambda t: t.origin},
     measures={"flight_count": lambda t: t.count()}
 )
