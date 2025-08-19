@@ -59,7 +59,9 @@ New way to query:
 flight_st.group_by('origin').aggregate(flight_count).select(['origin', 'flight_count'])
 ```
 
-This interface is more intuitive and follows Malloy's design patterns.
+Here is a short demo of the new [interface](https://asciinema.org/a/734396):
+https://asciinema.org/a/734396
+
 
 This offers these advantages:
 - **Composability**: Semantic tables work like regular Ibis table expressions and compose naturally
