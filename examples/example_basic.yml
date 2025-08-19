@@ -16,8 +16,7 @@ flights:
   smallest_time_grain: TIME_GRAIN_SECOND
 
   dimensions:
-    origin:
-      expr:
+    origin: _.origin
     destination: _.destination
     carrier: _.carrier
     tail_num: _.tail_num
