@@ -316,20 +316,8 @@ flights_sm.query(
 
 BSL supports the following operators: `=`, `!=`, `>`, `>=`, `in`, `not in`, `like`, `not like`, `is null`, `is not null`, `AND`, `OR`
 
-**Filtering on Measures:** You can now filter on both dimensions and measures. All filters are applied to the input table before aggregation.
-
-```python
-# Example: Filter by both dimension and measure
-flights_sm.query(
-    dimensions=['origin'],
-    measures=['total_flights', 'avg_distance'],
-    filters=[
-        {'field': 'origin', 'operator': 'in', 'values': ['JFK', 'LGA']},  # Dimension filter
-        {'field': 'total_flights', 'operator': '>', 'value': 1000}        # Measure filter
-    ]
-)
+**Note on filtering measures:** filters only work with dimensions. 
 ```
-
 
 ### Time-Based Dimensions and Queries
 
@@ -885,18 +873,15 @@ avg_distance_measure = MeasureSpec(
 
 **Supported operators:** `=`, `!=`, `>`, `>=`, `<`, `<=`, `in`, `not in`, `like`, `not like`, `is null`, `is not null`, `AND`, `OR`
 
-**Filter Fields:** You can filter on both dimensions and measures. All filters are applied to the input table before aggregation.
-
 #### Example
 
 ```python
 flights_sm.query(
     dimensions=['origin', 'year'],
-    measures=['total_flights', 'avg_distance'],
+    measures=['total_flights'],
     filters=[
-        {"field": "origin", "operator": "in", "values": ["JFK", "LGA"]},    # Dimension filter
-        {"field": "year", "operator": ">", "value": 2010},                  # Dimension filter
-        {"field": "total_flights", "operator": ">", "value": 100}           # Measure filter
+        {"field": "origin", "operator": "in", "values": ["JFK", "LGA"]},
+        {"field": "year", "operator": ">", "value": 2010}
     ],
     order_by=[('total_flights', 'desc')],
     limit=10,
@@ -907,10 +892,10 @@ flights_sm.query(
 
 Example output:
 
-| origin | year | total_flights | avg_distance |
-|--------|------|---------------|--------------|
-| JFK    | 2015 | 350           | 1047.71      |
-| LGA    | 2015 | 300           | 892.45       |
+| origin | year | total_flights |
+|--------|------|---------------|
+| JFK    | 2015 | 350           |
+| LGA    | 2015 | 300           |
 
 ### Chart API Reference
 
