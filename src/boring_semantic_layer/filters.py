@@ -95,36 +95,18 @@ class Filter:
                 if table_name not in model.joins:
                     raise KeyError(f"Unknown join alias: {table_name}")
                 join = model.joins[table_name]
-                # Check measures first, then dimensions, then raw columns
-                if field_name in join.model.measures:
-                    return join.model.measures[field_name](table)
-                elif field_name in join.model.dimensions:
-                    return join.model.dimensions[field_name](table)
-                elif hasattr(join.model.table, "schema") and hasattr(
-                    join.model.table.schema(), "names"
-                ):
-                    # Check if it's a raw column in the joined table
-                    if field_name in join.model.table.schema().names:
-                        return table[field_name]  # Use the joined table reference
-
-                raise KeyError(
-                    f"Unknown field '{field_name}' in joined model '{table_name}'"
-                )
+                if field_name not in join.model.dimensions:
+                    raise KeyError(
+                        f"Unknown dimension '{field_name}' in joined model '{table_name}'"
+                    )
+                return join.model.dimensions[field_name](table)
             # Unbound expression for table.field reference
             return getattr(getattr(_, table_name), field_name)
         # Simple field reference
         if model is not None and table is not None:
-            # Check measures first, then dimensions, then raw table columns
-            if field in model.measures:
-                return model.measures[field](table)
-            elif field in model.dimensions:
-                return model.dimensions[field](table)
-            elif hasattr(table, "schema") and hasattr(table.schema(), "names"):
-                # Check if it's a raw column in the table
-                if field in table.schema().names:
-                    return table[field]
-
-            raise KeyError(f"Unknown field: {field}")
+            if field not in model.dimensions:
+                raise KeyError(f"Unknown dimension: {field}")
+            return model.dimensions[field](table)
         # Unbound expression for field reference
         return getattr(_, field)
 

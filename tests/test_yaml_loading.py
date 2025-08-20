@@ -5,7 +5,6 @@ import ibis
 import tempfile
 import os
 from boring_semantic_layer import SemanticModel, Join
-import yaml
 
 
 @pytest.fixture
@@ -465,16 +464,22 @@ carriers:
         assert json_def["dimensions"]["code"]["description"] == ""
         assert json_def["dimensions"]["name"]["description"] == "Full airline name"
         assert json_def["dimensions"]["nickname"]["description"] == "Short airline name"
-        assert json_def["dimensions"]["code_upper"]["description"] == "Upper case airline code"
+        assert (
+            json_def["dimensions"]["code_upper"]["description"]
+            == "Upper case airline code"
+        )
 
         # Verify measure descriptions
         assert json_def["measures"]["carrier_count"]["description"] == ""
-        assert json_def["measures"]["total_carriers"]["description"] == "Total number of carriers"
+        assert (
+            json_def["measures"]["total_carriers"]["description"]
+            == "Total number of carriers"
+        )
 
         # Test that queries still work with both old and new style
         result = model.query(
-            dimensions = ["code", "name", "code_upper"],
-            measures = ["carrier_count", "total_carriers"]
+            dimensions=["code", "name", "code_upper"],
+            measures=["carrier_count", "total_carriers"],
         ).execute()
 
         assert len(result) == 4
@@ -485,6 +490,7 @@ carriers:
         assert all(code.isupper() for code in result["code_upper"])
     finally:
         os.unlink(yaml_path)
+
 
 def test_yaml_description_error_handling(sample_tables):
     """Test error handling for invalid description format."""
@@ -502,7 +508,10 @@ test:
         yaml_path = f.name
 
     try:
-        with pytest.raises(ValueError, match="Expression 'invalid_dim' must specify 'expr' field when using dict format"):
+        with pytest.raises(
+            ValueError,
+            match="Expression 'invalid_dim' must specify 'expr' field when using dict format",
+        ):
             SemanticModel.from_yaml(yaml_path, tables=sample_tables)
     finally:
         os.unlink(yaml_path)

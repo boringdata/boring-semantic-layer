@@ -95,8 +95,9 @@ class MCPSemanticModel(FastMCP):
                 
                 COMMON MISTAKES TO AVOID:
                 1. Don't use "value" with "in"/"not in" - use "values" array instead
-                2. Don't use .month(), .year() etc. - use time_grain parameter instead
-                3. For case-insensitive text search, prefer "ilike" over "like"
+                2. Don't filter on measures - only filter on dimensions
+                3. Don't use .month(), .year() etc. - use time_grain parameter instead
+                4. For case-insensitive text search, prefer "ilike" over "like"
                     
                 Compound Filter (AND/OR):
                 {

@@ -28,22 +28,31 @@ def _parse_expressions(expressions: Dict[str, str], spec_class) -> Dict[str, Any
     for name, config in expressions.items():
         if isinstance(config, str):
             deferred = eval(config, {"_": ibis_mod._, "__builtins__": {}})
-            expr_func = lambda t, d=deferred: d.resolve(t)
+
+            def expr_func(t, d=deferred):
+                return d.resolve(t)
+
             result[name] = expr_func
         elif isinstance(config, dict):
             if "expr" not in config:
-                raise ValueError(f"Expression '{name}' must specify 'expr' field when using dict format")
+                raise ValueError(
+                    f"Expression '{name}' must specify 'expr' field when using dict format"
+                )
 
             expr_str = config["expr"]
             description = config.get("description", "")
 
             deferred = eval(expr_str, {"_": ibis_mod._, "__builtins__": {}})
-            expr_func = lambda t, d=deferred: d.resolve(t)
+
+            def expr_func(t, d=deferred):
+                return d.resolve(t)
 
             # Create appropriate spec class with description
             result[name] = spec_class(expr=expr_func, description=description)
         else:
-            raise ValueError(f"Invalid expression format for '{name}'. Must either be a string or a dictionary")
+            raise ValueError(
+                f"Invalid expression format for '{name}'. Must either be a string or a dictionary"
+            )
     return result
 
 
