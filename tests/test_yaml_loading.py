@@ -5,6 +5,7 @@ import ibis
 import tempfile
 import os
 from boring_semantic_layer import SemanticModel, Join
+import yaml
 
 
 @pytest.fixture
@@ -123,7 +124,7 @@ flights:
     destination: _.destination
     carrier: _.carrier
     arr_time: _.arr_time
-    
+
     # Computed dimensions
     year: _.arr_time.year()
     month: _.arr_time.month()
@@ -403,5 +404,105 @@ test:
 
         with pytest.raises(ValueError, match="Invalid join type 'invalid_type'"):
             SemanticModel.from_yaml(yaml_path, tables=tables)
+    finally:
+        os.unlink(yaml_path)
+
+
+def test_load_model_With_descriptions(sample_tables):
+    """Test loading models with dimension/measure descriptions and model description."""
+    yaml_content = """
+carriers:
+    table: carriers_tbl
+    primary_key: code
+    description: "Carriers table description"
+
+    dimensions:
+        # Old format - no descriptions
+        code: _.code
+
+        # New format
+        name:
+            expr: _.name
+            description: "Full airline name"
+
+        nickname:
+            expr: _.nickname
+            description: "Short airline name"
+
+        code_upper:
+            expr: _.code.upper()
+            description: "Upper case airline code"
+
+    measures:
+        # Old format
+        carrier_count: _.count()
+
+        # New format
+        total_carriers:
+            expr: _.count()
+            description: "Total number of carriers"
+"""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = f.name
+
+    try:
+        # Load model from YAML
+        models = SemanticModel.from_yaml(yaml_path, tables=sample_tables)
+        model = models["carriers"]
+
+        # Verify model description
+        assert model.description == "Carriers table description"
+
+        # Test json_definition to verify descriptions are properly loaded
+        json_def = model.json_definition
+
+        # Verify model description in JSON
+        assert json_def["description"] == "Carriers table description"
+
+        # Verify dimension descriptions
+        assert json_def["dimensions"]["code"]["description"] == ""
+        assert json_def["dimensions"]["name"]["description"] == "Full airline name"
+        assert json_def["dimensions"]["nickname"]["description"] == "Short airline name"
+        assert json_def["dimensions"]["code_upper"]["description"] == "Upper case airline code"
+
+        # Verify measure descriptions
+        assert json_def["measures"]["carrier_count"]["description"] == ""
+        assert json_def["measures"]["total_carriers"]["description"] == "Total number of carriers"
+
+        # Test that queries still work with both old and new style
+        result = model.query(
+            dimensions = ["code", "name", "code_upper"],
+            measures = ["carrier_count", "total_carriers"]
+        ).execute()
+
+        assert len(result) == 4
+        assert result["carrier_count"].sum() == 4
+        assert result["total_carriers"].sum() == 4
+
+        # Verify computed dimension works
+        assert all(code.isupper() for code in result["code_upper"])
+    finally:
+        os.unlink(yaml_path)
+
+def test_yaml_description_error_handling(sample_tables):
+    """Test error handling for invalid description format."""
+    yaml_content = """
+test:
+    table: carriers_tbl
+
+    dimensions:
+        invalid_dim:
+            description: "Missing expr field"
+"""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = f.name
+
+    try:
+        with pytest.raises(ValueError, match="Expression 'invalid_dim' must specify 'expr' field when using dict format"):
+            SemanticModel.from_yaml(yaml_path, tables=sample_tables)
     finally:
         os.unlink(yaml_path)

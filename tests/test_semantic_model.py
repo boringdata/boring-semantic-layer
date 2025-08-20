@@ -1,7 +1,9 @@
+from ibis.expr.api import desc
 import pandas as pd
+from pandas._config import reset_option
 import pytest
 import ibis
-from boring_semantic_layer import SemanticModel, Join
+from boring_semantic_layer import SemanticModel, Join, DimensionSpec, MeasureSpec
 
 
 def test_group_by_sum_and_count():
@@ -1639,3 +1641,86 @@ def test_mixed_dimension_and_measure_field_filters():
     expected = pd.DataFrame({"company": ["C"], "total_amount": [300]})
 
     pd.testing.assert_frame_equal(result, expected)
+
+def test_backwards_compatibility_with_mixed_spec_classes():
+    """Test that old lambda functions work alongside new DimensionSpec/MeasureSpec classes."""
+    df = pd.DataFrame({
+        "category": ["A","B","A","B"],
+        "value": [1, 2, 3, 4],
+        "count": [1, 1, 1, 1]
+    })
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("test_mixed_spec", df)
+
+    model = SemanticModel(
+        table=table,
+        dimensions={
+            "category": lambda t: t.category,
+            "category_upper": DimensionSpec(expr=lambda t: t.category.upper(), description="Category in uppercase")
+        },
+        measures={
+            "sum_value": lambda t: t.value.sum(),
+            "avg_value": MeasureSpec(expr=lambda t: t.value.mean(), description="Average value per group"),
+        },
+        description="Test model with old and new style definitions"
+    )
+
+    expr = model.query(
+        dimensions=["category", "category_upper"],
+        measures=["sum_value", "avg_value"]
+    )
+    result = expr.execute().sort_values("category").reset_index(drop=True)
+
+    expected = pd.DataFrame({
+        "category": ["A", "B"],
+        "category_upper": ["A", "B"],
+        "sum_value": [4, 6],
+        "avg_value": [2.0, 3.0]
+    })
+
+    pd.testing.assert_frame_equal(result, expected)
+
+def test_json_definition_with_descriptions():
+    """Test that json_definition correctly handles descriptions for both old and new style definitions"""
+    df = pd.DataFrame({"x":[1,2], "y":[3,4]})
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table("desc_test", df)
+
+    model = SemanticModel(
+        table=table,
+        dimensions={
+            "x": lambda t: t.x,
+            "x_doubled": DimensionSpec(
+                expr=lambda t: t.x * 2,
+                description="X value doubled"
+            )
+        },
+        measures={
+            "sum_y": lambda t: t.y.sum(),
+            "max_y": MeasureSpec(
+                expr=lambda t: t.y.max(),
+                description="Maximum Y coordinate"
+            )
+        },
+        description="Test model with old and new style definitions"
+    )
+
+    json_def = model.json_definition
+
+    #Verify model description
+    assert json_def["description"] == "Test model with old and new style definitions"
+
+    #Verify dimension descriptions
+    assert json_def["dimensions"]["x"]["description"] == ""
+    assert json_def["dimensions"]["x_doubled"]["description"] == "X value doubled"
+
+    #Verify measure descriptions
+    assert json_def["measures"]["sum_y"]["description"] == ""
+    assert json_def["measures"]["max_y"]["description"] == "Maximum Y coordinate"
+
+    # Verify basic structure
+    assert "desc_test" in json_def["name"]
+    assert "x" in json_def["dimensions"]
+    assert "x_doubled" in json_def["dimensions"]
+    assert "sum_y" in json_def["measures"]
+    assert "max_y" in json_def["measures"]

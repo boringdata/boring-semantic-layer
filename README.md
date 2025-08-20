@@ -1,6 +1,6 @@
 # Boring Semantic Layer (BSL)
 
-The Boring Semantic Layer (BSL) is a lightweight semantic layer based on [Ibis](https://ibis-project.org/). 
+The Boring Semantic Layer (BSL) is a lightweight semantic layer based on [Ibis](https://ibis-project.org/).
 
 **Key Features:**
 - **Lightweight**: `pip install boring-semantic-layer`
@@ -63,6 +63,7 @@ flights_sm.query(
 - [Get Started](#get-started)
   1. [Get Sample Data](#1-get-sample-data)
   2. [Build a Semantic Model](#2-build-a-semantic-model)
+      - [Adding Descriptions to Semantic Models, Dimensions, and Measures](#adding-descriptions-to-semantic-models-dimensions-and-measures)
   3. [Query a Semantic Model](#3-query-a-semantic-model)
 - [Features](#features)
   - [Filters](#filters)
@@ -153,9 +154,98 @@ For example, in our semantic model:
 
 The `t` parameter represents the table, and you can chain operations like `t.origin.upper()` or `t.dep_delay > 0` to create complex expressions. Ibis ensures these expressions are translated to efficient SQL queries.
 
+### Adding Descriptions to Semantic Models, Dimensions, and Measures
+
+BSL supports adding human-readable descriptions to dimensions, measures, and semantic models. This helps in documenting your data model and making it easier for others to understand and AI agents to interact with.
+
+Semantic model descriptions are an optional parameter than can be used to provide a summary of what the semantic model contains and what it should be used for.
+```python
+from boring_semantic_layer import SemanticModel
+
+flights_sm = SemanticModel(
+    table=flights_tbl,
+    description="Flight data with departure and flight count information",
+    dimensions={"origin": lambda t: t.origin},
+    measures={"flight_count": lambda t: t.count()}
+)
+```
+
+You can define dimensions and measures in two ways:
+
+**Classic format (still fully supported):**
+```python
+from boring_semantic_layer import SemanticModel
+
+flights_sm = SemanticModel(
+    table=flights_tbl,
+    dimensions={"origin": lambda t: t.origin},
+    measures={"flight_count": lambda t: t.count()}
+)
+```
+**New format with descriptions:**
+```python
+from boring_semantic_layer import SemanticModel, DimensionSpec, MeasureSpec
+
+flights_sm = SemanticModel(
+    table=flights_tbl,
+    dimensions={
+        "origin": DimensionSpec(
+            expr=lambda t: t.origin,
+            description="Origin Airport where the flight departed from"
+        )
+    },
+    measures={
+        "flight_count": MeasureSpec(
+            expr=lambda t: t.count(),
+            description="Total number of flights"
+        )
+    }
+)
+```
+**Why use descriptions?**
+- **Human-readable**: Makes your models self documenting for team members.
+- **AI friendly**: Perfect for MCP agents and LLM's that need to understand your models in more detail and nuances between similar dimensions and measures.
+- **Flexible**: You can mix classic and descriptive formats seamlessly.
+- **Backwards compatible**: All existing models will continue to work without changes.
+
+**YAML Configuration Support:**
+
+You can also define models with descriptions using YAML configuration files:
+
+```yaml
+
+flights:
+  table: flights_table
+  description: "Flight data with departure and arrival information"
+
+  dimensions:
+    # Classic format
+    origin: _.origin
+
+    # New format
+    destination:
+      expr: _.destination
+      description: "Destination airport code where the flight arrived at"
+
+  measures:
+    # Classic format
+    flight_count: _.count()
+
+    # New format
+    avg_distance:
+      expr: _.distance.mean()
+      description: "Average distance of flights in miles"
+```
+
+Load the YAML model:
+```python
+models = SemanticModel.from_yaml("flights_model.yml", tables={"flights_table": flights_table})
+flights_sm = models["flights"]
+```
+
 ---
 
-### 2. Query a Semantic Model
+### 3. Query a Semantic Model
 
 Use your semantic model to run queries—selecting dimensions, measures, and applying filters or limits.
 
@@ -184,7 +274,7 @@ Example output:
 #### Ibis Expression
 
 The `query` method can filter data using raw Ibis expressions for full flexibility.
-  
+
 ```python
 flights_sm.query(
     dimensions=['origin'],
@@ -243,9 +333,9 @@ flights_sm.query(
 
 ### Time-Based Dimensions and Queries
 
-BSL has built-in support for flexible time-based analysis. 
+BSL has built-in support for flexible time-based analysis.
 
-To use it, define a `time_dimension` in your `SemanticModel` that points to a timestamp column. 
+To use it, define a `time_dimension` in your `SemanticModel` that points to a timestamp column.
 
 You can also set `smallest_time_grain` to prevent incorrect time aggregations.
 
@@ -302,7 +392,7 @@ The flight model resulting from a join with the carriers model:
 ```python
 from boring_semantic_layer import  Join, SemanticModel
 import ibis
-import os 
+import os
 
 # Assume `con` is an existing Ibis connection from the Quickstart example.
 con = ibis.duckdb.connect(":memory:")
@@ -435,6 +525,8 @@ Example output:
 
 BSL includes built-in support for the [Model Context Protocol (MCP)](https://github.com/modelcontextprotocol/python-sdk), allowing you to expose your semantic models to LLMs like Claude.
 
+**💡 Pro tip:** Use [descriptions in semantic models, dimensions and measures](#adding-descriptions-to-semantic-models-dimensions-and-measures) to make your models more AI-friendly. Descriptions help provide context to LLM's, enabling them to understand what each field represents and when to use them.
+
 ### Installation
 
 To use MCP functionality, install with the `mcp` extra:
@@ -532,9 +624,9 @@ pip install 'boring-semantic-layer[visualization]'
 
 ### How BSL Charting Works
 
-BSL's charting system is built on top of **[Vega-Lite](https://vega.github.io/vega-lite/)** and its Python wrapper **[Altair](https://altair-viz.github.io/)**. 
+BSL's charting system is built on top of **[Vega-Lite](https://vega.github.io/vega-lite/)** and its Python wrapper **[Altair](https://altair-viz.github.io/)**.
 
-Vega-Lite is a JSON-based grammar for creating interactive visualizations that provides a declarative approach to chart creation. 
+Vega-Lite is a JSON-based grammar for creating interactive visualizations that provides a declarative approach to chart creation.
 
 BSL supports multiple output formats including interactive Altair charts, static images (PNG/SVG), and raw JSON specifications for web embedding.
 
@@ -547,7 +639,7 @@ from examples.example_basic import flights_sm
 
 # Query with custom styling
 chart = flights_sm.query(
-    dimensions=["origin"], 
+    dimensions=["origin"],
     measures=["flight_count"],
     limit=5
 ).chart(spec={
@@ -570,7 +662,7 @@ This design enables you to work at any level of abstraction - from full auto-det
 
 ### Smart Chart Creation
 
-BSL automatically detects appropriate chart types and intelligently merges any specifications you provide. 
+BSL automatically detects appropriate chart types and intelligently merges any specifications you provide.
 
 BSL's detection logic:
 - **Time series** (time dimension + measure) → Line chart with time-grain aware formatting
@@ -713,13 +805,45 @@ with open("my_chart.png", "wb") as f:
 | Field                | Type                                      | Required | Allowed Values / Notes                                                                                      |
 |----------------------|-------------------------------------------|----------|------------------------------------------------------------------------------------------------------------|
 | `table`              | Ibis table expression                     | Yes      | Any Ibis table or view                                                                                     |
-| `dimensions`         | dict[str, callable]                       | Yes      | Keys: dimension names; Values: functions mapping table → column                                             |
-| `measures`           | dict[str, callable]                       | Yes      | Keys: measure names; Values: functions mapping table → aggregation                                          |
+| `dimensions`         | dict[str, callable or DimensionSpec]      | Yes      | Keys: dimension names; Values: functions mapping table → column OR DimensionSpec objects with descriptions |
+| `measures`           | dict[str, callable or MeasureSpec]        | Yes      | Keys: measure names; Values: functions mapping table → aggregation OR MeasureSpec objects with descriptions |
+| `description`        | str                                       | No       | Optional description of the model                                                                          |
 | `joins`              | dict[str, Join]                           | No       | Keys: join alias; Values: `Join` object (see below)                                                         |
 | `primary_key`        | str                                       | No       | Name of the primary key dimension (required for certain join types)                                         |
 | `name`               | str                                       | No       | Optional model name (inferred from table if omitted)                                                        |
 | `time_dimension`     | str                                       | No       | Name of the column to use as the time dimension                                                             |
 | `smallest_time_grain`| str                                       | No       | One of:<br>`TIME_GRAIN_SECOND`, `TIME_GRAIN_MINUTE`, `TIME_GRAIN_HOUR`, `TIME_GRAIN_DAY`,<br>`TIME_GRAIN_WEEK`, `TIME_GRAIN_MONTH`, `TIME_GRAIN_QUARTER`, `TIME_GRAIN_YEAR` |
+
+#### Spec Classes (for dimensions and measures with descriptions)
+
+**DimensionSpec:**
+|Field          |Type      |Required  |Notes                                                  |
+|---------------|----------|----------|-------------------------------------------------------|
+| `expr`        | callable | Yes      | Function mapping table -> column expression           |
+| `description` | str      | No       | Human readable description (defaults to empty string) |
+
+**MeasureSpec:**
+|Field          |Type      |Required  |Notes                                                  |
+|---------------|----------|----------|-------------------------------------------------------|
+| `expr`        | callable | Yes      | Function mapping table -> column expression           |
+| `description` | str      | No       | Human readable description (defaults to empty string) |
+
+**Example:**
+```python
+from boring_semantic_layer import DimensionSpec, MeasureSpec
+
+# Define a dimension spec
+origin_dimension = DimensionSpec(
+    expr=lambda t: t.origin.upper(),
+    description='The airport origin code in upper case'
+)
+
+# Define a measure spec
+avg_distance_measure = MeasureSpec(
+    expr=lambda t: t.distance.mean(),
+    description='Average flight distance in miles'
+)
+```
 
 #### Join object (for `joins`)
 - Use `Join.one(alias, model, with_)` for one-to-one/many-to-one

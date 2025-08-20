@@ -42,8 +42,24 @@ _ = ibis_mod._
 How = Literal["inner", "left", "cross"]
 Cardinality = Literal["one", "many", "cross"]
 
-Dimension = Callable[[Expr], Expr]
-Measure = Callable[[Expr], Expr]
+@frozen(kw_only=True, slots=True)
+class DimensionSpec:
+    expr: Callable[[Expr], Expr]
+    description: Optional[str] = None
+
+    def __call__(self, table: Expr) -> Expr:
+        return(self.expr(table))
+
+@frozen(kw_only=True, slots=True)
+class MeasureSpec:
+    expr: Callable[[Expr], Expr]
+    description: Optional[str] = None
+
+    def __call__(self, table: Expr) -> Expr:
+        return(self.expr(table))
+
+Dimension = DimensionSpec
+Measure = MeasureSpec
 
 
 @frozen(kw_only=True, slots=True)
@@ -267,6 +283,29 @@ class QueryExpr:
                 "Supported formats: 'altair', 'interactive', 'json', 'png', 'svg'"
             )
 
+def _convert_dimensions(dimension_dict) -> dict:
+    """Convert plain callables to DimensionSpec with no description for backward compatibility."""
+    result = {}
+    for name, dim in dimension_dict.items():
+        if isinstance(dim, DimensionSpec):
+            result[name] = dim
+        elif callable(dim):
+            result[name] = DimensionSpec(expr=dim, description="")
+        else:
+            raise ValueError(f"Invalid dimension specification for {name}: {dim}. Must be a callable or DimensionSpec instance.")
+    return result
+
+def _convert_measures(measure_dict) -> dict:
+    """Convert plain callables to MeasureSpec with no description for backward compatibility."""
+    result = {}
+    for name, measure in measure_dict.items():
+        if isinstance(measure, MeasureSpec):
+            result[name] = measure
+        elif callable(measure):
+            result[name] = MeasureSpec(expr=measure, description="")
+        else:
+            raise ValueError(f"Invalid measure specification for {name}: {measure}. Must be a callable or MeasureSpec instance.")
+    return result
 
 @frozen(kw_only=True, slots=True)
 class SemanticModel:
@@ -301,15 +340,16 @@ class SemanticModel:
 
     table: Expr = field()
     dimensions: Mapping[str, Dimension] = field(
-        converter=lambda d: MappingProxyType(dict(d))
+        converter=lambda d: MappingProxyType(_convert_dimensions(d))
     )
     measures: Mapping[str, Measure] = field(
-        converter=lambda m: MappingProxyType(dict(m))
+        converter=lambda m: MappingProxyType(_convert_measures(m))
     )
     joins: Mapping[str, Join] = field(
         converter=lambda j: MappingProxyType(dict(j or {})),
         default=MappingProxyType({}),
     )
+    description: Optional[str] = field(default=None)
     primary_key: Optional[str] = field(default=None)
     name: Optional[str] = field(default=None)
     time_dimension: Optional[str] = field(default=None)
@@ -572,33 +612,39 @@ class SemanticModel:
         return _from_yaml(cls, yaml_path, tables)
 
     @property
-    def available_dimensions(self) -> List[str]:
+    def available_dimensions(self) -> Mapping[str, Dimension]:
         """
-        List all available dimension keys, including joined model dimensions.
+        All available dimension specs, including joined model dimensions.
+        """
+        dims: Dict[str, Dimension] = dict(self.dimensions)
 
-        Returns:
-            List[str]: The available dimension names.
-        """
-        keys = list(self.dimensions.keys())
-        # Include time dimension if it exists and is not already in dimensions
-        if self.time_dimension and self.time_dimension not in keys:
-            keys.append(self.time_dimension)
+        # Include time dimension if missing
+        if self.time_dimension and self.time_dimension not in dims:
+            dims[self.time_dimension] = Dimension(
+                expr=lambda t, col=self.time_dimension: getattr(t, col),
+                description="",
+            )
+
+        # Add joined dimensions
         for alias, join in self.joins.items():
-            keys.extend([f"{alias}.{d}" for d in join.model.dimensions.keys()])
-        return keys
+            for dname, dspec in join.model.dimensions.items():
+                dims[f"{alias}.{dname}"] = dspec
+
+        return MappingProxyType(dims)
 
     @property
-    def available_measures(self) -> List[str]:
+    def available_measures(self) -> Mapping[str, Measure]:
         """
-        List all available measure keys, including joined model measures.
+        All available measure specs, including joined model measures.
+        """
+        meas: Dict[str, Measure] = dict(self.measures)
 
-        Returns:
-            List[str]: The available measure names.
-        """
-        keys = list(self.measures.keys())
+        # Add joined measures
         for alias, join in self.joins.items():
-            keys.extend([f"{alias}.{m}" for m in join.model.measures.keys()])
-        return keys
+            for mname, mspec in join.model.measures.items():
+                meas[f"{alias}.{mname}"] = mspec
+
+        return MappingProxyType(meas)
 
     @property
     def json_definition(self) -> Dict[str, Any]:
@@ -608,11 +654,19 @@ class SemanticModel:
         Returns:
             Dict[str, Any]: The model metadata.
         """
+
+        # Convert DimensionSpec and MeasureSpec objects to JSON-serializable format
+        dimensions_dict = { name: {"description": spec.description} for name, spec in self.available_dimensions.items()}
+        measures_dict = { name: {"description": spec.description} for name, spec in self.available_measures.items()}
+
         definition = {
             "name": self.name,
-            "dimensions": self.available_dimensions,
-            "measures": self.available_measures,
+            "dimensions": dimensions_dict,
+            "measures": measures_dict,
         }
+
+        if self.description:
+            definition["description"] = self.description
 
         # Add time dimension info if present
         if self.time_dimension:
@@ -702,10 +756,10 @@ class SemanticModel:
             cube_expr = flat
         cube_table = cube_expr.cache(storage=storage)
 
-        new_dimensions = {key: (lambda t, c=key: t[c]) for key in keys}
+        new_dimensions: Dict[str, Dimension] = {key: DimensionSpec(expr=lambda t, c=key: t[c]) for key in keys}
         new_measures: Dict[str, Measure] = {}
         for name in agg_kwargs:
-            new_measures[name] = lambda t, c=name: t[c]
+            new_measures[name] = MeasureSpec(expr=lambda t, c=name: t[c])
         for name, fn in self.measures.items():
             if name not in agg_kwargs:
                 new_measures[name] = fn
