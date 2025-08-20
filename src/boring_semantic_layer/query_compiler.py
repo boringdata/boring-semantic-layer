@@ -8,10 +8,12 @@ from .filters import Filter
 
 try:
     import xorq.vendor.ibis as ibis_mod
+    from xorq.vendor.ibis.expr.operations.relations import Field as RelField
 
     IS_XORQ_USED = True
 except ImportError:
     import ibis as ibis_mod
+    from ibis.expr.operations.relations import Field as RelField
 
     IS_XORQ_USED = False
 
@@ -95,14 +97,16 @@ def _compile_query(qe: Any) -> Expr:
             join = model.joins[alias]
             expr = join.model.measures[field](t)
             name = f"{alias}_{field}"
-            agg_kwargs[name] = expr.name(name)
+            agg_kwargs[name] = expr
         else:
             expr = model.measures[m](t)
-            agg_kwargs[m] = expr.name(m)
+            agg_kwargs[m] = expr
 
-    # Group and aggregate
+    def _is_simple_field(expr: Expr) -> bool:
+        return isinstance(expr.op(), RelField)
+
     if dimensions:
-        dim_exprs = []
+        dim_exprs: list[Expr] = []
         for d in dimensions:
             if "." in d:
                 alias, field = d.split(".", 1)
@@ -112,9 +116,15 @@ def _compile_query(qe: Any) -> Expr:
                 # Use possibly transformed dimension function
                 expr = dim_map[d](t).name(d)
             dim_exprs.append(expr)
-        result = t.aggregate(by=dim_exprs, **agg_kwargs)
+        if all(_is_simple_field(expr) for expr in agg_kwargs.values()):
+            result = t.select(*dim_exprs, *agg_kwargs.values())
+        else:
+            result = t.aggregate(by=dim_exprs, **agg_kwargs)
     else:
-        result = t.aggregate(**agg_kwargs)
+        if all(_is_simple_field(expr) for expr in agg_kwargs.values()):
+            result = t.select(*agg_kwargs.values())
+        else:
+            result = t.aggregate(**agg_kwargs)
 
     # Apply ordering
     if qe.order_by:
