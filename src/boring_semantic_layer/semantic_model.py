@@ -18,6 +18,7 @@ import datetime
 
 if TYPE_CHECKING:
     import altair
+    import plotly.graph_objects as go
 
 try:
     import xorq.vendor.ibis as ibis_mod
@@ -42,13 +43,15 @@ _ = ibis_mod._
 How = Literal["inner", "left", "cross"]
 Cardinality = Literal["one", "many", "cross"]
 
+
 @frozen(kw_only=True, slots=True)
 class DimensionSpec:
     expr: Callable[[Expr], Expr]
     description: Optional[str] = None
 
     def __call__(self, table: Expr) -> Expr:
-        return(self.expr(table))
+        return self.expr(table)
+
 
 @frozen(kw_only=True, slots=True)
 class MeasureSpec:
@@ -56,7 +59,8 @@ class MeasureSpec:
     description: Optional[str] = None
 
     def __call__(self, table: Expr) -> Expr:
-        return(self.expr(table))
+        return self.expr(table)
+
 
 Dimension = DimensionSpec
 Measure = MeasureSpec
@@ -265,6 +269,7 @@ class QueryExpr:
             return chart.interactive()
         elif format == "json":
             return chart.to_dict()
+
         elif format in ["png", "svg"]:
             try:
                 import io
@@ -283,6 +288,196 @@ class QueryExpr:
                 "Supported formats: 'altair', 'interactive', 'json', 'png', 'svg'"
             )
 
+    def plotly_chart(
+        self,
+        spec: Optional[Dict[str, Any]] = None,
+        format: str = "plotly",
+    ) -> Union["go.Figure", Dict[str, Any]]:
+        """
+        Create a Plotly/Vizro chart from the query using native Plotly integration.
+
+        Args:
+            spec: Optional custom specification for the chart.
+                  If not provided, will auto-detect chart type based on query.
+            format: The output format of the chart:
+                - "plotly" (default): Returns Plotly Figure object
+                - "json": Returns Plotly specification dictionary
+
+        Returns:
+            Chart in the requested format:
+                - plotly: go.Figure
+                - json: Dict containing Plotly specification
+
+        Raises:
+            ImportError: If Plotly is not installed
+            ValueError: If an unsupported format is specified
+        """
+        if format not in ["plotly", "json"]:
+            raise ValueError(
+                f"Unsupported format: {format}. Supported formats: 'plotly', 'json'"
+            )
+
+        from .chart import _detect_plotly_spec, _merge_plotly_specs, execute_plotly_spec
+
+        # Generate native Plotly specification
+        plotly_spec = _detect_plotly_spec(
+            dimensions=list(self.dimensions),
+            measures=list(self.measures),
+            time_dimension=self.model.time_dimension,
+            time_grain=self.time_grain,
+        )
+
+        # Apply any user customizations
+        if spec:
+            plotly_spec = _merge_plotly_specs(plotly_spec, spec)
+
+        # Return JSON spec if requested
+        if format == "json":
+            return plotly_spec
+
+        # For plotly format, we need plotly installed
+        try:
+            import plotly.express as px
+            import plotly.graph_objects as go
+        except ImportError:
+            raise ImportError(
+                "Plotly is required for plotly_chart visualization. "
+                "Install it with: pip install plotly"
+            )
+
+        # Execute with data preparation for plotly format
+        final_spec = execute_plotly_spec(self, plotly_spec)
+
+        # Create the actual Plotly figure
+        chart_type = final_spec["chart_type"]
+        parameters = final_spec["parameters"]
+        data = final_spec["data"]
+
+        # Handle special chart types
+        if chart_type == "indicator":
+            # KPI/Indicator charts use graph objects, not express
+            # Extract value from data
+            if isinstance(data, (int, float)):
+                value = data
+            elif hasattr(data, "iloc"):
+                # DataFrame-like object
+                value = data.iloc[0, -1]
+            elif hasattr(data, "item"):
+                # NumPy scalar
+                value = data.item()
+            else:
+                # Fallback - try to convert to float
+                value = float(data)
+
+            fig = go.Figure(
+                go.Indicator(
+                    mode=parameters.get("mode", "number"),
+                    value=value,
+                    title=parameters.get("title", {}),
+                )
+            )
+        elif chart_type == "heatmap":
+            # Heatmap uses graph objects, data should already be pivoted
+            fig = go.Figure(
+                data=go.Heatmap(
+                    z=data.values,
+                    x=data.columns,
+                    y=data.index,
+                    showscale=True,
+                    hoverongaps=False,
+                )
+            )
+
+            fig.update_layout(
+                title=parameters.get("title", ""),
+                xaxis_title=parameters.get("labels", {}).get(
+                    parameters["x"], parameters["x"]
+                ),
+                yaxis_title=parameters.get("labels", {}).get(
+                    parameters["y"], parameters["y"]
+                ),
+                # Make cells more discrete-looking
+                xaxis=dict(
+                    side="bottom",
+                    tickmode="array",
+                    tickvals=list(range(len(data.columns))),
+                    ticktext=data.columns,
+                ),
+                yaxis=dict(
+                    tickmode="array",
+                    tickvals=list(range(len(data.index))),
+                    ticktext=data.index,
+                ),
+            )
+        else:
+            # Regular charts use plotly express
+            # Separate layout parameters from px function parameters first
+            px_params = {}
+            layout_params = {}
+
+            for key, value in parameters.items():
+                if key in [
+                    "x_tickformat",
+                    "x_tickangle",
+                    "y_tickformat",
+                    "y_tickangle",
+                ]:
+                    # These are layout parameters
+                    if key.startswith("x_"):
+                        layout_params[f"xaxis_{key[2:]}"] = value
+                    elif key.startswith("y_"):
+                        layout_params[f"yaxis_{key[2:]}"] = value
+                else:
+                    px_params[key] = value
+
+            # For multi-series time-series charts, ensure data is sorted properly for correct connections
+            # Only sort if it's a time series (x-axis is the time dimension), not regular categorical charts with order_by
+            def should_apply_time_series_sorting():
+                """Determine if we should sort data by time for proper chart rendering."""
+                # Must have both x and color parameters (multi-series)
+                if not ("x" in px_params and "color" in px_params):
+                    return False
+
+                # Must have time dimension defined and x-axis using time dimension
+                if not (
+                    self.model.time_dimension
+                    and px_params["x"] == self.model.time_dimension
+                ):
+                    return False
+
+                # Chart types that benefit from time-series sorting
+                time_series_chart_types = ["line", "area", "scatter", "bar"]
+                return chart_type in time_series_chart_types
+
+            if should_apply_time_series_sorting():
+                # Sort by color group first, then by time dimension to ensure proper connectivity
+                sort_columns = [px_params["color"], px_params["x"]]
+                data = data.sort_values(sort_columns).reset_index(drop=True)
+
+            # Add the data_frame parameter
+            px_params["data_frame"] = data
+
+            try:
+                chart_func = getattr(px, chart_type)
+                fig = chart_func(**px_params)
+            except AttributeError:
+                # Fallback for unsupported chart types
+                fig = px.scatter(
+                    data_frame=data, title=f"Unsupported chart type: {chart_type}"
+                )
+
+            # Apply layout parameters
+            if layout_params:
+                fig.update_layout(**layout_params)
+
+        # Apply any additional configuration
+        chart_config = final_spec.get("config", {})
+        if chart_config:
+            fig.update_layout(**chart_config)
+
+        return fig
+
+
 def _convert_dimensions(dimension_dict) -> dict:
     """Convert plain callables to DimensionSpec with no description for backward compatibility."""
     result = {}
@@ -292,8 +487,11 @@ def _convert_dimensions(dimension_dict) -> dict:
         elif callable(dim):
             result[name] = DimensionSpec(expr=dim, description="")
         else:
-            raise ValueError(f"Invalid dimension specification for {name}: {dim}. Must be a callable or DimensionSpec instance.")
+            raise ValueError(
+                f"Invalid dimension specification for {name}: {dim}. Must be a callable or DimensionSpec instance."
+            )
     return result
+
 
 def _convert_measures(measure_dict) -> dict:
     """Convert plain callables to MeasureSpec with no description for backward compatibility."""
@@ -304,8 +502,11 @@ def _convert_measures(measure_dict) -> dict:
         elif callable(measure):
             result[name] = MeasureSpec(expr=measure, description="")
         else:
-            raise ValueError(f"Invalid measure specification for {name}: {measure}. Must be a callable or MeasureSpec instance.")
+            raise ValueError(
+                f"Invalid measure specification for {name}: {measure}. Must be a callable or MeasureSpec instance."
+            )
     return result
+
 
 @frozen(kw_only=True, slots=True)
 class SemanticModel:
@@ -656,8 +857,14 @@ class SemanticModel:
         """
 
         # Convert DimensionSpec and MeasureSpec objects to JSON-serializable format
-        dimensions_dict = { name: {"description": spec.description} for name, spec in self.available_dimensions.items()}
-        measures_dict = { name: {"description": spec.description} for name, spec in self.available_measures.items()}
+        dimensions_dict = {
+            name: {"description": spec.description}
+            for name, spec in self.available_dimensions.items()
+        }
+        measures_dict = {
+            name: {"description": spec.description}
+            for name, spec in self.available_measures.items()
+        }
 
         definition = {
             "name": self.name,
@@ -756,7 +963,9 @@ class SemanticModel:
             cube_expr = flat
         cube_table = cube_expr.cache(storage=storage)
 
-        new_dimensions: Dict[str, Dimension] = {key: DimensionSpec(expr=lambda t, c=key: t[c]) for key in keys}
+        new_dimensions: Dict[str, Dimension] = {
+            key: DimensionSpec(expr=lambda t, c=key: t[c]) for key in keys
+        }
         new_measures: Dict[str, Measure] = {}
         for name in agg_kwargs:
             new_measures[name] = MeasureSpec(expr=lambda t, c=name: t[c])
