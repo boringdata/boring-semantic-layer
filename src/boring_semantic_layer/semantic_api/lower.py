@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import ibis as ibis_mod
-
-IS_XORQ_USED = False
-
+from attrs import frozen, field
 from ibis.expr.sql import convert  # noqa: E402
 from boring_semantic_layer.semantic_api.ops import (  # noqa: E402
     SemanticAggregate,
@@ -20,35 +18,31 @@ from boring_semantic_layer.semantic_api.ops import (  # noqa: E402
 
 IbisTableExpr = ibis_mod.expr.api.Table
 
-# Handle vanilla Ibis Project operations (column pruning/projection)
 IbisProject = ibis_mod.expr.operations.relations.Project
 
 
 # Helper: Proxy to resolve attributes either from semantic dims or from a table's columns
+@frozen
 class _Resolver:
-    def __init__(self, base_table, dim_map: dict[str, Any] | None = None):
-        self._t = base_table
-        self._dims = dim_map or {}
+    _t: Any
+    _dims: dict[str, Any] = field(factory=dict)
 
     def __getattr__(self, name: str):
         if name in self._dims:
             return self._dims[name](self._t).name(name)
-        # Fallback to base columns
         return getattr(self._t, name)
 
     def __getitem__(self, name: str):
-        return self.__getattr__(name)
+        return getattr(self._t, name)
 
 
 @convert.register(IbisTableExpr)
 def _convert_ibis_table(expr, catalog, *args):
-    # unwrap Expr to its ops.Node for further dispatch
     return convert(expr.op(), catalog=catalog)
 
 
 @convert.register(IbisProject)
 def _lower_ibis_project(op: IbisProject, catalog, *args):
-    # Project a subset of columns from a table expression
     tbl = convert(op.parent, catalog=catalog)
     cols = [v.to_expr().name(k) for k, v in op.values.items()]
     return tbl.select(cols)
@@ -56,7 +50,6 @@ def _lower_ibis_project(op: IbisProject, catalog, *args):
 
 @convert.register(SemanticTable)
 def _lower_semantic_table(node: SemanticTable, catalog, *args):
-    # Base table: just unwrap to expr()
     return node.table.to_expr()
 
 
@@ -73,14 +66,13 @@ def _lower_semantic_filter(node: SemanticFilter, catalog, *args):
 def _lower_semantic_project(node: SemanticProject, catalog, *args):
     root = _find_root_model(node.source)
     if root is None:
-        # No model — just select raw columns by name if they exist
         tbl = convert(node.source, catalog=catalog)
         cols = [getattr(tbl, f) for f in node.fields]
         return tbl.select(cols)
 
     tbl = convert(
         node.source, catalog=catalog
-    )  # base table expr, include filters if any
+    )
     dims = [f for f in node.fields if f in root.dimensions]
     meas = [f for f in node.fields if f in root.measures]
 
@@ -95,18 +87,15 @@ def _lower_semantic_project(node: SemanticProject, catalog, *args):
 
 @convert.register(SemanticGroupBy)
 def _lower_semantic_groupby(node: SemanticGroupBy, catalog, *args):
-    # Marker only — actual grouping is handled by a following SemanticAggregate
     return convert(node.source, catalog=catalog)
 
 
 @convert.register(SemanticJoin)
 def _lower_semantic_join(node: SemanticJoin, catalog, *args):
-    # Join two semantic subplans
     left_tbl = convert(node.left, catalog=catalog)
     right_tbl = convert(node.right, catalog=catalog)
     if node.on is not None:
         pred = node.on(_Resolver(left_tbl), _Resolver(right_tbl))
-        # Pass predicate as positional argument to match ibis join signature
         return left_tbl.join(right_tbl, pred, how=node.how)
     else:
         return left_tbl.join(right_tbl, how=node.how)
@@ -117,7 +106,6 @@ def _lower_semantic_aggregate(node: SemanticAggregate, catalog, *args):
     root = _find_root_model(node.source)
     tbl = convert(root if root else node.source, catalog=catalog)
 
-    # Resolve grouping keys using dims first, then raw columns
     group_exprs = []
     for k in node.keys:
         if root and k in root.dimensions:
@@ -126,11 +114,11 @@ def _lower_semantic_aggregate(node: SemanticAggregate, catalog, *args):
             group_exprs.append(getattr(tbl, k).name(k))
 
     # Allow user-defined aggs to reference root dimensions and measures via proxy
+    @frozen
     class _AggResolver:
-        def __init__(self, table):
-            self._t = table
-            self._dims = root.dimensions if root else {}
-            self._meas = root.measures if root else {}
+        _t: Any
+        _dims: dict[str, Callable]
+        _meas: dict[str, Callable]
 
         def __getattr__(self, key: str):
             if key in self._dims:
@@ -142,7 +130,9 @@ def _lower_semantic_aggregate(node: SemanticAggregate, catalog, *args):
         def __getitem__(self, key: str):
             return getattr(self._t, key)
 
-    proxy = _AggResolver(tbl)
+    proxy = _AggResolver(
+        tbl, root.dimensions if root else {}, root.measures if root else {}
+    )
     meas_exprs = [fn(proxy).name(name) for name, fn in node.aggs.items()]
     return tbl.group_by(group_exprs).aggregate(meas_exprs)
 
@@ -153,15 +143,14 @@ def _lower_semantic_mutate(node: SemanticMutate, catalog, *args):
     agg_tbl = convert(node.source, catalog=catalog)
 
     # Mutations reference columns on the aggregated table
+    @frozen
     class _AggProxy:
-        def __init__(self, t):
-            self._t = t
+        _t: Any
 
-        def __getattr__(self, key):
-            # Always treat attributes as column lookups to avoid method conflicts
+        def __getattr__(self, key: str):
             return self._t[key]
 
-        def __getitem__(self, key):
+        def __getitem__(self, key: str):
             return self._t[key]
 
     proxy = _AggProxy(agg_tbl)

@@ -31,24 +31,19 @@ class SemanticTable(Relation):
         dimensions: dict[str, Callable] | None = None,
         measures: dict[str, Callable] | None = None,
     ) -> None:
-        # Ensure immutable collections for hashability
         dims = FrozenDict(dimensions or {})
         meas = FrozenDict(measures or {})
-        # Coerce table/expr into a Relation op
         base_rel = Relation.__coerce__(table.op() if hasattr(table, "op") else table)
         super().__init__(table=base_rel, dimensions=dims, measures=meas)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         """Expose semantic fields as expressions referencing the base relation."""
-        # Use the base Table expr so lambdas return ir.Value; then capture .op()
         base_tbl = self.table.to_expr()
         out: dict[str, Any] = {}
-        # Dimensions
         for name, fn in self.dimensions.items():
             expr = fn(base_tbl)
             out[name] = expr.op()
-        # Measures (may be aggregations; this is fine as a "value definition")
         for name, fn in self.measures.items():
             expr = fn(base_tbl)
             out[name] = expr.op()
@@ -60,8 +55,6 @@ class SemanticTable(Relation):
 
 
 class SemanticFilter(Relation):
-    """Semantic-level filter; predicate can reference base columns and named dimensions."""
-
     source: Any
     predicate: Callable
 
@@ -78,8 +71,6 @@ class SemanticFilter(Relation):
 
 
 class SemanticProject(Relation):
-    """Semantic-level projection: choose named dimensions/measures."""
-
     source: Any
     fields: tuple[str, ...]
 
@@ -100,8 +91,6 @@ class SemanticProject(Relation):
 
 
 class SemanticGroupBy(Relation):
-    """Marker relation carrying grouping keys by name."""
-
     source: Any
     keys: tuple[str, ...]
 

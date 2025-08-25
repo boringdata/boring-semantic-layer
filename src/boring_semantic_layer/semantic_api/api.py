@@ -10,6 +10,7 @@ import ibis as ibis_mod
 from ibis.expr.format import fmt as _fmt
 from ibis.expr.sql import convert
 
+
 from boring_semantic_layer.semantic_api.ops import (
     SemanticAggregate,
     SemanticFilter,
@@ -19,8 +20,6 @@ from boring_semantic_layer.semantic_api.ops import (
     SemanticTable,
     SemanticJoin,
 )
-
-IS_XORQ_USED = False
 
 
 # Formatter registration for semantic-DSL ops (avoid schema eval at repr-time)
@@ -154,7 +153,7 @@ class SemanticTableExpr(IbisTable):
         return join_(self, other, how=how, on=on)
 
 
-def to_semantic_table(table: IbisTable) -> IbisTable:
+def to_semantic_table(table: IbisTable) -> SemanticTableExpr:
     """Initialize an empty SemanticTable over an Ibis table."""
     expr = SemanticTable(table=table, dimensions={}, measures={}).to_expr()
     return SemanticTableExpr(expr)
