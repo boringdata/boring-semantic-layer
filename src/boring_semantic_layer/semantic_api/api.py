@@ -83,6 +83,10 @@ class SemanticTableExpr(IbisTable):
         # Use explicit convert with an empty catalog if none provided
         return convert(self._expr, catalog=catalog or {})
 
+    def execute(self, *args: Any, **kwargs: Any) -> Any:
+        """Execute the lowered Ibis expression against its backend."""
+        return self.to_ibis().execute(*args, **kwargs)
+
     def __repr__(self) -> str:
         """Format a semantic-table expression, falling back if formatting fails."""
         try:
