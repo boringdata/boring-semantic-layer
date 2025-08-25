@@ -17,9 +17,75 @@ from boring_semantic_layer.semantic_api.ops import (
 from ibis.expr.api import Table as IbisTable
 
 
+class SemanticTableExpr(IbisTable):
+    """Wrapper around a semantic-table Ibis Expr enabling the semantic-DSL methods."""
+
+    __slots__ = ("_expr",)
+
+    def __init__(self, expr: IbisTable) -> None:
+        # Bypass immutability to set the underlying expr
+        object.__setattr__(self, "_expr", expr)
+
+    def op(self):
+        return self._expr.op()
+
+    def to_expr(self) -> IbisTable:
+        return self._expr
+
+    def __repr__(self) -> str:
+        return repr(self._expr)
+
+    def __getattr__(self, name: str):
+        return getattr(self._expr, name)
+
+    # Semantic-DSL instance methods:
+    def with_dimensions(self, **dims: Callable) -> SemanticTableExpr:
+        return with_dimensions(self, **dims)
+
+    def with_measures(self, **meas: Callable) -> SemanticTableExpr:
+        return with_measures(self, **meas)
+
+    def group_by(self, *keys: str) -> SemanticTableExpr:
+        return group_by_(self, *keys)
+
+    def aggregate(self, **aggs: Callable) -> SemanticTableExpr:
+        return aggregate_(self, **aggs)
+
+    def mutate(self, **post_aggs: Callable) -> SemanticTableExpr:
+        return mutate_(self, **post_aggs)
+
+    def filter(self, predicate: Callable) -> SemanticTableExpr:
+        return where_(self, predicate)
+
+    def where(self, predicate: Callable) -> SemanticTableExpr:
+        return where_(self, predicate)
+
+    def select(self, *fields: str) -> SemanticTableExpr:
+        return select_(self, *fields)
+
+    def join_one(
+        self, other: IbisTable, left_on: str, right_on: str
+    ) -> SemanticTableExpr:
+        return join_one(self, other, left_on, right_on)
+
+    def join_many(
+        self, other: IbisTable, left_on: str, right_on: str
+    ) -> SemanticTableExpr:
+        return join_many(self, other, left_on, right_on)
+
+    def join_cross(self, other: IbisTable) -> SemanticTableExpr:
+        return join_cross(self, other)
+
+    def join(
+        self, other: IbisTable, how: str = "inner", on: Callable | None = None
+    ) -> SemanticTableExpr:
+        return join_(self, other, how=how, on=on)
+
+
 def to_semantic_table(table: IbisTable) -> IbisTable:
     """Initialize an empty SemanticTable over an Ibis table."""
-    return SemanticTable(table=table, dimensions={}, measures={}).to_expr()
+    expr = SemanticTable(table=table, dimensions={}, measures={}).to_expr()
+    return SemanticTableExpr(expr)
 
 
 def with_dimensions(table: IbisTable, **dimensions: Callable) -> IbisTable:
@@ -28,11 +94,12 @@ def with_dimensions(table: IbisTable, **dimensions: Callable) -> IbisTable:
     if not isinstance(node, SemanticTable):
         node = SemanticTable(table=table, dimensions={}, measures={})
     new_dims = {**getattr(node, "dimensions", {}), **dimensions}
-    return SemanticTable(
+    expr = SemanticTable(
         table=node.table.to_expr(),
         dimensions=new_dims,
         measures=getattr(node, "measures", {}),
     ).to_expr()
+    return SemanticTableExpr(expr)
 
 
 def with_measures(table: IbisTable, **measures: Callable) -> IbisTable:
@@ -41,38 +108,44 @@ def with_measures(table: IbisTable, **measures: Callable) -> IbisTable:
     if not isinstance(node, SemanticTable):
         node = SemanticTable(table=table, dimensions={}, measures={})
     new_meas = {**getattr(node, "measures", {}), **measures}
-    return SemanticTable(
+    expr = SemanticTable(
         table=node.table.to_expr(),
         dimensions=getattr(node, "dimensions", {}),
         measures=new_meas,
     ).to_expr()
+    return SemanticTableExpr(expr)
 
 
 def where_(table: IbisTable, predicate: Callable) -> IbisTable:
     """Add a semantic filter node to the AST."""
-    return SemanticFilter(source=table.op(), predicate=predicate).to_expr()
+    expr = SemanticFilter(source=table.op(), predicate=predicate).to_expr()
+    return SemanticTableExpr(expr)
 
 
 def select_(table: IbisTable, *fields: str) -> IbisTable:
     """Add a semantic projection of named dimensions/measures."""
-    return SemanticProject(source=table.op(), fields=fields).to_expr()
+    expr = SemanticProject(source=table.op(), fields=fields).to_expr()
+    return SemanticTableExpr(expr)
 
 
 def group_by_(table: IbisTable, *keys: str) -> IbisTable:
     """Add a semantic GROUP BY marker."""
-    return SemanticGroupBy(source=table.op(), keys=keys).to_expr()
+    expr = SemanticGroupBy(source=table.op(), keys=keys).to_expr()
+    return SemanticTableExpr(expr)
 
 
 def aggregate_(table: IbisTable, **measures: Callable) -> IbisTable:
     """Add a semantic AGGREGATE node."""
     node = table.op()
-    keys = getattr(node, "keys", ())  # inherit keys if called after group_by_
-    return SemanticAggregate(source=node, keys=keys, aggs=measures).to_expr()
+    keys = getattr(node, "keys", ())
+    expr = SemanticAggregate(source=node, keys=keys, aggs=measures).to_expr()
+    return SemanticTableExpr(expr)
 
 
 def mutate_(table: IbisTable, **post_aggs: Callable) -> IbisTable:
     """Add a post-aggregation semantic MUTATE node."""
-    return SemanticMutate(source=table.op(), post=post_aggs).to_expr()
+    expr = SemanticMutate(source=table.op(), post=post_aggs).to_expr()
+    return SemanticTableExpr(expr)
 
 
 def join_(
@@ -86,7 +159,8 @@ def join_(
 
     lnode = left.op()
     rnode = right.op()
-    return SemanticJoin(left=lnode, right=rnode, how=how, on=on).to_expr()
+    expr = SemanticJoin(left=lnode, right=rnode, how=how, on=on).to_expr()
+    return SemanticTableExpr(expr)
 
 
 def join_one(
@@ -96,12 +170,14 @@ def join_one(
     right_on: str,
 ) -> IbisTable:
     """Declare a one-to-one (inner) join on specified keys."""
-    return join_(
+    expr = join_(
         left,
         right,
         how="inner",
-        on=lambda l, r: getattr(l, left_on) == getattr(r, right_on),
+        on=lambda left_tbl, right_tbl: getattr(left_tbl, left_on)
+        == getattr(right_tbl, right_on),
     )
+    return expr
 
 
 def join_many(
@@ -111,14 +187,17 @@ def join_many(
     right_on: str,
 ) -> IbisTable:
     """Declare a one-to-many (left) join on specified keys."""
-    return join_(
+    expr = join_(
         left,
         right,
         how="left",
-        on=lambda l, r: getattr(l, left_on) == getattr(r, right_on),
+        on=lambda left_tbl, right_tbl: getattr(left_tbl, left_on)
+        == getattr(right_tbl, right_on),
     )
+    return expr
 
 
 def join_cross(left: IbisTable, right: IbisTable) -> IbisTable:
     """Declare a cross join (cartesian product)."""
-    return join_(left, right, how="cross", on=None)
+    expr = join_(left, right, how="cross", on=None)
+    return expr
