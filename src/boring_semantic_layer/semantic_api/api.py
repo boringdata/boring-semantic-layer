@@ -6,6 +6,15 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+try:
+    import xorq.vendor.ibis as ibis_mod  # noqa: F401
+
+    IS_XORQ_USED = True
+except ImportError:
+    import ibis as ibis_mod
+
+    IS_XORQ_USED = False
+
 from boring_semantic_layer.semantic_api.ops import (
     SemanticAggregate,
     SemanticFilter,
@@ -14,7 +23,8 @@ from boring_semantic_layer.semantic_api.ops import (
     SemanticProject,
     SemanticTable,
 )
-from ibis.expr.api import Table as IbisTable
+
+IbisTable = ibis_mod.expr.api.Table
 
 
 class SemanticTableExpr(IbisTable):
@@ -30,12 +40,8 @@ class SemanticTableExpr(IbisTable):
         return self._expr.op()
 
     def to_expr(self) -> IbisTable:
-        """Lower the semantic-table AST into a standard Ibis expression."""
-        # Automatically convert semantic nodes to a SQL-able Ibis Expr
-        from ibis.expr.sql import convert
-
-        # Use an empty catalog for semantic lowering
-        return convert(self._expr, catalog={})
+        """Get the underlying Ibis expression (no automatic lowering)."""
+        return self._expr
 
     def __repr__(self) -> str:
         return repr(self._expr)
@@ -242,3 +248,13 @@ def _infer_measure_name(fn: Callable) -> str:
             f"Cannot infer measure name from lambda; found names {unique}."
         )
     return next(iter(unique))
+
+
+# Allow convert() to accept the SemanticTableExpr wrapper directly
+from ibis.expr.sql import convert  # noqa: E402
+
+
+@convert.register(SemanticTableExpr)
+def _lower_semantic_tableexpr(node: SemanticTableExpr, catalog, *args):
+    """Unwrap the semantic-table wrapper before lowering."""
+    return convert(node._expr, catalog=catalog)

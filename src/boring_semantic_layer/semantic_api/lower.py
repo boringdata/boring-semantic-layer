@@ -2,8 +2,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from ibis.expr.sql import convert
-from boring_semantic_layer.semantic_api.ops import (
+try:
+    import xorq.vendor.ibis as ibis_mod  # noqa: F401
+
+    IS_XORQ_USED = True
+except ImportError:
+    import ibis as ibis_mod
+
+    IS_XORQ_USED = False
+
+from ibis.expr.sql import convert  # noqa: E402
+from boring_semantic_layer.semantic_api.ops import (  # noqa: E402
     SemanticAggregate,
     SemanticFilter,
     SemanticGroupBy,
@@ -13,10 +22,11 @@ from boring_semantic_layer.semantic_api.ops import (
     SemanticTable,
     _find_root_model,
 )
-from ibis.expr.types import Table as IbisTableExpr
+
+IbisTableExpr = ibis_mod.expr.types.Table
 
 # Handle vanilla Ibis Project operations (column pruning/projection)
-from ibis.expr.operations.relations import Project as IbisProject
+IbisProject = ibis_mod.expr.operations.relations.Project
 
 
 # Helper: Proxy to resolve attributes either from semantic dims or from a table's columns
