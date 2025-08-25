@@ -6,14 +6,9 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-try:
-    import xorq.vendor.ibis as ibis_mod  # noqa: F401
-
-    IS_XORQ_USED = True
-except ImportError:
-    import ibis as ibis_mod
-
-    IS_XORQ_USED = False
+import ibis as ibis_mod
+from ibis.expr.format import fmt as _fmt
+from ibis.expr.sql import convert
 
 from boring_semantic_layer.semantic_api.ops import (
     SemanticAggregate,
@@ -22,7 +17,47 @@ from boring_semantic_layer.semantic_api.ops import (
     SemanticMutate,
     SemanticProject,
     SemanticTable,
+    SemanticJoin,
 )
+
+IS_XORQ_USED = False
+
+
+# Formatter registration for semantic-DSL ops (avoid schema eval at repr-time)
+@_fmt.register(SemanticTable)
+def _format_semantic_table(op, **kwargs):
+    return op.__class__.__name__
+
+
+@_fmt.register(SemanticFilter)
+def _format_semantic_filter(op, **kwargs):
+    return op.__class__.__name__
+
+
+@_fmt.register(SemanticProject)
+def _format_semantic_project(op, **kwargs):
+    return op.__class__.__name__
+
+
+@_fmt.register(SemanticGroupBy)
+def _format_semantic_group_by(op, **kwargs):
+    return op.__class__.__name__
+
+
+@_fmt.register(SemanticAggregate)
+def _format_semantic_aggregate(op, **kwargs):
+    return op.__class__.__name__
+
+
+@_fmt.register(SemanticMutate)
+def _format_semantic_mutate(op, **kwargs):
+    return op.__class__.__name__
+
+
+@_fmt.register(SemanticJoin)
+def _format_semantic_join(op, **kwargs):
+    return op.__class__.__name__
+
 
 IbisTable = ibis_mod.expr.api.Table
 
@@ -43,8 +78,17 @@ class SemanticTableExpr(IbisTable):
         """Get the underlying Ibis expression (no automatic lowering)."""
         return self._expr
 
+    def to_ibis(self, catalog: dict[str, Any] | None = None) -> IbisTable:
+        """Lower this semantic-table plan into a raw Ibis table expression."""
+        # Use explicit convert with an empty catalog if none provided
+        return convert(self._expr, catalog=catalog or {})
+
     def __repr__(self) -> str:
-        return repr(self._expr)
+        """Format a semantic-table expression, falling back if formatting fails."""
+        try:
+            return repr(self._expr)
+        except AttributeError:
+            return repr(self._expr.op())
 
     def __getattr__(self, name: str):
         return getattr(self._expr, name)
@@ -191,7 +235,6 @@ def join_(
     on: Callable[[Any, Any], Any] | None = None,
 ) -> IbisTable:
     """Add a semantic JOIN between two semantic tables."""
-    from boring_semantic_layer.semantic_api.ops import SemanticJoin
 
     lnode = left.op()
     rnode = right.op()
@@ -251,7 +294,6 @@ def _infer_measure_name(fn: Callable) -> str:
 
 
 # Allow convert() to accept the SemanticTableExpr wrapper directly
-from ibis.expr.sql import convert  # noqa: E402
 
 
 @convert.register(SemanticTableExpr)

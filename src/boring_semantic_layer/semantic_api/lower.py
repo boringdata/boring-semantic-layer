@@ -2,14 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-try:
-    import xorq.vendor.ibis as ibis_mod  # noqa: F401
+import ibis as ibis_mod
 
-    IS_XORQ_USED = True
-except ImportError:
-    import ibis as ibis_mod
-
-    IS_XORQ_USED = False
+IS_XORQ_USED = False
 
 from ibis.expr.sql import convert  # noqa: E402
 from boring_semantic_layer.semantic_api.ops import (  # noqa: E402
@@ -23,7 +18,7 @@ from boring_semantic_layer.semantic_api.ops import (  # noqa: E402
     _find_root_model,
 )
 
-IbisTableExpr = ibis_mod.expr.types.Table
+IbisTableExpr = ibis_mod.expr.api.Table
 
 # Handle vanilla Ibis Project operations (column pruning/projection)
 IbisProject = ibis_mod.expr.operations.relations.Project
