@@ -39,7 +39,12 @@ def test_semantic_join_variants(how, left_on, right_on, expected_how):
     elif how == "cross":
         joined = join_cross(sem_l, sem_r)
     else:
-        joined = join_(sem_l, sem_r, how=how, on=(lambda l, r: l.a == r.b))
+        joined = join_(
+            sem_l,
+            sem_r,
+            how=how,
+            on=lambda left_tbl, right_tbl: left_tbl.a == right_tbl.b,
+        )
 
     expr = convert(joined, catalog={})
     if expected_how == "cross":
