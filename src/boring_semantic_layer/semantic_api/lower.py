@@ -15,6 +15,9 @@ from boring_semantic_layer.semantic_api.ops import (
 )
 from ibis.expr.types import Table as IbisTableExpr
 
+# Handle vanilla Ibis Project operations (column pruning/projection)
+from ibis.expr.operations.relations import Project as IbisProject
+
 
 # Helper: Proxy to resolve attributes either from semantic dims or from a table's columns
 class _Resolver:
@@ -36,6 +39,14 @@ class _Resolver:
 def _convert_ibis_table(expr, catalog, *args):
     # unwrap Expr to its ops.Node for further dispatch
     return convert(expr.op(), catalog=catalog)
+
+
+@convert.register(IbisProject)
+def _lower_ibis_project(op: IbisProject, catalog, *args):
+    # Project a subset of columns from a table expression
+    tbl = convert(op.parent, catalog=catalog)
+    cols = [v.to_expr().name(k) for k, v in op.values.items()]
+    return tbl.select(cols)
 
 
 @convert.register(SemanticTable)

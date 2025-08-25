@@ -9,6 +9,9 @@ from boring_semantic_layer.semantic_api.api import (
     join_one,
     to_semantic_table,
     with_dimensions,
+    group_by_,
+    aggregate_,
+    mutate_,
 )
 
 
@@ -46,7 +49,8 @@ def test_semantic_join_variants(how, left_on, right_on, expected_how):
     assert repr(expr) == repr(expected)
 
 
-# Temporarily xfail: window passthrough behavior is under revision
+# Test window passthrough: aggregate+mutate with window over specification
+# Temporarily xfail: window semantics updated, test obsolete
 @pytest.mark.xfail(reason="window semantics updated, test obsolete", strict=False)
 def test_window_passthrough():
     data = {"x": [1, 2, 3, 4, 5]}
@@ -54,13 +58,12 @@ def test_window_passthrough():
     sem = with_dimensions(to_semantic_table(tbl), x=lambda t: t.x)
 
     # one following row frame (0 preceding, 1 following) for window passthrough test
-    w = ibis.window(order_by="x", rows=(0, 1))
-    # Use a distinct measure name to avoid duplicate group key collision
-    q = (
-        sem.group_by("x")
-        .aggregate(sum_x=lambda t: t.x.sum())
-        .mutate(rolling=lambda t: t.sum_x.sum().over(w))
-    )
+    # Adapt to new ibis.window signature (preceding, following)
+    w = ibis.window(preceding=0, following=1, order_by="x")
+    # Use semantic functions for group_by, aggregate, and mutate
+    gb = group_by_(sem, "x")
+    agg = aggregate_(gb, sum_x=lambda t: t.x.sum())
+    q = mutate_(agg, rolling=lambda t: t.sum_x.sum().over(w))
     expr = convert(q, catalog={})
     expected = (
         tbl.group_by([tbl.x])
