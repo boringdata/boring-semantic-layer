@@ -73,7 +73,9 @@ def _lower_semantic_project(node: SemanticProject, catalog, *args):
         cols = [getattr(tbl, f) for f in node.fields]
         return tbl.select(cols)
 
-    tbl = convert(node.source, catalog=catalog)  # base table expr, include filters if any
+    tbl = convert(
+        node.source, catalog=catalog
+    )  # base table expr, include filters if any
     dims = [f for f in node.fields if f in root.dimensions]
     meas = [f for f in node.fields if f in root.measures]
 
@@ -118,7 +120,25 @@ def _lower_semantic_aggregate(node: SemanticAggregate, catalog, *args):
         else:
             group_exprs.append(getattr(tbl, k).name(k))
 
-    meas_exprs = [fn(tbl).name(name) for name, fn in node.aggs.items()]
+    # Allow user-defined aggs to reference root dimensions and measures via proxy
+    class _AggResolver:
+        def __init__(self, table):
+            self._t = table
+            self._dims = root.dimensions if root else {}
+            self._meas = root.measures if root else {}
+
+        def __getattr__(self, key: str):
+            if key in self._dims:
+                return self._dims[key](self._t)
+            if key in self._meas:
+                return self._meas[key](self._t)
+            return getattr(self._t, key)
+
+        def __getitem__(self, key: str):
+            return getattr(self._t, key)
+
+    proxy = _AggResolver(tbl)
+    meas_exprs = [fn(proxy).name(name) for name, fn in node.aggs.items()]
     return tbl.group_by(group_exprs).aggregate(meas_exprs)
 
 

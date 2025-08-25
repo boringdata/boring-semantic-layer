@@ -30,7 +30,12 @@ class SemanticTableExpr(IbisTable):
         return self._expr.op()
 
     def to_expr(self) -> IbisTable:
-        return self._expr
+        """Lower the semantic-table AST into a standard Ibis expression."""
+        # Automatically convert semantic nodes to a SQL-able Ibis Expr
+        from ibis.expr.sql import convert
+
+        # Use an empty catalog for semantic lowering
+        return convert(self._expr, catalog={})
 
     def __repr__(self) -> str:
         return repr(self._expr)
@@ -48,7 +53,20 @@ class SemanticTableExpr(IbisTable):
     def group_by(self, *keys: str) -> SemanticTableExpr:
         return group_by_(self, *keys)
 
-    def aggregate(self, **aggs: Callable) -> SemanticTableExpr:
+    def aggregate(self, *fns: Callable, **aggs: Callable) -> SemanticTableExpr:
+        """Attach one or more measure lambdas; positional lambdas infer their measure names."""
+        from .api import _infer_measure_name  # avoid circular
+
+        # Support positional measure lambdas by inferring their names
+        if fns:
+            if aggs:
+                raise ValueError("Cannot mix positional and named measure lambdas")
+            if len(fns) != 1:
+                raise ValueError(
+                    f"Expected exactly 1 positional measure lambda, got {len(fns)}"
+                )
+            name = _infer_measure_name(fns[0])
+            aggs = {name: fns[0]}
         return aggregate_(self, **aggs)
 
     def mutate(self, **post_aggs: Callable) -> SemanticTableExpr:
@@ -134,8 +152,20 @@ def group_by_(table: IbisTable, *keys: str) -> IbisTable:
     return SemanticTableExpr(expr)
 
 
-def aggregate_(table: IbisTable, **measures: Callable) -> IbisTable:
-    """Add a semantic AGGREGATE node."""
+def aggregate_(table: IbisTable, *fns: Callable, **measures: Callable) -> IbisTable:
+    """Add a semantic AGGREGATE node. Positional lambdas infer their measure names."""
+    from .api import _infer_measure_name
+
+    # Merge positional lambdas by inferring name if provided
+    if fns:
+        if measures:
+            raise ValueError("Cannot mix positional and named measure lambdas")
+        if len(fns) != 1:
+            raise ValueError(
+                f"Expected exactly 1 positional measure lambda, got {len(fns)}"
+            )
+        measures = {_infer_measure_name(fns[0]): fns[0]}
+
     node = table.op()
     keys = getattr(node, "keys", ())
     expr = SemanticAggregate(source=node, keys=keys, aggs=measures).to_expr()
@@ -201,3 +231,14 @@ def join_cross(left: IbisTable, right: IbisTable) -> IbisTable:
     """Declare a cross join (cartesian product)."""
     expr = join_(left, right, how="cross", on=None)
     return expr
+
+
+def _infer_measure_name(fn: Callable) -> str:
+    """Infer a single measure name from a lambda accessing one attribute."""
+    names = fn.__code__.co_names
+    unique = set(names)
+    if len(unique) != 1:
+        raise ValueError(
+            f"Cannot infer measure name from lambda; found names {unique}."
+        )
+    return next(iter(unique))

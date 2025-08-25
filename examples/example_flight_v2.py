@@ -21,7 +21,7 @@ flights_st = (
 
 carrier_share = (
     flights_st.group_by("carrier")
-    .aggregate(flight_count=flights_st.flight_count)
+    .aggregate(lambda t: t.flight_count)
     .mutate(market_share=lambda t: t.flight_count / t.flight_count.sum())
     .select("carrier", "flight_count", "market_share")
 )
@@ -31,9 +31,9 @@ print(carrier_expr.execute().head())
 rolling_window = ibis.window(order_by="month", rows=(2, 0))
 monthly_trends = (
     flights_st.group_by("month", "carrier")
-    .aggregate(monthly_flights=flights_st.flight_count)
-    .mutate(rolling_avg=lambda t: t.monthly_flights.mean().over(rolling_window))
-    .select("month", "carrier", "monthly_flights", "rolling_avg")
+    .aggregate(lambda t: t.flight_count)
+    .mutate(rolling_avg=lambda t: t.flight_count.mean().over(rolling_window))
+    .select("month", "carrier", "flight_count", "rolling_avg")
 )
 monthly_expr = monthly_trends.to_expr()
 print(monthly_expr.execute().head())
