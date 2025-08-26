@@ -21,7 +21,6 @@ IbisTableExpr = ibis_mod.expr.api.Table
 IbisProject = ibis_mod.expr.operations.relations.Project
 
 
-# Helper: Proxy to resolve attributes either from semantic dims or from a table's columns
 @frozen
 class _Resolver:
     _t: Any
@@ -113,7 +112,6 @@ def _lower_semantic_aggregate(node: SemanticAggregate, catalog, *args):
         else:
             group_exprs.append(getattr(tbl, k).name(k))
 
-    # Allow user-defined aggs to reference root dimensions and measures via proxy
     @frozen
     class _AggResolver:
         _t: Any
@@ -139,10 +137,8 @@ def _lower_semantic_aggregate(node: SemanticAggregate, catalog, *args):
 
 @convert.register(SemanticMutate)
 def _lower_semantic_mutate(node: SemanticMutate, catalog, *args):
-    # Lower the upstream plan first (usually a group_by+aggregate)
     agg_tbl = convert(node.source, catalog=catalog)
 
-    # Mutations reference columns on the aggregated table
     @frozen
     class _AggProxy:
         _t: Any

@@ -1,7 +1,3 @@
-"""
-Port of xorq.semantic.ops to standalone ibis package.
-"""
-
 from __future__ import annotations
 
 from typing import Any, Callable, Iterable
@@ -14,8 +10,6 @@ from ibis.expr.schema import Schema
 # Notes on design:
 # - .values must map column name -> Value ops that reference *parent* relations.
 # - .schema must come from those values' dtypes, so Field(dtype) can resolve from rel.schema.
-# - We store user lambdas (dimensions/measures) and only evaluate them against the base ibis table
-#   when computing .values / .schema. This preserves immutability and keeps IR nodes hashable.
 
 
 class SemanticTable(Relation):
@@ -80,7 +74,6 @@ class SemanticProject(Relation):
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         src_vals = self.source.values
-        # Keep only requested names that exist in the semantic model
         return FrozenOrderedDict(
             {k: v for k, v in src_vals.items() if k in self.fields}
         )
@@ -99,7 +92,6 @@ class SemanticGroupBy(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        # No shape change until aggregation; hand through upstream values.
         return self.source.values
 
     @property
@@ -108,8 +100,6 @@ class SemanticGroupBy(Relation):
 
 
 class SemanticAggregate(Relation):
-    """Aggregation over grouping keys + measure lambdas."""
-
     source: Any
     keys: tuple[str, ...]
     aggs: Any  # FrozenDict[str, Callable]
@@ -127,20 +117,14 @@ class SemanticAggregate(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        # Conceptually, this defines output columns; use the *base* table to define dtypes.
-        # The actual grouping/aggregation happens in lowering.
-        # We include both group keys and measure outputs.
-        # Resolve group keys by name from underlying SemanticTable dims or fallback to base columns.
         root = _find_root_model(self.source)
         base_tbl = root.table.to_expr() if root else self.source.to_expr()
         vals: dict[str, Any] = {}
-        # Group keys
         for k in self.keys:
             if root and k in root.dimensions:
                 vals[k] = root.dimensions[k](base_tbl).op()
             else:
                 vals[k] = base_tbl[k].op()
-        # Measures
         for name, fn in self.aggs.items():
             vals[name] = fn(base_tbl).op()
         return FrozenOrderedDict(vals)
@@ -151,8 +135,6 @@ class SemanticAggregate(Relation):
 
 
 class SemanticMutate(Relation):
-    """Post-aggregation mutations (expressions over aggregated outputs)."""
-
     source: Any
     post: Any  # FrozenDict[str, Callable]
 
@@ -162,18 +144,14 @@ class SemanticMutate(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        # Mutations define new columns but don't affect upstream dereference rules.
         return self.source.values
 
     @property
     def schema(self) -> Schema:
-        # Actual dtypes materialize after lowering; preserving upstream schema here is fine.
         return self.source.schema
 
 
 class SemanticJoin(Relation):
-    """Semantic-level join between two semantic tables."""
-
     left: Any
     right: Any
     how: str
@@ -195,7 +173,6 @@ class SemanticJoin(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        # Combine left and right values; right keys may override
         vals: dict[str, Any] = {}
         vals.update(self.left.values)
         vals.update(self.right.values)
@@ -207,7 +184,6 @@ class SemanticJoin(Relation):
 
 
 def _find_root_model(node: Any) -> SemanticTable | None:
-    """Walk upstream until we find the first SemanticTable."""
     cur = node
     while cur is not None:
         if isinstance(cur, SemanticTable):

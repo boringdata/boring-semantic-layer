@@ -1,7 +1,3 @@
-"""
-Port of xorq.semantic.api to standalone ibis package.
-"""
-
 from __future__ import annotations
 
 from typing import Any, Callable
@@ -22,7 +18,6 @@ from boring_semantic_layer.semantic_api.ops import (
 )
 
 
-# Formatter registration for semantic-DSL ops (avoid schema eval at repr-time)
 @_fmt.register(SemanticTable)
 def _format_semantic_table(op, **kwargs):
     return op.__class__.__name__
@@ -62,32 +57,26 @@ IbisTable = ibis_mod.expr.api.Table
 
 
 class SemanticTableExpr(IbisTable):
-    """Wrapper around a semantic-table Ibis Expr enabling the semantic-DSL methods."""
-
     __slots__ = ("_expr",)
 
     def __init__(self, expr: IbisTable) -> None:
-        # Bypass immutability to set the underlying expr
+        # FIXME: HACK to work around immutability of ibis expressions
         object.__setattr__(self, "_expr", expr)
 
     def op(self):
         return self._expr.op()
 
     def to_expr(self) -> IbisTable:
-        """Get the underlying Ibis expression (no automatic lowering)."""
         return self._expr
 
     def to_ibis(self, catalog: dict[str, Any] | None = None) -> IbisTable:
-        """Lower this semantic-table plan into a raw Ibis table expression."""
-        # Use explicit convert with an empty catalog if none provided
         return convert(self._expr, catalog=catalog or {})
 
     def execute(self, *args: Any, **kwargs: Any) -> Any:
-        """Execute the lowered Ibis expression against its backend."""
         return self.to_ibis().execute(*args, **kwargs)
 
     def __repr__(self) -> str:
-        """Format a semantic-table expression, falling back if formatting fails."""
+        # FIXME
         try:
             return repr(self._expr)
         except AttributeError:
@@ -96,7 +85,6 @@ class SemanticTableExpr(IbisTable):
     def __getattr__(self, name: str):
         return getattr(self._expr, name)
 
-    # Semantic-DSL instance methods:
     def with_dimensions(self, **dims: Callable) -> SemanticTableExpr:
         return with_dimensions(self, **dims)
 
@@ -107,17 +95,14 @@ class SemanticTableExpr(IbisTable):
         return group_by_(self, *keys)
 
     def aggregate(self, *fns: Callable, **aggs: Callable) -> SemanticTableExpr:
-        """Attach one or more measure lambdas; positional lambdas infer their measure names."""
         from .api import _infer_measure_name  # avoid circular
 
-        # Support positional measure lambdas by inferring their names
         if fns:
             if aggs:
-                raise ValueError("Cannot mix positional and named measure lambdas")
+                raise ValueError
             if len(fns) != 1:
-                raise ValueError(
-                    f"Expected exactly 1 positional measure lambda, got {len(fns)}"
-                )
+                raise ValueError
+
             name = _infer_measure_name(fns[0])
             aggs = {name: fns[0]}
         return aggregate_(self, **aggs)
@@ -154,13 +139,11 @@ class SemanticTableExpr(IbisTable):
 
 
 def to_semantic_table(table: IbisTable) -> SemanticTableExpr:
-    """Initialize an empty SemanticTable over an Ibis table."""
     expr = SemanticTable(table=table, dimensions={}, measures={}).to_expr()
     return SemanticTableExpr(expr)
 
 
 def with_dimensions(table: IbisTable, **dimensions: Callable) -> IbisTable:
-    """Attach or extend dimension lambdas (name -> fn(table) -> column)."""
     node = table.op()
     if not isinstance(node, SemanticTable):
         node = SemanticTable(table=table, dimensions={}, measures={})
@@ -174,7 +157,6 @@ def with_dimensions(table: IbisTable, **dimensions: Callable) -> IbisTable:
 
 
 def with_measures(table: IbisTable, **measures: Callable) -> IbisTable:
-    """Attach or extend measure lambdas (name -> fn(table) -> scalar/agg)."""
     node = table.op()
     if not isinstance(node, SemanticTable):
         node = SemanticTable(table=table, dimensions={}, measures={})
@@ -188,28 +170,23 @@ def with_measures(table: IbisTable, **measures: Callable) -> IbisTable:
 
 
 def where_(table: IbisTable, predicate: Callable) -> IbisTable:
-    """Add a semantic filter node to the AST."""
     expr = SemanticFilter(source=table.op(), predicate=predicate).to_expr()
     return SemanticTableExpr(expr)
 
 
 def select_(table: IbisTable, *fields: str) -> IbisTable:
-    """Add a semantic projection of named dimensions/measures."""
     expr = SemanticProject(source=table.op(), fields=fields).to_expr()
     return SemanticTableExpr(expr)
 
 
 def group_by_(table: IbisTable, *keys: str) -> IbisTable:
-    """Add a semantic GROUP BY marker."""
     expr = SemanticGroupBy(source=table.op(), keys=keys).to_expr()
     return SemanticTableExpr(expr)
 
 
 def aggregate_(table: IbisTable, *fns: Callable, **measures: Callable) -> IbisTable:
-    """Add a semantic AGGREGATE node. Positional lambdas infer their measure names."""
     from .api import _infer_measure_name
 
-    # Merge positional lambdas by inferring name if provided
     if fns:
         if measures:
             raise ValueError("Cannot mix positional and named measure lambdas")
@@ -226,7 +203,6 @@ def aggregate_(table: IbisTable, *fns: Callable, **measures: Callable) -> IbisTa
 
 
 def mutate_(table: IbisTable, **post_aggs: Callable) -> IbisTable:
-    """Add a post-aggregation semantic MUTATE node."""
     expr = SemanticMutate(source=table.op(), post=post_aggs).to_expr()
     return SemanticTableExpr(expr)
 
@@ -237,7 +213,6 @@ def join_(
     how: str = "inner",
     on: Callable[[Any, Any], Any] | None = None,
 ) -> IbisTable:
-    """Add a semantic JOIN between two semantic tables."""
 
     lnode = left.op()
     rnode = right.op()
@@ -251,7 +226,6 @@ def join_one(
     left_on: str,
     right_on: str,
 ) -> IbisTable:
-    """Declare a one-to-one (inner) join on specified keys."""
     expr = join_(
         left,
         right,
@@ -268,7 +242,6 @@ def join_many(
     left_on: str,
     right_on: str,
 ) -> IbisTable:
-    """Declare a one-to-many (left) join on specified keys."""
     expr = join_(
         left,
         right,
@@ -280,26 +253,18 @@ def join_many(
 
 
 def join_cross(left: IbisTable, right: IbisTable) -> IbisTable:
-    """Declare a cross join (cartesian product)."""
     expr = join_(left, right, how="cross", on=None)
     return expr
 
 
 def _infer_measure_name(fn: Callable) -> str:
-    """Infer a single measure name from a lambda accessing one attribute."""
     names = fn.__code__.co_names
     unique = set(names)
     if len(unique) != 1:
-        raise ValueError(
-            f"Cannot infer measure name from lambda; found names {unique}."
-        )
+        raise ValueError
     return next(iter(unique))
-
-
-# Allow convert() to accept the SemanticTableExpr wrapper directly
 
 
 @convert.register(SemanticTableExpr)
 def _lower_semantic_tableexpr(node: SemanticTableExpr, catalog, *args):
-    """Unwrap the semantic-table wrapper before lowering."""
     return convert(node._expr, catalog=catalog)
