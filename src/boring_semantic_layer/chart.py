@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 
-def _detect_chart_spec(
+def _detect_vega_spec(
     dimensions: List[str],
     measures: List[str],
     time_dimension: Optional[str] = None,

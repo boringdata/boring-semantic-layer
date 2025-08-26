@@ -34,7 +34,7 @@ from .joins import Join
 from .filters import Filter
 from .time_grain import TimeGrain, TIME_GRAIN_TRANSFORMATIONS, TIME_GRAIN_ORDER
 from .query_compiler import _compile_query
-from .chart import _detect_chart_spec
+from .chart import _detect_vega_spec
 
 Expr = ibis_mod.expr.types.core.Expr
 _ = ibis_mod._
@@ -201,7 +201,7 @@ class QueryExpr:
         except Exception:
             return None
 
-    def chart(
+    def chart_vega(
         self,
         spec: Optional[Dict[str, Any]] = None,
         format: str = "altair",
@@ -241,7 +241,7 @@ class QueryExpr:
             )
 
         # Always start with auto-detected spec as base
-        base_spec = _detect_chart_spec(
+        base_spec = _detect_vega_spec(
             dimensions=list(self.dimensions),
             measures=list(self.measures),
             time_dimension=self.model.time_dimension,
@@ -292,7 +292,7 @@ class QueryExpr:
         self,
         spec: Optional[Dict[str, Any]] = None,
         format: str = "plotly",
-    ) -> Union["go.Figure", Dict[str, Any]]:
+    ) -> Union["go.Figure", Dict[str, Any], bytes, str]:
         """
         Create a Plotly/Vizro chart from the query using native Plotly integration.
 
@@ -301,20 +301,26 @@ class QueryExpr:
                   If not provided, will auto-detect chart type based on query.
             format: The output format of the chart:
                 - "plotly" (default): Returns Plotly Figure object
+                - "interactive": Returns interactive Plotly Figure with tooltip
                 - "json": Returns Plotly specification dictionary
+                - "png": Returns PNG image bytes
+                - "svg": Returns SVG string
 
         Returns:
             Chart in the requested format:
-                - plotly: go.Figure
+                - plotly/interactive: go.Figure
                 - json: Dict containing Plotly specification
+                - png: bytes of PNG image
+                - svg: str containing SVG markup
 
         Raises:
             ImportError: If Plotly is not installed
             ValueError: If an unsupported format is specified
         """
-        if format not in ["plotly", "json"]:
+        if format not in ["plotly", "interactive", "json", "png", "svg"]:
             raise ValueError(
-                f"Unsupported format: {format}. Supported formats: 'plotly', 'json'"
+                f"Unsupported format: {format}. "
+                "Supported formats: 'plotly', 'interactive', 'json', 'png', 'svg'"
             )
 
         from .chart import _detect_plotly_spec, _merge_plotly_specs, execute_plotly_spec
@@ -475,7 +481,78 @@ class QueryExpr:
         if chart_config:
             fig.update_layout(**chart_config)
 
+        # Handle different output formats
+        if format == "plotly":
+            return fig
+        elif format == "interactive":
+            # Enable hover data and interactivity
+            fig.update_layout(hovermode="closest")
+            return fig
+        elif format in ["png", "svg"]:
+            try:
+                return fig.to_image(format=format)
+            except Exception as e:
+                raise ImportError(
+                    f"{format} export requires additional dependencies: {e}. "
+                    "Install with: pip install -U kaleido"
+                )
+
         return fig
+
+    def chart(
+        self,
+        spec: Optional[Dict[str, Any]] = None,
+        backend: str = "vega",
+        format: str = "object",
+    ) -> Union["altair.Chart", "go.Figure", Dict[str, Any], bytes, str]:
+        """
+        Create a chart from the query using the specified backend.
+
+        Args:
+            spec: Optional chart specification. Format depends on backend:
+                  - For vega: Vega-Lite specification
+                  - For plotly: Plotly specification
+            backend: The charting backend to use:
+                - "vega" (default): Use Vega-Lite/Altair backend
+                - "plotly": Use Plotly backend
+            format: The output format of the chart:
+                - "object" (default): Returns chart object (Chart/Figure)
+                - "interactive": Returns interactive chart with tooltip
+                - "json": Returns JSON specification
+                - "png": Returns PNG image bytes
+                - "svg": Returns SVG string
+
+        Returns:
+            Chart in the requested format. The exact type depends on backend:
+                - vega object/interactive: Altair Chart object
+                - plotly object/interactive: Plotly Figure object
+                - json: Dict containing specification
+                - png: bytes of PNG image
+                - svg: str containing SVG markup
+
+        Raises:
+            ImportError: If the specified backend is not installed
+            ValueError: If an unsupported backend or format is specified
+        """
+        if backend not in ["vega", "plotly"]:
+            raise ValueError(
+                f"Unsupported backend: {backend}. Supported backends: 'vega', 'plotly'"
+            )
+
+        if format not in ["object", "interactive", "json", "png", "svg"]:
+            raise ValueError(
+                f"Unsupported format: {format}. "
+                "Supported formats: 'object', 'interactive', 'json', 'png', 'svg'"
+            )
+
+        if backend == "vega":
+            # Map format names for Vega-Lite backend
+            vega_format = "altair" if format == "object" else format
+            return self.chart_vega(spec=spec, format=vega_format)
+        elif backend == "plotly":
+            # Map format names for Plotly backend
+            plotly_format = "plotly" if format == "object" else format
+            return self.plotly_chart(spec=spec, format=plotly_format)
 
 
 def _convert_dimensions(dimension_dict) -> dict:
