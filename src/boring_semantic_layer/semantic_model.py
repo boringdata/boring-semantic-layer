@@ -300,30 +300,17 @@ class QueryExpr:
     ) -> Union["go.Figure", Dict[str, Any], bytes, str]:
         """
         Create a Plotly chart from the query using native Plotly integration.
-        
-        **Plotly Backend Design Pattern**:
-        
+
         This method implements a two-phase approach for chart creation:
-        
-        1. **Chart Type Determination** (separate from parameters):
-           - Auto-detect chart type using `_detect_plotly_chart_type()` based on query structure
-           - Chart type can be explicitly overridden via `chart_type` parameter
-           - Chart type acts as routing key for subsequent processing
-           
-        2. **Parameter Preparation & Chart Creation**:
-           - `_prepare_plotly_data_and_params()` transforms data and maps semantic concepts 
-             to Plotly Express parameters
-           - Parameters are passed directly to the appropriate Plotly Express function:
-             `px.{chart_type}(**final_params)`
-           - User specifications merge with base parameters (user specs take precedence)
-           
-        **Parameter Flow**:
+
+        1. Chart Type Determination (separate from parameters):
+        2. Parameter Preparation & Chart Creation
+
         ```
         Query → Chart Type Detection → Data/Param Preparation → px.{chart_type}(**params)
         ```
-        
-        **Argument Passing Strategy**:
-        - All parameters in `spec` (except 'layout'/'config') are passed directly to 
+
+        - All parameters in `spec` (except 'layout'/'config') are passed directly to
           Plotly Express functions as keyword arguments
         - Base parameters are computed from query structure (x, y, color, data_frame, etc.)
         - User parameters override base parameters when conflicts occur
@@ -417,7 +404,7 @@ class QueryExpr:
             fig = px.bar(**final_params)
             # For multiple measures, set barmode to 'group' to create grouped bars instead of stacked
             if len(list(self.measures)) > 1:
-                fig.update_layout(barmode='group')
+                fig.update_layout(barmode="group")
         elif final_chart_type == "line":
             fig = px.line(**final_params)
         elif final_chart_type == "scatter":

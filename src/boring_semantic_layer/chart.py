@@ -315,7 +315,6 @@ def _prepare_plotly_data_and_params(query_expr, chart_type: str) -> tuple:
                 "z": pivot_df.values,
                 "x": pivot_df.columns.tolist(),
                 "y": pivot_df.index.tolist(),
-                "colorscale": "Viridis",
                 "hoverongaps": False,  # Don't show hover on NaN values
             }
             # Update df reference for return
