@@ -34,7 +34,7 @@ from .joins import Join
 from .filters import Filter
 from .time_grain import TimeGrain, TIME_GRAIN_TRANSFORMATIONS, TIME_GRAIN_ORDER
 from .query_compiler import _compile_query
-from .chart import _detect_vega_spec
+from .chart import _detect_vega_spec, _detect_plotly_spec, _merge_plotly_specs, execute_plotly_spec
 
 Expr = ibis_mod.expr.types.core.Expr
 _ = ibis_mod._
@@ -323,7 +323,6 @@ class QueryExpr:
                 "Supported formats: 'plotly', 'interactive', 'json', 'png', 'svg'"
             )
 
-        from .chart import _detect_plotly_spec, _merge_plotly_specs, execute_plotly_spec
 
         # Generate native Plotly specification
         plotly_spec = _detect_plotly_spec(

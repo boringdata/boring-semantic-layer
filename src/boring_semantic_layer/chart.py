@@ -4,6 +4,7 @@ Auto-detect Vega-Lite chart specifications based on query dimensions and measure
 
 from typing import Any, Dict, List, Optional
 import pandas as pd
+import copy
 
 
 def _detect_vega_spec(
@@ -188,8 +189,6 @@ def _detect_plotly_spec(
     measures: List[str],
     time_dimension: Optional[str] = None,
     time_grain: Optional[str] = None,
-    query_filters: Optional[List] = None,
-    data_sample: Optional[pd.DataFrame] = None,
 ) -> Dict[str, Any]:
     """
     Detect appropriate chart type and return native Plotly Express specification.
@@ -215,11 +214,9 @@ def _detect_plotly_spec(
             "parameters": {
                 "mode": "number",
                 "value": measures[0],
-                "title": {"text": measures[0].title()},
             },
             "plotly_function": "go.Indicator",
             "data_requirements": {"single_value": True},
-            "chart_config": {"autosize": True, "height": 200},
         }
 
     # Check if we have a time dimension
@@ -249,8 +246,6 @@ def _detect_plotly_spec(
             parameters = {
                 "x": dimensions[0],
                 "y": measures[0],
-                "title": f"{measures[0]} over time",
-                "labels": {dimensions[0]: "Time", measures[0]: measures[0]},
             }
             parameters.update(time_formatting)
             return {
@@ -267,11 +262,6 @@ def _detect_plotly_spec(
                 "parameters": {
                     "x": dimensions[0],
                     "y": measures[0],
-                    "title": f"{measures[0]} by {dimensions[0]}",
-                    "labels": {
-                        dimensions[0]: dimensions[0].title(),
-                        measures[0]: measures[0],
-                    },
                 },
                 "plotly_function": "px.bar",
                 "data_requirements": {"data_frame": True},
@@ -286,12 +276,6 @@ def _detect_plotly_spec(
                 "x": dimensions[0],
                 "y": "value",
                 "color": "measure",
-                "title": "Multiple metrics over time",
-                "labels": {
-                    dimensions[0]: "Time",
-                    "value": "Value",
-                    "measure": "Metric",
-                },
             }
             parameters.update(time_formatting)
             chart_type = "line"
@@ -302,12 +286,6 @@ def _detect_plotly_spec(
                 "y": "value",
                 "color": "measure",
                 "barmode": "group",
-                "title": f"Multiple metrics by {dimensions[0]}",
-                "labels": {
-                    dimensions[0]: dimensions[0].title(),
-                    "value": "Value",
-                    "measure": "Metric",
-                },
             }
             chart_type = "bar"
 
@@ -335,12 +313,6 @@ def _detect_plotly_spec(
             "x": time_dimension,
             "y": measures[0],
             "color": non_time_dims[0],
-            "title": f"{measures[0]} over time by {non_time_dims[0]}",
-            "labels": {
-                time_dimension: "Time",
-                measures[0]: measures[0],
-                non_time_dims[0]: non_time_dims[0].title(),
-            },
         }
         parameters.update(time_formatting)
         return {
@@ -357,8 +329,6 @@ def _detect_plotly_spec(
             "x": dimensions[0],
             "y": "value",
             "color": "measure",
-            "title": "Multiple metrics over time",
-            "labels": {dimensions[0]: "Time", "value": "Value", "measure": "Metric"},
         }
         parameters.update(time_formatting)
         return {
@@ -386,12 +356,6 @@ def _detect_plotly_spec(
                 "x": dimensions[0],
                 "y": dimensions[1],
                 "z": measures[0],
-                "title": f"{measures[0]} by {dimensions[0]} and {dimensions[1]}",
-                "labels": {
-                    dimensions[0]: dimensions[0].title(),
-                    dimensions[1]: dimensions[1].title(),
-                    measures[0]: measures[0],
-                },
             },
             "plotly_function": "go.Heatmap",
             "data_requirements": {
@@ -421,21 +385,17 @@ def _detect_plotly_spec(
                 "y": y_axis,
                 "color": color_by,
                 "size": size_by,
-                "title": "Multi-dimensional Analysis",
-                "labels": {
-                    x_axis: x_axis.title(),
-                    y_axis: y_axis if isinstance(y_axis, str) else y_axis.title(),
-                },
+
             },
             "plotly_function": "px.scatter",
             "data_requirements": {"data_frame": True},
             "chart_config": {"autosize": True, "height": 500},
         }
 
-    # Ultimate fallback - table view
+    # fallback to table view
     return {
         "chart_type": "table",
-        "parameters": {"columns": dimensions + measures, "title": "Data Table"},
+        "parameters": {"columns": dimensions + measures},
         "plotly_function": "custom_table",
         "data_requirements": {"data_frame": True},
         "chart_config": {"autosize": True},
@@ -453,7 +413,6 @@ def execute_plotly_spec(query_expr, plotly_spec: Dict[str, Any]) -> Dict[str, An
     Returns:
         Dictionary with prepared data and final chart specification
     """
-    # Execute query to get data
     data = query_expr.execute()
 
     # Apply required data transformations
@@ -491,7 +450,6 @@ def execute_plotly_spec(query_expr, plotly_spec: Dict[str, Any]) -> Dict[str, An
 
 def _merge_plotly_specs(base_spec: Dict, user_spec: Dict) -> Dict:
     """Merge user customizations with auto-detected spec."""
-    import copy
 
     merged = copy.deepcopy(base_spec)
 
@@ -517,13 +475,13 @@ def _merge_plotly_specs(base_spec: Dict, user_spec: Dict) -> Dict:
             merged["chart_type"] = new_chart_type
             merged["plotly_function"] = f"px.{new_chart_type}"
 
-            # Clean up parameters that don't apply to the new chart type
-            if new_chart_type == "line":
-                # Line charts don't use barmode
-                merged["parameters"].pop("barmode", None)
-            elif new_chart_type == "scatter":
-                # Scatter plots don't use barmode
-                merged["parameters"].pop("barmode", None)
+            # # Clean up parameters that don't apply to the new chart type
+            # if new_chart_type == "line":
+            #     # Line charts don't use barmode
+            #     merged["parameters"].pop("barmode", None)
+            # elif new_chart_type == "scatter":
+            #     # Scatter plots don't use barmode
+            #     merged["parameters"].pop("barmode", None)
 
     # Allow chart type override (direct Plotly chart_type)
     if "chart_type" in user_spec:
