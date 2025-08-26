@@ -3,8 +3,6 @@ Auto-detect Vega-Lite chart specifications based on query dimensions and measure
 """
 
 from typing import Any, Dict, List, Optional
-import pandas as pd
-import copy
 
 
 def _detect_vega_spec(
@@ -181,316 +179,146 @@ def _detect_vega_spec(
     }
 
 
-# Native Plotly Detection Functions (Approach 2)
+# Plotly backend
 
 
-def _detect_plotly_spec(
-    dimensions: List[str],
-    measures: List[str],
-    time_dimension: Optional[str] = None,
-    time_grain: Optional[str] = None,
-) -> Dict[str, Any]:
+def _detect_plotly_chart_type(
+    dimensions: List[str], measures: List[str], time_dimension: Optional[str] = None
+) -> str:
     """
-    Detect appropriate chart type and return native Plotly Express specification.
+    Auto-detect appropriate chart type based on query structure for Plotly backend.
 
     Args:
-        dimensions: List of dimension field names
-        measures: List of measure field names
-        time_dimension: Name of time dimension if present
-        time_grain: Time aggregation level for formatting
-        query_filters: Applied filters for context
-        data_sample: Optional sample data for cardinality analysis
+        dimensions: List of dimension field names from the query
+        measures: List of measure field names from the query
+        time_dimension: Optional time dimension field name for temporal detection
 
     Returns:
-        Dictionary with chart_type, parameters, and metadata for Plotly Express
+        str: Chart type identifier ("bar", "line", "heatmap", "table", "indicator")
+
     """
     num_dims = len(dimensions)
     num_measures = len(measures)
 
-    # Single value - KPI display
+    # Single value - indicator
     if num_dims == 0 and num_measures == 1:
-        return {
-            "chart_type": "indicator",
-            "parameters": {
-                "mode": "number",
-                "value": measures[0],
-            },
-            "plotly_function": "go.Indicator",
-            "data_requirements": {"single_value": True},
-        }
+        return "indicator"
 
     # Check if we have a time dimension
     has_time = time_dimension and time_dimension in dimensions
-    time_dim_index = dimensions.index(time_dimension) if has_time else -1
-
-    # Get time formatting options
-    time_formatting = {}
-    if has_time and time_grain:
-        if "YEAR" in time_grain:
-            time_formatting = {"x_tickformat": "%Y"}
-        elif "QUARTER" in time_grain:
-            time_formatting = {"x_tickformat": "%Y Q%q", "x_tickangle": -45}
-        elif "MONTH" in time_grain:
-            time_formatting = {"x_tickformat": "%Y-%m", "x_tickangle": -45}
-        elif "WEEK" in time_grain:
-            time_formatting = {"x_tickformat": "%Y W%W", "x_tickangle": -45}
-        elif "DAY" in time_grain:
-            time_formatting = {"x_tickformat": "%m-%d", "x_tickangle": -45}
-        else:
-            time_formatting = {"x_tickangle": -45}
 
     # Single dimension, single measure
     if num_dims == 1 and num_measures == 1:
-        if has_time:
-            # Time series - line chart
-            parameters = {
-                "x": dimensions[0],
-                "y": measures[0],
-            }
-            parameters.update(time_formatting)
-            return {
-                "chart_type": "line",
-                "parameters": parameters,
-                "plotly_function": "px.line",
-                "data_requirements": {"data_frame": True},
-                "chart_config": {"autosize": True, "height": 400},
-            }
-        else:
-            # Categorical - bar chart
-            return {
-                "chart_type": "bar",
-                "parameters": {
-                    "x": dimensions[0],
-                    "y": measures[0],
-                },
-                "plotly_function": "px.bar",
-                "data_requirements": {"data_frame": True},
-                "chart_config": {"autosize": True, "height": 400},
-            }
+        return "line" if has_time else "bar"
 
     # Single dimension, multiple measures - grouped chart
     if num_dims == 1 and num_measures >= 2:
-        if has_time:
-            # Multi-line time series
-            parameters = {
-                "x": dimensions[0],
-                "y": "value",
-                "color": "measure",
-            }
-            parameters.update(time_formatting)
-            chart_type = "line"
-        else:
-            # Grouped bar chart
-            parameters = {
-                "x": dimensions[0],
-                "y": "value",
-                "color": "measure",
-                "barmode": "group",
-            }
-            chart_type = "bar"
-
-        return {
-            "chart_type": chart_type,
-            "parameters": parameters,
-            "plotly_function": f"px.{chart_type}",
-            "data_requirements": {
-                "data_frame": True,
-                "reshape": "melt",
-                "melt_config": {
-                    "id_vars": [dimensions[0]],
-                    "value_vars": measures,
-                    "var_name": "measure",
-                    "value_name": "value",
-                },
-            },
-            "chart_config": {"autosize": True, "height": 400},
-        }
+        return "line" if has_time else "bar"
 
     # Time series with additional dimension(s) - multi-line chart
     if has_time and num_dims >= 2 and num_measures == 1:
-        non_time_dims = [d for i, d in enumerate(dimensions) if i != time_dim_index]
-        parameters = {
-            "x": time_dimension,
-            "y": measures[0],
-            "color": non_time_dims[0],
-        }
-        parameters.update(time_formatting)
-        return {
-            "chart_type": "line",
-            "parameters": parameters,
-            "plotly_function": "px.line",
-            "data_requirements": {"data_frame": True},
-            "chart_config": {"autosize": True, "height": 400},
-        }
-
-    # Time series with multiple measures
-    if has_time and num_dims == 1 and num_measures >= 2:
-        parameters = {
-            "x": dimensions[0],
-            "y": "value",
-            "color": "measure",
-        }
-        parameters.update(time_formatting)
-        return {
-            "chart_type": "line",
-            "parameters": parameters,
-            "plotly_function": "px.line",
-            "data_requirements": {
-                "data_frame": True,
-                "reshape": "melt",
-                "melt_config": {
-                    "id_vars": [dimensions[0]],
-                    "value_vars": measures,
-                    "var_name": "measure",
-                    "value_name": "value",
-                },
-            },
-            "chart_config": {"autosize": True, "height": 400},
-        }
+        return "line"
 
     # Two dimensions, one measure - heatmap
     if num_dims == 2 and num_measures == 1:
-        return {
-            "chart_type": "heatmap",
-            "parameters": {
-                "x": dimensions[0],
-                "y": dimensions[1],
-                "z": measures[0],
-            },
-            "plotly_function": "go.Heatmap",
-            "data_requirements": {
-                "data_frame": True,
-                "reshape": "pivot",
-                "pivot_config": {
-                    "index": dimensions[0],
-                    "columns": dimensions[1],
-                    "values": measures[0],
-                },
-            },
-            "chart_config": {"autosize": True, "height": 500},
-        }
+        return "heatmap"
 
-    # Default for complex queries - scatter plot or table
-    if len(dimensions) >= 3 or len(measures) >= 3:
-        # Complex scatter plot
-        x_axis = dimensions[0]
-        y_axis = measures[0] if measures else dimensions[1]
-        color_by = dimensions[1] if len(dimensions) > 1 else None
-        size_by = measures[1] if len(measures) > 1 else None
-
-        return {
-            "chart_type": "scatter",
-            "parameters": {
-                "x": x_axis,
-                "y": y_axis,
-                "color": color_by,
-                "size": size_by,
-
-            },
-            "plotly_function": "px.scatter",
-            "data_requirements": {"data_frame": True},
-            "chart_config": {"autosize": True, "height": 500},
-        }
-
-    # fallback to table view
-    return {
-        "chart_type": "table",
-        "parameters": {"columns": dimensions + measures},
-        "plotly_function": "custom_table",
-        "data_requirements": {"data_frame": True},
-        "chart_config": {"autosize": True},
-    }
+    # Default for complex queries - table
+    return "table"
 
 
-def execute_plotly_spec(query_expr, plotly_spec: Dict[str, Any]) -> Dict[str, Any]:
+def _prepare_plotly_data_and_params(query_expr, chart_type: str) -> tuple:
     """
-    Execute query and prepare data according to plotly spec requirements.
+    Execute query and prepare base parameters for Plotly Express.
 
     Args:
-        query_expr: BSL QueryExpr object
-        plotly_spec: Plotly specification from _detect_plotly_spec
+        query_expr: The QueryExpr instance containing query details
+        chart_type: The chart type string (bar, line, heatmap, etc.)
 
     Returns:
-        Dictionary with prepared data and final chart specification
+        tuple: (dataframe, base_params) where:
+            - dataframe: Processed pandas DataFrame ready for plotting
+            - base_params: Dict of parameters for Plotly Express functions
+
+    Design Notes:
+        - Parameters are validated and processed according to chart type requirements
+        - Data transformations ensure compatibility with Plotly Express expectations
+        - Chart type is passed separately to maintain flexibility in chart creation
+        - All returned parameters are safe to pass to any Plotly Express function
     """
-    data = query_expr.execute()
+    import pandas as pd
 
-    # Apply required data transformations
-    data_reqs = plotly_spec.get("data_requirements", {})
+    # Execute the query to get data
+    df = query_expr.execute()
 
-    if data_reqs.get("reshape") == "melt":
-        # Reshape for multi-measure charts
-        melt_config = data_reqs["melt_config"]
-        data = data.melt(**melt_config)
+    # Get dimensions and measures from query
+    dimensions = list(query_expr.dimensions)
+    measures = list(query_expr.measures)
+    time_dimension = query_expr.model.time_dimension
 
-    elif data_reqs.get("reshape") == "pivot":
-        # Reshape for heatmaps
-        pivot_config = data_reqs["pivot_config"]
-        data = data.pivot(**pivot_config)
+    # Handle data sorting for line charts to avoid zigzag connections
+    if chart_type == "line" and dimensions:
+        if time_dimension and time_dimension in dimensions:
+            # Sort by time dimension for temporal data
+            df = df.sort_values(by=time_dimension)
+        elif query_expr.order_by:
+            # Query already applied order_by, but when switching chart types
+            # we might need to re-sort for proper line connections
+            pass  # df is already sorted by the query execution
+        else:
+            # For categorical data converted to line, sort by x-axis for consistency
+            df = df.sort_values(by=dimensions[0])
 
-    elif data_reqs.get("single_value"):
-        # Extract single value for KPIs
-        data = data.iloc[0, -1]  # Last column, first row
+    # Build minimal base parameters that Plotly Express needs
+    base_params = {"data_frame": df}
 
-    # Prepare final specification
-    final_spec = {
-        "chart_type": plotly_spec["chart_type"],
-        "plotly_function": plotly_spec["plotly_function"],
-        "parameters": plotly_spec["parameters"].copy(),
-        "data": data,
-        "config": plotly_spec.get("chart_config", {}),
-    }
+    if chart_type in ["bar", "line", "scatter"]:
+        if dimensions:
+            base_params["x"] = dimensions[0]
+        if measures:
+            if len(measures) == 1:
+                base_params["y"] = measures[0]
+            else:
+                # For multiple measures, we need to reshape data for grouped charts
+                # Melt the dataframe to long format
 
-    # Add data to parameters if needed
-    if "data_frame" in data_reqs:
-        final_spec["parameters"]["data_frame"] = data
+                id_cols = [col for col in df.columns if col not in measures]
+                df_melted = pd.melt(
+                    df,
+                    id_vars=id_cols,
+                    value_vars=measures,
+                    var_name="measure",
+                    value_name="value",
+                )
+                base_params["data_frame"] = df_melted
+                base_params["y"] = "value"
+                base_params["color"] = "measure"
+                # Update df reference for return
+                df = df_melted
 
-    return final_spec
+        # Handle multiple traces for time series with categories
+        if time_dimension and len(dimensions) >= 2:
+            non_time_dims = [d for d in dimensions if d != time_dimension]
+            if non_time_dims:
+                base_params["color"] = non_time_dims[0]
 
+    elif chart_type == "heatmap":
+        if len(dimensions) >= 2 and measures:
+            # Use pivot table to create proper heatmap matrix with NaN for missing values
 
-def _merge_plotly_specs(base_spec: Dict, user_spec: Dict) -> Dict:
-    """Merge user customizations with auto-detected spec."""
+            pivot_df = df.pivot(
+                index=dimensions[1], columns=dimensions[0], values=measures[0]
+            )
 
-    merged = copy.deepcopy(base_spec)
+            # For go.Heatmap, we need to pass the matrix directly, not through px parameters
+            base_params = {
+                "z": pivot_df.values,
+                "x": pivot_df.columns.tolist(),
+                "y": pivot_df.index.tolist(),
+                "colorscale": "Viridis",
+                "hoverongaps": False,  # Don't show hover on NaN values
+            }
+            # Update df reference for return
+            df = pivot_df
 
-    # Allow overriding parameters
-    if "parameters" in user_spec:
-        merged["parameters"].update(user_spec["parameters"])
-
-    # Handle Vega-Lite mark translation to Plotly chart_type
-    if "mark" in user_spec:
-        # Map Vega-Lite marks to Plotly chart types
-        mark_to_chart_type = {
-            "bar": "bar",
-            "line": "line",
-            "point": "scatter",
-            "circle": "scatter",
-            "square": "scatter",
-            "rect": "imshow",  # For heatmaps
-            "area": "area",
-        }
-        mark = user_spec["mark"]
-        if mark in mark_to_chart_type:
-            new_chart_type = mark_to_chart_type[mark]
-            merged["chart_type"] = new_chart_type
-            merged["plotly_function"] = f"px.{new_chart_type}"
-
-            # # Clean up parameters that don't apply to the new chart type
-            # if new_chart_type == "line":
-            #     # Line charts don't use barmode
-            #     merged["parameters"].pop("barmode", None)
-            # elif new_chart_type == "scatter":
-            #     # Scatter plots don't use barmode
-            #     merged["parameters"].pop("barmode", None)
-
-    # Allow chart type override (direct Plotly chart_type)
-    if "chart_type" in user_spec:
-        merged["chart_type"] = user_spec["chart_type"]
-        # Update function reference
-        merged["plotly_function"] = f"px.{user_spec['chart_type']}"
-
-    # Allow config overrides
-    if "chart_config" in user_spec:
-        merged["chart_config"].update(user_spec["chart_config"])
-
-    return merged
+    return df, base_params

@@ -34,7 +34,11 @@ from .joins import Join
 from .filters import Filter
 from .time_grain import TimeGrain, TIME_GRAIN_TRANSFORMATIONS, TIME_GRAIN_ORDER
 from .query_compiler import _compile_query
-from .chart import _detect_vega_spec, _detect_plotly_spec, _merge_plotly_specs, execute_plotly_spec
+from .chart import (
+    _detect_vega_spec,
+    _detect_plotly_chart_type,
+    _prepare_plotly_data_and_params,
+)
 
 Expr = ibis_mod.expr.types.core.Expr
 _ = ibis_mod._
@@ -288,17 +292,51 @@ class QueryExpr:
                 "Supported formats: 'altair', 'interactive', 'json', 'png', 'svg'"
             )
 
-    def plotly_chart(
+    def chart_plotly(
         self,
+        chart_type: Optional[str] = None,
         spec: Optional[Dict[str, Any]] = None,
         format: str = "plotly",
     ) -> Union["go.Figure", Dict[str, Any], bytes, str]:
         """
-        Create a Plotly/Vizro chart from the query using native Plotly integration.
+        Create a Plotly chart from the query using native Plotly integration.
+        
+        **Plotly Backend Design Pattern**:
+        
+        This method implements a two-phase approach for chart creation:
+        
+        1. **Chart Type Determination** (separate from parameters):
+           - Auto-detect chart type using `_detect_plotly_chart_type()` based on query structure
+           - Chart type can be explicitly overridden via `chart_type` parameter
+           - Chart type acts as routing key for subsequent processing
+           
+        2. **Parameter Preparation & Chart Creation**:
+           - `_prepare_plotly_data_and_params()` transforms data and maps semantic concepts 
+             to Plotly Express parameters
+           - Parameters are passed directly to the appropriate Plotly Express function:
+             `px.{chart_type}(**final_params)`
+           - User specifications merge with base parameters (user specs take precedence)
+           
+        **Parameter Flow**:
+        ```
+        Query → Chart Type Detection → Data/Param Preparation → px.{chart_type}(**params)
+        ```
+        
+        **Argument Passing Strategy**:
+        - All parameters in `spec` (except 'layout'/'config') are passed directly to 
+          Plotly Express functions as keyword arguments
+        - Base parameters are computed from query structure (x, y, color, data_frame, etc.)
+        - User parameters override base parameters when conflicts occur
+        - Layout and config parameters are applied post-creation via `fig.update_layout()`
 
         Args:
-            spec: Optional custom specification for the chart.
-                  If not provided, will auto-detect chart type based on query.
+            chart_type: Optional chart type override ("bar", "line", "scatter", "heatmap", "table").
+                       If not provided, will auto-detect based on query structure.
+                       This argument is separate from chart parameters to maintain clean separation.
+            spec: Optional Plotly Express parameters to customize the chart.
+                  These are passed directly to the Plotly Express function (e.g., px.bar()).
+                  Examples: {"title": "My Chart", "color": "category", "labels": {...}}
+                  Special keys: "layout" and "config" are handled separately.
             format: The output format of the chart:
                 - "plotly" (default): Returns Plotly Figure object
                 - "interactive": Returns interactive Plotly Figure with tooltip
@@ -315,188 +353,110 @@ class QueryExpr:
 
         Raises:
             ImportError: If Plotly is not installed
-            ValueError: If an unsupported format is specified
+            ValueError: If an unsupported format or chart_type is specified
         """
+        try:
+            import plotly
+        except ImportError:
+            raise ImportError(
+                "plotly is required for chart creation. "
+                "Install it with: pip install 'boring-semantic-layer[plotly]'"
+            )
         if format not in ["plotly", "interactive", "json", "png", "svg"]:
             raise ValueError(
                 f"Unsupported format: {format}. "
                 "Supported formats: 'plotly', 'interactive', 'json', 'png', 'svg'"
             )
 
-
-        # Generate native Plotly specification
-        plotly_spec = _detect_plotly_spec(
-            dimensions=list(self.dimensions),
-            measures=list(self.measures),
-            time_dimension=self.model.time_dimension,
-            time_grain=self.time_grain,
-        )
-
-        # Apply any user customizations
-        if spec:
-            plotly_spec = _merge_plotly_specs(plotly_spec, spec)
-
-        # Return JSON spec if requested
-        if format == "json":
-            return plotly_spec
-
-        # For plotly format, we need plotly installed
         try:
-            import plotly.express as px
             import plotly.graph_objects as go
+            import plotly.express as px
         except ImportError:
             raise ImportError(
                 "Plotly is required for plotly_chart visualization. "
                 "Install it with: pip install plotly"
             )
 
-        # Execute with data preparation for plotly format
-        final_spec = execute_plotly_spec(self, plotly_spec)
-
-        # Create the actual Plotly figure
-        chart_type = final_spec["chart_type"]
-        parameters = final_spec["parameters"]
-        data = final_spec["data"]
-
-        # Handle special chart types
-        if chart_type == "indicator":
-            # KPI/Indicator charts use graph objects, not express
-            # Extract value from data
-            if isinstance(data, (int, float)):
-                value = data
-            elif hasattr(data, "iloc"):
-                # DataFrame-like object
-                value = data.iloc[0, -1]
-            elif hasattr(data, "item"):
-                # NumPy scalar
-                value = data.item()
-            else:
-                # Fallback - try to convert to float
-                value = float(data)
-
-            fig = go.Figure(
-                go.Indicator(
-                    mode=parameters.get("mode", "number"),
-                    value=value,
-                    title=parameters.get("title", {}),
-                )
-            )
-        elif chart_type == "heatmap":
-            # Heatmap uses graph objects, data should already be pivoted
-            fig = go.Figure(
-                data=go.Heatmap(
-                    z=data.values,
-                    x=data.columns,
-                    y=data.index,
-                    showscale=True,
-                    hoverongaps=False,
-                )
+        # Determine chart type - use override if provided, otherwise auto-detect
+        if chart_type is not None:
+            final_chart_type = chart_type
+        else:
+            final_chart_type = _detect_plotly_chart_type(
+                dimensions=list(self.dimensions),
+                measures=list(self.measures),
+                time_dimension=self.model.time_dimension,
             )
 
-            fig.update_layout(
-                title=parameters.get("title", ""),
-                xaxis_title=parameters.get("labels", {}).get(
-                    parameters["x"], parameters["x"]
-                ),
-                yaxis_title=parameters.get("labels", {}).get(
-                    parameters["y"], parameters["y"]
-                ),
-                # Make cells more discrete-looking
-                xaxis=dict(
-                    side="bottom",
-                    tickmode="array",
-                    tickvals=list(range(len(data.columns))),
-                    ticktext=data.columns,
-                ),
-                yaxis=dict(
-                    tickmode="array",
-                    tickvals=list(range(len(data.index))),
-                    ticktext=data.index,
-                ),
+        # Prepare data and base parameters
+        df, base_params = _prepare_plotly_data_and_params(self, final_chart_type)
+
+        # Merge base params with user-provided Plotly Express parameters
+        # All spec properties are Plotly Express parameters except layout and config
+        user_params = {}
+        layout_params = {}
+        config_params = {}
+
+        if spec is not None:
+            for k, v in spec.items():
+                if k == "layout":
+                    layout_params = v
+                elif k == "config":
+                    config_params = v
+                else:
+                    user_params[k] = v
+
+        # Final parameters for Plotly Express - user params override base params
+        final_params = {**base_params, **user_params}
+
+        # Create the actual Plotly figure by calling Plotly Express directly
+        if final_chart_type == "indicator":
+            raise NotImplementedError(
+                "Indicator charts are not yet supported for Plotly backend"
+            )
+        elif final_chart_type == "bar":
+            fig = px.bar(**final_params)
+            # For multiple measures, set barmode to 'group' to create grouped bars instead of stacked
+            if len(list(self.measures)) > 1:
+                fig.update_layout(barmode='group')
+        elif final_chart_type == "line":
+            fig = px.line(**final_params)
+        elif final_chart_type == "scatter":
+            fig = px.scatter(**final_params)
+        elif final_chart_type == "heatmap":
+            fig = go.Figure(data=go.Heatmap(**final_params))
+        elif final_chart_type == "table":
+            # Special case for table - doesn't use Plotly Express
+            dimensions = list(self.dimensions)
+            measures = list(self.measures)
+            columns = user_params.get("columns", dimensions + measures)
+            fig = go.Figure(
+                data=[
+                    go.Table(
+                        header=dict(values=columns),
+                        cells=dict(
+                            values=[df[col] for col in columns if col in df.columns]
+                        ),
+                    )
+                ]
             )
         else:
-            # Regular charts use plotly express
-            # Separate layout parameters from px function parameters first
-            px_params = {}
-            layout_params = {}
+            # Fallback
+            fig = px.scatter(**final_params)
 
-            for key, value in parameters.items():
-                if key in [
-                    "x_tickformat",
-                    "x_tickangle",
-                    "y_tickformat",
-                    "y_tickangle",
-                ]:
-                    # These are layout parameters
-                    if key.startswith("x_"):
-                        layout_params[f"xaxis_{key[2:]}"] = value
-                    elif key.startswith("y_"):
-                        layout_params[f"yaxis_{key[2:]}"] = value
-                else:
-                    px_params[key] = value
-
-            # For multi-series time-series charts, ensure data is sorted properly for correct connections
-            # Only sort if it's a time series (x-axis is the time dimension), not regular categorical charts with order_by
-            def should_apply_time_series_sorting():
-                """Determine if we should sort data by time for proper chart rendering."""
-                # Must have both x and color parameters (multi-series)
-                if not ("x" in px_params and "color" in px_params):
-                    return False
-
-                # Must have time dimension defined and x-axis using time dimension
-                if not (
-                    self.model.time_dimension
-                    and px_params["x"] == self.model.time_dimension
-                ):
-                    return False
-
-                # Chart types that benefit from time-series sorting
-                time_series_chart_types = ["line", "area", "scatter", "bar"]
-                return chart_type in time_series_chart_types
-
-            if should_apply_time_series_sorting():
-                # Sort by color group first, then by time dimension to ensure proper connectivity
-                sort_columns = [px_params["color"], px_params["x"]]
-                data = data.sort_values(sort_columns).reset_index(drop=True)
-
-            # Add the data_frame parameter
-            px_params["data_frame"] = data
-
-            try:
-                chart_func = getattr(px, chart_type)
-                fig = chart_func(**px_params)
-            except AttributeError:
-                # Fallback for unsupported chart types
-                fig = px.scatter(
-                    data_frame=data, title=f"Unsupported chart type: {chart_type}"
-                )
-
-            # Apply layout parameters
-            if layout_params:
-                fig.update_layout(**layout_params)
-
-        # Apply any additional configuration
-        chart_config = final_spec.get("config", {})
-        if chart_config:
-            fig.update_layout(**chart_config)
+        if layout_params:
+            fig.update_layout(**layout_params)
+        if config_params:
+            fig.update_layout(**config_params)
 
         # Handle different output formats
         if format == "plotly":
             return fig
         elif format == "interactive":
-            # Enable hover data and interactivity
-            fig.update_layout(hovermode="closest")
             return fig
+        elif format == "json":
+            return plotly.io.to_json(fig)
         elif format in ["png", "svg"]:
-            try:
-                return fig.to_image(format=format)
-            except Exception as e:
-                raise ImportError(
-                    f"{format} export requires additional dependencies: {e}. "
-                    "Install with: pip install -U kaleido"
-                )
-
-        return fig
+            return fig.to_image(format=format)
 
     def chart(
         self,
@@ -551,7 +511,7 @@ class QueryExpr:
         elif backend == "plotly":
             # Map format names for Plotly backend
             plotly_format = "plotly" if format == "object" else format
-            return self.plotly_chart(spec=spec, format=plotly_format)
+            return self.chart_plotly(spec=spec, format=plotly_format)
 
 
 def _convert_dimensions(dimension_dict) -> dict:
