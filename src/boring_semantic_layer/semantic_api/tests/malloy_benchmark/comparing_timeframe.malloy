@@ -1,0 +1,10 @@
+source: flights is duckdb.table('https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/flights.parquet') extend {
+  measure: flight_count is count()
+}
+
+query: query_1 is flights -> {
+  group_by: month_of_year is month(dep_time)
+  aggregate: flight_count
+  group_by: flight_year is dep_time.year
+  order_by: month_of_year, flight_year
+}
