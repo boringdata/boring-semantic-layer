@@ -55,6 +55,66 @@ def normalize_dataframe_dtypes(
     return normalized_df
 
 
+def normalize_for_comparison(
+    df1: pd.DataFrame, df2: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Normalize both DataFrames for comparison by handling special cases like datetime.date vs string.
+
+    Args:
+        df1: First DataFrame
+        df2: Second DataFrame
+
+    Returns:
+        Tuple of normalized DataFrames
+    """
+    df1_normalized = df1.copy()
+    df2_normalized = df2.copy()
+    conversion_log = []
+
+    # Check common columns
+    common_cols = set(df1.columns) & set(df2.columns)
+
+    for col in common_cols:
+        df1_dtype = df1[col].dtype
+        df2_dtype = df2[col].dtype
+
+        # Special handling for datetime.date vs string in object columns
+        if df1_dtype == "object" and df2_dtype == "object":
+            df1_sample = df1[col].iloc[0] if len(df1) > 0 else None
+            df2_sample = df2[col].iloc[0] if len(df2) > 0 else None
+
+            # Check for datetime.date objects (which have year, month, day attributes but no date() method)
+            df1_is_date = (
+                hasattr(df1_sample, "year")
+                and hasattr(df1_sample, "month")
+                and hasattr(df1_sample, "day")
+                and not hasattr(df1_sample, "hour")
+            )
+            df2_is_date = (
+                hasattr(df2_sample, "year")
+                and hasattr(df2_sample, "month")
+                and hasattr(df2_sample, "day")
+                and not hasattr(df2_sample, "hour")
+            )
+            df1_is_string = isinstance(df1_sample, str)
+            df2_is_string = isinstance(df2_sample, str)
+
+            if (df1_is_date and df2_is_string) or (df2_is_date and df1_is_string):
+                # Convert both to string for consistent comparison
+                df1_normalized[col] = df1_normalized[col].astype(str)
+                df2_normalized[col] = df2_normalized[col].astype(str)
+                conversion_log.append(
+                    f"  {col}: converted both to string for date comparison"
+                )
+
+    if conversion_log:
+        print("DataFrame comparison normalizations applied:")
+        print("\n".join(conversion_log))
+
+    return df1_normalized, df2_normalized
+
+
 class DataFrameDiff:
     """Comprehensive DataFrame comparison utility."""
 

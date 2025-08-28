@@ -23,19 +23,19 @@ order_items_st = (
         user_count=lambda t: t.user_id.nunique(),
     )
     .with_dimensions(
-        order_month=lambda t: t.created_at.truncate("month"),
-        user_signup_cohort=lambda t: t.created_at_right.truncate(
-            "month"
-        ),  # users.created_at becomes created_at_right after join
+        **{
+            "Order Month": lambda t: t.created_at.truncate("month"),
+            "User Signup Cohort": lambda t: t.created_at_right.truncate(
+                "month"
+            ),  # users.created_at becomes created_at_right after join
+        }
     )
 )
 
 # BSL equivalent of the Malloy cohort queries
 
-# Query 1: User Cohort Analysis by Order Count
-# This is a simplified version since BSL doesn't have nested queries like Malloy
-# We implement the cohort analysis as a flat table with cohort dimensions
-# Malloy's nested structure would need to be reconstructed in post-processing
+# Query 1: User Cohort Analysis by Order Count (flattened equivalent)
+# BSL produces the flattened equivalent of Malloy's nested structure
 query_1 = (
     order_items_st
     # Filter to 2022 data (6 months) - approximating Malloy's date range filter
@@ -47,23 +47,35 @@ query_1 = (
             & (t.created_at_right < pd.Timestamp("2022-07-01"))
         )
     )
-    .group_by("order_month", "user_signup_cohort")
+    .group_by("Order Month", "User Signup Cohort")
     .aggregate(
-        users_in_cohort_that_ordered=lambda t: t.user_id.nunique(),
-        total_sales_by_cohort=lambda t: t.sale_price.sum(),
+        **{
+            # Users in Cohort that Ordered: users in this specific cohort who ordered in this month
+            "Users in Cohort that Ordered": lambda t: t.user_id.nunique(),
+        }
     )
     .mutate(
-        # Calculate percent of cohort - equivalent to user_count/all(user_count) in the cohort
-        percent_of_cohort_that_ordered=lambda t: t.users_in_cohort_that_ordered
-        / t.users_in_cohort_that_ordered.sum().over(
-            ibis.window(group_by="user_signup_cohort")
-        )
+        **{
+            # Users that Ordered Count: total users who ordered in this month (across all cohorts)
+            "Users that Ordered Count": lambda t: t["Users in Cohort that Ordered"]
+            .sum()
+            .over(ibis.window(group_by="Order Month")),
+            # Percent of cohort that ordered: cohort users / all users who ordered in this month (equivalent to all(user_count) in Malloy nested section)
+            "Percent of cohort that ordered": lambda t: t[
+                "Users in Cohort that Ordered"
+            ]
+            / t["Users in Cohort that Ordered"]
+            .sum()
+            .over(ibis.window(group_by="Order Month")),
+            # Convert User Signup Cohort to date string to match Malloy format
+            "User Signup Cohort": lambda t: t["User Signup Cohort"].date().cast(str),
+        }
     )
-    .order_by("order_month", "user_signup_cohort")
+    .order_by(ibis.desc("Order Month"), "User Signup Cohort")
 )
 
-# Query 2: Cohort Analysis by Sales Percentage
-# Similar to query_1 but focused on sales percentages
+# Query 2: Cohort Analysis by Sales Percentage (flattened equivalent)
+# BSL produces the flattened equivalent of Malloy's nested structure
 query_2 = (
     order_items_st
     # Filter to 2022 data (6 months)
@@ -75,17 +87,27 @@ query_2 = (
             & (t.created_at_right < pd.Timestamp("2022-07-01"))
         )
     )
-    .group_by("order_month", "user_signup_cohort")
+    .group_by("Order Month", "User Signup Cohort")
     .aggregate(
-        cohort_total_sales=lambda t: t.sale_price.sum(),
-        user_count_in_cohort=lambda t: t.user_id.nunique(),
+        **{
+            # Sales for this specific cohort in this month
+            "cohort_sales": lambda t: t.sale_price.sum()
+        }
     )
     .mutate(
-        # Calculate cohort as percent of total sales - equivalent to total_sales/all(total_sales)
-        cohort_as_percent_of_sales=lambda t: t.cohort_total_sales
-        / t.cohort_total_sales.sum().over()
+        **{
+            # Total Sales: total sales in this month (across all cohorts)
+            "Total Sales": lambda t: t.cohort_sales.sum().over(
+                ibis.window(group_by="Order Month")
+            ),
+            # Cohort as Percent of Sales: this cohort's sales / all sales in this month (equivalent to all(total_sales) in Malloy nested section)
+            "Cohort as Percent of Sales": lambda t: t.cohort_sales
+            / t.cohort_sales.sum().over(ibis.window(group_by="Order Month")),
+            # Convert User Signup Cohort to date string to match Malloy format
+            "User Signup Cohort": lambda t: t["User Signup Cohort"].date().cast(str),
+        }
     )
-    .order_by("order_month", "user_signup_cohort")
+    .order_by(ibis.desc("Order Month"), "User Signup Cohort")
 )
 
 # Query 3: Simplified flat cohort analysis (matches the Malloy query_3)
@@ -101,10 +123,12 @@ query_3 = (
             & (t.created_at_right < pd.Timestamp("2022-07-01"))
         )
     )
-    .group_by("order_month", "user_signup_cohort")
+    .group_by("Order Month", "User Signup Cohort")
     .aggregate(
-        users_in_cohort_that_ordered=lambda t: t.user_id.nunique(),
-        total_sales_by_cohort=lambda t: t.sale_price.sum(),
+        **{
+            "Users in Cohort that Ordered": lambda t: t.user_id.nunique(),
+            "Total Sales by Cohort": lambda t: t.sale_price.sum(),
+        }
     )
-    .order_by("order_month", "user_signup_cohort")
+    .order_by("Order Month", "User Signup Cohort")
 )
