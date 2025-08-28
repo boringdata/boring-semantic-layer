@@ -208,7 +208,7 @@ class QueryExpr:
     def _chart_altair(
         self,
         spec: Optional[Dict[str, Any]] = None,
-        format: str = "altair",
+        format: str = "static",
     ) -> Union["altair.Chart", Dict[str, Any], bytes, str]:
         """
         Private method to create a chart using Altair backend.
@@ -241,7 +241,7 @@ class QueryExpr:
         except ImportError:
             raise ImportError(
                 "Altair is required for chart creation. "
-                "Install it with: pip install 'boring-semantic-layer[visualization]'"
+                "Install it with: pip install 'boring-semantic-layer[viz-altair]'"
             )
 
         # Always start with auto-detected spec as base
@@ -267,7 +267,7 @@ class QueryExpr:
         chart = alt.Chart(self.to_expr(), **spec)
 
         # Handle different output formats
-        if format == "altair":
+        if format == "static":
             return chart
         elif format == "interactive":
             return chart.interactive()
@@ -289,13 +289,13 @@ class QueryExpr:
         else:
             raise ValueError(
                 f"Unsupported format: {format}. "
-                "Supported formats: 'altair', 'interactive', 'json', 'png', 'svg'"
+                "Supported formats: 'static', 'interactive', 'json', 'png', 'svg'"
             )
 
     def _chart_plotly(
         self,
         spec: Optional[Dict[str, Any]] = None,
-        format: str = "plotly",
+        format: str = "interactive",
     ) -> Union["go.Figure", Dict[str, Any], bytes, str]:
         """
         Private method to create a chart using Plotly backend.
@@ -328,31 +328,24 @@ class QueryExpr:
         """
         try:
             import plotly
-        except ImportError:
-            raise ImportError(
-                "plotly is required for chart creation. "
-                "Install it with: pip install 'boring-semantic-layer[plotly]'"
-            )
-        if format not in ["plotly", "interactive", "json", "png", "svg"]:
-            raise ValueError(
-                f"Unsupported format: {format}. "
-                "Supported formats: 'plotly', 'interactive', 'json', 'png', 'svg'"
-            )
-
-        try:
             import plotly.graph_objects as go
             import plotly.express as px
         except ImportError:
             raise ImportError(
-                "Plotly is required for plotly_chart visualization. "
-                "Install it with: pip install plotly"
+                "plotly is required for chart creation. "
+                "Install it with: pip install 'boring-semantic-layer[viz-plotly]'"
+            )
+        if format not in ["static", "interactive", "json", "png", "svg"]:
+            raise ValueError(
+                f"Unsupported format: {format}. "
+                "Supported formats: 'static', 'interactive', 'json', 'png', 'svg'"
             )
 
         # Extract chart_type from spec if provided, otherwise auto-detect
         chart_type = None
         if spec is not None and "chart_type" in spec:
             chart_type = spec["chart_type"]
-            
+
         if chart_type is not None:
             final_chart_type = chart_type
         else:
@@ -426,7 +419,7 @@ class QueryExpr:
             fig.update_layout(**config_params)
 
         # Handle different output formats
-        if format == "plotly":
+        if format == "static":
             return fig
         elif format == "interactive":
             return fig
@@ -439,7 +432,7 @@ class QueryExpr:
         self,
         spec: Optional[Dict[str, Any]] = None,
         backend: str = "altair",
-        format: str = "object",
+        format: str = "static",
     ) -> Union["altair.Chart", "go.Figure", Dict[str, Any], bytes, str]:
         """
         Create a chart from the query using the specified backend.
@@ -452,7 +445,7 @@ class QueryExpr:
                 - "altair" (default): Use Altair backend
                 - "plotly": Use Plotly backend
             format: The output format of the chart:
-                - "object" (default): Returns chart object (Chart/Figure)
+                - "static" (default): Returns chart object (Chart/Figure)
                 - "interactive": Returns interactive chart with tooltip
                 - "json": Returns JSON specification
                 - "png": Returns PNG image bytes
@@ -475,20 +468,16 @@ class QueryExpr:
                 f"Unsupported backend: {backend}. Supported backends: 'altair', 'plotly'"
             )
 
-        if format not in ["object", "interactive", "json", "png", "svg"]:
+        if format not in ["static", "interactive", "json", "png", "svg"]:
             raise ValueError(
                 f"Unsupported format: {format}. "
-                "Supported formats: 'object', 'interactive', 'json', 'png', 'svg'"
+                "Supported formats: 'static', 'interactive', 'json', 'png', 'svg'"
             )
 
         if backend == "altair":
-            # Map format names for Altair backend
-            altair_format = "altair" if format == "static" else format
-            return self._chart_altair(spec=spec, format=altair_format)
+            return self._chart_altair(spec=spec, format=format)
         elif backend == "plotly":
-            # Map format names for Plotly backend
-            plotly_format = "plotly" if format == "static" else format
-            return self._chart_plotly(spec=spec, format=plotly_format)
+            return self._chart_plotly(spec=spec, format=format)
 
 
 def _convert_dimensions(dimension_dict) -> dict:
