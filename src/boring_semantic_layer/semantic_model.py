@@ -35,7 +35,7 @@ from .filters import Filter
 from .time_grain import TimeGrain, TIME_GRAIN_TRANSFORMATIONS, TIME_GRAIN_ORDER
 from .query_compiler import _compile_query
 from .chart import (
-    _detect_vega_spec,
+    _detect_altair_spec,
     _detect_plotly_chart_type,
     _prepare_plotly_data_and_params,
 )
@@ -205,16 +205,16 @@ class QueryExpr:
         except Exception:
             return None
 
-    def chart_vega(
+    def _chart_altair(
         self,
         spec: Optional[Dict[str, Any]] = None,
         format: str = "altair",
     ) -> Union["altair.Chart", Dict[str, Any], bytes, str]:
         """
-        Create a chart from the query using native Ibis-Altair integration.
+        Private method to create a chart using Altair backend.
 
         Args:
-            spec: Optional Vega-Lite specification for the chart.
+            spec: Optional Altair-specific specification for the chart.
                   If not provided, will auto-detect chart type based on query.
                   If partial spec is provided (e.g., only encoding or only mark),
                   missing parts will be auto-detected and merged.
@@ -245,7 +245,7 @@ class QueryExpr:
             )
 
         # Always start with auto-detected spec as base
-        base_spec = _detect_vega_spec(
+        base_spec = _detect_altair_spec(
             dimensions=list(self.dimensions),
             measures=list(self.measures),
             time_dimension=self.model.time_dimension,
@@ -292,38 +292,22 @@ class QueryExpr:
                 "Supported formats: 'altair', 'interactive', 'json', 'png', 'svg'"
             )
 
-    def chart_plotly(
+    def _chart_plotly(
         self,
-        chart_type: Optional[str] = None,
         spec: Optional[Dict[str, Any]] = None,
         format: str = "plotly",
     ) -> Union["go.Figure", Dict[str, Any], bytes, str]:
         """
-        Create a Plotly chart from the query using native Plotly integration.
-
-        This method implements a two-phase approach for chart creation:
-
-        1. Chart Type Determination (separate from parameters):
-        2. Parameter Preparation & Chart Creation
-
-        ```
-        Query → Chart Type Detection → Data/Param Preparation → px.{chart_type}(**params)
-        ```
-
-        - All parameters in `spec` (except 'layout'/'config') are passed directly to
-          Plotly Express functions as keyword arguments
-        - Base parameters are computed from query structure (x, y, color, data_frame, etc.)
-        - User parameters override base parameters when conflicts occur
-        - Layout and config parameters are applied post-creation via `fig.update_layout()`
+        Private method to create a chart using Plotly backend.
 
         Args:
-            chart_type: Optional chart type override ("bar", "line", "scatter", "heatmap", "table").
-                       If not provided, will auto-detect based on query structure.
-                       This argument is separate from chart parameters to maintain clean separation.
-            spec: Optional Plotly Express parameters to customize the chart.
+            spec: Optional Plotly-specific parameters to customize the chart.
                   These are passed directly to the Plotly Express function (e.g., px.bar()).
                   Examples: {"title": "My Chart", "color": "category", "labels": {...}}
-                  Special keys: "layout" and "config" are handled separately.
+                  Special keys: "chart_type", "layout" and "config" are handled separately.
+                  - "chart_type": Optional chart type override ("bar", "line", "scatter", "heatmap", "table")
+                  - "layout": Applied via fig.update_layout()
+                  - "config": Applied via fig.update_layout()
             format: The output format of the chart:
                 - "plotly" (default): Returns Plotly Figure object
                 - "interactive": Returns interactive Plotly Figure with tooltip
@@ -364,7 +348,11 @@ class QueryExpr:
                 "Install it with: pip install plotly"
             )
 
-        # Determine chart type - use override if provided, otherwise auto-detect
+        # Extract chart_type from spec if provided, otherwise auto-detect
+        chart_type = None
+        if spec is not None and "chart_type" in spec:
+            chart_type = spec["chart_type"]
+            
         if chart_type is not None:
             final_chart_type = chart_type
         else:
@@ -378,14 +366,16 @@ class QueryExpr:
         df, base_params = _prepare_plotly_data_and_params(self, final_chart_type)
 
         # Merge base params with user-provided Plotly Express parameters
-        # All spec properties are Plotly Express parameters except layout and config
+        # All spec properties are Plotly Express parameters except chart_type, layout and config
         user_params = {}
         layout_params = {}
         config_params = {}
 
         if spec is not None:
             for k, v in spec.items():
-                if k == "layout":
+                if k == "chart_type":
+                    pass  # Already handled above
+                elif k == "layout":
                     layout_params = v
                 elif k == "config":
                     config_params = v
@@ -448,7 +438,7 @@ class QueryExpr:
     def chart(
         self,
         spec: Optional[Dict[str, Any]] = None,
-        backend: str = "vega",
+        backend: str = "altair",
         format: str = "object",
     ) -> Union["altair.Chart", "go.Figure", Dict[str, Any], bytes, str]:
         """
@@ -459,7 +449,7 @@ class QueryExpr:
                   - For vega: Vega-Lite specification
                   - For plotly: Plotly specification
             backend: The charting backend to use:
-                - "vega" (default): Use Vega-Lite/Altair backend
+                - "altair" (default): Use Altair backend
                 - "plotly": Use Plotly backend
             format: The output format of the chart:
                 - "object" (default): Returns chart object (Chart/Figure)
@@ -480,9 +470,9 @@ class QueryExpr:
             ImportError: If the specified backend is not installed
             ValueError: If an unsupported backend or format is specified
         """
-        if backend not in ["vega", "plotly"]:
+        if backend not in ["altair", "plotly"]:
             raise ValueError(
-                f"Unsupported backend: {backend}. Supported backends: 'vega', 'plotly'"
+                f"Unsupported backend: {backend}. Supported backends: 'altair', 'plotly'"
             )
 
         if format not in ["object", "interactive", "json", "png", "svg"]:
@@ -491,14 +481,14 @@ class QueryExpr:
                 "Supported formats: 'object', 'interactive', 'json', 'png', 'svg'"
             )
 
-        if backend == "vega":
-            # Map format names for Vega-Lite backend
-            vega_format = "altair" if format == "object" else format
-            return self.chart_vega(spec=spec, format=vega_format)
+        if backend == "altair":
+            # Map format names for Altair backend
+            altair_format = "altair" if format == "static" else format
+            return self._chart_altair(spec=spec, format=altair_format)
         elif backend == "plotly":
             # Map format names for Plotly backend
-            plotly_format = "plotly" if format == "object" else format
-            return self.chart_plotly(spec=spec, format=plotly_format)
+            plotly_format = "plotly" if format == "static" else format
+            return self._chart_plotly(spec=spec, format=plotly_format)
 
 
 def _convert_dimensions(dimension_dict) -> dict:

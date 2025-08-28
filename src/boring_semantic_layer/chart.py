@@ -1,18 +1,18 @@
 """
-Auto-detect Vega-Lite chart specifications based on query dimensions and measures.
+Auto-detect Altair chart specifications based on query dimensions and measures.
 """
 
 from typing import Any, Dict, List, Optional
 
 
-def _detect_vega_spec(
+def _detect_altair_spec(
     dimensions: List[str],
     measures: List[str],
     time_dimension: Optional[str] = None,
     time_grain: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Detect an appropriate chart type and return a Vega-Lite specification.
+    Detect an appropriate chart type and return an Altair specification.
 
     Args:
         dimensions: List of dimension names
@@ -21,7 +21,7 @@ def _detect_vega_spec(
         time_grain: Optional time grain for temporal formatting
 
     Returns:
-        A Vega-Lite specification dict with appropriate chart type
+        An Altair specification dict with appropriate chart type
     """
     num_dims = len(dimensions)
     num_measures = len(measures)
