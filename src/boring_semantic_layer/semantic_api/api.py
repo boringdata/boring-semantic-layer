@@ -16,6 +16,7 @@ from boring_semantic_layer.semantic_api.ops import (
     SemanticTable,
     SemanticJoin,
     SemanticOrderBy,
+    SemanticLimit,
 )
 
 
@@ -56,6 +57,11 @@ def _format_semantic_join(op, **kwargs):
 
 @_fmt.register(SemanticOrderBy)
 def _format_semantic_orderby(op, **kwargs):
+    return op.__class__.__name__
+
+
+@_fmt.register(SemanticLimit)
+def _format_semantic_limit(op, **kwargs):
     return op.__class__.__name__
 
 
@@ -146,6 +152,9 @@ class SemanticTableExpr(IbisTable):
 
     def order_by(self, *keys: str) -> SemanticTableExpr:
         return order_by_(self, *keys)
+
+    def limit(self, n: int, offset: int = 0) -> SemanticTableExpr:
+        return limit_(self, n, offset)
 
 
 def to_semantic_table(table: IbisTable) -> SemanticTableExpr:
@@ -283,6 +292,11 @@ def join_cross(left: IbisTable, right: IbisTable) -> SemanticTableExpr:
 
 def order_by_(table: IbisTable, *keys: str) -> SemanticTableExpr:
     node = SemanticOrderBy(source=table.op(), keys=keys)
+    return SemanticTableExpr(node)
+
+
+def limit_(table: IbisTable, n: int, offset: int = 0) -> SemanticTableExpr:
+    node = SemanticLimit(source=table.op(), n=n, offset=offset)
     return SemanticTableExpr(node)
 
 

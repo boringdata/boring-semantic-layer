@@ -199,6 +199,23 @@ class SemanticOrderBy(Relation):
         return self.source.schema
 
 
+class SemanticLimit(Relation):
+    source: Any
+    n: int
+    offset: int
+
+    def __init__(self, source: Any, n: int, offset: int = 0) -> None:
+        super().__init__(source=Relation.__coerce__(source), n=n, offset=offset)
+
+    @property
+    def values(self) -> FrozenOrderedDict[str, Any]:
+        return self.source.values
+
+    @property
+    def schema(self) -> Schema:
+        return self.source.schema
+
+
 def _find_root_model(node: Any) -> SemanticTable | None:
     cur = node
     while cur is not None:

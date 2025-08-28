@@ -14,6 +14,7 @@ from boring_semantic_layer.semantic_api.ops import (  # noqa: E402
     SemanticOrderBy,
     SemanticProject,
     SemanticTable,
+    SemanticLimit,
     _find_root_model,
 )
 
@@ -171,3 +172,12 @@ def _lower_semantic_orderby(node: SemanticOrderBy, catalog, *args):
     tbl = convert(node.source, catalog=catalog)
     order_keys = [getattr(tbl, key) for key in node.keys]
     return tbl.order_by(order_keys)
+
+
+@convert.register(SemanticLimit)
+def _lower_semantic_limit(node: SemanticLimit, catalog, *args):
+    tbl = convert(node.source, catalog=catalog)
+    if node.offset == 0:
+        return tbl.limit(node.n)
+    else:
+        return tbl.limit(node.n, offset=node.offset)
