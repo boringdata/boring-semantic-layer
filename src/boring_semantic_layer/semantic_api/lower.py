@@ -11,6 +11,7 @@ from boring_semantic_layer.semantic_api.ops import (  # noqa: E402
     SemanticGroupBy,
     SemanticJoin,
     SemanticMutate,
+    SemanticOrderBy,
     SemanticProject,
     SemanticTable,
     _find_root_model,
@@ -69,9 +70,7 @@ def _lower_semantic_project(node: SemanticProject, catalog, *args):
         cols = [getattr(tbl, f) for f in node.fields]
         return tbl.select(cols)
 
-    tbl = convert(
-        node.source, catalog=catalog
-    )
+    tbl = convert(node.source, catalog=catalog)
     dims = [f for f in node.fields if f in root.dimensions]
     meas = [f for f in node.fields if f in root.measures]
 
@@ -103,7 +102,7 @@ def _lower_semantic_join(node: SemanticJoin, catalog, *args):
 @convert.register(SemanticAggregate)
 def _lower_semantic_aggregate(node: SemanticAggregate, catalog, *args):
     root = _find_root_model(node.source)
-    tbl = convert(root if root else node.source, catalog=catalog)
+    tbl = convert(node.source, catalog=catalog)
 
     group_exprs = []
     for k in node.keys:
@@ -154,3 +153,10 @@ def _lower_semantic_mutate(node: SemanticMutate, catalog, *args):
         [fn(proxy).name(name) for name, fn in node.post.items()] if node.post else []
     )
     return agg_tbl.mutate(new_cols)
+
+
+@convert.register(SemanticOrderBy)
+def _lower_semantic_orderby(node: SemanticOrderBy, catalog, *args):
+    tbl = convert(node.source, catalog=catalog)
+    order_keys = [getattr(tbl, key) for key in node.keys]
+    return tbl.order_by(order_keys)

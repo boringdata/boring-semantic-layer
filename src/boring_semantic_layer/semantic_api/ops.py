@@ -183,6 +183,22 @@ class SemanticJoin(Relation):
         return Schema({name: v.dtype for name, v in self.values.items()})
 
 
+class SemanticOrderBy(Relation):
+    source: Any
+    keys: tuple[str, ...]
+
+    def __init__(self, source: Any, keys: Iterable[str]) -> None:
+        super().__init__(source=Relation.__coerce__(source), keys=tuple(keys))
+
+    @property
+    def values(self) -> FrozenOrderedDict[str, Any]:
+        return self.source.values
+
+    @property
+    def schema(self) -> Schema:
+        return self.source.schema
+
+
 def _find_root_model(node: Any) -> SemanticTable | None:
     cur = node
     while cur is not None:
