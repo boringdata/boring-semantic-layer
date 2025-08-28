@@ -150,7 +150,7 @@ class SemanticTableExpr(IbisTable):
     ) -> SemanticTableExpr:
         return join_(self, other, how=how, on=on)
 
-    def order_by(self, *keys: str) -> SemanticTableExpr:
+    def order_by(self, *keys: Any) -> SemanticTableExpr:
         return order_by_(self, *keys)
 
     def limit(self, n: int, offset: int = 0) -> SemanticTableExpr:
@@ -290,8 +290,21 @@ def join_cross(left: IbisTable, right: IbisTable) -> SemanticTableExpr:
     return join_(left, right, how="cross", on=None)
 
 
-def order_by_(table: IbisTable, *keys: str) -> SemanticTableExpr:
-    node = SemanticOrderBy(source=table.op(), keys=keys)
+def order_by_(table: IbisTable, *keys: Any) -> SemanticTableExpr:
+    # Convert deferred expressions to a serializable form
+    processed_keys = []
+    for key in keys:
+        from ibis.common.deferred import Deferred
+
+        if isinstance(key, Deferred):
+            # Store deferred expressions as a callable that can be applied to the table
+            processed_keys.append(
+                ("__deferred__", lambda t, deferred=key: deferred.resolve(t))
+            )
+        else:
+            processed_keys.append(key)
+
+    node = SemanticOrderBy(source=table.op(), keys=processed_keys)
     return SemanticTableExpr(node)
 
 

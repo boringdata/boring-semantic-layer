@@ -4,11 +4,23 @@ from malloy.data.duckdb import DuckDbConnection
 import asyncio
 import importlib
 import sys
+import pytest
 
 # Import utilities
 from malloy_benchmark_utils import normalize_dataframe_dtypes, compare_dataframes
 
-QUERIES = {"comparing_timeframe": ["query_1", "query_2", "query_3"]}
+QUERIES = [
+    ("comparing_timeframe", "query_1"),
+    ("comparing_timeframe", "query_2"),
+    ("comparing_timeframe", "query_3"),
+    ("percent_of_total", "query_1"),
+    ("percent_of_total", "query_2"),
+    ("percent_of_total", "query_3"),
+    ("percent_of_total", "query_4"),
+    ("cohorts", "query_1"),
+    ("cohorts", "query_2"),
+    ("cohorts", "query_3"),
+]
 
 BASE_PATH = Path(__file__).parent / "malloy_benchmark"
 sys.path.append(str(BASE_PATH))
@@ -27,32 +39,35 @@ async def run_malloy_query(query_file: str, query_name: str):
     return df
 
 
-def test_malloy_queries():
-    for query_file, queries in QUERIES.items():
-        for query_name in queries:
-            df_malloy = asyncio.run(
-                run_malloy_query(f"{query_file}.malloy", query_name)
-            )
-            module = importlib.import_module(query_file)
-            query_bsl = getattr(module, query_name)
-            df_bsl = query_bsl.execute()
+@pytest.mark.parametrize(
+    "query_file,query_name", QUERIES, ids=[f"{qf}_{qn}" for qf, qn in QUERIES]
+)
+def test_malloy_query(query_file: str, query_name: str):
+    """Test individual Malloy query against BSL implementation"""
+    # Run Malloy query
+    df_malloy = asyncio.run(run_malloy_query(f"{query_file}.malloy", query_name))
 
-            # Ensure BSL columns match Malloy column order
-            df_bsl = df_bsl[df_malloy.columns]
+    # Run BSL query
+    module = importlib.import_module(query_file)
+    query_bsl = getattr(module, query_name)
+    df_bsl = query_bsl.execute()
 
-            # Normalize BSL dtypes to match Malloy dtypes using simple mapping
-            df_bsl = normalize_dataframe_dtypes(
-                target_df=df_bsl, reference_df=df_malloy
-            )
+    # Ensure BSL columns match Malloy column order
+    df_bsl = df_bsl[df_malloy.columns]
 
-            # Use comprehensive DataFrame comparison (no sorting - queries should include order_by)
-            diff_analysis = compare_dataframes(
-                df1=df_malloy,
-                df2=df_bsl,
-                df1_name="Malloy",
-                df2_name="BSL",
-                print_report=not df_malloy.equals(df_bsl),  # Only print if different
-            )
+    # Normalize BSL dtypes to match Malloy dtypes
+    df_bsl = normalize_dataframe_dtypes(target_df=df_bsl, reference_df=df_malloy)
 
-            if not diff_analysis.analyze()["identical"]:
-                assert False, f"DataFrames do not match for {query_file}.{query_name}"
+    # Compare DataFrames
+    diff_analysis = compare_dataframes(
+        df1=df_malloy,
+        df2=df_bsl,
+        df1_name="Malloy",
+        df2_name="BSL",
+        print_report=not df_malloy.equals(df_bsl),
+    )
+
+    # Assert that DataFrames are identical
+    assert diff_analysis.analyze()["identical"], (
+        f"DataFrames do not match for {query_file}.{query_name}"
+    )

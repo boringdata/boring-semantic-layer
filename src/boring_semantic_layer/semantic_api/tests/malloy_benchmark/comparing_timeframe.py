@@ -35,6 +35,7 @@ query_2 = (
             (t.flights_in_2003 - t.flights_in_2002) / t.flights_in_2003.nullif(0)
         )
     )
+    .order_by("carrier")
 )
 
 # Add dep_year dimension to semantic table for query_3

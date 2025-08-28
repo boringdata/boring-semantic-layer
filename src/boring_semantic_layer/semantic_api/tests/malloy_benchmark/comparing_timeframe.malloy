@@ -18,6 +18,7 @@ query: query_2 is flights -> {
     percent_change is 
       (flight_count { where: dep_time = @2003 } - flight_count { where: dep_time = @2002 })
         / nullif(flight_count { where: dep_time = @2003 }, 0)
+  order_by: carrier
 }
 
 query: query_3 is flights -> {

@@ -35,12 +35,21 @@ class SemanticTable(Relation):
         """Expose semantic fields as expressions referencing the base relation."""
         base_tbl = self.table.to_expr()
         out: dict[str, Any] = {}
+
+        # Include all base table columns first
+        for col_name in base_tbl.columns:
+            out[col_name] = base_tbl[col_name].op()
+
+        # Then add/override with semantic dimensions
         for name, fn in self.dimensions.items():
             expr = fn(base_tbl)
             out[name] = expr.op()
+
+        # Then add measures
         for name, fn in self.measures.items():
             expr = fn(base_tbl)
             out[name] = expr.op()
+
         return FrozenOrderedDict(out)
 
     @property
@@ -185,9 +194,9 @@ class SemanticJoin(Relation):
 
 class SemanticOrderBy(Relation):
     source: Any
-    keys: tuple[str, ...]
+    keys: tuple[Any, ...]  # Can be strings or ibis expressions with direction
 
-    def __init__(self, source: Any, keys: Iterable[str]) -> None:
+    def __init__(self, source: Any, keys: Iterable[Any]) -> None:
         super().__init__(source=Relation.__coerce__(source), keys=tuple(keys))
 
     @property

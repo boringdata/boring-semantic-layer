@@ -167,10 +167,33 @@ def _lower_semantic_mutate(node: SemanticMutate, catalog, *args):
     return agg_tbl.mutate(new_cols)
 
 
+def _get_table_column(tbl, col_name: str):
+    """Helper to get column from table."""
+    if hasattr(tbl, col_name):
+        return getattr(tbl, col_name)
+    elif col_name in tbl.columns:
+        return tbl[col_name]
+    else:
+        raise ValueError(f"Column '{col_name}' not found in table")
+
+
 @convert.register(SemanticOrderBy)
 def _lower_semantic_orderby(node: SemanticOrderBy, catalog, *args):
     tbl = convert(node.source, catalog=catalog)
-    order_keys = [getattr(tbl, key) for key in node.keys]
+    order_keys = []
+
+    for key in node.keys:
+        if isinstance(key, str):
+            # Simple string key - ascending order
+            order_keys.append(_get_table_column(tbl, key))
+        elif isinstance(key, tuple) and len(key) == 2 and key[0] == "__deferred__":
+            # Deferred expression - resolve by calling the stored function
+            deferred_fn = key[1]
+            order_keys.append(deferred_fn(tbl))
+        else:
+            # Other type - use as-is
+            order_keys.append(key)
+
     return tbl.order_by(order_keys)
 
 
