@@ -92,7 +92,7 @@ def _detect_altair_spec(
             return {
                 "mark": "bar",
                 "encoding": {
-                    "x": {"field": dimensions[0], "type": "nominal"},
+                    "x": {"field": dimensions[0], "type": "ordinal", "sort": None},
                     "y": {"field": measures[0], "type": "quantitative"},
                     "tooltip": [
                         {"field": dimensions[0], "type": "nominal"},
@@ -107,7 +107,7 @@ def _detect_altair_spec(
             "transform": [{"fold": measures, "as": ["measure", "value"]}],
             "mark": "bar",
             "encoding": {
-                "x": {"field": dimensions[0], "type": "nominal"},
+                "x": {"field": dimensions[0], "type": "ordinal", "sort": None},
                 "y": {"field": "value", "type": "quantitative"},
                 "color": {"field": "measure", "type": "nominal"},
                 "xOffset": {"field": "measure"},
@@ -159,8 +159,8 @@ def _detect_altair_spec(
         return {
             "mark": "rect",
             "encoding": {
-                "x": {"field": dimensions[0], "type": "nominal"},
-                "y": {"field": dimensions[1], "type": "nominal"},
+                "x": {"field": dimensions[0], "type": "ordinal", "sort": None},
+                "y": {"field": dimensions[1], "type": "ordinal", "sort": None},
                 "color": {"field": measures[0], "type": "quantitative"},
                 "tooltip": [
                     {"field": dimensions[0], "type": "nominal"},

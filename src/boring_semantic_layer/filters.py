@@ -99,7 +99,7 @@ class Filter:
                     raise KeyError(
                         f"Unknown dimension '{field_name}' in joined model '{table_name}'"
                     )
-                return join.model.dimensions[field_name](table)
+                return join.model.dimensions[field_name](join.model.table)
             # Unbound expression for table.field reference
             return getattr(getattr(_, table_name), field_name)
         # Simple field reference
