@@ -98,8 +98,8 @@ class SemanticTableExpr(IbisTable):
     def with_measures(self, **meas: Callable) -> SemanticTableExpr:
         return with_measures(self, **meas)
 
-    def group_by(self, *keys: str) -> SemanticTableExpr:
-        return group_by_(self, *keys)
+    def group_by(self, *keys: str, **inline_dims: Callable) -> SemanticTableExpr:
+        return group_by_(self, *keys, **inline_dims)
 
     def aggregate(self, *fns: Callable, **aggs: Callable) -> SemanticTableExpr:
         from .api import _infer_measure_name  # avoid circular
@@ -189,9 +189,27 @@ def select_(table: IbisTable, *fields: str) -> SemanticTableExpr:
     return SemanticTableExpr(node)
 
 
-def group_by_(table: IbisTable, *keys: str) -> SemanticTableExpr:
-    node = SemanticGroupBy(source=table.op(), keys=keys)
-    return SemanticTableExpr(node)
+def group_by_(
+    table: IbisTable, *keys: str, **inline_dims: Callable
+) -> SemanticTableExpr:
+    # Detect if we have inline dimensions (regular Ibis style) or semantic dimensions
+    if inline_dims:
+        # Regular Ibis group_by with inline expressions
+        # Add inline dimensions to the semantic table first, then group by them
+        semantic_table = table
+        for name, expr_fn in inline_dims.items():
+            semantic_table = semantic_table.with_dimensions(**{name: expr_fn})
+
+        # Collect all keys (both string keys and inline dimension names)
+        all_keys = list(keys) + list(inline_dims.keys())
+
+        # Use semantic group_by with all keys
+        node = SemanticGroupBy(source=semantic_table.op(), keys=all_keys)
+        return SemanticTableExpr(node)
+    else:
+        # Semantic group_by with predefined dimensions
+        node = SemanticGroupBy(source=table.op(), keys=keys)
+        return SemanticTableExpr(node)
 
 
 def aggregate_(
