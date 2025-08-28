@@ -57,7 +57,18 @@ def _lower_semantic_table(node: SemanticTable, catalog, *args):
 def _lower_semantic_filter(node: SemanticFilter, catalog, *args):
     root = _find_root_model(node.source)
     base_tbl = convert(node.source, catalog=catalog)
-    dim_map = root.dimensions if root else {}
+
+    # Check if we're filtering after aggregation
+    # If the source is a SemanticAggregate, we should only use available columns
+    from boring_semantic_layer.semantic_api.ops import SemanticAggregate
+
+    if isinstance(node.source, SemanticAggregate):
+        # Post-aggregation filter: only use columns available in the result
+        dim_map = {}  # Don't use original dimensions
+    else:
+        # Pre-aggregation filter: use semantic dimensions
+        dim_map = root.dimensions if root else {}
+
     pred = node.predicate(_Resolver(base_tbl, dim_map))
     return base_tbl.filter(pred)
 
