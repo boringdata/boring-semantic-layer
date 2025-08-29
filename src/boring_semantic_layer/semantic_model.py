@@ -18,6 +18,7 @@ import datetime
 
 if TYPE_CHECKING:
     import altair
+    import plotly.graph_objects as go
 
 try:
     import xorq.vendor.ibis as ibis_mod
@@ -33,7 +34,11 @@ from .joins import Join
 from .filters import Filter
 from .time_grain import TimeGrain, TIME_GRAIN_TRANSFORMATIONS, TIME_GRAIN_ORDER
 from .query_compiler import _compile_query
-from .chart import _detect_chart_spec
+from .chart import (
+    _detect_altair_spec,
+    _detect_plotly_chart_type,
+    _prepare_plotly_data_and_params,
+)
 
 Expr = ibis_mod.expr.types.core.Expr
 _ = ibis_mod._
@@ -42,13 +47,15 @@ _ = ibis_mod._
 How = Literal["inner", "left", "cross"]
 Cardinality = Literal["one", "many", "cross"]
 
+
 @frozen(kw_only=True, slots=True)
 class DimensionSpec:
     expr: Callable[[Expr], Expr]
     description: Optional[str] = None
 
     def __call__(self, table: Expr) -> Expr:
-        return(self.expr(table))
+        return self.expr(table)
+
 
 @frozen(kw_only=True, slots=True)
 class MeasureSpec:
@@ -56,7 +63,8 @@ class MeasureSpec:
     description: Optional[str] = None
 
     def __call__(self, table: Expr) -> Expr:
-        return(self.expr(table))
+        return self.expr(table)
+
 
 Dimension = DimensionSpec
 Measure = MeasureSpec
@@ -197,16 +205,16 @@ class QueryExpr:
         except Exception:
             return None
 
-    def chart(
+    def _chart_altair(
         self,
         spec: Optional[Dict[str, Any]] = None,
-        format: str = "altair",
+        format: str = "static",
     ) -> Union["altair.Chart", Dict[str, Any], bytes, str]:
         """
-        Create a chart from the query using native Ibis-Altair integration.
+        Private method to create a chart using Altair backend.
 
         Args:
-            spec: Optional Vega-Lite specification for the chart.
+            spec: Optional Altair-specific specification for the chart.
                   If not provided, will auto-detect chart type based on query.
                   If partial spec is provided (e.g., only encoding or only mark),
                   missing parts will be auto-detected and merged.
@@ -233,11 +241,11 @@ class QueryExpr:
         except ImportError:
             raise ImportError(
                 "Altair is required for chart creation. "
-                "Install it with: pip install 'boring-semantic-layer[visualization]'"
+                "Install it with: pip install 'boring-semantic-layer[viz-altair]'"
             )
 
         # Always start with auto-detected spec as base
-        base_spec = _detect_chart_spec(
+        base_spec = _detect_altair_spec(
             dimensions=list(self.dimensions),
             measures=list(self.measures),
             time_dimension=self.model.time_dimension,
@@ -259,12 +267,13 @@ class QueryExpr:
         chart = alt.Chart(self.to_expr(), **spec)
 
         # Handle different output formats
-        if format == "altair":
+        if format == "static":
             return chart
         elif format == "interactive":
             return chart.interactive()
         elif format == "json":
             return chart.to_dict()
+
         elif format in ["png", "svg"]:
             try:
                 import io
@@ -280,8 +289,196 @@ class QueryExpr:
         else:
             raise ValueError(
                 f"Unsupported format: {format}. "
-                "Supported formats: 'altair', 'interactive', 'json', 'png', 'svg'"
+                "Supported formats: 'static', 'interactive', 'json', 'png', 'svg'"
             )
+
+    def _chart_plotly(
+        self,
+        spec: Optional[Dict[str, Any]] = None,
+        format: str = "interactive",
+    ) -> Union["go.Figure", Dict[str, Any], bytes, str]:
+        """
+        Private method to create a chart using Plotly backend.
+
+        Args:
+            spec: Optional Plotly-specific parameters to customize the chart.
+                  These are passed directly to the Plotly Express function (e.g., px.bar()).
+                  Examples: {"title": "My Chart", "color": "category", "labels": {...}}
+                  Special keys: "chart_type", "layout" and "config" are handled separately.
+                  - "chart_type": Optional chart type override ("bar", "line", "scatter", "heatmap", "table")
+                  - "layout": Applied via fig.update_layout()
+                  - "config": Applied via fig.update_layout()
+            format: The output format of the chart:
+                - "plotly" (default): Returns Plotly Figure object
+                - "interactive": Returns interactive Plotly Figure with tooltip
+                - "json": Returns Plotly specification dictionary
+                - "png": Returns PNG image bytes
+                - "svg": Returns SVG string
+
+        Returns:
+            Chart in the requested format:
+                - plotly/interactive: go.Figure
+                - json: Dict containing Plotly specification
+                - png: bytes of PNG image
+                - svg: str containing SVG markup
+
+        Raises:
+            ImportError: If Plotly is not installed
+            ValueError: If an unsupported format or chart_type is specified
+        """
+        try:
+            import plotly
+            import plotly.graph_objects as go
+            import plotly.express as px
+        except ImportError:
+            raise ImportError(
+                "plotly is required for chart creation. "
+                "Install it with: pip install 'boring-semantic-layer[viz-plotly]'"
+            )
+        if format not in ["static", "interactive", "json", "png", "svg"]:
+            raise ValueError(
+                f"Unsupported format: {format}. "
+                "Supported formats: 'static', 'interactive', 'json', 'png', 'svg'"
+            )
+
+        # Extract chart_type from spec if provided, otherwise auto-detect
+        chart_type = None
+        if spec is not None and "chart_type" in spec:
+            chart_type = spec["chart_type"]
+
+        if chart_type is not None:
+            final_chart_type = chart_type
+        else:
+            final_chart_type = _detect_plotly_chart_type(
+                dimensions=list(self.dimensions),
+                measures=list(self.measures),
+                time_dimension=self.model.time_dimension,
+            )
+
+        # Prepare data and base parameters
+        df, base_params = _prepare_plotly_data_and_params(self, final_chart_type)
+
+        # Merge base params with user-provided Plotly Express parameters
+        # All spec properties are Plotly Express parameters except chart_type, layout and config
+        user_params = {}
+        layout_params = {}
+        config_params = {}
+
+        if spec is not None:
+            for k, v in spec.items():
+                if k == "chart_type":
+                    pass  # Already handled above
+                elif k == "layout":
+                    layout_params = v
+                elif k == "config":
+                    config_params = v
+                else:
+                    user_params[k] = v
+
+        # Final parameters for Plotly Express - user params override base params
+        final_params = {**base_params, **user_params}
+
+        # Create the actual Plotly figure by calling Plotly Express directly
+        if final_chart_type == "indicator":
+            raise NotImplementedError(
+                "Indicator charts are not yet supported for Plotly backend"
+            )
+        elif final_chart_type == "bar":
+            fig = px.bar(**final_params)
+            # For multiple measures, set barmode to 'group' to create grouped bars instead of stacked
+            if len(list(self.measures)) > 1:
+                fig.update_layout(barmode="group")
+        elif final_chart_type == "line":
+            fig = px.line(**final_params)
+        elif final_chart_type == "scatter":
+            fig = px.scatter(**final_params)
+        elif final_chart_type == "heatmap":
+            fig = go.Figure(data=go.Heatmap(**final_params))
+        elif final_chart_type == "table":
+            # Special case for table - doesn't use Plotly Express
+            dimensions = list(self.dimensions)
+            measures = list(self.measures)
+            columns = user_params.get("columns", dimensions + measures)
+            fig = go.Figure(
+                data=[
+                    go.Table(
+                        header=dict(values=columns),
+                        cells=dict(
+                            values=[df[col] for col in columns if col in df.columns]
+                        ),
+                    )
+                ]
+            )
+        else:
+            # Fallback
+            fig = px.scatter(**final_params)
+
+        if layout_params:
+            fig.update_layout(**layout_params)
+        if config_params:
+            fig.update_layout(**config_params)
+
+        # Handle different output formats
+        if format == "static":
+            return fig
+        elif format == "interactive":
+            return fig
+        elif format == "json":
+            return plotly.io.to_json(fig)
+        elif format in ["png", "svg"]:
+            return fig.to_image(format=format)
+
+    def chart(
+        self,
+        spec: Optional[Dict[str, Any]] = None,
+        backend: str = "altair",
+        format: str = "static",
+    ) -> Union["altair.Chart", "go.Figure", Dict[str, Any], bytes, str]:
+        """
+        Create a chart from the query using the specified backend.
+
+        Args:
+            spec: Optional chart specification. Format depends on backend:
+                  - For vega: Vega-Lite specification
+                  - For plotly: Plotly specification
+            backend: The charting backend to use:
+                - "altair" (default): Use Altair backend
+                - "plotly": Use Plotly backend
+            format: The output format of the chart:
+                - "static" (default): Returns chart object (Chart/Figure)
+                - "interactive": Returns interactive chart with tooltip
+                - "json": Returns JSON specification
+                - "png": Returns PNG image bytes
+                - "svg": Returns SVG string
+
+        Returns:
+            Chart in the requested format. The exact type depends on backend:
+                - vega object/interactive: Altair Chart object
+                - plotly object/interactive: Plotly Figure object
+                - json: Dict containing specification
+                - png: bytes of PNG image
+                - svg: str containing SVG markup
+
+        Raises:
+            ImportError: If the specified backend is not installed
+            ValueError: If an unsupported backend or format is specified
+        """
+        if backend not in ["altair", "plotly"]:
+            raise ValueError(
+                f"Unsupported backend: {backend}. Supported backends: 'altair', 'plotly'"
+            )
+
+        if format not in ["static", "interactive", "json", "png", "svg"]:
+            raise ValueError(
+                f"Unsupported format: {format}. "
+                "Supported formats: 'static', 'interactive', 'json', 'png', 'svg'"
+            )
+
+        if backend == "altair":
+            return self._chart_altair(spec=spec, format=format)
+        elif backend == "plotly":
+            return self._chart_plotly(spec=spec, format=format)
+
 
 def _convert_dimensions(dimension_dict) -> dict:
     """Convert plain callables to DimensionSpec with no description for backward compatibility."""
@@ -292,8 +489,11 @@ def _convert_dimensions(dimension_dict) -> dict:
         elif callable(dim):
             result[name] = DimensionSpec(expr=dim, description="")
         else:
-            raise ValueError(f"Invalid dimension specification for {name}: {dim}. Must be a callable or DimensionSpec instance.")
+            raise ValueError(
+                f"Invalid dimension specification for {name}: {dim}. Must be a callable or DimensionSpec instance."
+            )
     return result
+
 
 def _convert_measures(measure_dict) -> dict:
     """Convert plain callables to MeasureSpec with no description for backward compatibility."""
@@ -304,8 +504,11 @@ def _convert_measures(measure_dict) -> dict:
         elif callable(measure):
             result[name] = MeasureSpec(expr=measure, description="")
         else:
-            raise ValueError(f"Invalid measure specification for {name}: {measure}. Must be a callable or MeasureSpec instance.")
+            raise ValueError(
+                f"Invalid measure specification for {name}: {measure}. Must be a callable or MeasureSpec instance."
+            )
     return result
+
 
 @frozen(kw_only=True, slots=True)
 class SemanticModel:
@@ -656,8 +859,14 @@ class SemanticModel:
         """
 
         # Convert DimensionSpec and MeasureSpec objects to JSON-serializable format
-        dimensions_dict = { name: {"description": spec.description} for name, spec in self.available_dimensions.items()}
-        measures_dict = { name: {"description": spec.description} for name, spec in self.available_measures.items()}
+        dimensions_dict = {
+            name: {"description": spec.description}
+            for name, spec in self.available_dimensions.items()
+        }
+        measures_dict = {
+            name: {"description": spec.description}
+            for name, spec in self.available_measures.items()
+        }
 
         definition = {
             "name": self.name,
@@ -756,7 +965,9 @@ class SemanticModel:
             cube_expr = flat
         cube_table = cube_expr.cache(storage=storage)
 
-        new_dimensions: Dict[str, Dimension] = {key: DimensionSpec(expr=lambda t, c=key: t[c]) for key in keys}
+        new_dimensions: Dict[str, Dimension] = {
+            key: DimensionSpec(expr=lambda t, c=key: t[c]) for key in keys
+        }
         new_measures: Dict[str, Measure] = {}
         for name in agg_kwargs:
             new_measures[name] = MeasureSpec(expr=lambda t, c=name: t[c])

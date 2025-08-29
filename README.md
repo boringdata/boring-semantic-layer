@@ -49,7 +49,7 @@ flights_sm.query(
 **Example output (dataframe):**
 
 | origin | flight_count |
-|--------|--------------|
+| ------ | ------------ |
 | JFK    | 3689         |
 | LGA    | 2941         |
 | ...    | ...          |
@@ -59,32 +59,49 @@ flights_sm.query(
 
 ## Table of Contents
 
-- [Installation](#installation)
-- [Get Started](#get-started)
-  1. [Get Sample Data](#1-get-sample-data)
-  2. [Build a Semantic Model](#2-build-a-semantic-model)
-      - [Adding Descriptions to Semantic Models, Dimensions, and Measures](#adding-descriptions-to-semantic-models-dimensions-and-measures)
-  3. [Query a Semantic Model](#3-query-a-semantic-model)
-- [Features](#features)
-  - [Filters](#filters)
-    - [Ibis Expression](#ibis-expression)
-    - [JSON-based (MCP & LLM friendly)](#json-based-mcp-llm-friendly)
-  - [Time-Based Dimensions and Queries](#time-based-dimensions-and-queries)
-  - [Joins Across Semantic Models](#joins-across-semantic-models)
-    - [Classic SQL Joins](#classic-sql-joins)
-    - [join_one](#join_one)
-    - [join_many](#join_many)
-    - [join_cross](#join_cross)
-- [Model Context Protocol (MCP) Integration](#model-context-protocol-mcp-integration)
-- [Chart Visualization](#chart-visualization)
-  - [Installation](#installation-1)
-  - [Smart Chart Creation](#smart-chart-creation)
-  - [Automatic Chart Detection](#automatic-chart-detection)
-  - [Advanced Chart Examples](#advanced-chart-examples)
-- [Reference](#reference)
-  - [SemanticModel](#semanticmodel)
-  - [Query (SemanticModel.query / QueryExpr)](#query-semanticmodelquery--queryexpr)
-  - [Chart API Reference](#chart-api-reference)
+- [Boring Semantic Layer (BSL)](#boring-semantic-layer-bsl)
+- [Quick Example](#quick-example)
+  - [Table of Contents](#table-of-contents)
+  - [Installation](#installation)
+  - [Get Started](#get-started)
+    - [1. Get Sample Data](#1-get-sample-data)
+    - [2. Build a Semantic Model](#2-build-a-semantic-model)
+    - [Adding Descriptions to Semantic Models, Dimensions, and Measures](#adding-descriptions-to-semantic-models-dimensions-and-measures)
+    - [3. Query a Semantic Model](#3-query-a-semantic-model)
+  - [Features](#features)
+    - [Filters](#filters)
+      - [Ibis Expression](#ibis-expression)
+      - [JSON-based (MCP \& LLM friendly)](#json-based-mcp--llm-friendly)
+    - [Joins Across Semantic Models](#joins-across-semantic-models)
+      - [Classic SQL Joins](#classic-sql-joins)
+      - [join\_one](#join_one)
+      - [join\_many](#join_many)
+      - [join\_cross](#join_cross)
+  - [Model Context Protocol (MCP) Integration](#model-context-protocol-mcp-integration)
+    - [Installation](#installation-1)
+    - [Setting up an MCP Server](#setting-up-an-mcp-server)
+    - [Configuring Claude Desktop](#configuring-claude-desktop)
+    - [Available MCP Tools](#available-mcp-tools)
+  - [Chart Visualization](#chart-visualization)
+    - [Installation](#installation-2)
+    - [How BSL Charting Works](#how-bsl-charting-works)
+      - [Quick Start Example](#quick-start-example)
+      - [How It Works](#how-it-works)
+    - [Smart Chart Creation](#smart-chart-creation)
+      - [1. Auto-detected Bar Chart](#1-auto-detected-bar-chart)
+      - [2. Auto-detected Time Series Chart](#2-auto-detected-time-series-chart)
+      - [3. Auto-detected Heatmap](#3-auto-detected-heatmap)
+      - [4. Custom Mark with Auto-detection](#4-custom-mark-with-auto-detection)
+      - [5. Full Custom Specification](#5-full-custom-specification)
+      - [Export Formats](#export-formats)
+  - [Reference](#reference)
+    - [SemanticModel](#semanticmodel)
+      - [Spec Classes (for dimensions and measures with descriptions)](#spec-classes-for-dimensions-and-measures-with-descriptions)
+      - [Join object (for `joins`)](#join-object-for-joins)
+    - [Query (SemanticModel.query / QueryExpr)](#query-semanticmodelquery--queryexpr)
+      - [Filters](#filters-1)
+      - [Example](#example)
+    - [Chart API Reference](#chart-api-reference)
 
 -----
 
@@ -260,7 +277,7 @@ flights_sm.query(
 Example output:
 
 | origin | total_flights | avg_distance |
-|--------|---------------|--------------|
+| ------ | ------------- | ------------ |
 | JFK    | 3689          | 1047.71      |
 | PHL    | 7708          | 1044.97      |
 | ...    | ...           | ...          |
@@ -287,7 +304,7 @@ flights_sm.query(
 
 
 | origin | total_flights |
-|--------|---------------|
+| ------ | ------------- |
 | JFK    | 3689          |
 
 #### JSON-based (MCP & LLM friendly)
@@ -310,13 +327,13 @@ flights_sm.query(
 **Example output (dataframe):**
 
 | origin | total_flights |
-|--------|---------------|
+| ------ | ------------- |
 | LGA    | 7000          |
 | PHL    | 7708          |
 
 BSL supports the following operators: `=`, `!=`, `>`, `>=`, `in`, `not in`, `like`, `not like`, `is null`, `is not null`, `AND`, `OR`
 
-**Note on filtering measures:** filters only work with dimensions. 
+**Note on filtering measures:** filters only work with dimensions.
 ```
 
 ### Time-Based Dimensions and Queries
@@ -356,7 +373,7 @@ print(query_time_based_df)
 Example output:
 
 | origin | arr_time   | flight_count |
-|--------|------------|--------------|
+| ------ | ---------- | ------------ |
 | PHL    | 2013-01-01 | 5            |
 | CLE    | 2013-01-01 | 5            |
 | DFW    | 2013-01-01 | 7            |
@@ -431,12 +448,12 @@ query_joined_df = flight_sm.query(
 ).execute()
 ```
 | carriers_name              | origin | flight_count |
-|---------------------------|--------|--------------|
-| Delta Air Lines           | MDT    | 235          |
-| Delta Air Lines           | ATL    | 8419         |
-| Comair (Delta Connections)| ATL    | 239          |
-| American Airlines         | DFW    | 8742         |
-| American Eagle Airlines   | JFK    | 418          |
+| -------------------------- | ------ | ------------ |
+| Delta Air Lines            | MDT    | 235          |
+| Delta Air Lines            | ATL    | 8419         |
+| Comair (Delta Connections) | ATL    | 239          |
+| American Airlines          | DFW    | 8742         |
+| American Eagle Airlines    | JFK    | 418          |
 
 #### join_one
 
@@ -501,13 +518,13 @@ flights_with_join_one_sm.query(
 
 Example output:
 
-| carriers_name            | flight_count |
-|-------------------------|--------------|
-| Delta Air Lines         | 10000        |
-| American Airlines       | 9000         |
-| United Airlines         | 8500         |
-| Southwest Airlines      | 8000         |
-| JetBlue Airways         | 7500         |
+| carriers_name      | flight_count |
+| ------------------ | ------------ |
+| Delta Air Lines    | 10000        |
+| American Airlines  | 9000         |
+| United Airlines    | 8500         |
+| Southwest Airlines | 8000         |
+| JetBlue Airways    | 7500         |
 
 ## Model Context Protocol (MCP) Integration
 
@@ -606,17 +623,25 @@ BSL includes built-in support for generating data visualizations using native Ib
 
 To use chart visualization functionality, install with the `visualization` extra:
 
+To use `altair` backend:
 ```bash
-pip install 'boring-semantic-layer[visualization]'
+pip install 'boring-semantic-layer[viz-altair]'
 ```
 
+To use `plotly` backend:
+```bash
+pip install 'boring-semantic-layer[viz-plotly]'
+```
 ### How BSL Charting Works
 
-BSL's charting system is built on top of **[Vega-Lite](https://vega.github.io/vega-lite/)** and its Python wrapper **[Altair](https://altair-viz.github.io/)**.
+BSL's charting system features **dual backend support**, allowing you to choose between two powerful visualization libraries:
 
-Vega-Lite is a JSON-based grammar for creating interactive visualizations that provides a declarative approach to chart creation.
+- **[Altair](https://altair-viz.github.io/)** (default): Built on **[Vega-Lite](https://vega.github.io/vega-lite/)**, a JSON-based grammar for creating interactive web-native visualizations with a declarative approach
+- **[Plotly](https://plotly.com/python/)**: Rich interactive plotting library with extensive chart types and dashboard integration capabilities
 
-BSL supports multiple output formats including interactive Altair charts, static images (PNG/SVG), and raw JSON specifications for web embedding.
+You can switch backends using the `backend` parameter: `chart(backend="altair")` or `chart(backend="plotly")`.
+
+BSL supports multiple output formats including interactive charts, static images (PNG/SVG), and JSON specifications for web embedding across both backends.
 
 #### Quick Start Example
 
@@ -648,6 +673,34 @@ BSL exposes a `chart()` method on query results that accepts a Vega-Lite JSON sp
 
 This design enables you to work at any level of abstraction - from full auto-detection to complete manual control.
 
+### Backend Selection
+
+BSL supports two charting backends:
+
+- **Altair** (default): `chart(backend="altair")`
+- **Plotly**: `chart(backend="plotly")`
+
+```python
+# Altair backend (default) - uses Vega-Lite spec format
+altair_chart = query.chart()  # or chart(backend="altair")
+altair_custom = query.chart(spec={"mark": "bar", "title": "My Chart"})
+
+# Plotly backend - uses BSL custom spec format  
+plotly_chart = query.chart(backend="plotly")
+plotly_custom = query.chart(backend="plotly", spec={
+    "chart_type": "scatter",  # Maps to px.scatter() function
+    "layout": {"title": "My Chart"},  # Plotly layout options
+    "color": "category"  # Plotly Express parameters
+})
+```
+
+**Spec Format Differences:**
+- **Altair**: Uses standard [Vega-Lite specification](https://vega.github.io/vega-lite/docs/spec.html) format
+- **Plotly**: Uses BSL's custom format combining:
+  - `chart_type`: Maps to Plotly Express functions (`px.bar`, `px.line`, `px.scatter`, etc.)  
+  - `layout`: Standard [Plotly layout](https://plotly.com/python/reference/layout/) options
+  - Other keys: [Plotly Express parameters](https://plotly.com/python-api-reference/plotly.express.html)
+
 ### Smart Chart Creation
 
 BSL automatically detects appropriate chart types and intelligently merges any specifications you provide.
@@ -676,8 +729,11 @@ query = flights_sm.query(
     limit=10
 )
 
-# Auto-detects bar chart
-chart = query.chart()
+# Auto-detects bar chart (Altair)
+altair_chart = query.chart()
+
+# Auto-detects bar chart (Plotly)
+plotly_chart = query.chart(backend="plotly")
 ```
 
 ![Bar Chart](docs/chart_bar.png)
@@ -695,8 +751,11 @@ time_query = flights_sm.query(
     time_grain="TIME_GRAIN_WEEK"
 )
 
-# Auto-detects time series line chart
-chart = time_query.chart()
+# Auto-detects time series line chart (Altair)
+altair_chart = time_query.chart()
+
+# Auto-detects time series line chart (Plotly)
+plotly_chart = time_query.chart(backend="plotly")
 ```
 
 ![Time Series Chart](docs/chart_timeseries.png)
@@ -713,11 +772,14 @@ heatmap_query = flights_sm.query(
     limit=50
 )
 
-# Auto-detects heatmap with custom sizing
-chart = heatmap_query.chart(spec={
+# Auto-detects heatmap with custom sizing (Altair)
+altair_chart = heatmap_query.chart(spec={
     "height": 300,
     "width": 400
 })
+
+# Auto-detects heatmap (Plotly)
+plotly_chart = heatmap_query.chart(backend="plotly")
 ```
 
 ![Heatmap Chart](docs/chart_heatmap.png)
@@ -790,29 +852,29 @@ with open("my_chart.png", "wb") as f:
 
 ### SemanticModel
 
-| Field                | Type                                      | Required | Allowed Values / Notes                                                                                      |
-|----------------------|-------------------------------------------|----------|------------------------------------------------------------------------------------------------------------|
-| `table`              | Ibis table expression                     | Yes      | Any Ibis table or view                                                                                     |
-| `dimensions`         | dict[str, callable or DimensionSpec]      | Yes      | Keys: dimension names; Values: functions mapping table → column OR DimensionSpec objects with descriptions |
-| `measures`           | dict[str, callable or MeasureSpec]        | Yes      | Keys: measure names; Values: functions mapping table → aggregation OR MeasureSpec objects with descriptions |
-| `description`        | str                                       | No       | Optional description of the model                                                                          |
-| `joins`              | dict[str, Join]                           | No       | Keys: join alias; Values: `Join` object (see below)                                                         |
-| `primary_key`        | str                                       | No       | Name of the primary key dimension (required for certain join types)                                         |
-| `name`               | str                                       | No       | Optional model name (inferred from table if omitted)                                                        |
-| `time_dimension`     | str                                       | No       | Name of the column to use as the time dimension                                                             |
-| `smallest_time_grain`| str                                       | No       | One of:<br>`TIME_GRAIN_SECOND`, `TIME_GRAIN_MINUTE`, `TIME_GRAIN_HOUR`, `TIME_GRAIN_DAY`,<br>`TIME_GRAIN_WEEK`, `TIME_GRAIN_MONTH`, `TIME_GRAIN_QUARTER`, `TIME_GRAIN_YEAR` |
+| Field                 | Type                                 | Required | Allowed Values / Notes                                                                                                                                                      |
+| --------------------- | ------------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `table`               | Ibis table expression                | Yes      | Any Ibis table or view                                                                                                                                                      |
+| `dimensions`          | dict[str, callable or DimensionSpec] | Yes      | Keys: dimension names; Values: functions mapping table → column OR DimensionSpec objects with descriptions                                                                  |
+| `measures`            | dict[str, callable or MeasureSpec]   | Yes      | Keys: measure names; Values: functions mapping table → aggregation OR MeasureSpec objects with descriptions                                                                 |
+| `description`         | str                                  | No       | Optional description of the model                                                                                                                                           |
+| `joins`               | dict[str, Join]                      | No       | Keys: join alias; Values: `Join` object (see below)                                                                                                                         |
+| `primary_key`         | str                                  | No       | Name of the primary key dimension (required for certain join types)                                                                                                         |
+| `name`                | str                                  | No       | Optional model name (inferred from table if omitted)                                                                                                                        |
+| `time_dimension`      | str                                  | No       | Name of the column to use as the time dimension                                                                                                                             |
+| `smallest_time_grain` | str                                  | No       | One of:<br>`TIME_GRAIN_SECOND`, `TIME_GRAIN_MINUTE`, `TIME_GRAIN_HOUR`, `TIME_GRAIN_DAY`,<br>`TIME_GRAIN_WEEK`, `TIME_GRAIN_MONTH`, `TIME_GRAIN_QUARTER`, `TIME_GRAIN_YEAR` |
 
 #### Spec Classes (for dimensions and measures with descriptions)
 
 **DimensionSpec:**
-|Field          |Type      |Required  |Notes                                                  |
-|---------------|----------|----------|-------------------------------------------------------|
+| Field         | Type     | Required | Notes                                                 |
+| ------------- | -------- | -------- | ----------------------------------------------------- |
 | `expr`        | callable | Yes      | Function mapping table -> column expression           |
 | `description` | str      | No       | Human readable description (defaults to empty string) |
 
 **MeasureSpec:**
-|Field          |Type      |Required  |Notes                                                  |
-|---------------|----------|----------|-------------------------------------------------------|
+| Field         | Type     | Required | Notes                                                 |
+| ------------- | -------- | -------- | ----------------------------------------------------- |
 | `expr`        | callable | Yes      | Function mapping table -> column expression           |
 | `description` | str      | No       | Human readable description (defaults to empty string) |
 
@@ -842,15 +904,15 @@ avg_distance_measure = MeasureSpec(
 
 ### Query (SemanticModel.query / QueryExpr)
 
-| Parameter      | Type                                              | Required | Allowed Values / Notes                                                                                      |
-|----------------|---------------------------------------------------|----------|------------------------------------------------------------------------------------------------------------|
-| `dimensions`   | list[str]                                         | No       | List of dimension names (can include joined fields, e.g. `"carriers.name"`)                                 |
-| `measures`     | list[str]                                         | No       | List of measure names (can include joined fields)                                                           |
-| `filters`      | list[dict/str/callable] or dict/str/callable      | No       | See below for filter formats and operators                                                                  |
-| `order_by`     | list[tuple[str, str]]                             | No       | List of (field, direction) tuples, e.g. `[("avg_delay", "desc")]`                                           |
-| `limit`        | int                                               | No       | Maximum number of rows to return                                                                            |
-| `time_range`   | dict with `start` and `end` (ISO 8601 strings)    | No       | Example: `{'start': '2024-01-01', 'end': '2024-12-31'}`                                                     |
-| `time_grain`   | str                                               | No       | One of:<br>`TIME_GRAIN_SECOND`, `TIME_GRAIN_MINUTE`, `TIME_GRAIN_HOUR`, `TIME_GRAIN_DAY`,<br>`TIME_GRAIN_WEEK`, `TIME_GRAIN_MONTH`, `TIME_GRAIN_QUARTER`, `TIME_GRAIN_YEAR` |
+| Parameter    | Type                                           | Required | Allowed Values / Notes                                                                                                                                                      |
+| ------------ | ---------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dimensions` | list[str]                                      | No       | List of dimension names (can include joined fields, e.g. `"carriers.name"`)                                                                                                 |
+| `measures`   | list[str]                                      | No       | List of measure names (can include joined fields)                                                                                                                           |
+| `filters`    | list[dict/str/callable] or dict/str/callable   | No       | See below for filter formats and operators                                                                                                                                  |
+| `order_by`   | list[tuple[str, str]]                          | No       | List of (field, direction) tuples, e.g. `[("avg_delay", "desc")]`                                                                                                           |
+| `limit`      | int                                            | No       | Maximum number of rows to return                                                                                                                                            |
+| `time_range` | dict with `start` and `end` (ISO 8601 strings) | No       | Example: `{'start': '2024-01-01', 'end': '2024-12-31'}`                                                                                                                     |
+| `time_grain` | str                                            | No       | One of:<br>`TIME_GRAIN_SECOND`, `TIME_GRAIN_MINUTE`, `TIME_GRAIN_HOUR`, `TIME_GRAIN_DAY`,<br>`TIME_GRAIN_WEEK`, `TIME_GRAIN_MONTH`, `TIME_GRAIN_QUARTER`, `TIME_GRAIN_YEAR` |
 
 #### Filters
 
@@ -893,7 +955,7 @@ flights_sm.query(
 Example output:
 
 | origin | year | total_flights |
-|--------|------|---------------|
+| ------ | ---- | ------------- |
 | JFK    | 2015 | 350           |
 | LGA    | 2015 | 300           |
 
@@ -901,10 +963,11 @@ Example output:
 
 The `QueryExpr` object provides the `chart()` method for visualization:
 
-| Parameter | Type                     | Required | Allowed Values / Notes                                                                                      |
-|-----------|--------------------------|----------|------------------------------------------------------------------------------------------------------------|
-| `spec`    | dict or None             | No       | Vega-Lite specification dict. If not provided, will auto-detect chart type.<br>If partial spec is provided (e.g., only encoding or only mark), missing parts will be auto-detected and merged. |
-| `format`  | str                      | No       | Output format of the chart:<br>- `"altair"` (default): Returns Altair Chart object<br>- `"interactive"`: Returns interactive Altair Chart with tooltip<br>- `"json"`: Returns Vega-Lite JSON specification<br>- `"png"`: Returns PNG image bytes (requires `pip install altair[all]`)<br>- `"svg"`: Returns SVG string (requires `pip install altair[all]`) |
+| Parameter | Type         | Required | Allowed Values / Notes                                                                                                                                                                                                                                                                                                                                      |
+| --------- | ------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spec`    | dict or None | No       | Chart specification dict. Format depends on backend:<br>- **Altair**: [Vega-Lite specification](https://vega.github.io/vega-lite/docs/spec.html)<br>- **Plotly**: BSL custom format (see Backend Selection section)<br>If not provided, will auto-detect chart type. If partial spec provided, missing parts will be auto-detected and merged. |
+| `backend` | str          | No       | Charting backend to use:<br>- `"altair"` (default): Use Altair/Vega-Lite backend<br>- `"plotly"`: Use Plotly backend |
+| `format`  | str          | No       | Output format of the chart:<br>- `"static"` (default): Returns chart object (Chart/Figure)<br>- `"interactive"`: Returns interactive chart with tooltip<br>- `"json"`: Returns JSON specification<br>- `"png"`: Returns PNG image bytes (requires additional dependencies)<br>- `"svg"`: Returns SVG string (requires additional dependencies) |
 
 **Returns:** Chart in the requested format (Altair Chart object, dict, bytes, or str depending on format)
 
