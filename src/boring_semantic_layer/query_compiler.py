@@ -95,7 +95,7 @@ def _compile_query(qe: Any) -> Expr:
         if "." in m:
             alias, field = m.split(".", 1)
             join = model.joins[alias]
-            expr = join.model.measures[field](t)
+            expr = join.model.measures[field](join.model.table)
             name = f"{alias}_{field}"
             agg_kwargs[name] = expr
         else:
@@ -111,7 +111,8 @@ def _compile_query(qe: Any) -> Expr:
             if "." in d:
                 alias, field = d.split(".", 1)
                 name = f"{alias}_{field}"
-                expr = model.joins[alias].model.dimensions[field](t).name(name)
+                target_model = model.joins[alias].model
+                expr = target_model.dimensions[field](target_model.table).name(name)
             else:
                 # Use possibly transformed dimension function
                 expr = dim_map[d](t).name(d)
