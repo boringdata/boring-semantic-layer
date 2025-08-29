@@ -1,6 +1,6 @@
 """Test that charts preserve data ordering from queries."""
 
-from boring_semantic_layer.chart import _detect_chart_spec
+from boring_semantic_layer.chart import _detect_altair_spec
 
 
 class TestChartOrdering:
@@ -8,7 +8,9 @@ class TestChartOrdering:
 
     def test_bar_chart_uses_ordinal_with_sort_none(self):
         """Test that single dimension bar charts use ordinal type with sort: None."""
-        spec = _detect_chart_spec(dimensions=["destination"], measures=["avg_distance"])
+        spec = _detect_altair_spec(
+            dimensions=["destination"], measures=["avg_distance"]
+        )
 
         assert spec["mark"] == "bar"
         x_encoding = spec["encoding"]["x"]
@@ -18,7 +20,7 @@ class TestChartOrdering:
 
     def test_grouped_bar_chart_uses_ordinal_with_sort_none(self):
         """Test that grouped bar charts use ordinal type with sort: None."""
-        spec = _detect_chart_spec(
+        spec = _detect_altair_spec(
             dimensions=["destination"], measures=["avg_distance", "flight_count"]
         )
 
@@ -30,7 +32,7 @@ class TestChartOrdering:
 
     def test_heatmap_uses_ordinal_with_sort_none(self):
         """Test that heatmaps use ordinal type with sort: None for both dimensions."""
-        spec = _detect_chart_spec(
+        spec = _detect_altair_spec(
             dimensions=["origin", "destination"], measures=["flight_count"]
         )
 
@@ -48,7 +50,7 @@ class TestChartOrdering:
 
     def test_time_series_chart_uses_temporal_type(self):
         """Test that time series charts still use temporal type (not ordinal)."""
-        spec = _detect_chart_spec(
+        spec = _detect_altair_spec(
             dimensions=["flight_date"],
             measures=["flight_count"],
             time_dimension="flight_date",
