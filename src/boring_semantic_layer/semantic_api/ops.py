@@ -35,12 +35,21 @@ class SemanticTable(Relation):
         """Expose semantic fields as expressions referencing the base relation."""
         base_tbl = self.table.to_expr()
         out: dict[str, Any] = {}
+
+        # Include all base table columns first
+        for col_name in base_tbl.columns:
+            out[col_name] = base_tbl[col_name].op()
+
+        # Then add/override with semantic dimensions
         for name, fn in self.dimensions.items():
             expr = fn(base_tbl)
             out[name] = expr.op()
+
+        # Then add measures
         for name, fn in self.measures.items():
             expr = fn(base_tbl)
             out[name] = expr.op()
+
         return FrozenOrderedDict(out)
 
     @property
@@ -181,6 +190,39 @@ class SemanticJoin(Relation):
     @property
     def schema(self) -> Schema:
         return Schema({name: v.dtype for name, v in self.values.items()})
+
+
+class SemanticOrderBy(Relation):
+    source: Any
+    keys: tuple[Any, ...]  # Can be strings or ibis expressions with direction
+
+    def __init__(self, source: Any, keys: Iterable[Any]) -> None:
+        super().__init__(source=Relation.__coerce__(source), keys=tuple(keys))
+
+    @property
+    def values(self) -> FrozenOrderedDict[str, Any]:
+        return self.source.values
+
+    @property
+    def schema(self) -> Schema:
+        return self.source.schema
+
+
+class SemanticLimit(Relation):
+    source: Any
+    n: int
+    offset: int
+
+    def __init__(self, source: Any, n: int, offset: int = 0) -> None:
+        super().__init__(source=Relation.__coerce__(source), n=n, offset=offset)
+
+    @property
+    def values(self) -> FrozenOrderedDict[str, Any]:
+        return self.source.values
+
+    @property
+    def schema(self) -> Schema:
+        return self.source.schema
 
 
 def _find_root_model(node: Any) -> SemanticTable | None:

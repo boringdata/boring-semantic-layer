@@ -15,6 +15,8 @@ from boring_semantic_layer.semantic_api.ops import (
     SemanticProject,
     SemanticTable,
     SemanticJoin,
+    SemanticOrderBy,
+    SemanticLimit,
 )
 
 
@@ -50,6 +52,16 @@ def _format_semantic_mutate(op, **kwargs):
 
 @_fmt.register(SemanticJoin)
 def _format_semantic_join(op, **kwargs):
+    return op.__class__.__name__
+
+
+@_fmt.register(SemanticOrderBy)
+def _format_semantic_orderby(op, **kwargs):
+    return op.__class__.__name__
+
+
+@_fmt.register(SemanticLimit)
+def _format_semantic_limit(op, **kwargs):
     return op.__class__.__name__
 
 
@@ -92,8 +104,8 @@ class SemanticTableExpr(IbisTable):
     def with_measures(self, **meas: Callable) -> SemanticTableExpr:
         return with_measures(self, **meas)
 
-    def group_by(self, *keys: str) -> SemanticTableExpr:
-        return group_by_(self, *keys)
+    def group_by(self, *keys: str, **inline_dims: Callable) -> SemanticTableExpr:
+        return group_by_(self, *keys, **inline_dims)
 
     def aggregate(self, *fns: Callable, **aggs: Callable) -> SemanticTableExpr:
         from .api import _infer_measure_name  # avoid circular
@@ -138,6 +150,12 @@ class SemanticTableExpr(IbisTable):
     ) -> SemanticTableExpr:
         return join_(self, other, how=how, on=on)
 
+    def order_by(self, *keys: Any) -> SemanticTableExpr:
+        return order_by_(self, *keys)
+
+    def limit(self, n: int, offset: int = 0) -> SemanticTableExpr:
+        return limit_(self, n, offset)
+
 
 def to_semantic_table(table: IbisTable) -> SemanticTableExpr:
     node = SemanticTable(table=table, dimensions={}, measures={})
@@ -150,7 +168,9 @@ def with_dimensions(table: IbisTable, **dimensions: Callable) -> SemanticTableEx
         node = SemanticTable(table=table, dimensions={}, measures={})
     new_dims = {**getattr(node, "dimensions", {}), **dimensions}
     node = SemanticTable(
-        table=node.table.to_expr(), dimensions=new_dims, measures=getattr(node, "measures", {})
+        table=node.table.to_expr(),
+        dimensions=new_dims,
+        measures=getattr(node, "measures", {}),
     )
     return SemanticTableExpr(node)
 
@@ -161,7 +181,9 @@ def with_measures(table: IbisTable, **measures: Callable) -> SemanticTableExpr:
         node = SemanticTable(table=table, dimensions={}, measures={})
     new_meas = {**getattr(node, "measures", {}), **measures}
     node = SemanticTable(
-        table=node.table.to_expr(), dimensions=getattr(node, "dimensions", {}), measures=new_meas
+        table=node.table.to_expr(),
+        dimensions=getattr(node, "dimensions", {}),
+        measures=new_meas,
     )
     return SemanticTableExpr(node)
 
@@ -176,12 +198,32 @@ def select_(table: IbisTable, *fields: str) -> SemanticTableExpr:
     return SemanticTableExpr(node)
 
 
-def group_by_(table: IbisTable, *keys: str) -> SemanticTableExpr:
-    node = SemanticGroupBy(source=table.op(), keys=keys)
-    return SemanticTableExpr(node)
+def group_by_(
+    table: IbisTable, *keys: str, **inline_dims: Callable
+) -> SemanticTableExpr:
+    # Detect if we have inline dimensions (regular Ibis style) or semantic dimensions
+    if inline_dims:
+        # Regular Ibis group_by with inline expressions
+        # Add inline dimensions to the semantic table first, then group by them
+        semantic_table = table
+        for name, expr_fn in inline_dims.items():
+            semantic_table = semantic_table.with_dimensions(**{name: expr_fn})
+
+        # Collect all keys (both string keys and inline dimension names)
+        all_keys = list(keys) + list(inline_dims.keys())
+
+        # Use semantic group_by with all keys
+        node = SemanticGroupBy(source=semantic_table.op(), keys=all_keys)
+        return SemanticTableExpr(node)
+    else:
+        # Semantic group_by with predefined dimensions
+        node = SemanticGroupBy(source=table.op(), keys=keys)
+        return SemanticTableExpr(node)
 
 
-def aggregate_(table: IbisTable, *fns: Callable, **measures: Callable) -> SemanticTableExpr:
+def aggregate_(
+    table: IbisTable, *fns: Callable, **measures: Callable
+) -> SemanticTableExpr:
     from .api import _infer_measure_name
 
     if fns:
@@ -246,6 +288,29 @@ def join_many(
 
 def join_cross(left: IbisTable, right: IbisTable) -> SemanticTableExpr:
     return join_(left, right, how="cross", on=None)
+
+
+def order_by_(table: IbisTable, *keys: Any) -> SemanticTableExpr:
+    # Convert deferred expressions to a serializable form
+    processed_keys = []
+    for key in keys:
+        from ibis.common.deferred import Deferred
+
+        if isinstance(key, Deferred):
+            # Store deferred expressions as a callable that can be applied to the table
+            processed_keys.append(
+                ("__deferred__", lambda t, deferred=key: deferred.resolve(t))
+            )
+        else:
+            processed_keys.append(key)
+
+    node = SemanticOrderBy(source=table.op(), keys=processed_keys)
+    return SemanticTableExpr(node)
+
+
+def limit_(table: IbisTable, n: int, offset: int = 0) -> SemanticTableExpr:
+    node = SemanticLimit(source=table.op(), n=n, offset=offset)
+    return SemanticTableExpr(node)
 
 
 def _infer_measure_name(fn: Callable) -> str:
