@@ -7,7 +7,7 @@ import sys
 import pytest
 
 # Import utilities
-from malloy_benchmark_utils import (
+from test_malloy_benchmark_utils import (
     normalize_dataframe_dtypes,
     compare_dataframes,
     normalize_for_comparison,
@@ -32,6 +32,9 @@ QUERIES = [
         ["cohorts"],
     ),  # Flatten cohorts column to match BSL flat structure
     ("cohorts", "query_3", []),  # Already flat
+    ("moving_avg", "query_1", []),
+    ("moving_avg", "query_2", []),
+    ("moving_avg", "query_3", []),
 ]
 
 BASE_PATH = Path(__file__).parent / "malloy_benchmark"
