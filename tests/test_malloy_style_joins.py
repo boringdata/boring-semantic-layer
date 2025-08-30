@@ -46,6 +46,40 @@ def test_join_one_with_callable_foreign_key():
     )
     pd.testing.assert_frame_equal(result, expected)
 
+def test_join_aliasing():
+    # Test that joining two models with dimensions of the same names actually resolves correctly
+    products_df = pd.DataFrame({"category_id": [1, 2, 3], "name": ["P1", "P2", "P3"], "value": [1, 1, 1]})
+    categories_df = pd.DataFrame({"category_id": [1, 2, 3], "name": ["C1", "C2", "C3"], "value": [10, 10, 10]})
+    con = xo.connect()
+    products_tbl = con.create_table("products_tbl", products_df)
+    categories_tbl = con.create_table("categories_tbl", categories_df)
+
+    categories_model = SemanticModel(
+        table=categories_tbl,
+        primary_key="category_id",
+        dimensions={"category_id": lambda t: t.category_id, "name": lambda t: t.name},
+        measures={"sum_category_value": lambda t: t.value.sum()},
+    )
+
+    products_model = SemanticModel(
+        table=products_tbl,
+        joins={"category": Join.one("category", categories_model, with_=lambda t: t.category_id)},
+        dimensions={"category_id": lambda t: t.category_id, "name": lambda t: t.name},
+        measures={"sum_product_value": lambda t: t.value.sum()},
+    )
+
+    expr = products_model.query(dimensions=["name", "category.name"], measures=["sum_product_value", "category.sum_category_value"])
+    result = expr.execute().sort_values("name").reset_index(drop=True)
+    expected = pd.DataFrame(
+        {
+            "name": ["P1", "P2", "P3"],
+            "category_name": ["C1", "C2", "C3"],
+            "sum_product_value": [1, 1, 1],
+            "category_sum_category_value": [10, 10, 10],
+        }
+    )
+    pd.testing.assert_frame_equal(result, expected)
+
 
 def test_join_many_counts_children():
     # Departments with many employees
