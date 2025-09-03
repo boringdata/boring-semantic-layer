@@ -11,8 +11,10 @@ from boring_semantic_layer.semantic_api.ops import (  # noqa: E402
     SemanticGroupBy,
     SemanticJoin,
     SemanticMutate,
+    SemanticOrderBy,
     SemanticProject,
     SemanticTable,
+    SemanticLimit,
     _find_root_model,
 )
 
@@ -56,7 +58,18 @@ def _lower_semantic_table(node: SemanticTable, catalog, *args):
 def _lower_semantic_filter(node: SemanticFilter, catalog, *args):
     root = _find_root_model(node.source)
     base_tbl = convert(node.source, catalog=catalog)
-    dim_map = root.dimensions if root else {}
+
+    # Check if we're filtering after aggregation
+    # If the source is a SemanticAggregate, we should only use available columns
+    from boring_semantic_layer.semantic_api.ops import SemanticAggregate
+
+    if isinstance(node.source, SemanticAggregate):
+        # Post-aggregation filter: only use columns available in the result
+        dim_map = {}  # Don't use original dimensions
+    else:
+        # Pre-aggregation filter: use semantic dimensions
+        dim_map = root.dimensions if root else {}
+
     pred = node.predicate(_Resolver(base_tbl, dim_map))
     return base_tbl.filter(pred)
 
@@ -69,9 +82,7 @@ def _lower_semantic_project(node: SemanticProject, catalog, *args):
         cols = [getattr(tbl, f) for f in node.fields]
         return tbl.select(cols)
 
-    tbl = convert(
-        node.source, catalog=catalog
-    )
+    tbl = convert(node.source, catalog=catalog)
     dims = [f for f in node.fields if f in root.dimensions]
     meas = [f for f in node.fields if f in root.measures]
 
@@ -103,7 +114,7 @@ def _lower_semantic_join(node: SemanticJoin, catalog, *args):
 @convert.register(SemanticAggregate)
 def _lower_semantic_aggregate(node: SemanticAggregate, catalog, *args):
     root = _find_root_model(node.source)
-    tbl = convert(root if root else node.source, catalog=catalog)
+    tbl = convert(node.source, catalog=catalog)
 
     group_exprs = []
     for k in node.keys:
@@ -154,3 +165,42 @@ def _lower_semantic_mutate(node: SemanticMutate, catalog, *args):
         [fn(proxy).name(name) for name, fn in node.post.items()] if node.post else []
     )
     return agg_tbl.mutate(new_cols)
+
+
+def _get_table_column(tbl, col_name: str):
+    """Helper to get column from table."""
+    if hasattr(tbl, col_name):
+        return getattr(tbl, col_name)
+    elif col_name in tbl.columns:
+        return tbl[col_name]
+    else:
+        raise ValueError(f"Column '{col_name}' not found in table")
+
+
+@convert.register(SemanticOrderBy)
+def _lower_semantic_orderby(node: SemanticOrderBy, catalog, *args):
+    tbl = convert(node.source, catalog=catalog)
+    order_keys = []
+
+    for key in node.keys:
+        if isinstance(key, str):
+            # Simple string key - ascending order
+            order_keys.append(_get_table_column(tbl, key))
+        elif isinstance(key, tuple) and len(key) == 2 and key[0] == "__deferred__":
+            # Deferred expression - resolve by calling the stored function
+            deferred_fn = key[1]
+            order_keys.append(deferred_fn(tbl))
+        else:
+            # Other type - use as-is
+            order_keys.append(key)
+
+    return tbl.order_by(order_keys)
+
+
+@convert.register(SemanticLimit)
+def _lower_semantic_limit(node: SemanticLimit, catalog, *args):
+    tbl = convert(node.source, catalog=catalog)
+    if node.offset == 0:
+        return tbl.limit(node.n)
+    else:
+        return tbl.limit(node.n, offset=node.offset)

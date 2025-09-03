@@ -1,0 +1,31 @@
+source: flights is duckdb.table('https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/flights.parquet') extend {
+  dimension: dep_month is dep_time.month
+  dimension: dep_year is dep_time.year
+  measure: flight_count is count()
+  measure: avg_delay is avg(arr_delay)
+}
+
+query: query_1 is flights -> {
+  group_by: dep_month
+  aggregate: flight_count
+  calculate: moving_avg_flight_count is avg_moving(flight_count, 3)
+  order_by: dep_month
+}
+
+query: query_2 is flights -> {
+  group_by: dep_month
+  aggregate: avg_delay
+  calculate: moving_avg_delay is avg_moving(avg_delay, 3)
+  order_by: dep_month
+}
+
+query: query_3 is flights -> {
+  group_by: dep_year, dep_month
+  aggregate: 
+    flight_count
+    avg_delay
+  calculate:
+    moving_avg_flight_count is avg_moving(flight_count, 6)
+    moving_avg_delay is avg_moving(avg_delay, 6)
+  order_by: dep_year, dep_month
+}
