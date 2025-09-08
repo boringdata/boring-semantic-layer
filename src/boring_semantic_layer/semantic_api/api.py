@@ -157,8 +157,10 @@ class SemanticTableExpr(IbisTable):
         return limit_(self, n, offset)
 
 
-def to_semantic_table(table: IbisTable) -> SemanticTableExpr:
-    node = SemanticTable(table=table, dimensions={}, measures={})
+def to_semantic_table(table: IbisTable, description: str = "") -> SemanticTableExpr:
+    node = SemanticTable(
+        table=table, dimensions={}, measures={}, description=description
+    )
     return SemanticTableExpr(node)
 
 
@@ -171,6 +173,7 @@ def with_dimensions(table: IbisTable, **dimensions: Callable) -> SemanticTableEx
         table=node.table.to_expr(),
         dimensions=new_dims,
         measures=getattr(node, "measures", {}),
+        description=getattr(node, "description", ""),
     )
     return SemanticTableExpr(node)
 
@@ -184,6 +187,7 @@ def with_measures(table: IbisTable, **measures: Callable) -> SemanticTableExpr:
         table=node.table.to_expr(),
         dimensions=getattr(node, "dimensions", {}),
         measures=new_meas,
+        description=getattr(node, "description", ""),
     )
     return SemanticTableExpr(node)
 

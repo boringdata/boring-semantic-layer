@@ -18,17 +18,21 @@ class SemanticTable(Relation):
     table: Any  # Relation | ir.Table is fine; Relation.__coerce__ will handle Expr
     dimensions: Any  # FrozenDict[str, Callable[[ir.Table], ir.Value]]
     measures: Any  # FrozenDict[str, Callable[[ir.Table], ir.Value]]
+    description: str  # Table description
 
     def __init__(
         self,
         table: Any,
         dimensions: dict[str, Callable] | None = None,
         measures: dict[str, Callable] | None = None,
+        description: str = "",
     ) -> None:
         dims = FrozenDict(dimensions or {})
         meas = FrozenDict(measures or {})
         base_rel = Relation.__coerce__(table.op() if hasattr(table, "op") else table)
-        super().__init__(table=base_rel, dimensions=dims, measures=meas)
+        super().__init__(
+            table=base_rel, dimensions=dims, measures=meas, description=description
+        )
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -55,6 +59,13 @@ class SemanticTable(Relation):
     @property
     def schema(self) -> Schema:
         return Schema({name: v.dtype for name, v in self.values.items()})
+
+    @classmethod
+    def from_yaml(cls, yaml_path: str, tables: dict[str, Any] | None = None):
+        """Load single semantic table from YAML file (Malloy-style)."""
+        from .yaml_loader import load_table
+
+        return load_table(yaml_path, tables)
 
 
 class SemanticFilter(Relation):
