@@ -31,9 +31,12 @@ class MCPSemanticModel(FastMCP):
 
     def _register_tools(self):
         @self.tool()
-        def list_models() -> List[str]:
-            """List all available semantic model names."""
-            return list(self.models.keys())
+        def list_models() -> Dict[str, str]:
+            """List all available semantic model names with their descriptions."""
+            return {
+                name: model.description or "No description available"
+                for name, model in self.models.items()
+            }
 
         @self.tool()
         def get_model(model_name: str) -> Dict[str, Any]:

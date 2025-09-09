@@ -41,6 +41,7 @@ carriers_tbl = con.read_parquet(f"{BASE_URL}/carriers.parquet")
 
 carriers_sm = SemanticModel(
     name="carriers",
+    description="Airline carrier reference data containing carrier codes, names, and nicknames",
     table=carriers_tbl,
     dimensions={
         "code": lambda t: t.code,
@@ -55,6 +56,7 @@ carriers_sm = SemanticModel(
 
 flights_sm = SemanticModel(
     name="flights",
+    description="Flight data with arrival times, origins, destinations, carriers, and performance metrics including delays and distances",
     table=flights_tbl,
     dimensions={
         "origin": lambda t: t.origin,

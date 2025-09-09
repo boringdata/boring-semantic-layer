@@ -4,7 +4,12 @@ import pytest
 from unittest.mock import Mock, patch
 import pandas as pd
 
-from boring_semantic_layer import SemanticModel, MCPSemanticModel, DimensionSpec, MeasureSpec
+from boring_semantic_layer import (
+    SemanticModel,
+    MCPSemanticModel,
+    DimensionSpec,
+    MeasureSpec,
+)
 from mcp.server.fastmcp.exceptions import ToolError
 
 
@@ -99,14 +104,17 @@ class TestListModelsTool:
 
     @pytest.mark.asyncio
     async def test_list_models_returns_all_names(self, sample_models):
-        """Test that list_models returns all model names."""
+        """Test that list_models returns all model names with descriptions."""
         mcp = MCPSemanticModel(models=sample_models)
 
         # Call the list_models tool
         content_blocks, result_dict = await mcp.call_tool("list_models", {})
         result = result_dict["result"]
 
-        assert set(result) == {"flights", "carriers"}
+        assert isinstance(result, dict)
+        assert set(result.keys()) == {"flights", "carriers"}
+        assert result["flights"] == "Sample flights model"
+        assert result["carriers"] == "No description available"
 
     @pytest.mark.asyncio
     async def test_list_models_empty(self):
@@ -116,7 +124,7 @@ class TestListModelsTool:
         content_blocks, result_dict = await mcp.call_tool("list_models", {})
         result = result_dict["result"]
 
-        assert result == []
+        assert result == {}
 
 
 class TestGetModelTool:
@@ -150,7 +158,6 @@ class TestGetModelTool:
         with pytest.raises(ToolError, match="Model nonexistent not found"):
             await mcp.call_tool("get_model", {"model_name": "nonexistent"})
 
-
     @pytest.mark.asyncio
     async def test_get_model_with_descriptions(self, mock_table):
         """Test that get_model correctly serialises models with descriptions"""
@@ -161,11 +168,15 @@ class TestGetModelTool:
             table=mock_table,
             dimensions={
                 "old_dimension": lambda t: t.old_col,
-                "new_dimension": DimensionSpec(expr=lambda t: t.new_col, description="New dimension description")
+                "new_dimension": DimensionSpec(
+                    expr=lambda t: t.new_col, description="New dimension description"
+                ),
             },
             measures={
                 "old_measure": lambda t: t.old_col,
-                "new_measure": MeasureSpec(expr=lambda t: t.new_col, description="New measure description")
+                "new_measure": MeasureSpec(
+                    expr=lambda t: t.new_col, description="New measure description"
+                ),
             },
             description="This is a test model with descriptions",
         )
@@ -184,11 +195,17 @@ class TestGetModelTool:
 
         # Verify dimension descriptions
         assert result["dimensions"]["old_dimension"]["description"] == ""
-        assert result["dimensions"]["new_dimension"]["description"] == "New dimension description"
+        assert (
+            result["dimensions"]["new_dimension"]["description"]
+            == "New dimension description"
+        )
 
         # Verify measure descriptions
         assert result["measures"]["old_measure"]["description"] == ""
-        assert result["measures"]["new_measure"]["description"] == "New measure description"
+        assert (
+            result["measures"]["new_measure"]["description"]
+            == "New measure description"
+        )
 
 
 class TestGetTimeRangeTool:
