@@ -1,0 +1,51 @@
+source: order_items is duckdb.table('https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/order_items.parquet') extend {
+  join_one: users is duckdb.table('https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/users.parquet') on user_id = users.id
+  measure: total_sales is sale_price.sum()
+  measure: user_count is count(user_id)
+}
+
+# Query 1: User Cohort Analysis by Order Count
+query: query_1 is order_items -> {
+  where: (users.created_at.month ? @2022 for 6 months) and
+    created_at ? @2022 for 6 months
+  group_by: `Order Month` is created_at.month
+  aggregate: 
+    `Users that Ordered Count` is user_count
+  # pivot
+  nest: cohorts is {
+    group_by: `User Signup Cohort` is users.created_at.month
+    aggregate: 
+      `Users in Cohort that Ordered` is user_count
+      `Percent of cohort that ordered` is user_count/all(user_count)
+    order_by: `User Signup Cohort`
+  }
+}
+
+# Query 2: Cohort Analysis by Sales Percentage  
+query: query_2 is order_items -> {
+  where: (users.created_at.month ? @2022 for 6 months) and
+    created_at ? @2022 for 6 months
+  group_by: `Order Month` is created_at.month
+  aggregate: 
+    `Total Sales` is total_sales
+  # pivot
+  nest: cohorts is {
+    group_by: `User Signup Cohort` is users.created_at.month
+    aggregate: 
+      `Cohort as Percent of Sales` is total_sales/all(total_sales)
+    order_by: `User Signup Cohort`
+  }
+}
+
+# Query 3: Simple cohort analysis without nesting (for easier BSL implementation)
+query: query_3 is order_items -> {
+  where: (users.created_at.month ? @2022 for 6 months) and
+    created_at ? @2022 for 6 months
+  group_by: 
+    `Order Month` is created_at.month
+    `User Signup Cohort` is users.created_at.month
+  aggregate: 
+    `Users in Cohort that Ordered` is user_count
+    `Total Sales by Cohort` is total_sales
+  order_by: `Order Month`, `User Signup Cohort`
+}
