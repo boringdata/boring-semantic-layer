@@ -108,7 +108,20 @@ flights_sm.query(
 ## Installation
 
 ```bash
+# Basic installation
 pip install boring-semantic-layer
+
+# For DuckDB support (used in examples)
+pip install 'boring-semantic-layer[examples]'
+
+# For MCP integration
+pip install 'boring-semantic-layer[mcp]'
+
+# For visualization with Altair
+pip install 'boring-semantic-layer[viz-altair]'
+
+# For visualization with Plotly
+pip install 'boring-semantic-layer[viz-plotly]'
 ```
 
 -----
@@ -123,6 +136,8 @@ We expose some test data in a public bucket. You can download it with:
 curl -L https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/flights.parquet -o flights.parquet
 curl -L https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/carriers.parquet -o carriers.parquet
 ```
+
+**Note:** Examples use DuckDB, so install with: `pip install 'boring-semantic-layer[examples]'`
 
 ### 2. Build a Semantic Model
 
