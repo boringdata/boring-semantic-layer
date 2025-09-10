@@ -1,10 +1,45 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Dict, Iterable, Optional
 
+from attrs import frozen
 from ibis.common.collections import FrozenDict, FrozenOrderedDict
 from ibis.expr.operations.relations import Relation
 from ibis.expr.schema import Schema
+
+
+@frozen(kw_only=True, slots=True)
+class Dimension:
+    expr: Callable[[Any], Any]
+    description: Optional[str] = None
+    is_time_dimension: bool = False
+    smallest_time_grain: Optional[str] = None
+
+    def __call__(self, table: Any) -> Any:
+        return self.expr(table)
+
+    def to_json(self) -> Dict[str, Any]:
+        """Convert dimension to JSON representation."""
+        if self.is_time_dimension:
+            return {
+                "description": self.description,
+                "smallest_time_grain": self.smallest_time_grain,
+            }
+        else:
+            return {"description": self.description}
+
+
+@frozen(kw_only=True, slots=True)
+class Measure:
+    expr: Callable[[Any], Any]
+    description: Optional[str] = None
+
+    def __call__(self, table: Any) -> Any:
+        return self.expr(table)
+
+    def to_json(self) -> Dict[str, Any]:
+        """Convert measure to JSON representation."""
+        return {"description": self.description}
 
 
 # Notes on design:
@@ -16,19 +51,67 @@ class SemanticTable(Relation):
     """Wrap a base Ibis table with semantic definitions (dimensions + measures)."""
 
     table: Any  # Relation | ir.Table is fine; Relation.__coerce__ will handle Expr
-    dimensions: Any  # FrozenDict[str, Callable[[ir.Table], ir.Value]]
-    measures: Any  # FrozenDict[str, Callable[[ir.Table], ir.Value]]
+    dimensions: Any  # FrozenDict[str, Dimension]
+    measures: Any  # FrozenDict[str, Measure]
+    name: Optional[str]  # Name of the semantic table
 
     def __init__(
         self,
         table: Any,
-        dimensions: dict[str, Callable] | None = None,
-        measures: dict[str, Callable] | None = None,
+        dimensions: dict[str, Dimension | Callable | dict] | None = None,
+        measures: dict[str, Measure | Callable] | None = None,
+        name: Optional[str] = None,
     ) -> None:
-        dims = FrozenDict(dimensions or {})
-        meas = FrozenDict(measures or {})
+        # Convert dimensions to Dimension objects, supporting dict format for time dimensions
+        dims = FrozenDict(
+            {
+                dim_name: self._create_dimension(dim)
+                for dim_name, dim in (dimensions or {}).items()
+            }
+        )
+
+        meas = FrozenDict(
+            {
+                meas_name: measure
+                if isinstance(measure, Measure)
+                else Measure(expr=measure, description=None)
+                for meas_name, measure in (measures or {}).items()
+            }
+        )
+        # Derive table name if not provided
+        if name is None:
+            try:
+                table_expr = table.to_expr() if hasattr(table, "to_expr") else table
+                derived_name = (
+                    table_expr.get_name() if hasattr(table_expr, "get_name") else None
+                )
+            except Exception:
+                derived_name = None
+        else:
+            derived_name = name
+
         base_rel = Relation.__coerce__(table.op() if hasattr(table, "op") else table)
-        super().__init__(table=base_rel, dimensions=dims, measures=meas)
+        super().__init__(
+            table=base_rel,
+            dimensions=dims,
+            measures=meas,
+            name=derived_name,
+        )
+
+    def _create_dimension(self, expr) -> Dimension:
+        """Create a Dimension object from various input formats."""
+        if isinstance(expr, Dimension):
+            return expr
+        elif isinstance(expr, dict):
+            # Handle time dimension specification: {"expr": lambda t: t.col, "smallest_time_grain": "day", "description": "..."}
+            return Dimension(
+                expr=expr["expr"],
+                description=expr.get("description"),
+                is_time_dimension=expr.get("is_time_dimension", False),
+                smallest_time_grain=expr.get("smallest_time_grain"),
+            )
+        else:
+            return Dimension(expr=expr, description=None)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -55,6 +138,33 @@ class SemanticTable(Relation):
     @property
     def schema(self) -> Schema:
         return Schema({name: v.dtype for name, v in self.values.items()})
+
+
+    @property
+    def json_definition(self) -> Dict[str, Any]:
+        """
+        Return a JSON-serializable definition of the semantic table.
+
+        Returns:
+            Dict[str, Any]: The semantic table metadata.
+        """
+        # Compute time dimensions on demand
+        time_dims = {
+            name: spec.to_json() 
+            for name, spec in self.dimensions.items() 
+            if spec.is_time_dimension
+        }
+
+        definition = {
+            "dimensions": {
+                name: spec.to_json() for name, spec in self.dimensions.items()
+            },
+            "measures": {name: spec.to_json() for name, spec in self.measures.items()},
+            "time_dimensions": time_dims,
+            "name": self.name,
+        }
+
+        return definition
 
 
 class SemanticFilter(Relation):
@@ -126,12 +236,21 @@ class SemanticAggregate(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        root = _find_root_model(self.source)
-        base_tbl = root.table.to_expr() if root else self.source.to_expr()
+        # Find all root models to handle joined tables properly
+        all_roots = _find_all_root_models(self.source)
+
+        # Use centralized prefixing logic
+        merged_dimensions = _merge_fields_with_prefixing(
+            all_roots, lambda root: root.dimensions
+        )
+
+        # Use the actual source table (which could be a join) as base_tbl
+        base_tbl = self.source.to_expr()
+
         vals: dict[str, Any] = {}
         for k in self.keys:
-            if root and k in root.dimensions:
-                vals[k] = root.dimensions[k](base_tbl).op()
+            if k in merged_dimensions:
+                vals[k] = merged_dimensions[k](base_tbl).op()
             else:
                 vals[k] = base_tbl[k].op()
         for name, fn in self.aggs.items():
@@ -191,6 +310,43 @@ class SemanticJoin(Relation):
     def schema(self) -> Schema:
         return Schema({name: v.dtype for name, v in self.values.items()})
 
+    @property
+    def dimensions(self) -> FrozenDict[str, Dimension]:
+        """Merge all dimensions from both sides of the join with prefixing."""
+        all_roots = _find_all_root_models(self)
+        merged_dims = _merge_fields_with_prefixing(
+            all_roots, lambda root: root.dimensions
+        )
+        return FrozenDict(merged_dims)
+
+    @property
+    def measures(self) -> FrozenDict[str, Measure]:
+        """Merge measures from both sides of the join with prefixing."""
+        all_roots = _find_all_root_models(self)
+        merged_measures = _merge_fields_with_prefixing(
+            all_roots, lambda root: root.measures
+        )
+        return FrozenDict(merged_measures)
+
+
+    @property
+    def json_definition(self) -> Dict[str, Any]:
+        """Return a JSON-serializable definition of the joined semantic table."""
+        return {
+            "dimensions": {
+                name: dim.to_json() for name, dim in self.dimensions.items()
+            },
+            "measures": {
+                name: measure.to_json() for name, measure in self.measures.items()
+            },
+            "time_dimensions": {
+                name: dim.to_json() 
+                for name, dim in self.dimensions.items() 
+                if dim.is_time_dimension
+            },
+            "name": None,  # Joined tables don't have a single name
+        }
+
 
 class SemanticOrderBy(Relation):
     source: Any
@@ -233,3 +389,56 @@ def _find_root_model(node: Any) -> SemanticTable | None:
         parent = getattr(cur, "source", None)
         cur = parent
     return None
+
+
+def _find_all_root_models(node: Any) -> list[SemanticTable]:
+    """Find all root SemanticTables in the operation tree (handles joins with multiple roots)."""
+    if isinstance(node, SemanticTable):
+        return [node]
+
+    roots = []
+
+    # Handle joins with left/right sides
+    if hasattr(node, "left") and hasattr(node, "right"):
+        roots.extend(_find_all_root_models(node.left))
+        roots.extend(_find_all_root_models(node.right))
+    # Handle single-source operations
+    elif hasattr(node, "source") and node.source is not None:
+        roots.extend(_find_all_root_models(node.source))
+
+    return roots
+
+
+def _merge_fields_with_prefixing(
+    all_roots: list[SemanticTable], field_accessor: callable
+) -> dict[str, Any]:
+    """
+    Generic function to merge any type of fields (dimensions, measures) with prefixing.
+
+    Args:
+        all_roots: List of SemanticTable root models
+        field_accessor: Function that takes a root and returns the fields dict (e.g. lambda r: r.dimensions)
+
+    Returns:
+        Dictionary mapping field names (always prefixed with table name) to field values
+    """
+    if not all_roots:
+        return {}
+
+    merged_fields = {}
+
+    # Always prefix fields with table name for consistency
+    for root in all_roots:
+        root_name = root.name
+        fields_dict = field_accessor(root)
+
+        for field_name, field_value in fields_dict.items():
+            if root_name:
+                # Always use prefixed name with __ separator
+                prefixed_name = f"{root_name}__{field_name}"
+                merged_fields[prefixed_name] = field_value
+            else:
+                # Fallback to original name if no root name
+                merged_fields[field_name] = field_value
+
+    return merged_fields

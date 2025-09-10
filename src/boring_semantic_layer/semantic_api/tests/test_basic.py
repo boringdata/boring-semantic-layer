@@ -176,3 +176,50 @@ def test_order_by_converts_to_ibis():
 
     assert list(result1["a"]) == list(result2["a"])
     assert list(result1["b"]) == list(result2["b"])
+
+
+def test_aggregate_with_predefined_measures():
+    """Test aggregating with predefined measures (new functionality)."""
+    data = {"group": ["X", "Y", "X", "Y"], "value": [1, 2, 3, 4]}
+    tbl = ibis.memtable(data, name="tbl")
+
+    # Create semantic table with predefined measures
+    sem = (
+        to_semantic_table(tbl)
+        .with_dimensions(group=lambda t: t.group)
+        .with_measures(
+            total_value=lambda t: t.value.sum(),
+            avg_value=lambda t: t.value.mean(),
+        )
+    )
+
+    # Test 1: Reference existing measure in aggregation
+    result1 = sem.group_by("group").aggregate(lambda t: t.total_value)
+    df1 = result1.execute()
+    
+    assert len(df1) == 2  # Two groups
+    assert "group" in df1.columns
+    assert "total_value" in df1.columns
+    assert sorted(df1["total_value"].tolist()) == [4, 6]  # X: 1+3=4, Y: 2+4=6
+
+    # Test 2: Reference multiple existing measures
+    result2 = sem.group_by("group").aggregate(
+        total=lambda t: t.total_value,
+        average=lambda t: t.avg_value
+    )
+    df2 = result2.execute()
+    
+    assert len(df2) == 2
+    assert "total" in df2.columns
+    assert "average" in df2.columns
+
+    # Test 3: Mix predefined measure with new aggregation
+    result3 = sem.group_by("group").aggregate(
+        existing_total=lambda t: t.total_value,
+        count=lambda t: t.value.count()  # New aggregation
+    )
+    df3 = result3.execute()
+    
+    assert len(df3) == 2
+    assert "existing_total" in df3.columns
+    assert "count" in df3.columns
