@@ -55,9 +55,7 @@ dask==2025.1.0 ; python_full_version < '4.0'
 distlib==0.3.9
     # via virtualenv
 duckdb==1.3.1
-    # via
-    #   boring-semantic-layer
-    #   ibis-framework
+    # via ibis-framework
 envyaml==1.10.211231
     # via xorq
 exceptiongroup==1.3.0 ; python_full_version < '3.11'
@@ -184,6 +182,7 @@ orjson==3.11.3
 packaging==25.0
     # via
     #   altair
+    #   boring-semantic-layer
     #   dask
     #   ibis-framework
     #   kaleido

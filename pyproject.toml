@@ -1,10 +1,14 @@
 [project]
 name = "boring-semantic-layer"
-version = "0.1.9"
+version = "0.1.10"
 description = "A boring semantic layer built with ibis"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["attrs>=25.3.0", "ibis-framework"]
+dependencies = [
+    "attrs>=25.3.0", 
+    "ibis-framework", 
+    "packaging" # required to install ibis-framework with no backend 
+    ]
 urls = { Homepage = "https://github.com/boringdata/boring-semantic-layer/tree/main" }
 
 [project.optional-dependencies]

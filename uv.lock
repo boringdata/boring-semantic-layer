@@ -80,17 +80,18 @@ wheels = [
 
 [[package]]
 name = "boring-semantic-layer"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "." }
 dependencies = [
     { name = "attrs" },
-    { name = "ibis-framework", extra = ["duckdb"] },
+    { name = "ibis-framework" },
+    { name = "packaging" },
 ]
 
 [package.optional-dependencies]
 dev = [
     { name = "altair" },
-    { name = "duckdb" },
+    { name = "ibis-framework", extra = ["duckdb"] },
     { name = "kaleido" },
     { name = "mcp" },
     { name = "pandas" },
@@ -103,7 +104,7 @@ dev = [
     { name = "xorq" },
 ]
 examples = [
-    { name = "duckdb" },
+    { name = "ibis-framework", extra = ["duckdb"] },
     { name = "xorq" },
 ]
 mcp = [
@@ -125,10 +126,11 @@ requires-dist = [
     { name = "altair", marker = "extra == 'viz-altair'", specifier = ">=5.0.0" },
     { name = "attrs", specifier = ">=25.3.0" },
     { name = "boring-semantic-layer", extras = ["mcp", "examples", "xorq", "viz-altair", "viz-plotly"], marker = "extra == 'dev'" },
-    { name = "duckdb", marker = "extra == 'examples'", specifier = ">=1.3.1" },
-    { name = "ibis-framework", extras = ["duckdb"], specifier = ">=10.6.0" },
+    { name = "ibis-framework" },
+    { name = "ibis-framework", extras = ["duckdb"], marker = "extra == 'examples'", specifier = ">=10.6.0" },
     { name = "kaleido", marker = "extra == 'viz-plotly'" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.10.1" },
+    { name = "packaging" },
     { name = "pandas", marker = "extra == 'dev'", specifier = ">=2.3.0" },
     { name = "plotly", marker = "extra == 'viz-plotly'", specifier = ">=6.3.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.2.0" },
