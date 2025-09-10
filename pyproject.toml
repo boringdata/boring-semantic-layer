@@ -7,7 +7,8 @@ requires-python = ">=3.10"
 dependencies = [
     "attrs>=25.3.0", 
     "ibis-framework", 
-    "packaging" # required to install ibis-framework with no backend 
+    "packaging", # required to install ibis-framework with no backend 
+    "PyYAML>=6.0", 
     ]
 urls = { Homepage = "https://github.com/boringdata/boring-semantic-layer/tree/main" }
 
@@ -25,6 +26,7 @@ dev = [
     "pandas>=2.3.0",
     "urllib3>=2.2.3",
     "pytest-asyncio",
+    "malloy>=0.1.0", # for semantic_api Malloy-style tests
 ]
 
 [build-system]

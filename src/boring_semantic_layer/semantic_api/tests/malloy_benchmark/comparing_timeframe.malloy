@@ -1,0 +1,57 @@
+source: flights is duckdb.table('https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/flights.parquet') extend {
+  measure: flight_count is count()
+}
+
+query: query_1 is flights -> {
+  group_by: month_of_year is month(dep_time)
+  aggregate: flight_count
+  group_by: flight_year is dep_time.year
+  order_by: month_of_year, flight_year
+}
+
+query: query_2 is flights -> {
+  group_by: carrier
+  aggregate:
+    flights_in_2002 is flight_count { where: dep_time = @2002 }
+    flights_in_2003 is flight_count { where: dep_time = @2003 }
+    # percent
+    percent_change is 
+      (flight_count { where: dep_time = @2003 } - flight_count { where: dep_time = @2002 })
+        / nullif(flight_count { where: dep_time = @2003 }, 0)
+  order_by: carrier
+}
+
+query: query_3 is flights -> {
+  group_by: dep_year is dep_time.year
+  aggregate: flight_count
+  calculate: 
+    last_year is lag(flight_count, 1)
+    # percent
+    growth is (lag(flight_count, 1) - flight_count) / lag(flight_count, 1)
+  order_by: dep_year
+}
+
+source: inventory_items is duckdb.table('https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/inventory_items.parquet') 
+
+source: order_items is duckdb.table('https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/order_items.parquet') extend {
+  join_one: inventory_items  on inventory_item_id = inventory_items.id
+  measure: order_item_count is count()
+
+  view: category_growth is {
+    extend: {
+      // add measures for use just in this query
+      measure:
+        last_year is order_item_count { where: created_at ? now.year - 1 year }
+        prior_year is order_item_count { where: created_at ? now.year - 2 years }
+    }
+    limit: 10
+    group_by: inventory_items.product_category
+    aggregate:
+      last_year
+      prior_year
+      # percent
+      percent_change is (last_year - prior_year) / nullif(last_year, 0)
+  }
+}
+
+query: query_4 is order_items -> category_growth
