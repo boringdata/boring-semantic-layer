@@ -526,7 +526,7 @@ test:
     try:
         with pytest.raises(
             ValueError,
-            match="Expression 'invalid_dim' must specify 'expr' field when using dict format",
+            match="Dimension 'invalid_dim' must specify 'expr' field when using dict format",
         ):
             from_yaml(yaml_path, tables=sample_tables)
     finally:
