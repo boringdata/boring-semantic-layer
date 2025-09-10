@@ -83,11 +83,7 @@ flights_sm = SemanticModel(
 )
 
 server = MCPSemanticModel(
-    models={
-        "flights": flights_sm,
-        "carriers": carriers_sm,
-        "carriers2": carriers_sm,
-    },
+    models={"flights": flights_sm, "carriers": carriers_sm},
     name="Flight Data Semantic Layer Server",
 )
 
