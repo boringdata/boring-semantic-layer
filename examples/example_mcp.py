@@ -1,6 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
+#     "boring-semantic-layer[examples]",
 #     "boring-semantic-layer[mcp] >= 0.1.1"
 # ]
 # ///
@@ -85,6 +86,7 @@ server = MCPSemanticModel(
     models={
         "flights": flights_sm,
         "carriers": carriers_sm,
+        "carriers2": carriers_sm,
     },
     name="Flight Data Semantic Layer Server",
 )
