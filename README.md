@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/boringdata-boring-semantic-layer-badge.png)](https://mseep.ai/app/boringdata-boring-semantic-layer)
+
 # Boring Semantic Layer (BSL)
 
 The Boring Semantic Layer (BSL) is a lightweight semantic layer based on [Ibis](https://ibis-project.org/).
