@@ -80,3 +80,21 @@ def replace_nodes(replacer, expr: Expr) -> Expr:
     initial = to_node(expr)
     new_op = initial.replace(lambda op, kwargs: replacer(op, kwargs))
     return new_op.to_expr()
+
+
+def find_dimensions_and_measures(expr: Expr) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Traverse the expression tree and collect dimensions and measures from all SemanticTable nodes.
+
+    Returns:
+        A tuple of two dictionaries (dimensions, measures), where keys are prefixed field names
+        and values are the Dimension or Measure objects attached to each table node.
+    """
+    from .ops import _find_all_root_models, _merge_fields_with_prefixing
+
+    node = to_node(expr)
+    roots = _find_all_root_models(node)
+    dimensions = _merge_fields_with_prefixing(
+        roots, lambda r: getattr(r, "dimensions", {})
+    )
+    measures = _merge_fields_with_prefixing(roots, lambda r: getattr(r, "measures", {}))
+    return dimensions, measures
