@@ -91,6 +91,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "altair" },
+    { name = "duckdb" },
     { name = "ibis-framework", extra = ["duckdb"] },
     { name = "kaleido" },
     { name = "mcp" },
@@ -104,6 +105,7 @@ dev = [
     { name = "xorq" },
 ]
 examples = [
+    { name = "duckdb" },
     { name = "ibis-framework", extra = ["duckdb"] },
     { name = "xorq" },
 ]
@@ -126,6 +128,7 @@ requires-dist = [
     { name = "altair", marker = "extra == 'viz-altair'", specifier = ">=5.0.0" },
     { name = "attrs", specifier = ">=25.3.0" },
     { name = "boring-semantic-layer", extras = ["mcp", "examples", "xorq", "viz-altair", "viz-plotly"], marker = "extra == 'dev'" },
+    { name = "duckdb", marker = "extra == 'examples'", specifier = "<1.4" },
     { name = "ibis-framework" },
     { name = "ibis-framework", extras = ["duckdb"], marker = "extra == 'examples'", specifier = ">=10.6.0" },
     { name = "kaleido", marker = "extra == 'viz-plotly'" },
