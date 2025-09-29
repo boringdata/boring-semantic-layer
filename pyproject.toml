@@ -17,7 +17,7 @@ license-files = [
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.10.1"]
-examples = ["ibis-framework[duckdb]>=10.6.0", "xorq"]
+examples = ["ibis-framework[duckdb]>=10.6.0", "xorq", "duckdb<1.4"]
 xorq = ["xorq"]
 viz-altair = ["altair>=5.0.0"]
 viz-plotly = ["plotly>=6.3.0", "kaleido"]

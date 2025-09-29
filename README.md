@@ -14,6 +14,10 @@ We welcome feedback and contributions!
 
 # Quick Example
 
+```
+pip install 'boring-semantic-layer[examples]'
+```
+
 **1. Define your ibis input table**
 
 ```python
