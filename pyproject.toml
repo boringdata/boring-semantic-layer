@@ -10,6 +10,10 @@ dependencies = [
     "packaging" # required to install ibis-framework with no backend 
     ]
 urls = { Homepage = "https://github.com/boringdata/boring-semantic-layer/tree/main" }
+license = "MIT"
+license-files = [
+    "LICENSE",
+]
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.10.1"]
