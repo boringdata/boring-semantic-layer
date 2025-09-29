@@ -16,6 +16,8 @@ from boring_semantic_layer.semantic_api.ops import (  # noqa: E402
     SemanticTable,
     SemanticLimit,
     _find_root_model,
+    _find_all_root_models,
+    _merge_fields_with_prefixing,
 )
 
 IbisTableExpr = ibis_mod.expr.api.Table
@@ -29,8 +31,16 @@ class _Resolver:
     _dims: dict[str, Any] = field(factory=dict)
 
     def __getattr__(self, name: str):
+        # 1. Try exact match first (unprefixed)
         if name in self._dims:
             return self._dims[name](self._t).name(name)
+        
+        # 2. Try prefixed versions (table__name format)
+        for dim_name, dim_func in self._dims.items():
+            if dim_name.endswith(f"__{name}"):
+                return dim_func(self._t).name(dim_name)
+        
+        # 3. Fall back to table columns
         return getattr(self._t, name)
 
     def __getitem__(self, name: str):
@@ -56,7 +66,8 @@ def _lower_semantic_table(node: SemanticTable, catalog, *args):
 
 @convert.register(SemanticFilter)
 def _lower_semantic_filter(node: SemanticFilter, catalog, *args):
-    root = _find_root_model(node.source)
+    # Handle both single and joined tables
+    all_roots = _find_all_root_models(node.source)
     base_tbl = convert(node.source, catalog=catalog)
 
     # Check if we're filtering after aggregation
@@ -68,7 +79,10 @@ def _lower_semantic_filter(node: SemanticFilter, catalog, *args):
         dim_map = {}  # Don't use original dimensions
     else:
         # Pre-aggregation filter: use semantic dimensions
-        dim_map = root.dimensions if root else {}
+        if len(all_roots) > 1:  # Joined table
+            dim_map = _merge_fields_with_prefixing(all_roots, lambda r: r.dimensions)
+        else:  # Single table
+            dim_map = all_roots[0].dimensions if all_roots else {}
 
     pred = node.predicate(_Resolver(base_tbl, dim_map))
     return base_tbl.filter(pred)
@@ -76,23 +90,41 @@ def _lower_semantic_filter(node: SemanticFilter, catalog, *args):
 
 @convert.register(SemanticProject)
 def _lower_semantic_project(node: SemanticProject, catalog, *args):
-    root = _find_root_model(node.source)
-    if root is None:
+    # Handle both single and joined tables
+    all_roots = _find_all_root_models(node.source)
+    if not all_roots:
         tbl = convert(node.source, catalog=catalog)
         cols = [getattr(tbl, f) for f in node.fields]
         return tbl.select(cols)
 
     tbl = convert(node.source, catalog=catalog)
-    dims = [f for f in node.fields if f in root.dimensions]
-    meas = [f for f in node.fields if f in root.measures]
+    
+    # Get merged fields with __ separator
+    if len(all_roots) > 1:  # Joined table
+        merged_dimensions = _merge_fields_with_prefixing(all_roots, lambda r: r.dimensions)
+        merged_measures = _merge_fields_with_prefixing(all_roots, lambda r: r.measures)
+    else:  # Single table
+        merged_dimensions = all_roots[0].dimensions if all_roots else {}
+        merged_measures = all_roots[0].measures if all_roots else {}
+    
+    dims = [f for f in node.fields if f in merged_dimensions]
+    meas = [f for f in node.fields if f in merged_measures]
+    raw_fields = [f for f in node.fields if f not in merged_dimensions and f not in merged_measures]
 
-    dim_exprs = [root.dimensions[name](tbl).name(name) for name in dims]
-    meas_exprs = [root.measures[name](tbl).name(name) for name in meas]
+    dim_exprs = [merged_dimensions[name](tbl).name(name) for name in dims]
+    meas_exprs = [merged_measures[name](tbl).name(name) for name in meas]
+    # For raw fields, just try to get them from the table directly
+    raw_exprs = [getattr(tbl, name) for name in raw_fields if hasattr(tbl, name)]
 
     if meas_exprs:
-        return tbl.group_by(dim_exprs).aggregate(meas_exprs)
+        if dim_exprs:
+            return tbl.group_by(dim_exprs).aggregate(meas_exprs)
+        else:
+            # No dimensions - direct aggregation for measures only
+            return tbl.aggregate(meas_exprs)
     else:
-        return tbl.select(dim_exprs) if dim_exprs else tbl  # no-op if nothing selected
+        all_exprs = dim_exprs + raw_exprs
+        return tbl.select(all_exprs) if all_exprs else tbl  # no-op if nothing selected
 
 
 @convert.register(SemanticGroupBy)
@@ -113,13 +145,23 @@ def _lower_semantic_join(node: SemanticJoin, catalog, *args):
 
 @convert.register(SemanticAggregate)
 def _lower_semantic_aggregate(node: SemanticAggregate, catalog, *args):
-    root = _find_root_model(node.source)
+    # Handle both single and joined tables
+    all_roots = _find_all_root_models(node.source)
     tbl = convert(node.source, catalog=catalog)
+    
+    # Get merged fields with __ separator
+    if len(all_roots) > 1:  # Joined table
+        merged_dimensions = _merge_fields_with_prefixing(all_roots, lambda r: r.dimensions)
+        merged_measures = _merge_fields_with_prefixing(all_roots, lambda r: r.measures)
+    else:  # Single table - use original fields
+        merged_dimensions = all_roots[0].dimensions if all_roots else {}
+        merged_measures = all_roots[0].measures if all_roots else {}
 
     group_exprs = []
     for k in node.keys:
-        if root and k in root.dimensions:
-            group_exprs.append(root.dimensions[k](tbl).name(k))
+        # Try to resolve with merged dimensions (handles prefixed names)
+        if k in merged_dimensions:
+            group_exprs.append(merged_dimensions[k](tbl).name(k))
         else:
             group_exprs.append(getattr(tbl, k).name(k))
 
@@ -130,20 +172,34 @@ def _lower_semantic_aggregate(node: SemanticAggregate, catalog, *args):
         _meas: dict[str, Callable]
 
         def __getattr__(self, key: str):
+            # 1. Try exact match first (unprefixed)
             if key in self._dims:
                 return self._dims[key](self._t)
             if key in self._meas:
                 return self._meas[key](self._t)
+            
+            # 2. Try prefixed versions (table__name format)
+            for dim_name, dim_func in self._dims.items():
+                if dim_name.endswith(f"__{key}"):
+                    return dim_func(self._t)
+            for meas_name, meas_func in self._meas.items():
+                if meas_name.endswith(f"__{key}"):
+                    return meas_func(self._t)
+            
+            # 3. Fall back to table columns
             return getattr(self._t, key)
 
         def __getitem__(self, key: str):
             return getattr(self._t, key)
 
-    proxy = _AggResolver(
-        tbl, root.dimensions if root else {}, root.measures if root else {}
-    )
+    proxy = _AggResolver(tbl, merged_dimensions, merged_measures)
     meas_exprs = [fn(proxy).name(name) for name, fn in node.aggs.items()]
-    return tbl.group_by(group_exprs).aggregate(meas_exprs)
+    
+    if group_exprs:
+        return tbl.group_by(group_exprs).aggregate(meas_exprs)
+    else:
+        # No grouping - direct aggregation
+        return tbl.aggregate(meas_exprs)
 
 
 @convert.register(SemanticMutate)

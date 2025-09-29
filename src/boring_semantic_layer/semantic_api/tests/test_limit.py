@@ -141,3 +141,85 @@ def test_limit_method_signature():
     result2_data = result2.execute()
     result3_data = result3.execute()
     assert result2_data.equals(result3_data)
+
+
+def test_limit_with_predefined_measures():
+    """Test limit operations with predefined measures (new functionality)."""
+    tbl = ibis.memtable(TEST_DATA, name="test_tbl")
+    
+    # Create semantic table with predefined measures
+    sem = (
+        to_semantic_table(tbl)
+        .with_dimensions(
+            category=lambda t: t.category,
+            priority=lambda t: t.priority,
+        )
+        .with_measures(
+            total_value=lambda t: t.value.sum(),
+            max_value=lambda t: t.value.max(),
+            count_rows=lambda t: t.count(),
+        )
+    )
+    
+    # Test 1: Aggregate with predefined measure, then limit
+    result1 = (
+        sem.group_by("priority")
+        .aggregate(lambda t: t.total_value)
+        .order_by("total_value")
+        .limit(1)
+    )
+    df1 = result1.execute()
+    
+    assert len(df1) == 1
+    assert "priority" in df1.columns
+    assert "total_value" in df1.columns
+    
+    # Test 2: Multiple predefined measures with limit
+    result2 = (
+        sem.group_by("category")
+        .aggregate(
+            total=lambda t: t.total_value,
+            max_val=lambda t: t.max_value,
+            count=lambda t: t.count_rows
+        )
+        .order_by("total")
+        .limit(2)
+    )
+    df2 = result2.execute()
+    
+    assert len(df2) == 2
+    assert "total" in df2.columns
+    assert "max_val" in df2.columns
+    assert "count" in df2.columns
+    
+    # Should be ordered by total (ascending)
+    assert df2["total"].iloc[0] <= df2["total"].iloc[1]
+    
+    # Test 3: Limit with offset and predefined measures
+    result3 = (
+        sem.group_by("category")
+        .aggregate(total=lambda t: t.total_value)
+        .order_by("category")
+        .limit(2, offset=1)
+    )
+    df3 = result3.execute()
+    
+    assert len(df3) == 2  # Should get 2 rows after skipping first
+    assert "total" in df3.columns
+    assert "category" in df3.columns
+    
+    # Test 4: Complex chain with filter, aggregate, and limit
+    result4 = (
+        sem.filter(lambda t: t.value >= 20)
+        .group_by("priority")  
+        .aggregate(
+            total=lambda t: t.total_value,
+            count=lambda t: t.count_rows
+        )
+        .limit(1)
+    )
+    df4 = result4.execute()
+    
+    assert len(df4) == 1
+    assert "total" in df4.columns
+    assert "count" in df4.columns
