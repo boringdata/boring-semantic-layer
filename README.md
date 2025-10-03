@@ -301,6 +301,20 @@ Example output:
 | PHL    | 7708          | 1044.97      |
 | ...    | ...           | ...          |
 
+**Getting the SQL:**
+
+To inspect the generated SQL without executing the query, use `.sql()`:
+
+```python
+query = flights_sm.query(
+    dimensions=['origin'],
+    measures=['total_flights', 'avg_distance'],
+    limit=10
+)
+
+print(query.sql())  # Prints the SQL statement
+```
+
 -----
 
 ## Features
