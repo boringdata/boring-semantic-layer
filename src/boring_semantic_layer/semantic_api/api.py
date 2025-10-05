@@ -102,10 +102,14 @@ class SemanticTableExpr(IbisTable):
             return repr(self.to_expr().op())
 
     def __getattr__(self, name: str):
-        # First try to get semantic properties from the node
+        dims = getattr(self._node, "dimensions", {})
+        if name in dims:
+            return dims[name](self.to_expr())
+        meas = getattr(self._node, "measures", {})
+        if name in meas:
+            return meas[name](self.to_expr())
         if hasattr(self._node, name):
             return getattr(self._node, name)
-        # Fall back to Ibis table properties
         return getattr(self.to_expr(), name)
 
     def with_dimensions(self, **dims: Union[Callable, Dimension]) -> SemanticTableExpr:
@@ -117,72 +121,74 @@ class SemanticTableExpr(IbisTable):
     @property
     def dimensions(self) -> dict:
         """Get dimensions from the semantic operation tree."""
-        return self._get_semantic_metadata('dimensions')
-    
+        return self._get_semantic_metadata("dimensions")
+
     @property
     def measures(self) -> dict:
         """Get measures from the semantic operation tree."""
-        return self._get_semantic_metadata('measures')
-    
+        return self._get_semantic_metadata("measures")
+
     @property
     def time_dimensions(self) -> dict:
         """Get time dimensions by checking dimension attributes directly."""
         # Check dimensions directly for is_time_dimension attribute
         time_dims = {
-            name: dim for name, dim in self.dimensions.items() 
-            if hasattr(dim, 'is_time_dimension') and dim.is_time_dimension
+            name: dim
+            for name, dim in self.dimensions.items()
+            if hasattr(dim, "is_time_dimension") and dim.is_time_dimension
         }
-        
+
         # Fallback: check Ibis column types for temporal data
         if not time_dims:
             try:
                 ibis_table = self.to_ibis()
                 for dim_name, dim_def in self.dimensions.items():
-                    if (dim_name in ibis_table.columns 
-                        and ibis_table[dim_name].type().is_temporal()):
+                    if (
+                        dim_name in ibis_table.columns
+                        and ibis_table[dim_name].type().is_temporal()
+                    ):
                         time_dims[dim_name] = dim_def
             except Exception:
                 pass
-        
+
         return time_dims
-    
-    
+
     def _get_semantic_metadata(self, attr_name: str) -> dict:
         """
         Get semantic metadata (dimensions/measures) using the existing root model functions.
-        
+
         This leverages _find_all_root_models and _merge_fields_with_prefixing to handle
         both single tables and joined tables consistently.
         """
         from .ops import _find_all_root_models, _merge_fields_with_prefixing
-        
+
         node = self._node
-        
+
         # For aggregated results, return the actual column names from the result
-        if hasattr(node, '__class__') and 'Aggregate' in node.__class__.__name__:
-            if attr_name == 'dimensions':
+        if hasattr(node, "__class__") and "Aggregate" in node.__class__.__name__:
+            if attr_name == "dimensions":
                 # For aggregated results, group-by keys become the available dimensions
-                if hasattr(node, 'keys'):
+                if hasattr(node, "keys"):
                     return {key: key for key in node.keys}
                 return {}
-            elif attr_name == 'measures':
-                # For aggregated results, aggregated columns become the available measures  
-                if hasattr(node, 'aggs'):
+            elif attr_name == "measures":
+                # For aggregated results, aggregated columns become the available measures
+                if hasattr(node, "aggs"):
                     return {name: name for name in node.aggs.keys()}
                 return {}
-        
+
         # Use the existing functions to find all root models and merge fields
         try:
             all_roots = _find_all_root_models(node)
             if not all_roots:
                 return {}
-            
+
             # Use the centralized merging logic that handles prefixing
             merged_metadata = _merge_fields_with_prefixing(
                 all_roots, lambda r: getattr(r, attr_name, {})
             )
             return merged_metadata
-            
+
         except Exception:
             # Fallback: return empty dict if root model extraction fails
             return {}
@@ -195,8 +201,10 @@ class SemanticTableExpr(IbisTable):
 
         if fns:
             if aggs:
-                raise ValueError("Cannot mix positional and named arguments in aggregate")
-            
+                raise ValueError(
+                    "Cannot mix positional and named arguments in aggregate"
+                )
+
             # Handle mixed string and lambda function arguments
             inferred_aggs = {}
             for i, fn in enumerate(fns):
@@ -204,7 +212,9 @@ class SemanticTableExpr(IbisTable):
                     # String-based predefined measure reference
                     # Create a lambda that accesses the predefined measure via the resolver
                     measure_name = fn
-                    inferred_aggs[measure_name] = lambda t, name=measure_name: getattr(t, name)
+                    inferred_aggs[measure_name] = lambda t, name=measure_name: getattr(
+                        t, name
+                    )
                 elif callable(fn):
                     # Lambda function - try to infer name
                     try:
@@ -215,8 +225,10 @@ class SemanticTableExpr(IbisTable):
                         fallback_name = f"measure_{i}"
                         inferred_aggs[fallback_name] = fn
                 else:
-                    raise ValueError(f"Aggregate arguments must be strings or callable functions, got {type(fn)}")
-            
+                    raise ValueError(
+                        f"Aggregate arguments must be strings or callable functions, got {type(fn)}"
+                    )
+
             aggs = inferred_aggs
         return aggregate_(self, **aggs)
 

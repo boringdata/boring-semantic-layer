@@ -4,18 +4,21 @@ from typing import Any, Callable, Dict, Iterable, Optional
 
 from attrs import frozen
 from ibis.common.collections import FrozenDict, FrozenOrderedDict
+from ibis.common.deferred import Deferred
 from ibis.expr.operations.relations import Relation
 from ibis.expr.schema import Schema
 
 
 @frozen(kw_only=True, slots=True)
 class Dimension:
-    expr: Callable[[Any], Any]
+    expr: Callable[[Any], Any] | Deferred
     description: Optional[str] = None
     is_time_dimension: bool = False
     smallest_time_grain: Optional[str] = None
 
     def __call__(self, table: Any) -> Any:
+        if isinstance(self.expr, Deferred):
+            return self.expr.resolve(table)
         return self.expr(table)
 
     def to_json(self) -> Dict[str, Any]:
@@ -28,18 +31,28 @@ class Dimension:
         else:
             return {"description": self.description}
 
+    def __hash__(self) -> int:
+        # Hash only metadata (expr/Deferred is unhashable)
+        return hash((self.description, self.is_time_dimension, self.smallest_time_grain))
+
 
 @frozen(kw_only=True, slots=True)
 class Measure:
-    expr: Callable[[Any], Any]
+    expr: Callable[[Any], Any] | Deferred
     description: Optional[str] = None
 
     def __call__(self, table: Any) -> Any:
+        if isinstance(self.expr, Deferred):
+            return self.expr.resolve(table)
         return self.expr(table)
 
     def to_json(self) -> Dict[str, Any]:
         """Convert measure to JSON representation."""
         return {"description": self.description}
+
+    def __hash__(self) -> int:
+        # Hash only description (expr/Deferred is unhashable)
+        return hash(self.description)
 
 
 # Notes on design:
@@ -53,7 +66,7 @@ class SemanticTable(Relation):
     table: Any  # Relation | ir.Table is fine; Relation.__coerce__ will handle Expr
     dimensions: Any  # FrozenDict[str, Dimension]
     measures: Any  # FrozenDict[str, Measure]
-    name: Optional[str]  # Name of the semantic table
+    name: Optional[str] = None  # Name of the semantic table
 
     def __init__(
         self,
@@ -139,7 +152,6 @@ class SemanticTable(Relation):
     def schema(self) -> Schema:
         return Schema({name: v.dtype for name, v in self.values.items()})
 
-
     @property
     def json_definition(self) -> Dict[str, Any]:
         """
@@ -150,8 +162,8 @@ class SemanticTable(Relation):
         """
         # Compute time dimensions on demand
         time_dims = {
-            name: spec.to_json() 
-            for name, spec in self.dimensions.items() 
+            name: spec.to_json()
+            for name, spec in self.dimensions.items()
             if spec.is_time_dimension
         }
 
@@ -328,7 +340,6 @@ class SemanticJoin(Relation):
         )
         return FrozenDict(merged_measures)
 
-
     @property
     def json_definition(self) -> Dict[str, Any]:
         """Return a JSON-serializable definition of the joined semantic table."""
@@ -340,8 +351,8 @@ class SemanticJoin(Relation):
                 name: measure.to_json() for name, measure in self.measures.items()
             },
             "time_dimensions": {
-                name: dim.to_json() 
-                for name, dim in self.dimensions.items() 
+                name: dim.to_json()
+                for name, dim in self.dimensions.items()
                 if dim.is_time_dimension
             },
             "name": None,  # Joined tables don't have a single name

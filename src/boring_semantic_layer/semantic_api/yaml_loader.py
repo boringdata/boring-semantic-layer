@@ -9,7 +9,7 @@ import yaml
 try:
     import xorq.vendor.ibis as ibis_mod
 except ImportError:
-    import ibis as ibis_mod
+    pass
 
 from .api import (
     to_semantic_table,
@@ -19,7 +19,6 @@ from .api import (
     SemanticTableExpr,
 )
 
-from typing import Callable
 import ibis
 
 

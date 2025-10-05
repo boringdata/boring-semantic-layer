@@ -15,10 +15,10 @@ from boring_semantic_layer.semantic_api.ops import (  # noqa: E402
     SemanticProject,
     SemanticTable,
     SemanticLimit,
-    _find_root_model,
     _find_all_root_models,
     _merge_fields_with_prefixing,
 )
+from ibis.common.collections import FrozenOrderedDict
 
 IbisTableExpr = ibis_mod.expr.api.Table
 
@@ -194,12 +194,15 @@ def _lower_semantic_aggregate(node: SemanticAggregate, catalog, *args):
 
     proxy = _AggResolver(tbl, merged_dimensions, merged_measures)
     meas_exprs = [fn(proxy).name(name) for name, fn in node.aggs.items()]
-    
+
+    # Build metrics mapping for correct signature (FrozenOrderedDict[name, expression])
+    metrics = FrozenOrderedDict({expr.get_name(): expr for expr in meas_exprs})
+
     if group_exprs:
-        return tbl.group_by(group_exprs).aggregate(meas_exprs)
+        return tbl.group_by(group_exprs).aggregate(metrics)
     else:
         # No grouping - direct aggregation
-        return tbl.aggregate(meas_exprs)
+        return tbl.aggregate(metrics)
 
 
 @convert.register(SemanticMutate)

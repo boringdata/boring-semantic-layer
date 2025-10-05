@@ -2,9 +2,9 @@ import pytest
 import pandas as pd
 import ibis
 from ibis.common.exceptions import InputTypeError
+from ibis.common.annotations import SignatureValidationError
 from boring_semantic_layer.semantic_api import to_semantic_table
 
-@pytest.mark.xfail(reason="TODO: fix cross-team join execute binding issue", strict=False)
 def test_cross_team_execute_binding_issue():
     marketing_df = pd.DataFrame({'customer_id':[1,2],'segment':['A','B'],'monthly_spend':[100,200]})
     support_df   = pd.DataFrame({'case_id':[10,11],'customer_id':[1,2],'priority':['high','low']})
@@ -28,5 +28,5 @@ def test_cross_team_execute_binding_issue():
         .with_measures(avg_case_value=lambda t: t.monthly_spend.mean() / t.case_count)
     )
 
-    with pytest.raises(InputTypeError):
+    with pytest.raises(SignatureValidationError):
         cross_team.group_by('segment').aggregate(avg_case_value=lambda t: t.avg_case_value).execute()

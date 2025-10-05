@@ -1726,10 +1726,10 @@ def test_original_user_scenario_demonstration():
     assert "products_measure" in df3.columns
     
     print("✅ Original user scenario now works!")
-    print(f"✅ sales.group_by('region').aggregate(lambda t: t.sales__total_sales)")
-    print(f"✅ Conflict resolution with double underscore separator")
-    print(f"✅ Priority resolution (simple names first, then prefixed)")
-    print(f"✅ Mixed usage in same aggregation operation")
+    print("✅ sales.group_by('region').aggregate(lambda t: t.sales__total_sales)")
+    print("✅ Conflict resolution with double underscore separator")
+    print("✅ Priority resolution (simple names first, then prefixed)")
+    print("✅ Mixed usage in same aggregation operation")
 
 
 if __name__ == "__main__":
