@@ -28,5 +28,4 @@ def test_cross_team_execute_binding_issue():
         .with_measures(avg_case_value=lambda t: t.monthly_spend.mean() / t.case_count)
     )
 
-    with pytest.raises(SignatureValidationError):
-        cross_team.group_by('segment').aggregate(avg_case_value=lambda t: t.avg_case_value).execute()
+    cross_team.group_by('segment').aggregate(avg_case_value=lambda t: t.avg_case_value).execute()
