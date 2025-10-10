@@ -89,9 +89,9 @@ class TestMCPSemanticModelInitialization:
     @pytest.mark.asyncio
     async def test_tools_are_registered(self, sample_models):
         """Test that all tools are registered during init."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
-        async with Client(server) as client:
+        async with Client(mcp) as client:
             tools = await client.list_tools()
             tool_names = [tool.name for tool in tools]
             assert "list_models" in tool_names
@@ -106,9 +106,9 @@ class TestListModelsTool:
     @pytest.mark.asyncio
     async def test_list_models_returns_all_names(self, sample_models):
         """Test that list_models returns all model names with descriptions."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
-        async with Client(server) as client:
+        async with Client(mcp) as client:
             result = await client.call_tool("list_models", {})
             data = json.loads(result.content[0].text)
 
@@ -120,9 +120,9 @@ class TestListModelsTool:
     @pytest.mark.asyncio
     async def test_list_models_empty(self):
         """Test list_models with no models."""
-        server = MCPSemanticModel(models={})
+        mcp = MCPSemanticModel(models={})
 
-        async with Client(server) as client:
+        async with Client(mcp) as client:
             result = await client.call_tool("list_models", {})
             data = json.loads(result.content[0].text)
 
@@ -135,9 +135,9 @@ class TestGetModelTool:
     @pytest.mark.asyncio
     async def test_get_model_returns_json_definition(self, sample_models):
         """Test that get_model returns model's json_definition."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
-        async with Client(server) as client:
+        async with Client(mcp) as client:
             result = await client.call_tool("get_model", {"model_name": "flights"})
             data = json.loads(result.content[0].text)
 
@@ -154,9 +154,9 @@ class TestGetModelTool:
     @pytest.mark.asyncio
     async def test_get_model_nonexistent(self, sample_models):
         """Test get_model with non-existent model name."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
-        async with Client(server) as client:
+        async with Client(mcp) as client:
             with pytest.raises(Exception) as exc_info:
                 await client.call_tool("get_model", {"model_name": "nonexistent"})
             assert "Model nonexistent not found" in str(exc_info.value)
@@ -185,9 +185,9 @@ class TestGetModelTool:
         )
 
         models = {"test_descriptions": model_with_descriptions}
-        server = MCPSemanticModel(models=models)
+        mcp = MCPSemanticModel(models=models)
 
-        async with Client(server) as client:
+        async with Client(mcp) as client:
             result = await client.call_tool(
                 "get_model", {"model_name": "test_descriptions"}
             )
@@ -217,9 +217,9 @@ class TestGetTimeRangeTool:
     @pytest.mark.asyncio
     async def test_get_time_range_with_time_dimension(self, sample_models):
         """Test get_time_range with model that has time dimension."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
-        async with Client(server) as client:
+        async with Client(mcp) as client:
             result = await client.call_tool(
                 "get_time_range", {"model_name": "flights"}
             )
@@ -234,9 +234,9 @@ class TestGetTimeRangeTool:
     @pytest.mark.asyncio
     async def test_get_time_range_without_time_dimension(self, sample_models):
         """Test get_time_range with model without time dimension."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
-        async with Client(server) as client:
+        async with Client(mcp) as client:
             result = await client.call_tool(
                 "get_time_range", {"model_name": "carriers"}
             )
@@ -248,9 +248,9 @@ class TestGetTimeRangeTool:
     @pytest.mark.asyncio
     async def test_get_time_range_nonexistent(self, sample_models):
         """Test get_time_range with non-existent model."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
-        async with Client(server) as client:
+        async with Client(mcp) as client:
             with pytest.raises(Exception) as exc_info:
                 await client.call_tool(
                     "get_time_range", {"model_name": "nonexistent"}
@@ -276,7 +276,7 @@ class TestQueryModelTool:
     @pytest.mark.asyncio
     async def test_query_model_basic(self, sample_models, mock_query_result):
         """Test basic query with dimensions and measures."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
         # Mock the query chain by patching the query method on the class
         with patch(
@@ -286,7 +286,7 @@ class TestQueryModelTool:
             mock_query_expr.execute.return_value = mock_query_result
             mock_query.return_value = mock_query_expr
 
-            async with Client(server) as client:
+            async with Client(mcp) as client:
                 result = await client.call_tool(
                     "query_model",
                     {
@@ -319,7 +319,7 @@ class TestQueryModelTool:
     @pytest.mark.asyncio
     async def test_query_model_with_filters(self, sample_models, mock_query_result):
         """Test query with filters."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
         with patch(
             "boring_semantic_layer.semantic_model.SemanticModel.query"
@@ -330,7 +330,7 @@ class TestQueryModelTool:
 
             filters = [{"field": "origin", "operator": "=", "value": "JFK"}]
             
-            async with Client(server) as client:
+            async with Client(mcp) as client:
                 await client.call_tool(
                     "query_model",
                     {
@@ -348,7 +348,7 @@ class TestQueryModelTool:
     @pytest.mark.asyncio
     async def test_query_model_with_time_range(self, sample_models, mock_query_result):
         """Test query with time_range and time_grain."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
         with patch(
             "boring_semantic_layer.semantic_model.SemanticModel.query"
@@ -359,7 +359,7 @@ class TestQueryModelTool:
 
             time_range = {"start": "2024-01-01", "end": "2024-03-31"}
             
-            async with Client(server) as client:
+            async with Client(mcp) as client:
                 await client.call_tool(
                     "query_model",
                     {
@@ -387,7 +387,7 @@ class TestQueryModelTool:
         self, sample_models, mock_query_result
     ):
         """Test query with order_by and limit."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
         with patch(
             "boring_semantic_layer.semantic_model.SemanticModel.query"
@@ -396,7 +396,7 @@ class TestQueryModelTool:
             mock_query_expr.execute.return_value = mock_query_result.head(2)
             mock_query.return_value = mock_query_expr
 
-            async with Client(server) as client:
+            async with Client(mcp) as client:
                 await client.call_tool(
                     "query_model",
                     {
@@ -422,9 +422,9 @@ class TestQueryModelTool:
     @pytest.mark.asyncio
     async def test_query_model_invalid_order_by(self, sample_models):
         """Test query with invalid order_by format."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
-        async with Client(server) as client:
+        async with Client(mcp) as client:
             # Test non-list order_by
             with pytest.raises(Exception) as exc_info:
                 await client.call_tool(
@@ -467,9 +467,9 @@ class TestQueryModelTool:
     @pytest.mark.asyncio
     async def test_query_model_invalid_time_grain(self, sample_models):
         """Test query with time grain smaller than allowed."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
-        async with Client(server) as client:
+        async with Client(mcp) as client:
             with pytest.raises(Exception) as exc_info:
                 await client.call_tool(
                     "query_model",
@@ -485,9 +485,9 @@ class TestQueryModelTool:
     @pytest.mark.asyncio
     async def test_query_model_nonexistent(self, sample_models):
         """Test query with non-existent model."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
-        async with Client(server) as client:
+        async with Client(mcp) as client:
             with pytest.raises(Exception) as exc_info:
                 await client.call_tool(
                     "query_model",
@@ -502,7 +502,7 @@ class TestQueryModelTool:
     @pytest.mark.asyncio
     async def test_query_model_with_chart_spec(self, sample_models, mock_query_result):
         """Test query with chart_spec returns both data and chart."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
         with patch(
             "boring_semantic_layer.semantic_model.SemanticModel.query"
@@ -514,7 +514,7 @@ class TestQueryModelTool:
             mock_query_expr.chart.return_value = mock_chart
             mock_query.return_value = mock_query_expr
 
-            async with Client(server) as client:
+            async with Client(mcp) as client:
                 result = await client.call_tool(
                     "query_model",
                     {
@@ -549,7 +549,7 @@ class TestQueryModelTool:
         self, sample_models, mock_query_result
     ):
         """Test query with custom chart_spec."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
         with patch(
             "boring_semantic_layer.semantic_model.SemanticModel.query"
@@ -567,7 +567,7 @@ class TestQueryModelTool:
 
             custom_spec = {"title": "Custom Title", "mark": "line"}
             
-            async with Client(server) as client:
+            async with Client(mcp) as client:
                 result = await client.call_tool(
                     "query_model",
                     {
@@ -593,7 +593,7 @@ class TestQueryModelTool:
     @pytest.mark.asyncio
     async def test_query_model_with_png_format(self, sample_models, mock_query_result):
         """Test query with PNG chart format."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
         with patch(
             "boring_semantic_layer.semantic_model.SemanticModel.query"
@@ -605,7 +605,7 @@ class TestQueryModelTool:
             mock_query_expr.chart.return_value = mock_png_bytes
             mock_query.return_value = mock_query_expr
 
-            async with Client(server) as client:
+            async with Client(mcp) as client:
                 result = await client.call_tool(
                     "query_model",
                     {
@@ -630,7 +630,7 @@ class TestQueryModelTool:
     @pytest.mark.asyncio
     async def test_query_model_with_svg_format(self, sample_models, mock_query_result):
         """Test query with SVG chart format."""
-        server = MCPSemanticModel(models=sample_models)
+        mcp = MCPSemanticModel(models=sample_models)
 
         with patch(
             "boring_semantic_layer.semantic_model.SemanticModel.query"
@@ -642,7 +642,7 @@ class TestQueryModelTool:
             mock_query_expr.chart.return_value = mock_svg_string
             mock_query.return_value = mock_query_expr
 
-            async with Client(server) as client:
+            async with Client(mcp) as client:
                 result = await client.call_tool(
                     "query_model",
                     {
