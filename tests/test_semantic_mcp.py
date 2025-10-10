@@ -222,9 +222,7 @@ class TestGetTimeRangeTool:
         mcp = MCPSemanticModel(models=sample_models)
 
         async with Client(mcp) as client:
-            result = await client.call_tool(
-                "get_time_range", {"model_name": "flights"}
-            )
+            result = await client.call_tool("get_time_range", {"model_name": "flights"})
             data = json.loads(result.content[0].text)
 
             assert "start" in data
@@ -254,9 +252,7 @@ class TestGetTimeRangeTool:
 
         async with Client(mcp) as client:
             with pytest.raises(ToolError, match="Model nonexistent not found"):
-                await client.call_tool(
-                    "get_time_range", {"model_name": "nonexistent"}
-                )
+                await client.call_tool("get_time_range", {"model_name": "nonexistent"})
 
 
 class TestQueryModelTool:
@@ -330,7 +326,7 @@ class TestQueryModelTool:
             mock_query.return_value = mock_query_expr
 
             filters = [{"field": "origin", "operator": "=", "value": "JFK"}]
-            
+
             async with Client(mcp) as client:
                 await client.call_tool(
                     "query_model",
@@ -341,7 +337,7 @@ class TestQueryModelTool:
                         "filters": filters,
                     },
                 )
-                
+
                 # Check filters were passed correctly
                 called_filters = mock_query.call_args[1]["filters"]
                 assert called_filters == filters
@@ -359,7 +355,7 @@ class TestQueryModelTool:
             mock_query.return_value = mock_query_expr
 
             time_range = {"start": "2024-01-01", "end": "2024-03-31"}
-            
+
             async with Client(mcp) as client:
                 await client.call_tool(
                     "query_model",
@@ -371,7 +367,7 @@ class TestQueryModelTool:
                         "time_grain": "TIME_GRAIN_MONTH",
                     },
                 )
-                
+
                 # Check time_range and time_grain were passed
                 mock_query.assert_called_with(
                     dimensions=["carrier"],
@@ -408,7 +404,7 @@ class TestQueryModelTool:
                         "limit": 10,
                     },
                 )
-                
+
                 # Check order_by and limit were passed
                 mock_query.assert_called_with(
                     dimensions=["carrier"],
@@ -427,7 +423,10 @@ class TestQueryModelTool:
 
         async with Client(mcp) as client:
             # Test non-list order_by
-            with pytest.raises(ToolError, match="Input validation error: 'invalid' is not of type 'array'"):
+            with pytest.raises(
+                ToolError,
+                match="Input validation error: 'invalid' is not of type 'array'",
+            ):
                 await client.call_tool(
                     "query_model",
                     {
@@ -468,7 +467,9 @@ class TestQueryModelTool:
         mcp = MCPSemanticModel(models=sample_models)
 
         async with Client(mcp) as client:
-            with pytest.raises(ToolError, match="Time grain TIME_GRAIN_SECOND is smaller than"):
+            with pytest.raises(
+                ToolError, match="Time grain TIME_GRAIN_SECOND is smaller than"
+            ):
                 await client.call_tool(
                     "query_model",
                     {
@@ -562,7 +563,7 @@ class TestQueryModelTool:
             mock_query.return_value = mock_query_expr
 
             custom_spec = {"title": "Custom Title", "mark": "line"}
-            
+
             async with Client(mcp) as client:
                 result = await client.call_tool(
                     "query_model",
