@@ -12,6 +12,7 @@ from boring_semantic_layer import (
     MeasureSpec,
 )
 from fastmcp import Client
+from fastmcp.exceptions import ToolError
 
 
 @pytest.fixture
@@ -92,6 +93,7 @@ class TestMCPSemanticModelInitialization:
         mcp = MCPSemanticModel(models=sample_models)
 
         async with Client(mcp) as client:
+            # Check that tools are registered
             tools = await client.list_tools()
             tool_names = [tool.name for tool in tools]
             assert "list_models" in tool_names
@@ -109,6 +111,7 @@ class TestListModelsTool:
         mcp = MCPSemanticModel(models=sample_models)
 
         async with Client(mcp) as client:
+            # Call the list_models tool
             result = await client.call_tool("list_models", {})
             data = json.loads(result.content[0].text)
 
@@ -157,9 +160,8 @@ class TestGetModelTool:
         mcp = MCPSemanticModel(models=sample_models)
 
         async with Client(mcp) as client:
-            with pytest.raises(Exception) as exc_info:
+            with pytest.raises(ToolError, match="Model nonexistent not found"):
                 await client.call_tool("get_model", {"model_name": "nonexistent"})
-            assert "Model nonexistent not found" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_get_model_with_descriptions(self, mock_table):
@@ -251,11 +253,10 @@ class TestGetTimeRangeTool:
         mcp = MCPSemanticModel(models=sample_models)
 
         async with Client(mcp) as client:
-            with pytest.raises(Exception) as exc_info:
+            with pytest.raises(ToolError, match="Model nonexistent not found"):
                 await client.call_tool(
                     "get_time_range", {"model_name": "nonexistent"}
                 )
-            assert "Model nonexistent not found" in str(exc_info.value)
 
 
 class TestQueryModelTool:
@@ -426,7 +427,7 @@ class TestQueryModelTool:
 
         async with Client(mcp) as client:
             # Test non-list order_by
-            with pytest.raises(Exception) as exc_info:
+            with pytest.raises(ToolError, match="Input validation error: 'invalid' is not of type 'array'"):
                 await client.call_tool(
                     "query_model",
                     {
@@ -436,10 +437,9 @@ class TestQueryModelTool:
                         "order_by": "invalid",
                     },
                 )
-            assert "is not of type 'array'" in str(exc_info.value)
 
             # Test invalid tuple format
-            with pytest.raises(Exception) as exc_info:
+            with pytest.raises(ToolError, match="is too short"):
                 await client.call_tool(
                     "query_model",
                     {
@@ -449,10 +449,9 @@ class TestQueryModelTool:
                         "order_by": [["field"]],  # Missing direction
                     },
                 )
-            assert "is too short" in str(exc_info.value)
 
-            # Test invalid direction
-            with pytest.raises(Exception) as exc_info:
+            # Test invalid direction - this will pass pydantic validation but fail our validation
+            with pytest.raises(ToolError, match="Each order_by tuple must be"):
                 await client.call_tool(
                     "query_model",
                     {
@@ -462,7 +461,6 @@ class TestQueryModelTool:
                         "order_by": [["field", "invalid"]],
                     },
                 )
-            assert "Each order_by tuple must be" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_query_model_invalid_time_grain(self, sample_models):
@@ -470,7 +468,7 @@ class TestQueryModelTool:
         mcp = MCPSemanticModel(models=sample_models)
 
         async with Client(mcp) as client:
-            with pytest.raises(Exception) as exc_info:
+            with pytest.raises(ToolError, match="Time grain TIME_GRAIN_SECOND is smaller than"):
                 await client.call_tool(
                     "query_model",
                     {
@@ -480,7 +478,6 @@ class TestQueryModelTool:
                         "time_grain": "TIME_GRAIN_SECOND",
                     },
                 )
-            assert "Time grain TIME_GRAIN_SECOND is smaller than" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_query_model_nonexistent(self, sample_models):
@@ -488,7 +485,7 @@ class TestQueryModelTool:
         mcp = MCPSemanticModel(models=sample_models)
 
         async with Client(mcp) as client:
-            with pytest.raises(Exception) as exc_info:
+            with pytest.raises(ToolError, match="Model nonexistent not found"):
                 await client.call_tool(
                     "query_model",
                     {
@@ -497,7 +494,6 @@ class TestQueryModelTool:
                         "measures": ["flight_count"],
                     },
                 )
-            assert "Model nonexistent not found" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_query_model_with_chart_spec(self, sample_models, mock_query_result):
