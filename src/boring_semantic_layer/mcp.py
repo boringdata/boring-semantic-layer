@@ -1,6 +1,6 @@
 """MCP functionality for semantic models."""
 
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 from typing import Annotated, Any, Dict, List, Optional, Union, Tuple, Literal
 from .time_grain import TIME_GRAIN_ORDER
 
