@@ -9,7 +9,7 @@ dimension definitions become stale and fail on dot notation access.
 import pandas as pd
 import pytest
 import ibis
-from boring_semantic_layer.semantic_api import to_semantic_table
+from boring_semantic_layer.semantic_api.api import to_semantic_table, group_by_, aggregate_, join_one
 
 
 def test_stale_dimension_problem_in_complex_chain():
@@ -60,9 +60,12 @@ def test_stale_dimension_problem_in_complex_chain():
                .with_dimensions(customer_id=lambda t: t.customer_id, country=lambda t: t.country))
     
     # Execute the complex chain: ModelA → Join(ModelB) → GroupBy → Aggregate → Join(ModelC)
-    step1 = model_a.join_one(model_b, 'order_id', 'order_id')
-    step2 = step1.group_by('orders__region', 'orders__customer_id').aggregate('orders__order_count', 'products__avg_price')
-    final_result = step2.join_one(model_c, 'orders__customer_id', 'customer_id')
+    step1 = join_one(model_a, model_b, 'order_id', 'order_id')
+    step2 = aggregate_(
+        group_by_(step1, 'orders__region', 'orders__customer_id'),
+        lambda t: t.orders__order_count,
+    )
+    final_result = join_one(step2, model_c, 'orders__customer_id', 'customer_id')
     
     # Verify semantic metadata and actual structure
     assert 'orders__region' in final_result.dimensions, "Dimension should exist in semantic metadata"
@@ -125,9 +128,12 @@ def test_stale_dimension_problem_root_cause():
                      .with_dimensions(customer_id=lambda t: t.customer_id, country=lambda t: t.country))
     
     # The key: Join → Aggregate → Join again (this triggers the stale dimension problem)
-    step1 = orders_sem.join_one(products_sem, 'order_id', 'order_id')  
-    step2 = step1.group_by('orders__region', 'orders__customer_id').aggregate('orders__order_count')
-    step3 = step2.join_one(customers_sem, 'orders__customer_id', 'customer_id')  # This causes stale dimensions
+    step1 = join_one(orders_sem, products_sem, 'order_id', 'order_id')
+    step2 = aggregate_(
+        group_by_(step1, 'orders__region', 'orders__customer_id'),
+        lambda t: t.orders__order_count,
+    )
+    step3 = join_one(step2, customers_sem, 'orders__customer_id', 'customer_id')
     
     # Verify the structure is correct
     assert 'orders__region' in step3.dimensions, "Should exist in semantic metadata"
