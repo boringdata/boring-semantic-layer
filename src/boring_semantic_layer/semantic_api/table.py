@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, Iterable, List, Union
+from typing import Dict, Iterable, Optional, Union
 
 import ibis
 
@@ -30,14 +30,26 @@ class SemanticTable:
                 self._base_measures[name] = (lambda _fn=fn: (lambda base_tbl: _fn(ColumnScope(base_tbl))))()
         return self
 
-    def join(self, other: "SemanticTable", on):
+
+    def join_one(self, other: "SemanticTable", left_on: str, right_on: str) -> "SemanticTable":
         left = self._base_tbl
         right = other._base_tbl
-        cond = on(left, right)
+        cond = getattr(left, left_on) == getattr(right, right_on)
         joined_tbl = left.join(right, cond, how="inner")
 
         out = SemanticTable(joined_tbl, name=f"{self._name}_join_{other._name}")
+        out._dims = {**self._dims, **other._dims}
+        out._base_measures = {**self._base_measures, **other._base_measures}
+        out._calc_measures = {**self._calc_measures, **other._calc_measures}
+        return out
 
+    def join_many(self, other: "SemanticTable", left_on: str, right_on: str) -> "SemanticTable":
+        left = self._base_tbl
+        right = other._base_tbl
+        cond = getattr(left, left_on) == getattr(right, right_on)
+        joined_tbl = left.join(right, cond, how="left")
+
+        out = SemanticTable(joined_tbl, name=f"{self._name}_join_{other._name}")
         out._dims = {**self._dims, **other._dims}
         out._base_measures = {**self._base_measures, **other._base_measures}
         out._calc_measures = {**self._calc_measures, **other._calc_measures}
@@ -48,13 +60,16 @@ class SemanticTable:
         return self
 
     def aggregate(self, *measure_names: str, **aliased: str):
-        """
-        Natural API:
-          .aggregate("avg_case_value", "case_count")
-          .aggregate(total_cases="case_count")
-        """
         if not hasattr(self, "_group_dims"):
             raise ValueError("Call .group_by(...) before .aggregate(...)")
+
+        from .api import SemanticTableExpr
+
+        # old-style lambda aggregates => defer to semantic_api DSL
+        if any(callable(m) for m in measure_names) or any(callable(f) for f in aliased.values()):
+            expr = SemanticTableExpr(self)
+            expr = expr.group_by(*self._group_dims)
+            return expr.aggregate(*measure_names, **aliased)
 
         select_measures = list(measure_names) + list(aliased.values())
         base = self._materialize_base_with_dims()
@@ -79,5 +94,5 @@ class SemanticTable:
         cols = {name: fn(self._base_tbl) for name, fn in self._dims.items()}
         return self._base_tbl.mutate(**cols)
 
-def to_semantic_table(ibis_table, name: str) -> SemanticTable:
+def to_semantic_table(ibis_table, name: Optional[str] = None) -> SemanticTable:
     return SemanticTable(ibis_table, name=name)
