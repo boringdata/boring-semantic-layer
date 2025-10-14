@@ -110,3 +110,61 @@ def test_inline_group_by_returns_semantic_table():
     final_result = result.aggregate(count=lambda t: t.count()).execute()
     assert len(final_result) == 4
     assert all(final_result["count"] == 1)
+
+
+def test_groupby_with_predefined_measures():
+    """Test group_by operations with predefined measures."""
+    tbl = ibis.memtable(TEST_DATA, name="test_tbl")
+    tbl = tbl.mutate(arr_time=tbl.arr_time.cast("timestamp"))
+    
+    # Create semantic table with predefined measures
+    sem = (
+        to_semantic_table(tbl)
+        .with_dimensions(category=lambda t: t.category)
+        .with_measures(
+            total_value=lambda t: t.value.sum(),
+            count_rows=lambda t: t.count(),
+            avg_value=lambda t: t.value.mean()
+        )
+    )
+    
+    # Test 1: Use predefined measure in group_by aggregation
+    result1 = sem.group_by("category").aggregate(lambda t: t.total_value)
+    df1 = result1.execute()
+    
+    assert len(df1) == 2  # Two categories
+    assert "category" in df1.columns
+    assert "total_value" in df1.columns
+    
+    # Check the aggregated values
+    category_totals = df1.set_index("category")["total_value"].to_dict()
+    assert category_totals["A"] == 30  # 10 + 20
+    assert category_totals["B"] == 70  # 30 + 40
+    
+    # Test 2: Use multiple predefined measures
+    result2 = sem.group_by("category").aggregate(
+        total=lambda t: t.total_value,
+        count=lambda t: t.count_rows,
+        average=lambda t: t.avg_value
+    )
+    df2 = result2.execute()
+    
+    assert len(df2) == 2
+    assert "total" in df2.columns
+    assert "count" in df2.columns
+    assert "average" in df2.columns
+    
+    # Test 3: Group by inline dimension with predefined measure
+    result3 = sem.group_by(
+        year=lambda t: t.arr_time.year()
+    ).aggregate(lambda t: t.total_value)
+    df3 = result3.execute()
+    
+    assert len(df3) == 2  # Two years: 2020, 2021
+    assert "year" in df3.columns
+    assert "total_value" in df3.columns
+    
+    # Check year totals
+    year_totals = df3.set_index("year")["total_value"].to_dict()
+    assert year_totals[2020] == 30  # Jan + Feb 2020
+    assert year_totals[2021] == 70  # Mar + Apr 2021

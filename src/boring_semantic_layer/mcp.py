@@ -5,6 +5,7 @@ from typing import Annotated, Any, Dict, List, Optional, Union, Tuple, Literal
 from .time_grain import TIME_GRAIN_ORDER
 
 from .semantic_model import SemanticModel
+from .semantic_api import SemanticTable
 
 
 class MCPSemanticModel(FastMCP):
@@ -20,7 +21,7 @@ class MCPSemanticModel(FastMCP):
 
     def __init__(
         self,
-        models: Dict[str, SemanticModel],
+        models: Dict[str, Union[SemanticModel, SemanticTable]],
         name: str = "Semantic Layer MCP Server",
         *args,
         **kwargs,
@@ -31,12 +32,9 @@ class MCPSemanticModel(FastMCP):
 
     def _register_tools(self):
         @self.tool()
-        def list_models() -> Dict[str, str]:
-            """List all available semantic model names with their descriptions."""
-            return {
-                name: model.description or "No description available"
-                for name, model in self.models.items()
-            }
+        def list_models() -> List[str]:
+            """List all available semantic model names."""
+            return list(self.models.keys())
 
         @self.tool()
         def get_model(model_name: str) -> Dict[str, Any]:

@@ -189,3 +189,67 @@ def test_filter_method_availability():
 
     assert len(result1) == len(result2) == 3
     assert set(result1["value"]) == set(result2["value"]) == {40, 50, 60}
+
+
+def test_filter_with_predefined_measures():
+    """Test filtering operations with predefined measures (new functionality)."""
+    tbl = ibis.memtable(TEST_DATA, name="test_tbl")
+    tbl = tbl.mutate(timestamp=tbl.timestamp.cast("timestamp"))
+    
+    # Create semantic table with predefined measures
+    sem = (
+        to_semantic_table(tbl)
+        .with_dimensions(
+            category=lambda t: t.category,
+            group=lambda t: t.group,
+        )
+        .with_measures(
+            total_value=lambda t: t.value.sum(),
+            avg_value=lambda t: t.value.mean(),
+            count_rows=lambda t: t.count(),
+        )
+    )
+    
+    # Test 1: Pre-aggregation filter, then use predefined measure
+    result1 = (
+        sem.filter(lambda t: t.priority > 1)
+        .group_by("category")
+        .aggregate(lambda t: t.total_value)
+    )
+    df1 = result1.execute()
+    
+    # Should only include priority > 1 rows: [20, 40, 60]
+    # Category A: 20, Category B: 40, Category C: 60
+    assert len(df1) == 3
+    assert "category" in df1.columns
+    assert "total_value" in df1.columns
+    
+    # Test 2: Aggregate with predefined measure, then filter on result
+    result2 = (
+        sem.group_by("category")
+        .aggregate(total=lambda t: t.total_value, count=lambda t: t.count_rows)
+        .filter(lambda t: t.total > 50)
+    )
+    df2 = result2.execute()
+    
+    # Category totals: A=30, B=70, C=110 -> B and C have totals > 50
+    assert len(df2) == 2
+    assert set(df2["category"]) == {"B", "C"}
+    assert all(df2["total"] > 50)
+    
+    # Test 3: Filter with predefined measures in complex chain
+    result3 = (
+        sem.filter(lambda t: t.category.isin(["A", "B"]))
+        .group_by("group")
+        .aggregate(
+            total=lambda t: t.total_value,
+            average=lambda t: t.avg_value
+        )
+        .filter(lambda t: t.total > 25)
+    )
+    df3 = result3.execute()
+    
+    assert len(df3) >= 1  # Should have at least one group with total > 25
+    assert "total" in df3.columns
+    assert "average" in df3.columns
+    assert all(df3["total"] > 25)
