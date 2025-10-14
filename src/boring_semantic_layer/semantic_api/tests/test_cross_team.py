@@ -40,7 +40,7 @@ def test_cross_team_aggregated_measure_refs():
 
     # Calculated measure references other measures (both aggregates)
     cross_team = (
-        marketing_st.join(support_st, on=lambda m, s: m.customer_id == s.customer_id)
+        marketing_st.join_one(support_st, 'customer_id', 'customer_id')
         .with_measures(
             avg_case_value=lambda t: t.avg_monthly_spend / t.case_count
         )
