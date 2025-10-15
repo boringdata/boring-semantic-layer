@@ -437,8 +437,10 @@ class TestQueryModelTool:
                     },
                 )
 
-            # Test invalid tuple format
-            with pytest.raises(ToolError, match="is too short"):
+            # Test invalid list format (missing direction)
+            with pytest.raises(
+                ToolError, match="Each order_by item must be a list with 2 elements"
+            ):
                 await client.call_tool(
                     "query_model",
                     {
@@ -450,7 +452,7 @@ class TestQueryModelTool:
                 )
 
             # Test invalid direction - this will pass pydantic validation but fail our validation
-            with pytest.raises(ToolError, match="Each order_by tuple must be"):
+            with pytest.raises(ToolError, match="Each order_by item must be"):
                 await client.call_tool(
                     "query_model",
                     {
