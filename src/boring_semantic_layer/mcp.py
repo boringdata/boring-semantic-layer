@@ -1,7 +1,7 @@
 """MCP functionality for semantic models."""
 
 from mcp.server.fastmcp import FastMCP
-from typing import Annotated, Any, Dict, List, Optional, Union, Tuple, Literal
+from typing import Annotated, Any, Dict, List, Optional, Union, Literal
 from .time_grain import TIME_GRAIN_ORDER
 
 from .semantic_model import SemanticModel
@@ -65,42 +65,52 @@ class MCPSemanticModel(FastMCP):
                 Optional[Union[Dict[str, Any], List[Dict[str, Any]]]],
                 """
                 List of JSON filter objects with the following structure:
-                    
+
                 Simple Filter:
                 {
                     "field": "dimension_name",  # Must be an existing dimension (check model schema first!).
-                    "operator": "=",            # See operator list below
+                    "operator": "=",            # See operator list below - MUST use exact symbols shown
                     "value": "single_value"     # For single-value operators (=, !=, >, >=, <, <=, ilike, not ilike, like, not like)
                     # OR for 'in'/'not in' operators only:
                     "values": ["val1", "val2"]  # REQUIRED for 'in' and 'not in' operators
                 }
-                
-                IMPORTANT OPERATOR GUIDELINES:
-                - Equality: Use "=" (preferred), "eq", or "equals" - all work identically
-                - Text matching: Use "ilike" (case-insensitive) instead of "like" for better results
-                - List membership: "in" requires "values" field (array), NOT "value"
-                - Negated list: "not in" requires "values" field (array), NOT "value"
-                - Pattern matching: "ilike" and "not ilike" support wildcards (%, _)
-                - Null checks: "is null" and "is not null" need no value/values field
-                
-                Available operators:
-                - "=" / "eq" / "equals": exact match (use "value")
-                - "!=": not equal (use "value") 
-                - ">", ">=", "<", "<=": comparisons (use "value")
-                - "in": value is in list (use "values" array)
-                - "not in": value not in list (use "values" array)
-                - "ilike": case-insensitive pattern match (use "value" with % wildcards)
-                - "not ilike": negated case-insensitive pattern (use "value" with % wildcards)  
-                - "like": case-sensitive pattern match (use "value" with % wildcards)
-                - "not like": negated case-sensitive pattern (use "value" with % wildcards)
-                - "is null": field is null (no value/values needed)
-                - "is not null": field is not null (no value/values needed)
-                
+
+                ⚠️ CRITICAL: OPERATOR SYMBOLS - Use EXACT symbols, NOT abbreviations:
+                - Comparisons: Use ">", ">=", "<", "<=" (NOT "gt", "gte", "lt", "lte")
+                - Equality: Use "=" or "eq" or "equals" (all work identically)
+                - Not equal: Use "!=" or "ne" or "not equals"
+
+                ⚠️ CRITICAL: value vs values field:
+                - Single-value operators (=, !=, >, >=, <, <=, like, ilike): Use "value" (singular)
+                - Multi-value operators (in, not in): Use "values" (plural) with array
+                - WRONG: {"field": "x", "operator": "=", "values": ["y"]} ❌
+                - RIGHT: {"field": "x", "operator": "=", "value": "y"} ✅
+                - WRONG: {"field": "x", "operator": "in", "value": "y"} ❌
+                - RIGHT: {"field": "x", "operator": "in", "values": ["y", "z"]} ✅
+
+                Available operators (use exact symbols):
+                - "=" / "eq" / "equals": exact match → use "value" field
+                - "!=" / "ne" / "not equals": not equal → use "value" field
+                - ">": greater than → use "value" field (NOT "gt")
+                - ">=": greater than or equal → use "value" field (NOT "gte")
+                - "<": less than → use "value" field (NOT "lt")
+                - "<=": less than or equal → use "value" field (NOT "lte")
+                - "in": value is in list → use "values" array (NOT "value")
+                - "not in": value not in list → use "values" array (NOT "value")
+                - "ilike": case-insensitive pattern → use "value" field with % wildcards
+                - "not ilike": negated case-insensitive → use "value" field with % wildcards
+                - "like": case-sensitive pattern → use "value" field with % wildcards
+                - "not like": negated case-sensitive → use "value" field with % wildcards
+                - "is null": field is null → no value/values field needed
+                - "is not null": field is not null → no value/values field needed
+
                 COMMON MISTAKES TO AVOID:
-                1. Don't use "value" with "in"/"not in" - use "values" array instead
-                2. Don't filter on measures - only filter on dimensions
-                3. Don't use .month(), .year() etc. - use time_grain parameter instead
-                4. For case-insensitive text search, prefer "ilike" over "like"
+                1. ❌ Using "gt", "gte", "lt", "lte" - Use ">", ">=", "<", "<=" instead
+                2. ❌ Using "values" with "=" or comparison operators - Use "value" (singular)
+                3. ❌ Using "value" with "in"/"not in" - Use "values" (plural) array
+                4. ❌ Filtering on measures - Only filter on dimensions
+                5. ❌ Using .month(), .year() etc. - Use time_grain parameter instead
+                6. For text search, prefer "ilike" over "like" for case-insensitive matching
                     
                 Compound Filter (AND/OR):
                 {
@@ -109,27 +119,35 @@ class MCPSemanticModel(FastMCP):
                         {
                             "field": "country",
                             "operator": "equals",   # or "=" or "eq" - all equivalent
-                            "value": "US"
+                            "value": "US"           # Note: "value" singular
                         },
                         {
                             "field": "tier",
                             "operator": "in",       # MUST use "values" array for "in"
-                            "values": ["gold", "platinum"]  # NOT "value"
+                            "values": ["gold", "platinum"]  # Note: "values" plural
                         },
                         {
                             "field": "name",
                             "operator": "ilike",    # Case-insensitive pattern matching
-                            "value": "%john%"       # Wildcards supported
+                            "value": "%john%"       # Note: "value" singular
                         }
                     ]
                 }
-                    
-                Example filters:
+
+                Correct examples:
                 [
                     {"field": "status", "operator": "in", "values": ["active", "pending"]},
                     {"field": "name", "operator": "ilike", "value": "%smith%"},
                     {"field": "created_date", "operator": ">=", "value": "2024-01-01"},
+                    {"field": "amount", "operator": ">", "value": 1000000},
                     {"field": "email", "operator": "not ilike", "value": "%spam%"}
+                ]
+
+                Wrong examples (DO NOT USE):
+                [
+                    {"field": "amount", "operator": "gt", "value": 1000000},  # ❌ Use ">" not "gt"
+                    {"field": "status", "operator": "equals", "values": ["active"]},  # ❌ Use "value" not "values"
+                    {"field": "tier", "operator": "in", "value": "gold"}  # ❌ Use "values" array not "value"
                 ]
                 Example of a complex nested filter with time ranges:
                 [{
@@ -148,8 +166,8 @@ class MCPSemanticModel(FastMCP):
                 """,
             ] = [],
             order_by: Annotated[
-                List[Tuple[str, str]],
-                "The order by clause to apply to the query (list of tuples: [('field', 'asc|desc')]",
+                List[List[str]],
+                "The order by clause to apply to the query (list of lists: [['field', 'asc|desc']])",
             ] = [],
             limit: Annotated[int, "The limit to apply to the query"] = None,
             time_range: Annotated[
@@ -247,7 +265,7 @@ class MCPSemanticModel(FastMCP):
                 dimensions: The dimensions to group by. Can include time dimensions like "flight_date", "flight_month", "flight_year".
                 measures: The measures to aggregate.
                 filters: List of JSON filter objects (see detailed description above).
-                order_by: The order by clause to apply to the query (list of tuples: [("field", "asc|desc")]).
+                order_by: The order by clause to apply to the query (list of lists: [["field", "asc|desc"]]).
                 limit: The limit to apply to the query (integer).
                 time_range: Optional time range filter for time dimensions. Preferred over using filters for time-based filtering.
                 time_grain: Optional time grain for time-based dimensions (YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, SECOND).
@@ -263,7 +281,7 @@ class MCPSemanticModel(FastMCP):
                 measures=["total_delay", "avg_delay"],
                 time_range={"start": "2024-01-01", "end": "2024-03-31"},
                 time_grain="TIME_GRAIN_MONTH",
-                order_by=[("avg_delay", "desc")],
+                order_by=[["avg_delay", "desc"]],
                 limit=10
             )  # Returns {"records": [...]}
 
@@ -317,18 +335,24 @@ class MCPSemanticModel(FastMCP):
                     )
             # Validate order_by directions
             for item in order_by:
-                # item is a tuple (field, direction)
+                # item is a list [field, direction]
+                if len(item) != 2:
+                    raise ValueError(
+                        "Each order_by item must be a list with 2 elements: [field, direction]"
+                    )
                 _, direction = item
                 if not isinstance(direction, str) or direction not in ("asc", "desc"):
                     raise ValueError(
-                        "Each order_by tuple must be (field: str, direction: 'asc' or 'desc')"
+                        "Each order_by item must be [field: str, direction: 'asc' or 'desc']"
                     )
             # Build and execute query
+            # Convert order_by from list of lists to list of tuples for internal API
+            order_by_tuples = [tuple(item) for item in order_by] if order_by else []
             query = self.models[model_name].query(
                 dimensions=dimensions,
                 measures=measures,
                 filters=filters,
-                order_by=order_by,
+                order_by=order_by_tuples,
                 limit=limit,
                 time_range=time_range,
                 time_grain=time_grain,

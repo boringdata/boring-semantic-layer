@@ -418,8 +418,10 @@ class TestQueryModelTool:
                 },
             )
 
-        # Test invalid tuple format
-        with pytest.raises(ToolError, match="Field required"):
+        # Test invalid list format (missing direction)
+        with pytest.raises(
+            ToolError, match="Each order_by item must be a list with 2 elements"
+        ):
             await mcp.call_tool(
                 "query_model",
                 {
@@ -431,7 +433,7 @@ class TestQueryModelTool:
             )
 
         # Test invalid direction - this will pass pydantic validation but fail our validation
-        with pytest.raises(ToolError, match="Each order_by tuple must be"):
+        with pytest.raises(ToolError, match="Each order_by item must be"):
             await mcp.call_tool(
                 "query_model",
                 {
