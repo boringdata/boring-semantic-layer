@@ -13,6 +13,7 @@ from typing import (
     Literal,
     Mapping,
     TYPE_CHECKING,
+    TypeAlias,
 )
 import datetime
 
@@ -40,7 +41,8 @@ from .chart import (
     _prepare_plotly_data_and_params,
 )
 
-Expr = ibis_mod.expr.types.core.Expr
+# Type alias for Ibis expressions
+Expr: TypeAlias = ibis_mod.expr.types.core.Expr
 _ = ibis_mod._
 
 # Join strategies
@@ -277,9 +279,14 @@ class QueryExpr:
         elif format in ["png", "svg"]:
             try:
                 import io
+                from typing import cast
 
                 buffer = io.BytesIO()
-                chart.save(buffer, format=format)
+                # Cast format to the expected literal type
+                chart.save(
+                    buffer,
+                    format=cast("Literal['json', 'html', 'png', 'svg', 'pdf']", format),
+                )
                 return buffer.getvalue()
             except Exception as e:
                 raise ImportError(
@@ -427,6 +434,8 @@ class QueryExpr:
             return plotly.io.to_json(fig)
         elif format in ["png", "svg"]:
             return fig.to_image(format=format)
+        else:
+            raise ValueError(f"Unsupported format: {format}")
 
     def chart(
         self,
@@ -478,6 +487,8 @@ class QueryExpr:
             return self._chart_altair(spec=spec, format=format)
         elif backend == "plotly":
             return self._chart_plotly(spec=spec, format=format)
+        else:
+            raise ValueError(f"Unsupported backend: {backend}")
 
 
 def _convert_dimensions(dimension_dict) -> dict:
@@ -649,24 +660,31 @@ class SemanticModel:
     ) -> Tuple[Expr, Dict[str, Dimension]]:
         """Transform the time dimension based on the specified grain."""
         if not self.time_dimension or not time_grain:
-            return table, self.dimensions.copy()
+            return table, dict(self.dimensions)
 
         # Create a copy of dimensions
-        dimensions = self.dimensions.copy()
+        dimensions = dict(self.dimensions)
 
         # Get or create the time dimension function
         if self.time_dimension in dimensions:
-            time_dim_func = dimensions[self.time_dimension]
+            time_dim_spec = dimensions[self.time_dimension]
+            time_dim_func = time_dim_spec.expr
         else:
             # Create a default time dimension function that accesses the column directly
             def time_dim_func(t: Expr) -> Expr:
+                if self.time_dimension is None:
+                    raise ValueError("time_dimension is None")
                 return getattr(t, self.time_dimension)
 
-            dimensions[self.time_dimension] = time_dim_func
+            dimensions[self.time_dimension] = DimensionSpec(expr=time_dim_func)
 
         # Create the transformed dimension function
         transform_func = TIME_GRAIN_TRANSFORMATIONS[time_grain]
-        dimensions[self.time_dimension] = lambda t: transform_func(time_dim_func(t))
+
+        def transformed_time_func(t: Expr) -> Expr:
+            return transform_func(time_dim_func(t))
+
+        dimensions[self.time_dimension] = DimensionSpec(expr=transformed_time_func)
 
         return table, dimensions
 
@@ -723,9 +741,12 @@ class SemanticModel:
                     raise KeyError(f"Unknown measure: {m}")
         # Normalize filters to list
         if filters is None:
-            filters_list = []
+            filters_list: List[Union[Dict[str, Any], str, Callable[[Expr], Expr]]] = []
         else:
-            filters_list = filters if isinstance(filters, list) else [filters]
+            if isinstance(filters, list):
+                filters_list = filters
+            else:
+                filters_list = [filters]
         # Validate time_range format
         if time_range is not None:
             if (
@@ -823,8 +844,12 @@ class SemanticModel:
 
         # Include time dimension if missing
         if self.time_dimension and self.time_dimension not in dims:
+
+            def make_time_dim_func(col_name: str) -> Callable[[Expr], Expr]:
+                return lambda t: getattr(t, col_name)
+
             dims[self.time_dimension] = Dimension(
-                expr=lambda t, col=self.time_dimension: getattr(t, col),
+                expr=make_time_dim_func(self.time_dimension),
                 description="",
             )
 
@@ -937,6 +962,10 @@ class SemanticModel:
                     cutoff_ts = datetime.datetime.fromisoformat(cutoff)
                 except ValueError:
                     cutoff_ts = datetime.datetime.strptime(cutoff, "%Y-%m-%d")
+            elif isinstance(cutoff, datetime.date) and not isinstance(
+                cutoff, datetime.datetime
+            ):
+                cutoff_ts = datetime.datetime.combine(cutoff, datetime.time.min)
             else:
                 cutoff_ts = cutoff
             flat = flat.filter(getattr(flat, self.time_dimension) <= cutoff_ts)
@@ -965,12 +994,21 @@ class SemanticModel:
             cube_expr = flat
         cube_table = cube_expr.cache(storage=storage)
 
-        new_dimensions: Dict[str, Dimension] = {
-            key: DimensionSpec(expr=lambda t, c=key: t[c]) for key in keys
-        }
+        new_dimensions: Dict[str, Dimension] = {}
+        for key in keys:
+
+            def make_dim_func(col_name: str) -> Callable[[Expr], Expr]:
+                return lambda t: t[col_name]
+
+            new_dimensions[key] = DimensionSpec(expr=make_dim_func(key))
+
         new_measures: Dict[str, Measure] = {}
         for name in agg_kwargs:
-            new_measures[name] = MeasureSpec(expr=lambda t, c=name: t[c])
+
+            def make_measure_func(col_name: str) -> Callable[[Expr], Expr]:
+                return lambda t: t[col_name]
+
+            new_measures[name] = MeasureSpec(expr=make_measure_func(name))
         for name, fn in self.measures.items():
             if name not in agg_kwargs:
                 new_measures[name] = fn

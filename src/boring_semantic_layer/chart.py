@@ -35,7 +35,11 @@ def _detect_altair_spec(
 
     # Check if we have a time dimension
     has_time = time_dimension and time_dimension in dimensions
-    time_dim_index = dimensions.index(time_dimension) if has_time else -1
+    time_dim_index = (
+        dimensions.index(time_dimension)
+        if has_time and time_dimension is not None
+        else -1
+    )
 
     # Determine appropriate date format and axis config based on time grain
     if has_time and time_grain:

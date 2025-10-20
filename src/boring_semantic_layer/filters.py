@@ -11,6 +11,7 @@ from typing import (
     Optional,
     TYPE_CHECKING,
     Union,
+    TypeAlias,
 )
 
 try:
@@ -18,7 +19,7 @@ try:
 except ImportError:
     import ibis as ibis_mod
 
-Expr = ibis_mod.expr.types.core.Expr
+Expr: TypeAlias = ibis_mod.expr.types.core.Expr
 _ = ibis_mod._
 
 # Mapping of operators to Ibis expressions

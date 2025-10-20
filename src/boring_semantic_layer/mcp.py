@@ -112,7 +112,7 @@ class MCPSemanticModel(FastMCP):
                 4. ❌ Filtering on measures - Only filter on dimensions
                 5. ❌ Using .month(), .year() etc. - Use time_grain parameter instead
                 6. For text search, prefer "ilike" over "like" for case-insensitive matching
-                    
+
                 Compound Filter (AND/OR):
                 {
                     "operator": "AND",          # or "OR"
@@ -170,7 +170,7 @@ class MCPSemanticModel(FastMCP):
                 List[List[str]],
                 "The order by clause to apply to the query (list of lists: [['field', 'asc|desc']])",
             ] = [],
-            limit: Annotated[int, "The limit to apply to the query"] = None,
+            limit: Annotated[Optional[int], "The limit to apply to the query"] = None,
             time_range: Annotated[
                 Optional[Dict[str, str]],
                 """Optional time range filter with format:
@@ -178,7 +178,7 @@ class MCPSemanticModel(FastMCP):
                         "start": "2024-01-01T00:00:00Z",  # ISO 8601 format
                         "end": "2024-12-31T23:59:59Z"     # ISO 8601 format
                     }
-                    
+
                     Using time_range is preferred over using filters for time-based filtering because:
                     1. It automatically applies to the model's primary time dimension
                     2. It ensures proper time zone handling with ISO 8601 format
@@ -200,16 +200,16 @@ class MCPSemanticModel(FastMCP):
                     ]
                 ],
                 """Time grain for aggregating time-based dimensions.
-                
+
                 IMPORTANT: Instead of trying to use .month(), .year(), .quarter() etc. in filters,
-                use this time_grain parameter to aggregate by time periods. The system will 
+                use this time_grain parameter to aggregate by time periods. The system will
                 automatically handle time dimension transformations.
-                
+
                 Examples:
-                - For monthly data: time_grain="TIME_GRAIN_MONTH" 
+                - For monthly data: time_grain="TIME_GRAIN_MONTH"
                 - For yearly data: time_grain="TIME_GRAIN_YEAR"
                 - For daily data: time_grain="TIME_GRAIN_DAY"
-                
+
                 Then filter using the time_range parameter or regular date filters like:
                 {"field": "date_column", "operator": ">=", "value": "2024-01-01"}
                 """,
@@ -222,17 +222,17 @@ class MCPSemanticModel(FastMCP):
                 - Dict: Returns {"records": [...], "chart": {...}} with custom Vega-Lite specification
                     Can be partial (e.g., just {"mark": "line"} or {"encoding": {"y": {"scale": {"zero": False}}}}).
                     BSL intelligently merges partial specs with auto-detected defaults.
-                
+
                 Common chart specifications:
                 - {"mark": "bar"} - Bar chart
-                - {"mark": "line"} - Line chart  
+                - {"mark": "line"} - Line chart
                 - {"mark": "point"} - Scatter plot
                 - {"mark": "rect"} - Heatmap
                 - {"title": "My Chart"} - Add title
                 - {"width": 600, "height": 400} - Set size
                 - {"encoding": {"color": {"field": "category"}}} - Color by field
                 - {"encoding": {"y": {"scale": {"zero": False}}}} - Don't start Y-axis at zero
-                
+
                 BSL auto-detection logic:
                 - Time series (time dimension + measure) → Line chart
                 - Categorical (1 dimension + 1 measure) → Bar chart
@@ -348,11 +348,24 @@ class MCPSemanticModel(FastMCP):
                     )
             # Build and execute query
             # Convert order_by from list of lists to list of tuples for internal API
-            order_by_tuples = [tuple(item) for item in order_by] if order_by else []
+            order_by_tuples = (
+                [(item[0], item[1]) for item in order_by] if order_by else []
+            )
+            # Convert filters to the expected type
+            filters_converted = None
+            if filters is not None:
+                if isinstance(filters, dict):
+                    filters_converted = [filters]
+                elif isinstance(filters, list):
+                    # Cast to the expected type
+                    filters_converted = filters
+                else:
+                    filters_converted = [filters]
+
             query = self.models[model_name].query(
                 dimensions=dimensions,
                 measures=measures,
-                filters=filters,
+                filters=filters_converted,  # type: ignore
                 order_by=order_by_tuples,
                 limit=limit,
                 time_range=time_range,
