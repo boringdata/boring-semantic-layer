@@ -23,6 +23,7 @@ viz-plotly = ["plotly>=6.3.0", "kaleido"]
 dev = [
     "boring-semantic-layer[fastmcp,examples,xorq,viz-altair,viz-plotly]",
     "ruff>=0.6.7",
+    "mypy>=1.8.0",
     "pre-commit>=4.2.0",
     "pytest",
     "pandas>=2.3.0",
@@ -36,3 +37,26 @@ fastmcp = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.mypy]
+python_version = "3.10"
+packages = ["src/boring_semantic_layer"]
+
+# Handle optional dependencies
+[[tool.mypy.overrides]]
+module = [
+    "altair.*",
+    "plotly.*",
+    "xorq.*",
+    "ibis.*",
+    "fastmcp.*",
+    "pandas.*",
+    "duckdb.*",
+    "kaleido.*"
+]
+ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "types-pyyaml>=6.0.12.20250915",
+]

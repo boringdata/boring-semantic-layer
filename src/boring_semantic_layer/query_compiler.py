@@ -2,7 +2,7 @@
 Compile QueryExpr instances into Ibis expressions.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, TypeAlias
 
 from .filters import Filter
 
@@ -17,7 +17,7 @@ except ImportError:
 
     IS_XORQ_USED = False
 
-Expr = ibis_mod.expr.types.core.Expr
+Expr: TypeAlias = ibis_mod.expr.types.core.Expr
 _ = ibis_mod._
 
 

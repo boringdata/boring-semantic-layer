@@ -1,14 +1,16 @@
 from attrs import frozen
-from typing import Callable, Optional, TYPE_CHECKING, Literal
+from typing import Callable, Optional, TYPE_CHECKING, Literal, TypeAlias
 
 try:
     import xorq.vendor.ibis as ibis_mod
+
     IS_XORQ_USED = True
 except ImportError:
     import ibis as ibis_mod
+
     IS_XORQ_USED = False
 
-Expr = ibis_mod.expr.types.core.Expr
+Expr: TypeAlias = ibis_mod.expr.types.core.Expr
 _ = ibis_mod._
 
 How = Literal["inner", "left", "cross"]
@@ -16,6 +18,7 @@ Cardinality = Literal["one", "many", "cross"]
 
 if TYPE_CHECKING:
     from .semantic_model import SemanticModel
+
 
 @frozen(kw_only=True, slots=True)
 class Join:
@@ -48,6 +51,8 @@ class Join:
             )
 
         def on_expr(left, right):
+            if model.primary_key is None:
+                raise ValueError(f"Model primary_key is None for join: {alias}")
             return with_(left) == getattr(right, model.primary_key)
 
         return cls(alias=alias, model=model, on=on_expr, how="inner", kind="one")
@@ -73,6 +78,8 @@ class Join:
             )
 
         def on_expr(left, right):
+            if model.primary_key is None:
+                raise ValueError(f"Model primary_key is None for join: {alias}")
             return with_(left) == getattr(right, model.primary_key)
 
         return cls(alias=alias, model=model, on=on_expr, how="left", kind="many")
