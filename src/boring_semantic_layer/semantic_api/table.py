@@ -1,25 +1,75 @@
 from __future__ import annotations
 from typing import Any, Callable, Dict, Optional, Union
 
+from attrs import frozen
 
 from .measure_scope import MeasureScope, ColumnScope
 from .measure_nodes import MeasureRef, AllOf, BinOp, MeasureExpr
 from .compile_all import compile_grouped_with_all
 
 
+@frozen(kw_only=True, slots=True)
+class Dimension:
+    expr: Callable[[Any], Any]
+    description: Optional[str] = None
+    is_time_dimension: bool = False
+    smallest_time_grain: Optional[str] = None
+
+    def __call__(self, table: Any) -> Any:
+        """Make Dimension callable - transparently calls the expr."""
+        return self.expr(table)
+
+    @classmethod
+    def from_value(cls, value: Union['Dimension', dict, Callable]) -> 'Dimension':
+        """Convert various input formats to Dimension."""
+        if isinstance(value, cls):
+            return value
+        elif isinstance(value, dict):
+            return cls(**value)
+        elif callable(value):
+            return cls(expr=value)
+        else:
+            raise ValueError(f"Dimension must be callable, dict, or Dimension instance, got {type(value)}")
+
+
+@frozen(kw_only=True, slots=True)
+class Measure:
+    expr: Callable[[Any], Any]
+    description: Optional[str] = None
+
+    def __call__(self, *args, **kwargs) -> Any:
+        """Make Measure callable - transparently calls the expr."""
+        return self.expr(*args, **kwargs)
+
+    @classmethod
+    def from_value(cls, value: Union['Measure', dict, Callable]) -> 'Measure':
+        """Convert various input formats to Measure."""
+        if isinstance(value, cls):
+            return value
+        elif isinstance(value, dict):
+            return cls(**value)
+        elif callable(value):
+            return cls(expr=value)
+        else:
+            raise ValueError(f"Measure must be callable, dict, or Measure instance, got {type(value)}")
+
+
 class SemanticTable:
     def __init__(self, ibis_table, name: str):
         self._name = name
         self._base_tbl = ibis_table
-        self._dims: Dict[str, callable] = {}
-        self._base_measures: Dict[str, callable] = {}
+        self._dims: Dict[str, Dimension] = {}
+        self._base_measures: Dict[str, Measure] = {}
         self._calc_measures: Dict[str, MeasureExpr] = {}
 
     def with_dimensions(self, **defs):
+        defs = {name: Dimension.from_value(value) for name, value in defs.items()}
         self._dims.update(defs)
         return self
 
     def with_measures(self, **defs):
+        defs = {name: Measure.from_value(value) for name, value in defs.items()}
+
         known = set(self._base_measures) | set(self._calc_measures) | set(defs.keys())
         scope = MeasureScope(self._base_tbl, known_measures=known)
         for name, fn in defs.items():
@@ -27,9 +77,11 @@ class SemanticTable:
             if isinstance(val, (MeasureRef, AllOf, BinOp, int, float)):
                 self._calc_measures[name] = val
             else:
-                self._base_measures[name] = (
-                    lambda _fn=fn: (lambda base_tbl: _fn(ColumnScope(base_tbl)))
-                )()
+                # Create a closure that returns the aggregation function, preserving metadata
+                self._base_measures[name] = Measure(
+                    expr=(lambda _fn=fn.expr: (lambda base_tbl: _fn(ColumnScope(base_tbl))))(),
+                    description=fn.description
+                )
         return self
 
     def _join(self, other: "SemanticTable", cond, how: str) -> "SemanticTable":
@@ -229,9 +281,9 @@ class SemanticTable:
                     self._calc_measures[name] = val
                 else:
                     # This is a direct ibis aggregation - store as base measure
-                    self._base_measures[name] = (
-                        lambda _fn=fn: (lambda base_tbl: _fn(ColumnScope(base_tbl)))
-                    )()
+                    self._base_measures[name] = Measure(
+                        expr=(lambda _fn=fn: (lambda base_tbl: _fn(ColumnScope(base_tbl))))()
+                    )
             # use only string names for aggregation specs
             measure_names = tuple(inline_defs.keys())
             aliased = {}

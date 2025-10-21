@@ -333,5 +333,185 @@ class TestEndToEndNotationConsistency:
         pd.testing.assert_frame_equal(result_dot, result_bracket)
 
 
+class TestDictBasedMetadata:
+    """Test the new dict-based API for dimensions and measures with metadata."""
+
+    def test_dimension_with_metadata(self, flights_data):
+        """Test that dimensions accept dict with metadata."""
+        tbl = flights_data["flights"]
+        st = to_semantic_table(tbl, "flights").with_dimensions(
+            carrier={
+                "expr": lambda t: t.carrier,
+                "description": "Carrier code"
+            },
+            distance={
+                "expr": lambda t: t.distance,
+                "description": "Flight distance in miles",
+                "is_time_dimension": False
+            }
+        )
+
+        # Verify metadata is stored
+        assert st._dims["carrier"].description == "Carrier code"
+        assert st._dims["distance"].description == "Flight distance in miles"
+        assert st._dims["distance"].is_time_dimension is False
+
+        # Verify it still works in queries
+        result = st.group_by("carrier").aggregate(flight_count=lambda t: t.count()).execute()
+        assert len(result) > 0
+
+    def test_measure_with_metadata(self, flights_data):
+        """Test that measures accept dict with metadata."""
+        tbl = flights_data["flights"]
+        st = to_semantic_table(tbl, "flights").with_measures(
+            flight_count={
+                "expr": lambda t: t.count(),
+                "description": "Total number of flights"
+            },
+            total_distance={
+                "expr": lambda t: t.distance.sum(),
+                "description": "Sum of all flight distances"
+            }
+        )
+
+        # Verify metadata is stored
+        assert st._base_measures["flight_count"].description == "Total number of flights"
+        assert st._base_measures["total_distance"].description == "Sum of all flight distances"
+
+        # Verify it still works in queries
+        result = (
+            st.with_dimensions(carrier=lambda t: t.carrier)
+            .group_by("carrier")
+            .aggregate("flight_count", "total_distance")
+            .execute()
+        )
+        assert len(result) > 0
+
+    def test_mixed_callable_and_dict(self, flights_data):
+        """Test mixing simple callables and dicts with metadata."""
+        tbl = flights_data["flights"]
+        st = (
+            to_semantic_table(tbl, "flights")
+            .with_dimensions(
+                carrier=lambda t: t.carrier,  # Simple callable
+                distance={  # Dict with metadata
+                    "expr": lambda t: t.distance,
+                    "description": "Distance traveled"
+                }
+            )
+            .with_measures(
+                flight_count=lambda t: t.count(),  # Simple callable
+                avg_distance={  # Dict with metadata
+                    "expr": lambda t: t.distance.mean(),
+                    "description": "Average flight distance"
+                }
+            )
+        )
+
+        # Simple callable should have None description
+        assert st._dims["carrier"].description is None
+        # Dict should have description
+        assert st._dims["distance"].description == "Distance traveled"
+
+        # Same for measures
+        assert st._base_measures["flight_count"].description is None
+        assert st._base_measures["avg_distance"].description == "Average flight distance"
+
+        # Both should work in queries
+        result = (
+            st.group_by("carrier")
+            .aggregate("flight_count", "avg_distance")
+            .execute()
+        )
+        assert len(result) > 0
+
+    def test_descriptions_preserved_through_operations(self, flights_data):
+        """Test that descriptions are preserved through various operations."""
+        tbl = flights_data["flights"]
+        carriers_tbl = flights_data["carriers"]
+
+        # Create semantic table with descriptions
+        flights_st = (
+            to_semantic_table(tbl, "flights")
+            .with_dimensions(
+                carrier={
+                    "expr": lambda t: t.carrier,
+                    "description": "Airline carrier code"
+                }
+            )
+            .with_measures(
+                flight_count={
+                    "expr": lambda t: t.count(),
+                    "description": "Total number of flights"
+                },
+                total_distance={
+                    "expr": lambda t: t.distance.sum(),
+                    "description": "Sum of all flight distances"
+                }
+            )
+        )
+
+        carriers_st = (
+            to_semantic_table(carriers_tbl, "carriers")
+            .with_dimensions(
+                code={
+                    "expr": lambda t: t.code,
+                    "description": "Carrier code for joining"
+                }
+            )
+        )
+
+        # Test 1: Descriptions preserved after filter
+        filtered = flights_st.filter(lambda t: t.carrier == "AA")
+        assert filtered._dims["carrier"].description == "Airline carrier code"
+        assert filtered._base_measures["flight_count"].description == "Total number of flights"
+
+        # Test 2: Descriptions preserved after aggregate
+        aggregated = (
+            flights_st
+            .group_by("carrier")
+            .aggregate("flight_count", "total_distance")
+        )
+        # After aggregation, dimensions should be preserved
+        assert aggregated._dims["carrier"].description == "Airline carrier code"
+        # Note: measures are not preserved after aggregation (they become columns)
+
+        # Test 3: Descriptions preserved after join
+        joined = flights_st.join_one(carriers_st, "carrier", "code")
+        # Joined dimensions should have prefixed names
+        assert joined._dims["flights__carrier"].description == "Airline carrier code"
+        assert joined._dims["carriers__code"].description == "Carrier code for joining"
+        assert joined._base_measures["flights__flight_count"].description == "Total number of flights"
+
+    def test_time_dimension_metadata_preserved(self, flights_data):
+        """Test that time dimension metadata is preserved."""
+        tbl = flights_data["flights"]
+
+        st = to_semantic_table(tbl, "flights").with_dimensions(
+            carrier={
+                "expr": lambda t: t.carrier,
+                "description": "Carrier code",
+                "is_time_dimension": False
+            },
+            distance={
+                "expr": lambda t: t.distance,
+                "description": "Flight distance",
+                "is_time_dimension": False,
+                "smallest_time_grain": None
+            }
+        )
+
+        # Verify time dimension metadata
+        assert st._dims["carrier"].is_time_dimension is False
+        assert st._dims["carrier"].smallest_time_grain is None
+        assert st._dims["distance"].is_time_dimension is False
+        assert st._dims["distance"].smallest_time_grain is None
+
+        # After filter, metadata should be preserved
+        filtered = st.filter(lambda t: t.carrier == "AA")
+        assert filtered._dims["carrier"].is_time_dimension is False
+        assert filtered._dims["distance"].is_time_dimension is False
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
