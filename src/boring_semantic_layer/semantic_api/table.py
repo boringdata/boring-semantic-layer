@@ -1,5 +1,6 @@
 from __future__ import annotations
-from typing import Any, Callable, Dict, Optional, Union
+from typing import Any, Callable, Dict, Optional, Union, Tuple
+from attrs import frozen, field
 
 
 from .measure_scope import MeasureScope, ColumnScope
@@ -9,7 +10,7 @@ from .compile_all import compile_grouped_with_all
 
 def _resolve_expression(expr_or_callable, scope_or_table):
     """
-    Helper to resolve expressions that can be callables, deferred expressions, or direct values.
+    Pure helper to resolve expressions that can be callables, deferred expressions, or direct values.
 
     Supports:
     - Callables (lambdas): lambda t: t.distance.sum()
@@ -40,95 +41,163 @@ def _resolve_expression(expr_or_callable, scope_or_table):
     return expr_or_callable
 
 
+def _make_immutable_dict(d: Dict) -> Tuple[Tuple[str, Any], ...]:
+    """
+    Convert a dict to an immutable tuple of key-value pairs.
+    Preserves insertion order (important for join prefix resolution).
+    """
+    return tuple(d.items())
+
+
+def _to_dict(immutable_dict: Tuple[Tuple[str, Any], ...]) -> Dict:
+    """Convert immutable tuple of pairs back to dict."""
+    return dict(immutable_dict)
+
+
+@frozen(kw_only=True)
 class SemanticTable:
-    def __init__(self, ibis_table, name: str):
-        self._name = name
-        self._base_tbl = ibis_table
-        self._dims: Dict[str, callable] = {}
-        self._base_measures: Dict[str, callable] = {}
-        self._calc_measures: Dict[str, MeasureExpr] = {}
+    """
+    Immutable semantic table with functional composition patterns.
+
+    All transformation methods return new instances rather than modifying in place.
+    Uses frozen dataclass pattern with tuple-based storage for dimensions and measures.
+    """
+    name: str
+    base_tbl: Any  # Ibis table expression (already immutable)
+    dim_defs: Tuple[Tuple[str, Callable], ...] = field(factory=tuple)
+    base_measure_defs: Tuple[Tuple[str, Callable], ...] = field(factory=tuple)
+    calc_measure_defs: Tuple[Tuple[str, MeasureExpr], ...] = field(factory=tuple)
+    group_dim_names: Optional[Tuple[str, ...]] = field(default=None)
+
+    def clone(self, **changes) -> "SemanticTable":
+        """
+        Create a new SemanticTable instance with specified changes.
+        Pure function that returns a new instance without modifying self.
+        """
+        current_attrs = {
+            "name": self.name,
+            "base_tbl": self.base_tbl,
+            "dim_defs": self.dim_defs,
+            "base_measure_defs": self.base_measure_defs,
+            "calc_measure_defs": self.calc_measure_defs,
+            "group_dim_names": self.group_dim_names,
+        }
+        return SemanticTable(**(current_attrs | changes))
 
     @property
     def dims(self) -> list[str]:
         """Return list of dimension names defined on this semantic table."""
-        return list(self._dims.keys())
+        return [name for name, _ in self.dim_defs]
 
     @property
     def measures(self) -> list[str]:
         """Return list of measure names defined on this semantic table (both base and calculated)."""
-        return list(set(self._base_measures.keys()) | set(self._calc_measures.keys()))
+        base_names = {name for name, _ in self.base_measure_defs}
+        calc_names = {name for name, _ in self.calc_measure_defs}
+        return list(base_names | calc_names)
 
-    def with_dimensions(self, **defs):
-        # Resolve any deferred expressions to callables
-        resolved_defs = {}
-        for name, fn_or_expr in defs.items():
-            from ibis.common.deferred import Deferred
-            if isinstance(fn_or_expr, Deferred):
-                # Convert deferred to callable
-                resolved_defs[name] = lambda t, expr=fn_or_expr: expr.resolve(t)
-            else:
-                resolved_defs[name] = fn_or_expr
-        self._dims.update(resolved_defs)
-        return self
+    @property
+    def _dims(self) -> Dict[str, Callable]:
+        """Return dict view of dimension definitions (for test compatibility)."""
+        return _to_dict(self.dim_defs)
 
-    def with_measures(self, **defs):
-        known = set(self._base_measures) | set(self._calc_measures) | set(defs.keys())
-        scope = MeasureScope(self._base_tbl, known_measures=known)
+    @property
+    def _base_measures(self) -> Dict[str, Callable]:
+        """Return dict view of base measure definitions (for test compatibility)."""
+        return _to_dict(self.base_measure_defs)
+
+    @property
+    def _calc_measures(self) -> Dict[str, MeasureExpr]:
+        """Return dict view of calculated measure definitions (for test compatibility)."""
+        return _to_dict(self.calc_measure_defs)
+
+    def with_dimensions(self, **defs) -> "SemanticTable":
+        """
+        Define dimensions on the semantic table.
+        Supports both lambdas (lambda t: t.col.op()) and deferred expressions (_.col.op()).
+
+        Returns a new SemanticTable with added dimensions (immutable transformation).
+        """
+        from ibis.common.deferred import Deferred
+
+        # Convert deferred expressions to callables
+        resolved_defs = {
+            name: (lambda t, expr=fn_or_expr: expr.resolve(t))
+            if isinstance(fn_or_expr, Deferred)
+            else fn_or_expr
+            for name, fn_or_expr in defs.items()
+        }
+
+        # Merge with existing dimensions
+        current_dims = _to_dict(self.dim_defs)
+        current_dims.update(resolved_defs)
+
+        return self.clone(dim_defs=_make_immutable_dict(current_dims))
+
+    def with_measures(self, **defs) -> "SemanticTable":
+        """
+        Define measures on the semantic table.
+        Returns a new SemanticTable with added measures (immutable transformation).
+        """
+        current_base = _to_dict(self.base_measure_defs)
+        current_calc = _to_dict(self.calc_measure_defs)
+        known = set(current_base) | set(current_calc) | set(defs.keys())
+        scope = MeasureScope(self.base_tbl, known_measures=known)
+
+        new_base = current_base.copy()
+        new_calc = current_calc.copy()
+
         for name, fn_or_expr in defs.items():
             val = _resolve_expression(fn_or_expr, scope)
             if isinstance(val, (MeasureRef, AllOf, BinOp, int, float)):
-                self._calc_measures[name] = val
+                new_calc[name] = val
             else:
-                self._base_measures[name] = (
+                new_base[name] = (
                     lambda _fn=fn_or_expr: (lambda base_tbl: _resolve_expression(_fn, ColumnScope(base_tbl)))
                 )()
-        return self
+
+        return self.clone(
+            base_measure_defs=_make_immutable_dict(new_base),
+            calc_measure_defs=_make_immutable_dict(new_calc)
+        )
 
     def _join(self, other: "SemanticTable", cond, how: str) -> "SemanticTable":
-        joined_tbl = self._base_tbl.join(other._base_tbl, cond, how=how)
-        out = SemanticTable(joined_tbl, name=f"{self._name}_{how}_{other._name}")
+        """Pure function that creates a new joined semantic table."""
+        joined_tbl = self.base_tbl.join(other.base_tbl, cond, how=how)
 
-        # Prefix all dimensions and measures with table names to avoid conflicts
-        # This allows accessing them as table__dimension or table__measure
-        out._dims = {}
-        out._base_measures = {}
-        out._calc_measures = {}
+        # Build new dimension and measure dictionaries with prefixes
+        new_dims = {}
+        new_base_measures = {}
+        new_calc_measures = {}
 
-        # Add left table's fields with prefixes
-        if self._name:
-            for name, fn in self._dims.items():
-                out._dims[f"{self._name}__{name}"] = fn
-            for name, fn in self._base_measures.items():
-                out._base_measures[f"{self._name}__{name}"] = fn
-            for name, expr in self._calc_measures.items():
-                # Need to rename MeasureRef in calc_measures
-                out._calc_measures[f"{self._name}__{name}"] = self._rename_measure_refs(expr, self._name)
-        else:
-            # No prefix if table has no name
-            out._dims.update(self._dims)
-            out._base_measures.update(self._base_measures)
-            out._calc_measures.update(self._calc_measures)
+        # Helper to add fields with optional prefix
+        def add_with_prefix(source_defs, target_dict, table_name, rename_fn=None):
+            for name, value in _to_dict(source_defs).items():
+                prefixed_name = f"{table_name}__{name}" if table_name else name
+                target_dict[prefixed_name] = rename_fn(value, table_name) if rename_fn and table_name else value
 
-        # Add right table's fields with prefixes
-        if other._name:
-            for name, fn in other._dims.items():
-                out._dims[f"{other._name}__{name}"] = fn
-            for name, fn in other._base_measures.items():
-                out._base_measures[f"{other._name}__{name}"] = fn
-            for name, expr in other._calc_measures.items():
-                out._calc_measures[f"{other._name}__{name}"] = self._rename_measure_refs(expr, other._name)
-        else:
-            # No prefix if table has no name - may cause conflicts!
-            out._dims.update(other._dims)
-            out._base_measures.update(other._base_measures)
-            out._calc_measures.update(other._calc_measures)
+        # Add left table's fields
+        add_with_prefix(self.dim_defs, new_dims, self.name)
+        add_with_prefix(self.base_measure_defs, new_base_measures, self.name)
+        add_with_prefix(self.calc_measure_defs, new_calc_measures, self.name,
+                       lambda expr, prefix: self._rename_measure_refs(expr, prefix))
 
-        return out
+        # Add right table's fields
+        add_with_prefix(other.dim_defs, new_dims, other.name)
+        add_with_prefix(other.base_measure_defs, new_base_measures, other.name)
+        add_with_prefix(other.calc_measure_defs, new_calc_measures, other.name,
+                       lambda expr, prefix: self._rename_measure_refs(expr, prefix))
+
+        return SemanticTable(
+            name=f"{self.name}_{how}_{other.name}",
+            base_tbl=joined_tbl,
+            dim_defs=_make_immutable_dict(new_dims),
+            base_measure_defs=_make_immutable_dict(new_base_measures),
+            calc_measure_defs=_make_immutable_dict(new_calc_measures),
+        )
 
     def _rename_measure_refs(self, expr: MeasureExpr, prefix: str) -> MeasureExpr:
-        """Recursively rename MeasureRef names in calculated measure expressions."""
-        from .measure_nodes import MeasureRef, AllOf, BinOp
-
+        """Pure function that recursively renames MeasureRef names in calculated measure expressions."""
         if isinstance(expr, MeasureRef):
             return MeasureRef(f"{prefix}__{expr.name}")
         elif isinstance(expr, AllOf):
@@ -150,28 +219,20 @@ class SemanticTable:
     ) -> "SemanticTable":
         """
         Generic join on two semantic tables using a predicate or cross join.
+        Pure function returning new SemanticTable.
         """
-        if on is None:
-            cond = None
-        else:
-            # predicate receives table scopes for left and right
-            cond = on(ColumnScope(self._base_tbl), ColumnScope(other._base_tbl))
+        cond = on(ColumnScope(self.base_tbl), ColumnScope(other.base_tbl)) if on else None
         return self._join(other, cond, how=how)
 
     def filter(self, predicate: Callable[[Any], Any]) -> "SemanticTable":
         """
         Filter rows in the semantic table, returning a new SemanticTable with the same dimensions and measures.
         Supports both lambdas and Ibis deferred expressions.
+        Pure function - returns new instance.
         """
-        cond = _resolve_expression(predicate, ColumnScope(self._base_tbl))
-        filtered_tbl = self._base_tbl.filter(cond)
-
-        # Create new SemanticTable with filtered data but same semantic definitions
-        out = SemanticTable(filtered_tbl, name=self._name)
-        out._dims = self._dims.copy()
-        out._base_measures = self._base_measures.copy()
-        out._calc_measures = self._calc_measures.copy()
-        return out
+        cond = _resolve_expression(predicate, ColumnScope(self.base_tbl))
+        filtered_tbl = self.base_tbl.filter(cond)
+        return self.clone(base_tbl=filtered_tbl)
 
     def mutate(self, **defs: Callable[[Any], Any]) -> Any:
         """
@@ -182,180 +243,185 @@ class SemanticTable:
         This allows t.all() to work on aggregated results.
 
         Supports both lambdas (lambda t: t.col.sum()) and deferred expressions (_.col.sum()).
+
+        Pure function - does not modify self, returns Ibis expression.
         """
-        base = self._base_tbl
+        base_measures_dict = _to_dict(self.base_measure_defs)
+        calc_measures_dict = _to_dict(self.calc_measure_defs)
+
         # Check if we have any base measures - if not, this is likely a post-aggregation table
-        # In that case, treat column names as known measures for t.all() support
-        if not self._base_measures and not self._calc_measures:
+        if not base_measures_dict and not calc_measures_dict:
             # Post-aggregation: all columns are available, t.all() works on them
-            known_measures = set(base.columns)
+            known_measures = set(self.base_tbl.columns)
             post_agg = True
         else:
             # Pre-aggregation: use defined measures
-            known_measures = set(self._base_measures) | set(self._calc_measures)
+            known_measures = set(base_measures_dict) | set(calc_measures_dict)
             post_agg = False
 
-        scope = MeasureScope(base, known_measures=known_measures, post_aggregation=post_agg)
+        scope = MeasureScope(self.base_tbl, known_measures=known_measures, post_aggregation=post_agg)
         cols = {name: _resolve_expression(fn_or_expr, scope) for name, fn_or_expr in defs.items()}
-        return base.mutate(**cols)
+        return self.base_tbl.mutate(**cols)
 
     def order_by(self, *keys: Union[str, Any]) -> Any:
-        """
-        Order rows in the semantic table or expression.
-        """
-        return self._base_tbl.order_by(*keys)
+        """Order rows in the semantic table or expression. Pure function - returns Ibis expression."""
+        return self.base_tbl.order_by(*keys)
 
     def limit(self, n: int) -> Any:
-        """
-        Limit number of rows in the semantic table or expression.
-        """
-        return self._base_tbl.limit(n)
+        """Limit number of rows in the semantic table or expression. Pure function - returns Ibis expression."""
+        return self.base_tbl.limit(n)
 
     def to_ibis(self):
-        """
-        Get the underlying ibis table expression.
-        Useful for executing queries: .to_ibis().execute()
-        """
-        return self._base_tbl
+        """Get the underlying ibis table expression. Pure function - returns Ibis expression."""
+        return self.base_tbl
 
     def execute(self):
-        """
-        Execute the query and return results as a pandas DataFrame.
-        Internally converts to ibis and executes.
-        """
+        """Execute the query and return results as a pandas DataFrame."""
         return self.to_ibis().execute()
 
-    def join_one(
-        self, other: "SemanticTable", left_on: str, right_on: str
-    ) -> "SemanticTable":
-        cond = getattr(self._base_tbl, left_on) == getattr(other._base_tbl, right_on)
+    def join_one(self, other: "SemanticTable", left_on: str, right_on: str) -> "SemanticTable":
+        """Pure function for one-to-one join."""
+        cond = getattr(self.base_tbl, left_on) == getattr(other.base_tbl, right_on)
         return self._join(other, cond, how="inner")
 
-    def join_many(
-        self, other: "SemanticTable", left_on: str, right_on: str
-    ) -> "SemanticTable":
-        cond = getattr(self._base_tbl, left_on) == getattr(other._base_tbl, right_on)
+    def join_many(self, other: "SemanticTable", left_on: str, right_on: str) -> "SemanticTable":
+        """Pure function for one-to-many join."""
+        cond = getattr(self.base_tbl, left_on) == getattr(other.base_tbl, right_on)
         return self._join(other, cond, how="left")
 
     def join_cross(self, other: "SemanticTable") -> "SemanticTable":
+        """Pure function for cross join."""
         return self._join(other, cond=None, how="cross")
 
-    def group_by(self, *dims: str):
-        self._group_dims = list(dims)
-        return self
+    def group_by(self, *dims: str) -> "SemanticTable":
+        """Set grouping dimensions for aggregation. Pure function - returns new SemanticTable with group_dims set."""
+        return self.clone(group_dim_names=tuple(dims))
 
-    def aggregate(self, *measure_names: str, **aliased: str):
-        if not hasattr(self, "_group_dims"):
+    def aggregate(self, *measure_names: str, **aliased: str) -> "SemanticTable":
+        """
+        Aggregate measures by the grouped dimensions.
+        Pure function - returns new SemanticTable with aggregated results.
+        """
+        if self.group_dim_names is None:
             raise ValueError("Call .group_by(...) before .aggregate(...)")
 
-        # allow defining new measures inline via callables or deferred expressions (both positional and aliased)
-        base = self._materialize_base_with_dims()
-        inline_defs: dict[str, Callable] = {}
-        # positional callables/deferred: derive measure names from MeasureRef
-        from ibis.common.deferred import Deferred
+        base_measures_dict = _to_dict(self.base_measure_defs)
+        calc_measures_dict = _to_dict(self.calc_measure_defs)
 
-        for fn_or_expr in [m for m in measure_names if callable(m) or isinstance(m, Deferred)]:
-            val = _resolve_expression(
-                fn_or_expr,
-                MeasureScope(
-                    base,
-                    known_measures=set(self._base_measures) | set(self._calc_measures),
-                )
-            )
-            if not isinstance(val, MeasureRef):
-                raise TypeError(
-                    "aggregate() expects positional callables/deferred to return MeasureRef"
-                )
-            inline_defs[val.name] = fn_or_expr
-        # keyword callables/deferred - collect them first
-        for name, fn_or_expr in list(aliased.items()):
-            if callable(fn_or_expr) or isinstance(fn_or_expr, Deferred):
-                inline_defs[name] = fn_or_expr
+        # Process inline measure definitions (callables and deferred expressions)
+        inline_defs = self._process_inline_measures(
+            measure_names, aliased, base_measures_dict, calc_measures_dict
+        )
+
+        # Update measure dictionaries with inline definitions
+        new_base_measures = base_measures_dict.copy()
+        new_calc_measures = calc_measures_dict.copy()
 
         if inline_defs:
-            # Register inline measure definitions WITHOUT including the new names in scope
-            # This prevents issues when measures reference columns with same names
-            # Use MeasureScope so inline measure lambdas can access existing measures via MeasureRef
-            known = set(self._base_measures) | set(self._calc_measures)
-            for name, fn_or_expr in inline_defs.items():
-                val = _resolve_expression(fn_or_expr, MeasureScope(base, known_measures=known))
-                # Check if this is a calc measure (MeasureRef, AllOf, BinOp) or base measure (ibis expression)
-                if isinstance(val, (MeasureRef, AllOf, BinOp, int, float)):
-                    # This is a calculated measure - store as calc measure
-                    self._calc_measures[name] = val
-                else:
-                    # This is a direct ibis aggregation - store as base measure
-                    self._base_measures[name] = (
-                        lambda _fn=fn_or_expr: (lambda base_tbl: _resolve_expression(_fn, ColumnScope(base_tbl)))
-                    )()
-            # use only string names for aggregation specs
-            measure_names = tuple(inline_defs.keys())
-            aliased = {}
-
-        # only string measure names are supported in chainable DSL
-        if any(callable(m) or isinstance(m, Deferred) for m in measure_names) or any(
-            callable(f) or isinstance(f, Deferred) for f in aliased.values()
-        ):
-            raise ValueError(
-                "aggregate() only accepts string measure names in the chainable DSL"
+            measure_names, aliased = self._register_inline_measures(
+                inline_defs, new_base_measures, new_calc_measures,
+                measure_names, aliased, base_measures_dict, calc_measures_dict
             )
 
+        # Compile and execute aggregation
         select_measures = list(measure_names) + list(aliased.values())
         base = self._materialize_base_with_dims()
 
         grouped = compile_grouped_with_all(
             base_tbl=base,
-            by_cols=self._group_dims,
-            agg_specs=self._base_measures,
-            calc_specs=self._calc_measures,
+            by_cols=list(self.group_dim_names),
+            agg_specs=new_base_measures,
+            calc_specs=new_calc_measures,
         )
 
-        proj_cols = {d: grouped[d] for d in self._group_dims}
+        # Build projection with resolved column names
+        proj_cols = {d: grouped[d] for d in self.group_dim_names}
         for m in select_measures:
-            # Try to resolve measure name (handles both prefixed and short names)
             resolved_name = self._resolve_measure_name(m, grouped.columns)
-            if resolved_name != m:
-                # Short name was resolved to prefixed name - add as alias
-                proj_cols[m] = grouped[resolved_name].name(m)
-            else:
-                proj_cols[m] = grouped[m]
+            proj_cols[m] = grouped[resolved_name].name(m) if resolved_name != m else grouped[m]
         for alias, m in aliased.items():
             resolved_name = self._resolve_measure_name(m, grouped.columns)
             proj_cols[alias] = grouped[resolved_name]
-        # build the result table expression
+
         result = grouped.select(**proj_cols)
-        # wrap in SemanticTable to support further chainable DSL (e.g., mutate with t.all)
-        out = SemanticTable(result, name=self._name)
-        # DO NOT propagate semantic measure definitions - after aggregation,
-        # the measures have been materialized as columns, not semantic measures.
-        # This allows mutate() to work correctly with aggregated columns.
-        out._dims = self._dims.copy()
-        out._base_measures = {}
-        out._calc_measures = {}
-        return out
+
+        # Return new SemanticTable with materialized measures (not semantic definitions)
+        return SemanticTable(
+            name=self.name,
+            base_tbl=result,
+            dim_defs=self.dim_defs,
+            base_measure_defs=tuple(),  # Clear - measures now materialized as columns
+            calc_measure_defs=tuple(),
+        )
+
+    def _process_inline_measures(self, measure_names, aliased, base_measures_dict, calc_measures_dict):
+        """Extract and validate inline measure definitions from aggregate() arguments."""
+        from ibis.common.deferred import Deferred
+
+        inline_defs: dict[str, Callable] = {}
+        base = self._materialize_base_with_dims()
+
+        # Process positional callables/deferred - derive names from MeasureRef
+        for fn_or_expr in [m for m in measure_names if callable(m) or isinstance(m, Deferred)]:
+            val = _resolve_expression(
+                fn_or_expr,
+                MeasureScope(base, known_measures=set(base_measures_dict) | set(calc_measures_dict))
+            )
+            if not isinstance(val, MeasureRef):
+                raise TypeError("aggregate() expects positional callables/deferred to return MeasureRef")
+            inline_defs[val.name] = fn_or_expr
+
+        # Process keyword callables/deferred
+        for name, fn_or_expr in aliased.items():
+            if callable(fn_or_expr) or isinstance(fn_or_expr, Deferred):
+                inline_defs[name] = fn_or_expr
+
+        return inline_defs
+
+    def _register_inline_measures(self, inline_defs, new_base_measures, new_calc_measures,
+                                  measure_names, aliased, base_measures_dict, calc_measures_dict):
+        """Register inline measure definitions and update measure name lists."""
+        from ibis.common.deferred import Deferred
+
+        base = self._materialize_base_with_dims()
+        known = set(base_measures_dict) | set(calc_measures_dict)
+
+        for name, fn_or_expr in inline_defs.items():
+            val = _resolve_expression(fn_or_expr, MeasureScope(base, known_measures=known))
+            if isinstance(val, (MeasureRef, AllOf, BinOp, int, float)):
+                new_calc_measures[name] = val
+            else:
+                new_base_measures[name] = (
+                    lambda _fn=fn_or_expr: (lambda base_tbl: _resolve_expression(_fn, ColumnScope(base_tbl)))
+                )()
+
+        # Update measure_names and aliased to only include strings
+        measure_names = tuple([m for m in measure_names if isinstance(m, str)]) + tuple(inline_defs.keys())
+        aliased = {k: v for k, v in aliased.items() if not callable(v) and not isinstance(v, Deferred)}
+
+        return measure_names, aliased
 
     def _resolve_measure_name(self, name: str, available_columns: list[str]) -> str:
-        """Resolve a measure name to its actual column name.
-
-        Handles both full prefixed names (table__measure) and short names (measure).
-        For short names, finds the first matching prefixed column.
         """
-        # 1. Try exact match first
+        Pure function to resolve a measure name to its actual column name.
+        Handles both full prefixed names (table__measure) and short names (measure).
+        """
         if name in available_columns:
             return name
-        # 2. Try to find prefixed version (table__name format)
         for col in available_columns:
             if col.endswith(f"__{name}"):
                 return col
-        # 3. If not found, return original (will likely cause error downstream)
         return name
 
     def _materialize_base_with_dims(self):
-        if not self._dims:
-            return self._base_tbl
-        cols = {name: fn(self._base_tbl) for name, fn in self._dims.items()}
-        return self._base_tbl.mutate(**cols)
+        """Pure function to materialize dimensions on the base table. Returns Ibis expression."""
+        if not self.dim_defs:
+            return self.base_tbl
+        dims_dict = _to_dict(self.dim_defs)
+        cols = {name: fn(self.base_tbl) for name, fn in dims_dict.items()}
+        return self.base_tbl.mutate(**cols)
 
 
 def to_semantic_table(ibis_table, name: Optional[str] = None) -> SemanticTable:
-    return SemanticTable(ibis_table, name=name)
+    """Factory function to create a SemanticTable from an Ibis table."""
+    return SemanticTable(name=name, base_tbl=ibis_table)

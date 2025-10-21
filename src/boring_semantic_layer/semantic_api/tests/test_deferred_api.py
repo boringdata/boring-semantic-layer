@@ -275,3 +275,66 @@ def test_deferred_bracket_notation_for_measures():
 
     df = flights_st.group_by("carrier").aggregate("flight_count", "double").execute()
     assert all(df.double == df.flight_count * 2)
+
+
+def test_deferred_comprehensive_workflow():
+    """
+    Comprehensive test using deferred API in ALL applicable methods in a single workflow:
+    - with_dimensions() ✓
+    - with_measures() ✓
+    - filter() ✓
+    - aggregate() with inline measures ✓
+
+    This verifies deferred works everywhere applicable.
+    Note: mutate() with deferred is tested separately in test_deferred_in_mutate()
+    """
+    con = ibis.duckdb.connect(":memory:")
+    flights = pd.DataFrame({
+        "carrier": ["AA", "AA", "UA", "UA", "DL"],
+        "distance": [100, 200, 300, 400, 150],
+        "delay": [10, 20, 30, 40, 5],
+        "dep_time": pd.date_range("2024-01-01", periods=5),
+    })
+    f_tbl = con.create_table("flights", flights)
+
+    # Use deferred in with_dimensions()
+    flights_st = (
+        to_semantic_table(f_tbl, "flights")
+        .with_dimensions(
+            dep_month=_.dep_time.truncate("M"),  # Deferred!
+            dep_year=_.dep_time.truncate("Y"),   # Deferred!
+        )
+        # Use deferred in with_measures()
+        .with_measures(
+            flight_count=_.count(),                    # Deferred!
+            total_distance=_.distance.sum(),           # Deferred!
+            avg_delay=_.delay.mean(),                  # Deferred!
+        )
+        # Use deferred to define calculated measures
+        .with_measures(
+            avg_distance_per_flight=_.total_distance / _.flight_count,  # Deferred measure refs!
+        )
+        # Use deferred in filter()
+        .filter(_.distance > 100)  # Deferred! (filters out the 100 distance flight)
+    )
+
+    # Use deferred in aggregate() inline
+    df = (
+        flights_st
+        .group_by("carrier")
+        .aggregate(
+            "flight_count",
+            "total_distance",
+            "avg_distance_per_flight",
+            # Define new measure inline with deferred
+            long_flights=(_.distance > 200).sum(),  # Deferred! (count flights > 200)
+        )
+        .execute()
+    )
+
+    # Verify results
+    assert len(df) == 3  # AA, UA, DL (after filter)
+    assert df.flight_count.sum() == 4  # 5 flights - 1 filtered = 4
+    assert df.total_distance.sum() == 1050  # 200+300+400+150 (100 filtered out)
+    # AA has 1 flight (200) - 0 long, UA has 2 flights (300, 400) - 2 long, DL has 1 flight (150) - 0 long
+    assert df.long_flights.sum() == 2
