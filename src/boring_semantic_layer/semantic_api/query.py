@@ -220,7 +220,7 @@ def build_query(
     using method chaining.
 
     Args:
-        semantic_table: The base SemanticTable to build upon
+        semantic_table: The base SemanticTable to query
         dimensions: List of dimension names to include
         measures: List of measure names to include
         filters: List of filters (dict, str, callable, or Filter)
