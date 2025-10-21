@@ -84,11 +84,13 @@ class SemanticTable:
         if not self._base_measures and not self._calc_measures:
             # Post-aggregation: all columns are available, t.all() works on them
             known_measures = set(base.columns)
+            post_agg = True
         else:
             # Pre-aggregation: use defined measures
             known_measures = set(self._base_measures) | set(self._calc_measures)
+            post_agg = False
 
-        scope = MeasureScope(base, known_measures=known_measures)
+        scope = MeasureScope(base, known_measures=known_measures, post_aggregation=post_agg)
         cols = {name: fn(scope) for name, fn in defs.items()}
         return base.mutate(**cols)
 

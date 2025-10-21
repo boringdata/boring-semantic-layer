@@ -8,19 +8,43 @@ class MeasureScope:
     - Unknown attrs fall through to ibis columns (so you can write t.col.sum()).
     - Known measure names return MeasureRef (so you can write t.case_count).
     - t.all(t.<measure>) yields AllOf(MeasureRef(...)).
-    - t["column"] provides bracket-notation access to ibis columns.
+    - t["column"] provides bracket-notation access to measures/columns.
+
+    Args:
+        post_aggregation: If True, bracket notation returns ibis columns instead of MeasureRef.
+                         Used in .mutate() after .aggregate() where measures are materialized.
     """
-    def __init__(self, ibis_table, known_measures: Iterable[str]):
+    def __init__(self, ibis_table, known_measures: Iterable[str], post_aggregation: bool = False):
         self._tbl = ibis_table
         self._known = set(known_measures)
+        self._post_agg = post_aggregation
 
     def __getattr__(self, name: str):
+        # In post-aggregation context, always return ibis columns (measures are materialized)
+        if self._post_agg:
+            return getattr(self._tbl, name)
+        # In pre-aggregation context, return MeasureRef for known measures
         if name in self._known:
             return MeasureRef(name)
         return getattr(self._tbl, name)
 
     def __getitem__(self, name: str):
-        """Bracket notation access to columns (returns ibis expression)."""
+        """Bracket notation access to measures and columns.
+
+        In pre-aggregation context (post_aggregation=False):
+            Returns MeasureRef for known measures, otherwise ibis columns.
+            This makes t["measure_name"] and t.measure_name behave consistently.
+
+        In post-aggregation context (post_aggregation=True):
+            Always returns ibis columns directly, since measures are materialized.
+            Used in .mutate() after .aggregate().
+        """
+        if self._post_agg:
+            # Post-aggregation: always return ibis column
+            return self._tbl[name]
+        # Pre-aggregation: return MeasureRef for known measures
+        if name in self._known:
+            return MeasureRef(name)
         return self._tbl[name]
 
     def all(self, ref):
@@ -50,3 +74,6 @@ class ColumnScope:
         self._tbl = ibis_table
     def __getattr__(self, name: str):
         return getattr(self._tbl, name)
+    def __getitem__(self, name: str):
+        """Bracket notation access to columns."""
+        return self._tbl[name]
