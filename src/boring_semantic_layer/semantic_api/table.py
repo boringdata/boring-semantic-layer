@@ -35,10 +35,60 @@ class SemanticTable:
     def _join(self, other: "SemanticTable", cond, how: str) -> "SemanticTable":
         joined_tbl = self._base_tbl.join(other._base_tbl, cond, how=how)
         out = SemanticTable(joined_tbl, name=f"{self._name}_{how}_{other._name}")
-        out._dims = {**self._dims, **other._dims}
-        out._base_measures = {**self._base_measures, **other._base_measures}
-        out._calc_measures = {**self._calc_measures, **other._calc_measures}
+
+        # Prefix all dimensions and measures with table names to avoid conflicts
+        # This allows accessing them as table__dimension or table__measure
+        out._dims = {}
+        out._base_measures = {}
+        out._calc_measures = {}
+
+        # Add left table's fields with prefixes
+        if self._name:
+            for name, fn in self._dims.items():
+                out._dims[f"{self._name}__{name}"] = fn
+            for name, fn in self._base_measures.items():
+                out._base_measures[f"{self._name}__{name}"] = fn
+            for name, expr in self._calc_measures.items():
+                # Need to rename MeasureRef in calc_measures
+                out._calc_measures[f"{self._name}__{name}"] = self._rename_measure_refs(expr, self._name)
+        else:
+            # No prefix if table has no name
+            out._dims.update(self._dims)
+            out._base_measures.update(self._base_measures)
+            out._calc_measures.update(self._calc_measures)
+
+        # Add right table's fields with prefixes
+        if other._name:
+            for name, fn in other._dims.items():
+                out._dims[f"{other._name}__{name}"] = fn
+            for name, fn in other._base_measures.items():
+                out._base_measures[f"{other._name}__{name}"] = fn
+            for name, expr in other._calc_measures.items():
+                out._calc_measures[f"{other._name}__{name}"] = self._rename_measure_refs(expr, other._name)
+        else:
+            # No prefix if table has no name - may cause conflicts!
+            out._dims.update(other._dims)
+            out._base_measures.update(other._base_measures)
+            out._calc_measures.update(other._calc_measures)
+
         return out
+
+    def _rename_measure_refs(self, expr: MeasureExpr, prefix: str) -> MeasureExpr:
+        """Recursively rename MeasureRef names in calculated measure expressions."""
+        from .measure_nodes import MeasureRef, AllOf, BinOp
+
+        if isinstance(expr, MeasureRef):
+            return MeasureRef(f"{prefix}__{expr.name}")
+        elif isinstance(expr, AllOf):
+            return AllOf(self._rename_measure_refs(expr.ref, prefix))
+        elif isinstance(expr, BinOp):
+            return BinOp(
+                expr.op,
+                self._rename_measure_refs(expr.left, prefix) if isinstance(expr.left, (MeasureRef, AllOf, BinOp)) else expr.left,
+                self._rename_measure_refs(expr.right, prefix) if isinstance(expr.right, (MeasureRef, AllOf, BinOp)) else expr.right,
+            )
+        else:
+            return expr
 
     def join(
         self,
@@ -200,11 +250,18 @@ class SemanticTable:
 
         proj_cols = {d: grouped[d] for d in self._group_dims}
         for m in select_measures:
-            proj_cols[m] = grouped[m]
+            # Try to resolve measure name (handles both prefixed and short names)
+            resolved_name = self._resolve_measure_name(m, grouped.columns)
+            if resolved_name != m:
+                # Short name was resolved to prefixed name - add as alias
+                proj_cols[m] = grouped[resolved_name].name(m)
+            else:
+                proj_cols[m] = grouped[m]
         for alias, m in aliased.items():
-            proj_cols[alias] = grouped[m]
+            resolved_name = self._resolve_measure_name(m, grouped.columns)
+            proj_cols[alias] = grouped[resolved_name]
         # build the result table expression
-        result = grouped.select(*proj_cols.keys())
+        result = grouped.select(**proj_cols)
         # wrap in SemanticTable to support further chainable DSL (e.g., mutate with t.all)
         out = SemanticTable(result, name=self._name)
         # DO NOT propagate semantic measure definitions - after aggregation,
@@ -214,6 +271,22 @@ class SemanticTable:
         out._base_measures = {}
         out._calc_measures = {}
         return out
+
+    def _resolve_measure_name(self, name: str, available_columns: list[str]) -> str:
+        """Resolve a measure name to its actual column name.
+
+        Handles both full prefixed names (table__measure) and short names (measure).
+        For short names, finds the first matching prefixed column.
+        """
+        # 1. Try exact match first
+        if name in available_columns:
+            return name
+        # 2. Try to find prefixed version (table__name format)
+        for col in available_columns:
+            if col.endswith(f"__{name}"):
+                return col
+        # 3. If not found, return original (will likely cause error downstream)
+        return name
 
     def _materialize_base_with_dims(self):
         if not self._dims:

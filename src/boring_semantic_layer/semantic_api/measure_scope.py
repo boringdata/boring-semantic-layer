@@ -24,8 +24,14 @@ class MeasureScope:
         if self._post_agg:
             return getattr(self._tbl, name)
         # In pre-aggregation context, return MeasureRef for known measures
+        # 1. Try exact match first
         if name in self._known:
             return MeasureRef(name)
+        # 2. Try to find prefixed version (table__name format)
+        for known_name in self._known:
+            if known_name.endswith(f"__{name}"):
+                return MeasureRef(known_name)
+        # 3. Fall back to ibis column
         return getattr(self._tbl, name)
 
     def __getitem__(self, name: str):
@@ -34,6 +40,7 @@ class MeasureScope:
         In pre-aggregation context (post_aggregation=False):
             Returns MeasureRef for known measures, otherwise ibis columns.
             This makes t["measure_name"] and t.measure_name behave consistently.
+            Supports both full prefixed names (table__measure) and short names (measure).
 
         In post-aggregation context (post_aggregation=True):
             Always returns ibis columns directly, since measures are materialized.
@@ -43,8 +50,14 @@ class MeasureScope:
             # Post-aggregation: always return ibis column
             return self._tbl[name]
         # Pre-aggregation: return MeasureRef for known measures
+        # 1. Try exact match first
         if name in self._known:
             return MeasureRef(name)
+        # 2. Try to find prefixed version (table__name format)
+        for known_name in self._known:
+            if known_name.endswith(f"__{name}"):
+                return MeasureRef(known_name)
+        # 3. Fall back to ibis column
         return self._tbl[name]
 
     def all(self, ref):
