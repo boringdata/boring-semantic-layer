@@ -102,7 +102,9 @@ class SemanticTable:
                 out._base_measures[f"{self._name}__{name}"] = fn
             for name, expr in self._calc_measures.items():
                 # Need to rename MeasureRef in calc_measures
-                out._calc_measures[f"{self._name}__{name}"] = self._rename_measure_refs(expr, self._name)
+                out._calc_measures[f"{self._name}__{name}"] = self._rename_measure_refs(
+                    expr, self._name
+                )
         else:
             # No prefix if table has no name
             out._dims.update(self._dims)
@@ -116,7 +118,9 @@ class SemanticTable:
             for name, fn in other._base_measures.items():
                 out._base_measures[f"{other._name}__{name}"] = fn
             for name, expr in other._calc_measures.items():
-                out._calc_measures[f"{other._name}__{name}"] = self._rename_measure_refs(expr, other._name)
+                out._calc_measures[f"{other._name}__{name}"] = (
+                    self._rename_measure_refs(expr, other._name)
+                )
         else:
             # No prefix if table has no name - may cause conflicts!
             out._dims.update(other._dims)
@@ -136,8 +140,12 @@ class SemanticTable:
         elif isinstance(expr, BinOp):
             return BinOp(
                 expr.op,
-                self._rename_measure_refs(expr.left, prefix) if isinstance(expr.left, (MeasureRef, AllOf, BinOp)) else expr.left,
-                self._rename_measure_refs(expr.right, prefix) if isinstance(expr.right, (MeasureRef, AllOf, BinOp)) else expr.right,
+                self._rename_measure_refs(expr.left, prefix)
+                if isinstance(expr.left, (MeasureRef, AllOf, BinOp))
+                else expr.left,
+                self._rename_measure_refs(expr.right, prefix)
+                if isinstance(expr.right, (MeasureRef, AllOf, BinOp))
+                else expr.right,
             )
         else:
             return expr
@@ -192,7 +200,9 @@ class SemanticTable:
             known_measures = set(self._base_measures) | set(self._calc_measures)
             post_agg = False
 
-        scope = MeasureScope(base, known_measures=known_measures, post_aggregation=post_agg)
+        scope = MeasureScope(
+            base, known_measures=known_measures, post_aggregation=post_agg
+        )
         cols = {name: fn(scope) for name, fn in defs.items()}
         return base.mutate(**cols)
 
@@ -351,6 +361,34 @@ class SemanticTable:
             return self._base_tbl
         cols = {name: fn(self._base_tbl) for name, fn in self._dims.items()}
         return self._base_tbl.mutate(**cols)
+
+    def query(
+        self,
+        dimensions: Optional[list[str]] = None,
+        measures: Optional[list[str]] = None,
+        filters: Optional[list[Union[dict, str, Callable]]] = None,
+        order_by: Optional[list[tuple[str, str]]] = None,
+        limit: Optional[int] = None,
+        time_range: Optional[dict[str, str]] = None,
+        time_grain: Optional[str] = None,
+    ) -> "SemanticTable":
+        """
+        Query using parameter-based interface (alternative to method chaining).
+
+        Filters support JSON dicts, callables, or strings. Returns a new SemanticTable.
+        """
+        from .query import build_query
+
+        return build_query(
+            semantic_table=self,
+            dimensions=dimensions,
+            measures=measures,
+            filters=filters,
+            order_by=order_by,
+            limit=limit,
+            time_range=time_range,
+            time_grain=time_grain,
+        )
 
 
 def to_semantic_table(ibis_table, name: Optional[str] = None) -> SemanticTable:
