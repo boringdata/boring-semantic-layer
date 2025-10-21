@@ -208,14 +208,12 @@ def build_query(
     filters: Optional[List[Union[Dict[str, Any], str, Callable]]] = None,
     order_by: Optional[List[Tuple[str, str]]] = None,
     limit: Optional[int] = None,
-    time_range: Optional[Dict[str, str]] = None,
-    time_grain: Optional[Union[str, TimeGrain]] = None,
 ) -> "SemanticTable":
     """
     Build a SemanticTable from query parameters.
 
-    This function bridges the gap between the old QueryExpr interface (used by MCP)
-    and the new SemanticTable method chaining API.
+    This function provides a convenient way to query semantic tables without
+    using method chaining.
 
     Args:
         semantic_table: The base SemanticTable to build upon
@@ -224,8 +222,6 @@ def build_query(
         filters: List of filters (dict, str, callable, or Filter)
         order_by: List of (field, direction) tuples for ordering
         limit: Maximum number of rows to return
-        time_range: Dict with 'start' and 'end' keys for time filtering
-        time_grain: The time grain to use for time dimensions
 
     Returns:
         SemanticTable: A properly configured semantic table
@@ -235,14 +231,11 @@ def build_query(
     # semantic_table is always a SemanticTable instance
     expr = semantic_table
 
-    # Find time dimensions using the semantic table's dimensions
-    time_dimensions = {}
-    if hasattr(expr, '_dims'):
-        # Check each dimension to see if it's a time dimension
-        # This is a simple heuristic - could be improved with explicit time dimension metadata
-        for dim_name in expr._dims.keys():
-            if 'date' in dim_name.lower() or 'time' in dim_name.lower() or 'created' in dim_name.lower():
-                time_dimensions[dim_name] = expr._dims[dim_name]
+    # Start with the base table
+    result = semantic_table
+
+    if dimensions is None:
+        dimensions = []
 
     # Step 1: Apply filters first (before grouping/aggregation)
     if filters:
@@ -264,45 +257,7 @@ def build_query(
             else:
                 raise ValueError(f"Unsupported filter type: {type(filter_spec)}")
 
-    # Step 2: Apply time range filter if specified
-    if time_range and time_dim_names:
-        start_date = time_range.get("start")
-        end_date = time_range.get("end")
-
-        # Use the first time dimension found
-        primary_time_dim = time_dim_names[0]
-
-        # Apply time range filters using the primary time dimension
-        if start_date:
-            result = result.filter(
-                lambda t, td=primary_time_dim: getattr(t, td) >= start_date
-            )
-        if end_date:
-            result = result.filter(
-                lambda t, td=primary_time_dim: getattr(t, td) <= end_date
-            )
-
-    # Step 3: Handle time grain transformation by creating new dimensions
-    if time_grain and time_dim_names and time_grain in TIME_GRAIN_TRANSFORMATIONS:
-        time_transform = TIME_GRAIN_TRANSFORMATIONS[time_grain]
-
-        # Apply time grain transformation to all time dimensions
-        for time_dim_name in time_dim_names:
-            time_grain_dim_name = f"{time_dim_name}_by_{time_grain.lower()}"
-
-            # Add the time grain dimension to the semantic table
-            result = result.with_dimensions(
-                **{
-                    time_grain_dim_name: lambda t,
-                    td=time_dim_name,
-                    transform=time_transform: transform(getattr(t, td))
-                }
-            )
-
-            # Add the time grain dimension to the dimensions list
-            dimensions.append(time_grain_dim_name)
-
-    # Step 4: Group by dimensions and aggregate
+    # Step 2: Group by dimensions and aggregate
     if len(dimensions) > 0:
         result = result.group_by(*dimensions)
 
