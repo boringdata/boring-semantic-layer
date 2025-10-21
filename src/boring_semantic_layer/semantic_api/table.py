@@ -219,13 +219,19 @@ class SemanticTable:
         if inline_defs:
             # Register inline measure definitions WITHOUT including the new names in scope
             # This prevents issues when measures reference columns with same names
-            # Use ColumnScope so inline measure lambdas access actual columns, not MeasureRefs
+            # Use MeasureScope so inline measure lambdas can access existing measures via MeasureRef
+            known = set(self._base_measures) | set(self._calc_measures)
             for name, fn in inline_defs.items():
-                val = fn(ColumnScope(base))
-                # All inline aggregate measures should be base measures (direct ibis aggs)
-                self._base_measures[name] = (
-                    lambda _fn=fn: (lambda base_tbl: _fn(ColumnScope(base_tbl)))
-                )()
+                val = fn(MeasureScope(base, known_measures=known))
+                # Check if this is a MeasureRef (calculated measure) or ibis expression (base measure)
+                if isinstance(val, MeasureRef):
+                    # This is a reference to an existing measure - store as calc measure
+                    self._calc_measures[name] = val
+                else:
+                    # This is a direct ibis aggregation - store as base measure
+                    self._base_measures[name] = (
+                        lambda _fn=fn: (lambda base_tbl: _fn(ColumnScope(base_tbl)))
+                    )()
             # use only string names for aggregation specs
             measure_names = tuple(inline_defs.keys())
             aliased = {}

@@ -5,7 +5,6 @@ Test bracket-style filtering for joined and aggregated semantic tables.
 
 import pytest
 
-pytest.skip("stale dimension tests currently unsupported", allow_module_level=True)
 import pandas as pd
 import ibis
 from boring_semantic_layer.semantic_api import to_semantic_table
