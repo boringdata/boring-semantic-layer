@@ -56,12 +56,17 @@ query_1 = (
     )
     .mutate(
         **{
-            # Users that Ordered Count: grand total via t.all()
-            "Users that Ordered Count": lambda t: t.all(t["Users in Cohort that Ordered"]),
-            # Percent of cohort that ordered: cohort users / grand total
+            # Users that Ordered Count: total per Order Month (not grand total)
+            # In Malloy's nested query, this is scoped to each Order Month group
+            "Users that Ordered Count": lambda t: t["Users in Cohort that Ordered"].sum().over(
+                ibis.window(group_by="Order Month")
+            ),
+            # Percent of cohort that ordered: cohort users / total for that month
             "Percent of cohort that ordered": lambda t: (
                 t["Users in Cohort that Ordered"]
-                / t.all(t["Users in Cohort that Ordered"])
+                / t["Users in Cohort that Ordered"].sum().over(
+                    ibis.window(group_by="Order Month")
+                )
             ),
             # Convert User Signup Cohort to date string to match Malloy format
             "User Signup Cohort": lambda t: t["User Signup Cohort"].date().cast(str),
@@ -92,10 +97,15 @@ query_2 = (
     )
     .mutate(
         **{
-            # Total Sales: grand total via t.all()
-            "Total Sales": lambda t: t.all(t.cohort_sales),
-            # Cohort as Percent of Sales: this cohort's sales / grand total
-            "Cohort as Percent of Sales": lambda t: t.cohort_sales / t.all(t.cohort_sales),
+            # Total Sales: total per Order Month (not grand total)
+            # In Malloy's nested query, this is scoped to each Order Month group
+            "Total Sales": lambda t: t.cohort_sales.sum().over(
+                ibis.window(group_by="Order Month")
+            ),
+            # Cohort as Percent of Sales: this cohort's sales / total for that month
+            "Cohort as Percent of Sales": lambda t: t.cohort_sales / t.cohort_sales.sum().over(
+                ibis.window(group_by="Order Month")
+            ),
             # Convert User Signup Cohort to date string to match Malloy format
             "User Signup Cohort": lambda t: t["User Signup Cohort"].date().cast(str),
         }

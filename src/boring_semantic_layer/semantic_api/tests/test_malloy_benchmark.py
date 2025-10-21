@@ -1,5 +1,4 @@
 import pytest
-pytest.skip("Malloy benchmark tests currently unsupported", allow_module_level=True)
 from pathlib import Path
 import malloy
 from malloy.data.duckdb import DuckDbConnection
@@ -44,16 +43,26 @@ sys.path.append(str(BASE_PATH))
 
 
 async def run_malloy_query(query_file: str, query_name: str):
-    with malloy.Runtime() as runtime:
-        runtime.add_connection(DuckDbConnection(home_dir="."))
+    # Save original sys.argv to avoid conflicts with malloy's absl flags
+    import sys
+    original_argv = sys.argv.copy()
+    try:
+        # Set sys.argv to just the script name to avoid pytest flag conflicts
+        sys.argv = [sys.argv[0]]
 
-        data = await runtime.load_file(BASE_PATH / query_file).run(
-            named_query=query_name
-        )
+        with malloy.Runtime() as runtime:
+            runtime.add_connection(DuckDbConnection(home_dir="."))
 
-        df = data.to_dataframe()
+            data = await runtime.load_file(BASE_PATH / query_file).run(
+                named_query=query_name
+            )
 
-    return df
+            df = data.to_dataframe()
+
+        return df
+    finally:
+        # Restore original sys.argv
+        sys.argv = original_argv
 
 
 def _flatten_nested_malloy_result(df_malloy, columns_to_flatten: list[str]):
