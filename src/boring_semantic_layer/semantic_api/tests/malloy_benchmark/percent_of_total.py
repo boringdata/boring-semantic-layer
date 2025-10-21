@@ -1,5 +1,5 @@
 import ibis
-from boring_semantic_layer.semantic_api.api import to_semantic_table
+from boring_semantic_layer.semantic_api import to_semantic_table
 
 con = ibis.duckdb.connect()
 
@@ -31,11 +31,11 @@ flights_st = to_semantic_table(flights_with_carriers).with_measures(
 #     limit: 2
 # }
 query_1 = (
-    flights_st.group_by("nickname")  # carriers.nickname from join
+    flights_st.group_by("nickname")
     .aggregate(flight_count=lambda t: t.count())
     .mutate(
-        # all_flights computes the total across all groups (equivalent to Malloy's all())
-        all_flights=lambda t: t.flight_count.sum().over()
+        # all_flights: grand total via t.all()
+        all_flights=lambda t: t.all(t.flight_count)
     )
     .order_by(ibis.desc("flight_count"))
     .limit(2)
@@ -53,7 +53,9 @@ query_1 = (
 query_2 = (
     flights_st.group_by("nickname")
     .aggregate(flight_count=lambda t: t.count())
-    .mutate(percent_of_flights=lambda t: t.flight_count / t.flight_count.sum().over())
+    .mutate(
+        percent_of_flights=lambda t: t.flight_count / t.all(t.flight_count)
+    )
     .order_by(ibis.desc("flight_count"))
     .limit(5)
 )

@@ -1,24 +1,6 @@
-from .semantic_model import SemanticModel
-from .semantic_model import Join, Filter, QueryExpr, DimensionSpec, MeasureSpec
+"""Boring Semantic Layer core package."""
 
-__all__ = [
-    "SemanticModel",
-    "Join",
-    "Filter",
-    "QueryExpr",
-    "DimensionSpec",
-    "MeasureSpec",
-]
-
-# Import MCP functionality from separate module if available
-try:
-    from .mcp import MCPSemanticModel  # noqa: F401
-
-    _MCP_AVAILABLE = True
-except ImportError:
-    _MCP_AVAILABLE = False
-
-__all__.append("MCPSemanticModel")
+__all__ = []
 
 
 def __getattr__(name):

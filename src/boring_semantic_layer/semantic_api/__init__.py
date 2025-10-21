@@ -6,25 +6,18 @@ Semantic API layer on top of external ibis.
 from . import lower  # noqa: F401
 
 # Main API exports
-from .api import (
+from .table import (
     to_semantic_table,
-    with_dimensions,
-    with_measures,
-    SemanticTableExpr,
+    SemanticTable,
 )
-
 from .ops import (
     Dimension,
     Measure,
-    SemanticTable,
 )
 
 __all__ = [
     "to_semantic_table",
-    "with_dimensions",
-    "with_measures",
-    "SemanticTableExpr",
+    "SemanticTable",
     "Dimension",
     "Measure",
-    "SemanticTable",
 ]

@@ -1,5 +1,5 @@
 import ibis
-from boring_semantic_layer.semantic_api.api import to_semantic_table
+from boring_semantic_layer.semantic_api import to_semantic_table
 
 con = ibis.duckdb.connect()
 

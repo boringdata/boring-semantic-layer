@@ -1,0 +1,224 @@
+from __future__ import annotations
+from typing import Any, Callable, Dict, Optional, Union
+
+
+from .measure_scope import MeasureScope, ColumnScope
+from .measure_nodes import MeasureRef, AllOf, BinOp, MeasureExpr
+from .compile_all import compile_grouped_with_all
+
+
+class SemanticTable:
+    def __init__(self, ibis_table, name: str):
+        self._name = name
+        self._base_tbl = ibis_table
+        self._dims: Dict[str, callable] = {}
+        self._base_measures: Dict[str, callable] = {}
+        self._calc_measures: Dict[str, MeasureExpr] = {}
+
+    def with_dimensions(self, **defs):
+        self._dims.update(defs)
+        return self
+
+    def with_measures(self, **defs):
+        known = set(self._base_measures) | set(self._calc_measures) | set(defs.keys())
+        scope = MeasureScope(self._base_tbl, known_measures=known)
+        for name, fn in defs.items():
+            val = fn(scope)
+            if isinstance(val, (MeasureRef, AllOf, BinOp, int, float)):
+                self._calc_measures[name] = val
+            else:
+                self._base_measures[name] = (
+                    lambda _fn=fn: (lambda base_tbl: _fn(ColumnScope(base_tbl)))
+                )()
+        return self
+
+    def _join(self, other: "SemanticTable", cond, how: str) -> "SemanticTable":
+        joined_tbl = self._base_tbl.join(other._base_tbl, cond, how=how)
+        out = SemanticTable(joined_tbl, name=f"{self._name}_{how}_{other._name}")
+        out._dims = {**self._dims, **other._dims}
+        out._base_measures = {**self._base_measures, **other._base_measures}
+        out._calc_measures = {**self._calc_measures, **other._calc_measures}
+        return out
+
+    def join(
+        self,
+        other: "SemanticTable",
+        on: Optional[Callable[[Any, Any], Any]] = None,
+        how: str = "inner",
+    ) -> "SemanticTable":
+        """
+        Generic join on two semantic tables using a predicate or cross join.
+        """
+        if on is None:
+            cond = None
+        else:
+            # predicate receives table scopes for left and right
+            cond = on(ColumnScope(self._base_tbl), ColumnScope(other._base_tbl))
+        return self._join(other, cond, how=how)
+
+    def filter(self, predicate: Callable[[Any], Any]) -> "SemanticTable":
+        """
+        Filter rows in the semantic table, returning a new SemanticTable with the same dimensions and measures.
+        """
+        cond = predicate(ColumnScope(self._base_tbl))
+        filtered_tbl = self._base_tbl.filter(cond)
+
+        # Create new SemanticTable with filtered data but same semantic definitions
+        out = SemanticTable(filtered_tbl, name=self._name)
+        out._dims = self._dims.copy()
+        out._base_measures = self._base_measures.copy()
+        out._calc_measures = self._calc_measures.copy()
+        return out
+
+    def mutate(self, **defs: Callable[[Any], Any]) -> Any:
+        """
+        Add or modify columns in the semantic table using measure-based lambdas.
+
+        For post-aggregation tables (where measures have been materialized as columns),
+        use MeasureScope with only the aggregated column names as known measures.
+        This allows t.all() to work on aggregated results.
+        """
+        base = self._base_tbl
+        # Check if we have any base measures - if not, this is likely a post-aggregation table
+        # In that case, treat column names as known measures for t.all() support
+        if not self._base_measures and not self._calc_measures:
+            # Post-aggregation: all columns are available, t.all() works on them
+            known_measures = set(base.columns)
+        else:
+            # Pre-aggregation: use defined measures
+            known_measures = set(self._base_measures) | set(self._calc_measures)
+
+        scope = MeasureScope(base, known_measures=known_measures)
+        cols = {name: fn(scope) for name, fn in defs.items()}
+        return base.mutate(**cols)
+
+    def order_by(self, *keys: Union[str, Any]) -> Any:
+        """
+        Order rows in the semantic table or expression.
+        """
+        return self._base_tbl.order_by(*keys)
+
+    def limit(self, n: int) -> Any:
+        """
+        Limit number of rows in the semantic table or expression.
+        """
+        return self._base_tbl.limit(n)
+
+    def to_ibis(self):
+        """
+        Get the underlying ibis table expression.
+        Useful for executing queries: .to_ibis().execute()
+        """
+        return self._base_tbl
+
+    def execute(self):
+        """
+        Execute the query and return results as a pandas DataFrame.
+        Internally converts to ibis and executes.
+        """
+        return self.to_ibis().execute()
+
+    def join_one(
+        self, other: "SemanticTable", left_on: str, right_on: str
+    ) -> "SemanticTable":
+        cond = getattr(self._base_tbl, left_on) == getattr(other._base_tbl, right_on)
+        return self._join(other, cond, how="inner")
+
+    def join_many(
+        self, other: "SemanticTable", left_on: str, right_on: str
+    ) -> "SemanticTable":
+        cond = getattr(self._base_tbl, left_on) == getattr(other._base_tbl, right_on)
+        return self._join(other, cond, how="left")
+
+    def join_cross(self, other: "SemanticTable") -> "SemanticTable":
+        return self._join(other, cond=None, how="cross")
+
+    def group_by(self, *dims: str):
+        self._group_dims = list(dims)
+        return self
+
+    def aggregate(self, *measure_names: str, **aliased: str):
+        if not hasattr(self, "_group_dims"):
+            raise ValueError("Call .group_by(...) before .aggregate(...)")
+
+        # allow defining new measures inline via callables (both positional and aliased)
+        base = self._materialize_base_with_dims()
+        inline_defs: dict[str, Callable] = {}
+        # positional callables: derive measure names from MeasureRef
+        from ibis.common.deferred import Deferred
+
+        for fn in [m for m in measure_names if callable(m)]:
+            val = fn(
+                MeasureScope(
+                    base,
+                    known_measures=set(self._base_measures) | set(self._calc_measures),
+                )
+            )
+            if not isinstance(val, MeasureRef):
+                raise TypeError(
+                    "aggregate() expects positional callables to return MeasureRef"
+                )
+            inline_defs[val.name] = fn
+        # keyword callables - collect them first
+        for name, fn in list(aliased.items()):
+            if callable(fn):
+                inline_defs[name] = fn
+
+        if inline_defs:
+            # Register inline measure definitions WITHOUT including the new names in scope
+            # This prevents issues when measures reference columns with same names
+            # Use ColumnScope so inline measure lambdas access actual columns, not MeasureRefs
+            for name, fn in inline_defs.items():
+                val = fn(ColumnScope(base))
+                # All inline aggregate measures should be base measures (direct ibis aggs)
+                self._base_measures[name] = (
+                    lambda _fn=fn: (lambda base_tbl: _fn(ColumnScope(base_tbl)))
+                )()
+            # use only string names for aggregation specs
+            measure_names = tuple(inline_defs.keys())
+            aliased = {}
+
+        # only string measure names are supported in chainable DSL
+        if any(callable(m) or isinstance(m, Deferred) for m in measure_names) or any(
+            callable(f) or isinstance(f, Deferred) for f in aliased.values()
+        ):
+            raise ValueError(
+                "aggregate() only accepts string measure names in the chainable DSL"
+            )
+
+        select_measures = list(measure_names) + list(aliased.values())
+        base = self._materialize_base_with_dims()
+
+        grouped = compile_grouped_with_all(
+            base_tbl=base,
+            by_cols=self._group_dims,
+            agg_specs=self._base_measures,
+            calc_specs=self._calc_measures,
+        )
+
+        proj_cols = {d: grouped[d] for d in self._group_dims}
+        for m in select_measures:
+            proj_cols[m] = grouped[m]
+        for alias, m in aliased.items():
+            proj_cols[alias] = grouped[m]
+        # build the result table expression
+        result = grouped.select(*proj_cols.keys())
+        # wrap in SemanticTable to support further chainable DSL (e.g., mutate with t.all)
+        out = SemanticTable(result, name=self._name)
+        # DO NOT propagate semantic measure definitions - after aggregation,
+        # the measures have been materialized as columns, not semantic measures.
+        # This allows mutate() to work correctly with aggregated columns.
+        out._dims = self._dims.copy()
+        out._base_measures = {}
+        out._calc_measures = {}
+        return out
+
+    def _materialize_base_with_dims(self):
+        if not self._dims:
+            return self._base_tbl
+        cols = {name: fn(self._base_tbl) for name, fn in self._dims.items()}
+        return self._base_tbl.mutate(**cols)
+
+
+def to_semantic_table(ibis_table, name: Optional[str] = None) -> SemanticTable:
+    return SemanticTable(ibis_table, name=name)

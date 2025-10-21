@@ -1,6 +1,6 @@
 import ibis
 import pandas as pd
-from boring_semantic_layer.semantic_api.api import to_semantic_table
+from boring_semantic_layer.semantic_api import to_semantic_table
 
 con = ibis.duckdb.connect()
 
@@ -56,17 +56,13 @@ query_1 = (
     )
     .mutate(
         **{
-            # Users that Ordered Count: total users who ordered in this month (across all cohorts)
-            "Users that Ordered Count": lambda t: t["Users in Cohort that Ordered"]
-            .sum()
-            .over(ibis.window(group_by="Order Month")),
-            # Percent of cohort that ordered: cohort users / all users who ordered in this month (equivalent to all(user_count) in Malloy nested section)
-            "Percent of cohort that ordered": lambda t: t[
-                "Users in Cohort that Ordered"
-            ]
-            / t["Users in Cohort that Ordered"]
-            .sum()
-            .over(ibis.window(group_by="Order Month")),
+            # Users that Ordered Count: grand total via t.all()
+            "Users that Ordered Count": lambda t: t.all(t["Users in Cohort that Ordered"]),
+            # Percent of cohort that ordered: cohort users / grand total
+            "Percent of cohort that ordered": lambda t: (
+                t["Users in Cohort that Ordered"]
+                / t.all(t["Users in Cohort that Ordered"])
+            ),
             # Convert User Signup Cohort to date string to match Malloy format
             "User Signup Cohort": lambda t: t["User Signup Cohort"].date().cast(str),
         }
@@ -96,13 +92,10 @@ query_2 = (
     )
     .mutate(
         **{
-            # Total Sales: total sales in this month (across all cohorts)
-            "Total Sales": lambda t: t.cohort_sales.sum().over(
-                ibis.window(group_by="Order Month")
-            ),
-            # Cohort as Percent of Sales: this cohort's sales / all sales in this month (equivalent to all(total_sales) in Malloy nested section)
-            "Cohort as Percent of Sales": lambda t: t.cohort_sales
-            / t.cohort_sales.sum().over(ibis.window(group_by="Order Month")),
+            # Total Sales: grand total via t.all()
+            "Total Sales": lambda t: t.all(t.cohort_sales),
+            # Cohort as Percent of Sales: this cohort's sales / grand total
+            "Cohort as Percent of Sales": lambda t: t.cohort_sales / t.all(t.cohort_sales),
             # Convert User Signup Cohort to date string to match Malloy format
             "User Signup Cohort": lambda t: t["User Signup Cohort"].date().cast(str),
         }
