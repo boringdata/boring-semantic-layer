@@ -258,7 +258,45 @@ def build_query(
             else:
                 raise ValueError(f"Unsupported filter type: {type(filter_spec)}")
 
-    # Step 2: Group by dimensions and aggregate
+    # Step 2: Apply time range filter if specified
+    if time_range and time_dim_names:
+        start_date = time_range.get("start")
+        end_date = time_range.get("end")
+
+        # Use the first time dimension found
+        primary_time_dim = time_dim_names[0]
+
+        # Apply time range filters using the primary time dimension
+        if start_date:
+            result = result.filter(
+                lambda t, td=primary_time_dim: getattr(t, td) >= start_date
+            )
+        if end_date:
+            result = result.filter(
+                lambda t, td=primary_time_dim: getattr(t, td) <= end_date
+            )
+
+    # Step 3: Handle time grain transformation by creating new dimensions
+    if time_grain and time_dim_names and time_grain in TIME_GRAIN_TRANSFORMATIONS:
+        time_transform = TIME_GRAIN_TRANSFORMATIONS[time_grain]
+
+        # Apply time grain transformation to all time dimensions
+        for time_dim_name in time_dim_names:
+            time_grain_dim_name = f"{time_dim_name}_by_{time_grain.lower()}"
+
+            # Add the time grain dimension to the semantic table
+            result = result.with_dimensions(
+                **{
+                    time_grain_dim_name: lambda t,
+                    td=time_dim_name,
+                    transform=time_transform: transform(getattr(t, td))
+                }
+            )
+
+            # Add the time grain dimension to the dimensions list
+            dimensions.append(time_grain_dim_name)
+
+    # Step 4: Group by dimensions and aggregate
     if len(dimensions) > 0:
         result = result.group_by(*dimensions)
 
