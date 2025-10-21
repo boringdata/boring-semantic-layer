@@ -27,12 +27,10 @@ def _resolve_expression(expr_or_callable, scope_or_table):
 
     # If it's a Deferred expression, resolve it
     if isinstance(expr_or_callable, Deferred):
-        # Get the underlying table from scope or use directly
-        if isinstance(scope_or_table, (MeasureScope, ColumnScope)):
-            table = scope_or_table._tbl
-        else:
-            table = scope_or_table
-        return expr_or_callable.resolve(table)
+        # Resolve directly against the scope or table
+        # MeasureScope.__getattr__ handles returning MeasureRef for known measures
+        # and falls back to table columns for unknown attributes
+        return expr_or_callable.resolve(scope_or_table)
 
     # If it's callable, call it with the scope
     if callable(expr_or_callable):

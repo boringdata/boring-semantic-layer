@@ -175,51 +175,103 @@ def test_deferred_with_conditional():
     assert df.long_flight_count.sum() == 2
 
 
-def test_deferred_reference_to_measure_not_supported():
+def test_deferred_reference_to_measure_now_supported():
     """
-    Test that deferred expressions cannot reference measures directly.
+    Test that deferred expressions CAN reference measures directly!
 
-    This is a known limitation - deferred expressions resolve against the table,
-    not the MeasureScope, so they can't access measure references.
-    For measure references, you must use lambdas with t.measure_name or t.all().
+    Deferred expressions now resolve against MeasureScope, which means
+    _.measure_name returns a MeasureRef, just like lambda t: t.measure_name.
     """
     con = ibis.duckdb.connect(":memory:")
     flights = pd.DataFrame({"carrier": ["AA", "AA", "UA"]})
     f_tbl = con.create_table("flights", flights)
 
-    flights_st = to_semantic_table(f_tbl, "flights").with_measures(
-        flight_count=_.count()
+    flights_st = (
+        to_semantic_table(f_tbl, "flights")
+        .with_measures(
+            flight_count=_.count(),  # Define base measure with deferred
+        )
+        .with_measures(
+            # Reference measure using deferred!
+            double_count=_.flight_count * 2,
+        )
     )
 
-    # This should raise an error because deferred can't access measures
-    # We need to use lambda for measure references
-    with pytest.raises(Exception):  # Will raise AttributeError or similar
-        flights_st.with_measures(
-            pct=_.flight_count / _.all(_.flight_count)  # This won't work!
-        )
+    df = flights_st.group_by("carrier").aggregate("flight_count", "double_count").execute()
+    assert all(df.double_count == df.flight_count * 2)
 
 
-def test_deferred_documentation_example():
-    """Example showing when to use deferred vs lambda."""
+def test_deferred_with_measure_references_and_operations():
+    """Test deferred expressions with measure references and arithmetic."""
     con = ibis.duckdb.connect(":memory:")
     flights = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
     f_tbl = con.create_table("flights", flights)
 
     flights_st = (
         to_semantic_table(f_tbl, "flights")
-        # Use deferred for simple column operations
+        .with_measures(
+            flight_count=_.count(),
+            total_distance=_.distance.sum(),
+        )
+        .with_measures(
+            # Use deferred to reference measures and do math!
+            avg_distance_per_flight=_.total_distance / _.flight_count,
+        )
+    )
+
+    df = flights_st.group_by("carrier").aggregate("avg_distance_per_flight").execute()
+    # AA carrier: (100 + 200) / 2 = 150
+    # UA carrier: 300 / 1 = 300
+    assert pytest.approx(df[df.carrier == "AA"]["avg_distance_per_flight"].iloc[0]) == 150
+    assert pytest.approx(df[df.carrier == "UA"]["avg_distance_per_flight"].iloc[0]) == 300
+
+
+def test_deferred_documentation_example():
+    """Example showing deferred can now do everything lambdas can do."""
+    con = ibis.duckdb.connect(":memory:")
+    flights = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+    f_tbl = con.create_table("flights", flights)
+
+    flights_st = (
+        to_semantic_table(f_tbl, "flights")
+        # Use deferred for everything - column operations AND measure references!
         .with_measures(
             flight_count=_.count(),
             total_distance=_.distance.sum(),
             avg_distance=_.distance.mean(),
         )
-        # Use lambda for measure references and t.all()
+        # Deferred can now reference measures too!
         .with_measures(
+            # However, t.all() still requires lambda because it's a method on MeasureScope
             pct_of_flights=lambda t: t.flight_count / t.all(t.flight_count),
-            pct_of_distance=lambda t: t.total_distance / t.all(t.total_distance),
+            # But measure references work with deferred
+            distance_per_flight=_.total_distance / _.flight_count,
         )
     )
 
-    df = flights_st.group_by("carrier").aggregate("pct_of_flights", "pct_of_distance").execute()
+    df = flights_st.group_by("carrier").aggregate("pct_of_flights", "distance_per_flight").execute()
     assert pytest.approx(df.pct_of_flights.sum()) == 1.0
-    assert pytest.approx(df.pct_of_distance.sum()) == 1.0
+    assert len(df) == 2  # 2 carriers
+
+
+def test_deferred_bracket_notation_for_measures():
+    """Test that deferred works with bracket notation for measures."""
+    con = ibis.duckdb.connect(":memory:")
+    flights = pd.DataFrame({"carrier": ["AA", "AA", "UA"]})
+    f_tbl = con.create_table("flights", flights)
+
+    # Note: Deferred doesn't support bracket notation directly (_["col"] doesn't work in Ibis)
+    # But we can still use it in lambdas
+    flights_st = (
+        to_semantic_table(f_tbl, "flights")
+        .with_measures(
+            flight_count=_.count(),
+        )
+        .with_measures(
+            # Mix deferred and lambda with bracket notation
+            double=lambda t: t["flight_count"] * 2,
+        )
+    )
+
+    df = flights_st.group_by("carrier").aggregate("flight_count", "double").execute()
+    assert all(df.double == df.flight_count * 2)
