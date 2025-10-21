@@ -63,9 +63,30 @@ class MeasureScope:
     def all(self, ref):
         """
         Compute grand total of a measure.
-        Accepts either a MeasureRef or an ibis expression (for post-aggregation use).
+        Accepts:
+        - MeasureRef object (e.g., t.flight_count)
+        - String measure name (e.g., "flight_count")
+        - Ibis expression (for post-aggregation use)
         """
         import ibis as ibis_mod
+
+        # Handle string measure names by converting to MeasureRef
+        if isinstance(ref, str):
+            # Use the same resolution logic as __getattr__
+            if self._post_agg:
+                # Post-aggregation: treat as column name and return window function
+                return self._tbl[ref].sum().over(ibis_mod.window())
+            # Pre-aggregation: convert string to MeasureRef
+            # 1. Try exact match first
+            if ref in self._known:
+                return AllOf(MeasureRef(ref))
+            # 2. Try to find prefixed version (table__name format)
+            for known_name in self._known:
+                if known_name.endswith(f"__{ref}"):
+                    return AllOf(MeasureRef(known_name))
+            # 3. Fall back to treating as column name (post-agg context)
+            return self._tbl[ref].sum().over(ibis_mod.window())
+
         if isinstance(ref, MeasureRef):
             return AllOf(ref)
         # If it's an ibis expression (post-aggregation column), compute sum over all rows
@@ -74,7 +95,8 @@ class MeasureScope:
             return ref.sum().over(ibis_mod.window())
         else:
             raise TypeError(
-                "t.all(...) expects either a measure reference (e.g., t.flight_count) "
+                "t.all(...) expects either a measure reference (e.g., t.flight_count), "
+                "a string measure name (e.g., 'flight_count'), "
                 "or an ibis column expression (e.g., t['aggregated_column'])"
             )
 

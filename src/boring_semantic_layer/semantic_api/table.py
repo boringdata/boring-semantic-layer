@@ -15,6 +15,16 @@ class SemanticTable:
         self._base_measures: Dict[str, callable] = {}
         self._calc_measures: Dict[str, MeasureExpr] = {}
 
+    @property
+    def dims(self) -> list[str]:
+        """Return list of dimension names defined on this semantic table."""
+        return list(self._dims.keys())
+
+    @property
+    def measures(self) -> list[str]:
+        """Return list of measure names defined on this semantic table (both base and calculated)."""
+        return list(set(self._base_measures.keys()) | set(self._calc_measures.keys()))
+
     def with_dimensions(self, **defs):
         self._dims.update(defs)
         return self
@@ -223,9 +233,9 @@ class SemanticTable:
             known = set(self._base_measures) | set(self._calc_measures)
             for name, fn in inline_defs.items():
                 val = fn(MeasureScope(base, known_measures=known))
-                # Check if this is a MeasureRef (calculated measure) or ibis expression (base measure)
-                if isinstance(val, MeasureRef):
-                    # This is a reference to an existing measure - store as calc measure
+                # Check if this is a calc measure (MeasureRef, AllOf, BinOp) or base measure (ibis expression)
+                if isinstance(val, (MeasureRef, AllOf, BinOp, int, float)):
+                    # This is a calculated measure - store as calc measure
                     self._calc_measures[name] = val
                 else:
                     # This is a direct ibis aggregation - store as base measure
