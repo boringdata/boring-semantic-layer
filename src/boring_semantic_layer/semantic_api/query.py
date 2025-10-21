@@ -20,7 +20,10 @@ from typing import (
     TYPE_CHECKING,
 )
 import ibis as ibis_mod
-from .table import SemanticTable
+
+if TYPE_CHECKING:
+    from ..semantic_model import SemanticModel
+    from .table import SemanticTable
 
 Expr = ibis_mod.expr.types.core.Expr
 _ = ibis_mod._
@@ -82,6 +85,7 @@ OPERATOR_MAPPING: Dict[str, Callable[[Expr, Any], Expr]] = {
     "AND": lambda x, y: x & y,
     "OR": lambda x, y: x | y,
 }
+
 
 @frozen(kw_only=True, slots=True)
 class Filter:
@@ -202,13 +206,13 @@ class Filter:
 
 
 def build_query(
-    semantic_table: "SemanticTable",
-    dimensions: Optional[List[str]] = [],
+    semantic_table: SemanticTable,
+    dimensions: Optional[List[str]] = None,
     measures: Optional[List[str]] = None,
     filters: Optional[List[Union[Dict[str, Any], str, Callable]]] = None,
     order_by: Optional[List[Tuple[str, str]]] = None,
     limit: Optional[int] = None,
-) -> "SemanticTable":
+) -> SemanticTable:
     """
     Build a SemanticTable from query parameters.
 
@@ -227,9 +231,6 @@ def build_query(
         SemanticTable: A properly configured semantic table
     """
     from .table import SemanticTable
-
-    # semantic_table is always a SemanticTable instance
-    expr = semantic_table
 
     # Start with the base table
     result = semantic_table
