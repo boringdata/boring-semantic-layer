@@ -6,13 +6,13 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from boring_semantic_layer.semantic_api.api import SemanticTableExpr
+    from boring_semantic_layer.semantic_api.table import SemanticTable
 
 
 class SemanticChartRenderer(ABC):
     """Base class for semantic chart renderers."""
 
-    def __init__(self, semantic_table: "SemanticTableExpr"):
+    def __init__(self, semantic_table: "SemanticTable"):
         self.semantic_table = semantic_table
         
     @property

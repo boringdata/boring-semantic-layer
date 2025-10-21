@@ -1,5 +1,5 @@
 """
-Query builder for semantic API that bridges the gap between old QueryExpr interface and new SemanticTableExpr.
+Query builder for semantic API that bridges the gap between old QueryExpr interface and new SemanticTable.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from ..time_grain import TimeGrain, TIME_GRAIN_TRANSFORMATIONS
 
 
 def build_query(
-    semantic_table: Union["SemanticTable", "SemanticTableExpr"],
+    semantic_table: "SemanticTable",
     dimensions: Optional[List[str]] = [],
     measures: Optional[List[str]] = None,
     filters: Optional[List[Union[Dict[str, Any], str, Callable]]] = None,
@@ -20,15 +20,15 @@ def build_query(
     limit: Optional[int] = None,
     time_range: Optional[Dict[str, str]] = None,
     time_grain: Optional[Union[str, TimeGrain]] = None,
-) -> "SemanticTableExpr":  # type: ignore
+) -> "SemanticTable":
     """
-    Build a SemanticTableExpr from query parameters.
+    Build a SemanticTable from query parameters.
 
     This function bridges the gap between the old QueryExpr interface (used by MCP)
-    and the new SemanticTableExpr method chaining API.
+    and the new SemanticTable method chaining API.
 
     Args:
-        semantic_table: The base SemanticTable operation node or SemanticTableExpr to build upon
+        semantic_table: The base SemanticTable to build upon
         dimensions: List of dimension names to include
         measures: List of measure names to include
         filters: List of filters (dict, str, callable, or Filter)
@@ -38,31 +38,21 @@ def build_query(
         time_grain: The time grain to use for the time dimension
 
     Returns:
-        SemanticTableExpr: A properly configured semantic table expression
+        SemanticTable: A properly configured semantic table
     """
-    # Handle both SemanticTable operation node and SemanticTableExpr
-    from .api import SemanticTableExpr
-    from .ops import SemanticTable, SemanticJoin
+    from .table import SemanticTable
 
-    if isinstance(semantic_table, SemanticTableExpr):
-        expr = semantic_table
-        semantic_table_node = semantic_table._node
-    else:
-        expr = SemanticTableExpr(semantic_table)
-        semantic_table_node = semantic_table
+    # semantic_table is always a SemanticTable instance
+    expr = semantic_table
 
-    # Validate that the node supports semantic metadata (dimensions/measures)
-    if not isinstance(semantic_table_node, (SemanticTable, SemanticJoin)):
-        raise ValueError(
-            f"build_query() can only be used with SemanticTable or SemanticJoin nodes, "
-            f"got {type(semantic_table_node).__name__}. "
-            f"Cannot build queries on already aggregated results."
-        )
-
-    # Find time dimensions using the semantic table expression property
-    from .api import SemanticTableExpr
-    semantic_expr = SemanticTableExpr(semantic_table_node)
-    time_dimensions = semantic_expr.time_dimensions
+    # Find time dimensions using the semantic table's dimensions
+    time_dimensions = {}
+    if hasattr(expr, '_dims'):
+        # Check each dimension to see if it's a time dimension
+        # This is a simple heuristic - could be improved with explicit time dimension metadata
+        for dim_name in expr._dims.keys():
+            if 'date' in dim_name.lower() or 'time' in dim_name.lower() or 'created' in dim_name.lower():
+                time_dimensions[dim_name] = expr._dims[dim_name]
 
     # Step 1: Apply filters first (before grouping/aggregation)
     if filters:
