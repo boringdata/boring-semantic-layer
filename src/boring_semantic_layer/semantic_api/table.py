@@ -369,8 +369,6 @@ class SemanticTable:
         filters: Optional[list[Union[dict, str, Callable]]] = None,
         order_by: Optional[list[tuple[str, str]]] = None,
         limit: Optional[int] = None,
-        time_range: Optional[dict[str, str]] = None,
-        time_grain: Optional[str] = None,
     ) -> "SemanticTable":
         """
         Query using parameter-based interface (alternative to method chaining).
@@ -386,8 +384,6 @@ class SemanticTable:
             filters=filters,
             order_by=order_by,
             limit=limit,
-            time_range=time_range,
-            time_grain=time_grain,
         )
 
 
