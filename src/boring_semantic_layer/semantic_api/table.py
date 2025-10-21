@@ -7,6 +7,41 @@ from .measure_nodes import MeasureRef, AllOf, BinOp, MeasureExpr
 from .compile_all import compile_grouped_with_all
 
 
+def _resolve_expression(expr_or_callable, scope_or_table):
+    """
+    Helper to resolve expressions that can be callables, deferred expressions, or direct values.
+
+    Supports:
+    - Callables (lambdas): lambda t: t.distance.sum()
+    - Ibis Deferred expressions: _.distance.sum()
+    - Direct values (strings, MeasureRef, etc.): returned as-is
+
+    Args:
+        expr_or_callable: Expression, callable, or direct value
+        scope_or_table: MeasureScope, ColumnScope, or Ibis table to resolve against
+
+    Returns:
+        Resolved expression value
+    """
+    from ibis.common.deferred import Deferred
+
+    # If it's a Deferred expression, resolve it
+    if isinstance(expr_or_callable, Deferred):
+        # Get the underlying table from scope or use directly
+        if isinstance(scope_or_table, (MeasureScope, ColumnScope)):
+            table = scope_or_table._tbl
+        else:
+            table = scope_or_table
+        return expr_or_callable.resolve(table)
+
+    # If it's callable, call it with the scope
+    if callable(expr_or_callable):
+        return expr_or_callable(scope_or_table)
+
+    # Otherwise return as-is (strings, MeasureRef, etc.)
+    return expr_or_callable
+
+
 class SemanticTable:
     def __init__(self, ibis_table, name: str):
         self._name = name
@@ -26,19 +61,28 @@ class SemanticTable:
         return list(set(self._base_measures.keys()) | set(self._calc_measures.keys()))
 
     def with_dimensions(self, **defs):
-        self._dims.update(defs)
+        # Resolve any deferred expressions to callables
+        resolved_defs = {}
+        for name, fn_or_expr in defs.items():
+            from ibis.common.deferred import Deferred
+            if isinstance(fn_or_expr, Deferred):
+                # Convert deferred to callable
+                resolved_defs[name] = lambda t, expr=fn_or_expr: expr.resolve(t)
+            else:
+                resolved_defs[name] = fn_or_expr
+        self._dims.update(resolved_defs)
         return self
 
     def with_measures(self, **defs):
         known = set(self._base_measures) | set(self._calc_measures) | set(defs.keys())
         scope = MeasureScope(self._base_tbl, known_measures=known)
-        for name, fn in defs.items():
-            val = fn(scope)
+        for name, fn_or_expr in defs.items():
+            val = _resolve_expression(fn_or_expr, scope)
             if isinstance(val, (MeasureRef, AllOf, BinOp, int, float)):
                 self._calc_measures[name] = val
             else:
                 self._base_measures[name] = (
-                    lambda _fn=fn: (lambda base_tbl: _fn(ColumnScope(base_tbl)))
+                    lambda _fn=fn_or_expr: (lambda base_tbl: _resolve_expression(_fn, ColumnScope(base_tbl)))
                 )()
         return self
 
@@ -119,8 +163,9 @@ class SemanticTable:
     def filter(self, predicate: Callable[[Any], Any]) -> "SemanticTable":
         """
         Filter rows in the semantic table, returning a new SemanticTable with the same dimensions and measures.
+        Supports both lambdas and Ibis deferred expressions.
         """
-        cond = predicate(ColumnScope(self._base_tbl))
+        cond = _resolve_expression(predicate, ColumnScope(self._base_tbl))
         filtered_tbl = self._base_tbl.filter(cond)
 
         # Create new SemanticTable with filtered data but same semantic definitions
@@ -132,11 +177,13 @@ class SemanticTable:
 
     def mutate(self, **defs: Callable[[Any], Any]) -> Any:
         """
-        Add or modify columns in the semantic table using measure-based lambdas.
+        Add or modify columns in the semantic table using measure-based lambdas or deferred expressions.
 
         For post-aggregation tables (where measures have been materialized as columns),
         use MeasureScope with only the aggregated column names as known measures.
         This allows t.all() to work on aggregated results.
+
+        Supports both lambdas (lambda t: t.col.sum()) and deferred expressions (_.col.sum()).
         """
         base = self._base_tbl
         # Check if we have any base measures - if not, this is likely a post-aggregation table
@@ -151,7 +198,7 @@ class SemanticTable:
             post_agg = False
 
         scope = MeasureScope(base, known_measures=known_measures, post_aggregation=post_agg)
-        cols = {name: fn(scope) for name, fn in defs.items()}
+        cols = {name: _resolve_expression(fn_or_expr, scope) for name, fn_or_expr in defs.items()}
         return base.mutate(**cols)
 
     def order_by(self, *keys: Union[str, Any]) -> Any:
@@ -203,14 +250,15 @@ class SemanticTable:
         if not hasattr(self, "_group_dims"):
             raise ValueError("Call .group_by(...) before .aggregate(...)")
 
-        # allow defining new measures inline via callables (both positional and aliased)
+        # allow defining new measures inline via callables or deferred expressions (both positional and aliased)
         base = self._materialize_base_with_dims()
         inline_defs: dict[str, Callable] = {}
-        # positional callables: derive measure names from MeasureRef
+        # positional callables/deferred: derive measure names from MeasureRef
         from ibis.common.deferred import Deferred
 
-        for fn in [m for m in measure_names if callable(m)]:
-            val = fn(
+        for fn_or_expr in [m for m in measure_names if callable(m) or isinstance(m, Deferred)]:
+            val = _resolve_expression(
+                fn_or_expr,
                 MeasureScope(
                     base,
                     known_measures=set(self._base_measures) | set(self._calc_measures),
@@ -218,21 +266,21 @@ class SemanticTable:
             )
             if not isinstance(val, MeasureRef):
                 raise TypeError(
-                    "aggregate() expects positional callables to return MeasureRef"
+                    "aggregate() expects positional callables/deferred to return MeasureRef"
                 )
-            inline_defs[val.name] = fn
-        # keyword callables - collect them first
-        for name, fn in list(aliased.items()):
-            if callable(fn):
-                inline_defs[name] = fn
+            inline_defs[val.name] = fn_or_expr
+        # keyword callables/deferred - collect them first
+        for name, fn_or_expr in list(aliased.items()):
+            if callable(fn_or_expr) or isinstance(fn_or_expr, Deferred):
+                inline_defs[name] = fn_or_expr
 
         if inline_defs:
             # Register inline measure definitions WITHOUT including the new names in scope
             # This prevents issues when measures reference columns with same names
             # Use MeasureScope so inline measure lambdas can access existing measures via MeasureRef
             known = set(self._base_measures) | set(self._calc_measures)
-            for name, fn in inline_defs.items():
-                val = fn(MeasureScope(base, known_measures=known))
+            for name, fn_or_expr in inline_defs.items():
+                val = _resolve_expression(fn_or_expr, MeasureScope(base, known_measures=known))
                 # Check if this is a calc measure (MeasureRef, AllOf, BinOp) or base measure (ibis expression)
                 if isinstance(val, (MeasureRef, AllOf, BinOp, int, float)):
                     # This is a calculated measure - store as calc measure
@@ -240,7 +288,7 @@ class SemanticTable:
                 else:
                     # This is a direct ibis aggregation - store as base measure
                     self._base_measures[name] = (
-                        lambda _fn=fn: (lambda base_tbl: _fn(ColumnScope(base_tbl)))
+                        lambda _fn=fn_or_expr: (lambda base_tbl: _resolve_expression(_fn, ColumnScope(base_tbl)))
                     )()
             # use only string names for aggregation specs
             measure_names = tuple(inline_defs.keys())
