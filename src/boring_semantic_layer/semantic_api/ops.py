@@ -986,19 +986,9 @@ def _merge_fields_with_prefixing(
         fields_dict = field_accessor(root)
 
         if is_calc_measures and root_name:
-            # Build prefix map for this root (old_name -> prefixed_name)
-            prefix_map = {}
-            # Get base measures for this root
-            if hasattr(root, '_measures_dict'):
-                base_measures = root._measures_dict()
-                for base_name in base_measures.keys():
-                    prefix_map[base_name] = f"{root_name}__{base_name}"
-
-            # Get calc measures for this root (for nested references)
-            if hasattr(root, '_calc_measures_dict'):
-                calc_measures = root._calc_measures_dict()
-                for calc_name in calc_measures.keys():
-                    prefix_map[calc_name] = f"{root_name}__{calc_name}"
+            base_map = {k: f"{root_name}__{k}" for k in root._measures_dict().keys()} if hasattr(root, '_measures_dict') else {}
+            calc_map = {k: f"{root_name}__{k}" for k in root._calc_measures_dict().keys()} if hasattr(root, '_calc_measures_dict') else {}
+            prefix_map = {**base_map, **calc_map}
 
         for field_name, field_value in fields_dict.items():
             if root_name:
