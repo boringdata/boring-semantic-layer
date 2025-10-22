@@ -20,7 +20,7 @@ class Dimension:
         return self.expr(table)
 
     @classmethod
-    def from_value(cls, value: Union['Dimension', dict, Callable]) -> 'Dimension':
+    def from_value(cls, value: Union["Dimension", dict, Callable]) -> "Dimension":
         """Convert various input formats to Dimension."""
         if isinstance(value, cls):
             return value
@@ -29,7 +29,9 @@ class Dimension:
         elif callable(value):
             return cls(expr=value)
         else:
-            raise ValueError(f"Dimension must be callable, dict, or Dimension instance, got {type(value)}")
+            raise ValueError(
+                f"Dimension must be callable, dict, or Dimension instance, got {type(value)}"
+            )
 
 
 @frozen(kw_only=True, slots=True)
@@ -42,7 +44,7 @@ class Measure:
         return self.expr(*args, **kwargs)
 
     @classmethod
-    def from_value(cls, value: Union['Measure', dict, Callable]) -> 'Measure':
+    def from_value(cls, value: Union["Measure", dict, Callable]) -> "Measure":
         """Convert various input formats to Measure."""
         if isinstance(value, cls):
             return value
@@ -51,7 +53,9 @@ class Measure:
         elif callable(value):
             return cls(expr=value)
         else:
-            raise ValueError(f"Measure must be callable, dict, or Measure instance, got {type(value)}")
+            raise ValueError(
+                f"Measure must be callable, dict, or Measure instance, got {type(value)}"
+            )
 
 
 class SemanticTable:
@@ -80,8 +84,12 @@ class SemanticTable:
             else:
                 # Create a closure that returns the aggregation function, preserving metadata
                 self._base_measures[name] = Measure(
-                    expr=(lambda _fn=fn.expr: (lambda base_tbl: _fn(ColumnScope(base_tbl))))(),
-                    description=fn.description
+                    expr=(
+                        lambda _fn=fn.expr: (
+                            lambda base_tbl: _fn(ColumnScope(base_tbl))
+                        )
+                    )(),
+                    description=fn.description,
                 )
         return self
 
@@ -293,7 +301,9 @@ class SemanticTable:
                 else:
                     # This is a direct ibis aggregation - store as base measure
                     self._base_measures[name] = Measure(
-                        expr=(lambda _fn=fn: (lambda base_tbl: _fn(ColumnScope(base_tbl))))()
+                        expr=(
+                            lambda _fn=fn: (lambda base_tbl: _fn(ColumnScope(base_tbl)))
+                        )()
                     )
             # use only string names for aggregation specs
             measure_names = tuple(inline_defs.keys())
@@ -419,5 +429,7 @@ class SemanticTable:
         )
 
 
-def to_semantic_table(ibis_table, name: Optional[str] = None, description: Optional[str] = None) -> SemanticTable:
+def to_semantic_table(
+    ibis_table, name: Optional[str] = None, description: Optional[str] = None
+) -> SemanticTable:
     return SemanticTable(ibis_table, name=name, description=description)

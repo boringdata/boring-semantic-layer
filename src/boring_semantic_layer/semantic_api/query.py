@@ -65,15 +65,22 @@ TIME_GRAIN_ORDER = [
 ]
 
 
-def _find_time_dimension(semantic_table: "SemanticTable", dimensions: List[str]) -> Optional[str]:
+def _find_time_dimension(
+    semantic_table: "SemanticTable", dimensions: List[str]
+) -> Optional[str]:
     """Find the first time dimension in the query dimensions list."""
     for dim_name in dimensions:
-        if dim_name in semantic_table._dims and semantic_table._dims[dim_name].is_time_dimension:
+        if (
+            dim_name in semantic_table._dims
+            and semantic_table._dims[dim_name].is_time_dimension
+        ):
             return dim_name
     return None
 
 
-def _validate_time_grain(time_grain: TimeGrain, smallest_allowed_grain: Optional[str], dimension_name: str) -> None:
+def _validate_time_grain(
+    time_grain: TimeGrain, smallest_allowed_grain: Optional[str], dimension_name: str
+) -> None:
     """
     Validate that the requested time grain is not finer than the smallest allowed grain.
 
@@ -303,20 +310,29 @@ def build_query(
 
     # Step 0: Add time_range as a filter if specified
     if time_range:
-        if not isinstance(time_range, dict) or 'start' not in time_range or 'end' not in time_range:
+        if (
+            not isinstance(time_range, dict)
+            or "start" not in time_range
+            or "end" not in time_range
+        ):
             raise ValueError("time_range must be a dict with 'start' and 'end' keys")
 
         time_dim_name = _find_time_dimension(result, dimensions)
         if time_dim_name:
             # Add time range as a lambda filter
-            start = time_range['start']
-            end = time_range['end']
-            filters.append(lambda t, dim=time_dim_name, s=start, e=end: (t[dim] >= s) & (t[dim] <= e))
+            start = time_range["start"]
+            end = time_range["end"]
+            filters.append(
+                lambda t, dim=time_dim_name, s=start, e=end: (t[dim] >= s)
+                & (t[dim] <= e)
+            )
 
     # Step 1: Handle time grain transformations
     if time_grain:
         if time_grain not in TIME_GRAIN_TRANSFORMATIONS:
-            raise ValueError(f"Invalid time_grain: {time_grain}. Must be one of {list(TIME_GRAIN_TRANSFORMATIONS.keys())}")
+            raise ValueError(
+                f"Invalid time_grain: {time_grain}. Must be one of {list(TIME_GRAIN_TRANSFORMATIONS.keys())}"
+            )
 
         # Find time dimensions and apply grain transformation
         time_dims_to_transform = {}
@@ -325,17 +341,22 @@ def build_query(
                 dim_obj = result._dims[dim_name]
                 if dim_obj.is_time_dimension:
                     # Validate grain against smallest allowed grain
-                    _validate_time_grain(time_grain, dim_obj.smallest_time_grain, dim_name)
+                    _validate_time_grain(
+                        time_grain, dim_obj.smallest_time_grain, dim_name
+                    )
 
                     # Create transformed dimension while preserving metadata
                     from .table import Dimension
+
                     transform_fn = TIME_GRAIN_TRANSFORMATIONS[time_grain]
                     orig_expr = dim_obj.expr
                     time_dims_to_transform[dim_name] = Dimension(
-                        expr=lambda t, orig=orig_expr, trans=transform_fn: trans(orig(t)),
+                        expr=lambda t, orig=orig_expr, trans=transform_fn: trans(
+                            orig(t)
+                        ),
                         description=dim_obj.description,
                         is_time_dimension=dim_obj.is_time_dimension,
-                        smallest_time_grain=dim_obj.smallest_time_grain
+                        smallest_time_grain=dim_obj.smallest_time_grain,
                     )
 
         # Apply transformations
