@@ -9,6 +9,48 @@ from ibis.expr.operations.relations import Relation
 from ibis.expr.schema import Schema
 
 
+def _to_ibis(source: Any) -> Any:
+    return source.to_ibis() if hasattr(source, 'to_ibis') else source.to_expr()
+
+
+def _unwrap(wrapped: Any) -> Any:
+    return wrapped.unwrap if isinstance(wrapped, _CallableWrapper) else wrapped
+
+
+def _resolve_expr(expr: Any, scope: Any) -> Any:
+    return (expr.resolve(scope) if isinstance(expr, Deferred)
+            else expr(scope) if callable(expr) else expr)
+
+
+def _get_field_dict(root: Any, field_type: str) -> dict:
+    method_map = {
+        'dims': ('_dims_dict', 'dimensions'),
+        'measures': ('_measures_dict', 'measures'),
+        'calc_measures': ('_calc_measures_dict', 'calc_measures')
+    }
+    methods = method_map.get(field_type, ('', ''))
+    return (getattr(root, methods[0])() if hasattr(root, methods[0])
+            else getattr(root, methods[1], {}))
+
+
+def _get_merged_fields(all_roots: list, field_type: str) -> dict:
+    return (_merge_fields_with_prefixing(all_roots, lambda r: _get_field_dict(r, field_type))
+            if len(all_roots) > 1
+            else _get_field_dict(all_roots[0], field_type) if all_roots
+            else {})
+
+
+def _collect_measure_refs(expr, refs_out: set):
+    from .measure_nodes import MeasureRef, AllOf, BinOp
+    if isinstance(expr, MeasureRef):
+        refs_out.add(expr.name)
+    elif isinstance(expr, AllOf):
+        refs_out.add(expr.ref.name)
+    elif isinstance(expr, BinOp):
+        _collect_measure_refs(expr.left, refs_out)
+        _collect_measure_refs(expr.right, refs_out)
+
+
 @frozen
 class _CallableWrapper:
     _fn: Any
@@ -277,15 +319,12 @@ class SemanticFilter(Relation):
         from .lower import _Resolver
 
         all_roots = _find_all_root_models(self.source)
-        base_tbl = self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
+        base_tbl = _to_ibis(self.source)
+        dim_map = {} if isinstance(self.source, SemanticAggregate) else _get_merged_fields(all_roots, 'dims')
 
-        dim_map = ({} if isinstance(self.source, SemanticAggregate) else
-                   _merge_fields_with_prefixing(all_roots, lambda r: r._dims_dict() if hasattr(r, '_dims_dict') else r.dimensions) if len(all_roots) > 1 else
-                   (all_roots[0]._dims_dict() if hasattr(all_roots[0], '_dims_dict') else all_roots[0].dimensions) if all_roots else {})
-
-        pred_fn = self.predicate.unwrap if isinstance(self.predicate, _CallableWrapper) else self.predicate
-        pred = (pred_fn.resolve(_Resolver(base_tbl, dim_map)) if isinstance(pred_fn, Deferred)
-                else pred_fn(_Resolver(base_tbl, dim_map)))
+        pred_fn = _unwrap(self.predicate)
+        resolver = _Resolver(base_tbl, dim_map)
+        pred = _resolve_expr(pred_fn, resolver)
         return base_tbl.filter(pred)
 
     def execute(self):
@@ -311,24 +350,14 @@ class SemanticProject(Relation):
         return Schema({k: v.dtype for k, v in self.values.items()})
 
     def to_ibis(self):
-        """Convert to regular Ibis expression."""
         all_roots = _find_all_root_models(self.source)
+        tbl = _to_ibis(self.source)
+
         if not all_roots:
-            tbl = self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
-            cols = [getattr(tbl, f) for f in self.fields]
-            return tbl.select(cols)
+            return tbl.select([getattr(tbl, f) for f in self.fields])
 
-        tbl = self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
-
-        # Get merged fields
-        if len(all_roots) > 1:
-            merged_dimensions = _merge_fields_with_prefixing(all_roots, lambda r: r._dims_dict() if hasattr(r, '_dims_dict') else r.dimensions)
-            merged_measures = _merge_fields_with_prefixing(all_roots, lambda r: r._measures_dict() if hasattr(r, '_measures_dict') else r.measures)
-        else:
-            dims_dict = all_roots[0]._dims_dict() if hasattr(all_roots[0], '_dims_dict') else all_roots[0].dimensions
-            meas_dict = all_roots[0]._measures_dict() if hasattr(all_roots[0], '_measures_dict') else all_roots[0].measures
-            merged_dimensions = dims_dict if all_roots else {}
-            merged_measures = meas_dict if all_roots else {}
+        merged_dimensions = _get_merged_fields(all_roots, 'dims')
+        merged_measures = _get_merged_fields(all_roots, 'measures')
 
         dims = [f for f in self.fields if f in merged_dimensions]
         meas = [f for f in self.fields if f in merged_measures]
@@ -338,14 +367,10 @@ class SemanticProject(Relation):
         meas_exprs = [merged_measures[name](tbl).name(name) for name in meas]
         raw_exprs = [getattr(tbl, name) for name in raw_fields if hasattr(tbl, name)]
 
-        if meas_exprs:
-            if dim_exprs:
-                return tbl.group_by(dim_exprs).aggregate(meas_exprs)
-            else:
-                return tbl.aggregate(meas_exprs)
-        else:
-            all_exprs = dim_exprs + raw_exprs
-            return tbl.select(all_exprs) if all_exprs else tbl
+        return (tbl.group_by(dim_exprs).aggregate(meas_exprs) if meas_exprs and dim_exprs
+                else tbl.aggregate(meas_exprs) if meas_exprs
+                else tbl.select(dim_exprs + raw_exprs) if dim_exprs or raw_exprs
+                else tbl)
 
     def execute(self):
         return self.to_ibis().execute()
@@ -474,113 +499,60 @@ class SemanticAggregate(Relation):
                           on=lambda l, r: l[left_on] == r[right_on], how="left")
 
     def to_ibis(self):
-        """Convert to regular Ibis expression."""
         from .measure_scope import MeasureScope, ColumnScope
         from .measure_nodes import MeasureRef, AllOf, BinOp
         from .compile_all import compile_grouped_with_all
 
         all_roots = _find_all_root_models(self.source)
-        tbl = self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
+        tbl = _to_ibis(self.source)
 
-        # Get merged fields
-        if len(all_roots) > 1:
-            merged_dimensions = _merge_fields_with_prefixing(all_roots, lambda r: r._dims_dict() if hasattr(r, '_dims_dict') else r.dimensions)
-            merged_base_measures = _merge_fields_with_prefixing(all_roots, lambda r: r._measures_dict() if hasattr(r, '_measures_dict') else r.measures)
-            merged_calc_measures = _merge_fields_with_prefixing(all_roots, lambda r: r._calc_measures_dict() if hasattr(r, '_calc_measures_dict') else r.calc_measures)
-        else:
-            dims_dict = all_roots[0]._dims_dict() if hasattr(all_roots[0], '_dims_dict') else all_roots[0].dimensions
-            meas_dict = all_roots[0]._measures_dict() if hasattr(all_roots[0], '_measures_dict') else all_roots[0].measures
-            calc_meas_dict = all_roots[0]._calc_measures_dict() if hasattr(all_roots[0], '_calc_measures_dict') else all_roots[0].calc_measures
-            merged_dimensions = dims_dict if all_roots else {}
-            merged_base_measures = meas_dict if all_roots else {}
-            merged_calc_measures = calc_meas_dict if all_roots else {}
+        merged_dimensions = _get_merged_fields(all_roots, 'dims')
+        merged_base_measures = _get_merged_fields(all_roots, 'measures')
+        merged_calc_measures = _get_merged_fields(all_roots, 'calc_measures')
 
-        # Build group by column names (not expressions yet)
-        by_cols = []
-        dim_mutations = {}
-        for k in self.keys:
-            if k in merged_dimensions:
-                # Materialize dimension as a column
-                dim_mutations[k] = merged_dimensions[k](tbl)
-            by_cols.append(k)
+        dim_mutations = {k: merged_dimensions[k](tbl) for k in self.keys if k in merged_dimensions}
+        tbl = tbl.mutate(**dim_mutations) if dim_mutations else tbl
 
-        # Apply dimension mutations if needed
-        if dim_mutations:
-            tbl = tbl.mutate(**dim_mutations)
-
-        # Collect all aggregate measures (from self.aggs)
-        # Use list to preserve order for deterministic short name resolution
         all_measure_names = list(merged_base_measures.keys()) + list(merged_calc_measures.keys())
         scope = MeasureScope(tbl, known_measures=all_measure_names)
 
-        agg_specs = {}  # Base measure functions
-        calc_specs = {}  # Calculated measure expressions
+        agg_specs = {}
+        calc_specs = {}
 
         for name, fn_wrapped in self.aggs.items():
-            # Unwrap the callable/deferred
-            fn = fn_wrapped.unwrap if isinstance(fn_wrapped, _CallableWrapper) else fn_wrapped
+            fn = _unwrap(fn_wrapped)
+            val = _resolve_expr(fn, scope)
 
-            # Resolve the expression
-            if isinstance(fn, Deferred):
-                val = fn.resolve(scope)
-            elif callable(fn):
-                val = fn(scope)
-            else:
-                val = fn
-
-            # Check if it's a MeasureRef (from string lookup or explicit reference)
             if isinstance(val, MeasureRef):
-                # Look up the actual measure definition
                 ref_name = val.name
                 if ref_name in merged_calc_measures:
-                    # It's a calculated measure
                     calc_specs[name] = merged_calc_measures[ref_name]
                 elif ref_name in merged_base_measures:
-                    # It's a base measure
                     measure_obj = merged_base_measures[ref_name]
                     agg_specs[name] = lambda t, m=measure_obj: m(t)
                 else:
-                    # Shouldn't happen, but handle gracefully
                     calc_specs[name] = val
-            # Check if it's other calculated measure expressions
             elif isinstance(val, (AllOf, BinOp, int, float)):
                 calc_specs[name] = val
             else:
-                # It's a base measure expression - wrap to evaluate against ColumnScope
-                if isinstance(fn, Deferred):
-                    agg_specs[name] = lambda t, f=fn: f.resolve(ColumnScope(t))
-                else:
-                    agg_specs[name] = lambda t, f=fn: f(ColumnScope(t))
-
-        # Also add any base measures that are referenced by calculated measures
-        def collect_refs(expr, refs_out):
-            """Recursively collect MeasureRef names from expressions."""
-            if isinstance(expr, MeasureRef):
-                refs_out.add(expr.name)
-            elif isinstance(expr, AllOf):
-                refs_out.add(expr.ref.name)
-            elif isinstance(expr, BinOp):
-                collect_refs(expr.left, refs_out)
-                collect_refs(expr.right, refs_out)
+                agg_specs[name] = lambda t, f=fn: (f.resolve(ColumnScope(t)) if isinstance(f, Deferred)
+                                                   else f(ColumnScope(t)))
 
         referenced_measures = set()
         for calc_expr in calc_specs.values():
-            collect_refs(calc_expr, referenced_measures)
+            _collect_measure_refs(calc_expr, referenced_measures)
 
         for ref_name in referenced_measures:
             if ref_name not in agg_specs and ref_name in merged_base_measures:
                 measure_obj = merged_base_measures[ref_name]
                 agg_specs[ref_name] = lambda t, m=measure_obj: m(t)
 
-        # Use compile_grouped_with_all to handle everything
-        # Pass requested_measures to filter out intermediate base measures
         requested_measure_names = list(self.aggs.keys())
-        if calc_specs or by_cols:
-            return compile_grouped_with_all(tbl, by_cols, agg_specs, calc_specs, requested_measures=requested_measure_names)
-        else:
-            # No grouping, just aggregation
-            grouped_aggs = {name: agg_fn(tbl) for name, agg_fn in agg_specs.items()}
-            return tbl.aggregate(**grouped_aggs)
+        by_cols = list(self.keys)
+
+        return (compile_grouped_with_all(tbl, by_cols, agg_specs, calc_specs, requested_measures=requested_measure_names)
+                if calc_specs or by_cols
+                else tbl.aggregate({name: agg_fn(tbl) for name, agg_fn in agg_specs.items()}))
 
     def execute(self):
         return self.to_ibis().execute()
@@ -629,25 +601,14 @@ class SemanticMutate(Relation):
         return SemanticFilter(source=self, predicate=predicate)
 
     def to_ibis(self):
-        """Convert to regular Ibis expression."""
         from .measure_scope import MeasureScope
 
-        agg_tbl = self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
-
-        # Use MeasureScope with post_aggregation=True to support t.all() in mutate
-        # after aggregation. This allows percent-of-total calculations.
+        agg_tbl = _to_ibis(self.source)
         proxy = MeasureScope(agg_tbl, known_measures=[], post_aggregation=True)
 
-        new_cols = []
-        for name, fn_wrapped in self.post.items():
-            # Unwrap the callable/deferred
-            fn = fn_wrapped.unwrap if isinstance(fn_wrapped, _CallableWrapper) else fn_wrapped
-            # Handle both Deferred and Callable
-            if isinstance(fn, Deferred):
-                expr = fn.resolve(proxy)
-            else:
-                expr = fn(proxy)
-            new_cols.append(expr.name(name))
+        new_cols = [_resolve_expr(_unwrap(fn_wrapped), proxy).name(name)
+                    for name, fn_wrapped in self.post.items()]
+
         return agg_tbl.mutate(new_cols) if new_cols else agg_tbl
 
     def execute(self):
@@ -867,17 +828,14 @@ class SemanticJoin(Relation):
         return SemanticJoin(left=self, right=other, on=predicate, how="left")
 
     def to_ibis(self):
-        """Convert to regular Ibis expression."""
         from .lower import _Resolver
 
-        left_tbl = self.left.to_ibis() if hasattr(self.left, 'to_ibis') else self.left.to_expr()
-        right_tbl = self.right.to_ibis() if hasattr(self.right, 'to_ibis') else self.right.to_expr()
+        left_tbl = _to_ibis(self.left)
+        right_tbl = _to_ibis(self.right)
 
-        if self.on is not None:
-            pred = self.on(_Resolver(left_tbl), _Resolver(right_tbl))
-            return left_tbl.join(right_tbl, pred, how=self.how)
-        else:
-            return left_tbl.join(right_tbl, how=self.how)
+        return (left_tbl.join(right_tbl, self.on(_Resolver(left_tbl), _Resolver(right_tbl)), how=self.how)
+                if self.on is not None
+                else left_tbl.join(right_tbl, how=self.how))
 
     def execute(self):
         return self.to_ibis().execute()
@@ -915,33 +873,19 @@ class SemanticOrderBy(Relation):
         return SemanticLimit(source=self, n=n, offset=offset)
 
     def to_ibis(self):
-        """Convert to regular Ibis expression."""
-        from .lower import _Resolver
+        tbl = _to_ibis(self.source)
 
-        tbl = self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
-        order_keys = []
-
-        for key in self.keys:
+        def resolve_order_key(key):
             if isinstance(key, str):
-                # String column reference
-                if hasattr(tbl, key) or key in tbl.columns:
-                    order_keys.append(tbl[key] if key in tbl.columns else getattr(tbl, key))
-                else:
-                    order_keys.append(key)
+                return (tbl[key] if key in tbl.columns
+                        else getattr(tbl, key) if hasattr(tbl, key)
+                        else key)
             elif isinstance(key, _CallableWrapper):
-                # Unwrap and resolve the Deferred/callable
-                unwrapped = key.unwrap
-                if isinstance(unwrapped, Deferred):
-                    order_keys.append(unwrapped.resolve(tbl))
-                elif callable(unwrapped):
-                    order_keys.append(unwrapped(tbl))
-                else:
-                    order_keys.append(unwrapped)
-            else:
-                # Fallback for any unwrapped expressions
-                order_keys.append(key)
+                unwrapped = _unwrap(key)
+                return _resolve_expr(unwrapped, tbl)
+            return key
 
-        return tbl.order_by(order_keys)
+        return tbl.order_by([resolve_order_key(key) for key in self.keys])
 
     def execute(self):
         return self.to_ibis().execute()
@@ -964,12 +908,8 @@ class SemanticLimit(Relation):
         return self.source.schema
 
     def to_ibis(self):
-        """Convert to regular Ibis expression."""
-        tbl = self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
-        if self.offset == 0:
-            return tbl.limit(self.n)
-        else:
-            return tbl.limit(self.n, offset=self.offset)
+        tbl = _to_ibis(self.source)
+        return tbl.limit(self.n) if self.offset == 0 else tbl.limit(self.n, offset=self.offset)
 
     def execute(self):
         return self.to_ibis().execute()
