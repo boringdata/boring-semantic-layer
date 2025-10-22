@@ -91,6 +91,15 @@ def _classify_measure(fn_or_expr: Any, scope: Any):
         ))
 
 
+def _build_json_definition(dims_dict: dict, meas_dict: dict, name: Optional[str] = None) -> Dict[str, Any]:
+    return {
+        "dimensions": {n: spec.to_json() for n, spec in dims_dict.items()},
+        "measures": {n: spec.to_json() for n, spec in meas_dict.items()},
+        "time_dimensions": {n: spec.to_json() for n, spec in dims_dict.items() if spec.is_time_dimension},
+        "name": name,
+    }
+
+
 @frozen(kw_only=True, slots=True)
 class Dimension:
     expr: Callable[[Any], Any] | Deferred
@@ -297,6 +306,9 @@ class SemanticTable(Relation):
     def join_cross(self, other: "SemanticTable") -> "SemanticJoin":
         return SemanticJoin(left=self, right=other, on=None, how="cross")
 
+    def index(self, *fields: str, by: Optional[str] = None, sample: Optional[int] = None) -> "SemanticIndex":
+        return SemanticIndex(source=self, fields=fields or ("*",), by_measure=by, sample_size=sample)
+
     def to_ibis(self):
         return self.table.to_expr()
 
@@ -324,6 +336,14 @@ class SemanticFilter(Relation):
 
     def group_by(self, *keys: str) -> "SemanticGroupBy":
         return SemanticGroupBy(source=self, keys=keys)
+
+    def order_by(self, *keys: Any) -> "SemanticOrderBy":
+        """Order after filter (fluent API)."""
+        return SemanticOrderBy(source=self, keys=keys)
+
+    def limit(self, n: int, offset: int = 0) -> "SemanticLimit":
+        """Limit after filter (fluent API)."""
+        return SemanticLimit(source=self, n=n, offset=offset)
 
     def to_ibis(self):
         from .lower import _Resolver
@@ -784,6 +804,9 @@ class SemanticJoin(Relation):
             return getattr(left, left_on) == getattr(right, right_on)
         return SemanticJoin(left=self, right=other, on=predicate, how="left")
 
+    def index(self, *fields: str, by: Optional[str] = None, sample: Optional[int] = None) -> "SemanticIndex":
+        return SemanticIndex(source=self, fields=fields or ("*",), by_measure=by, sample_size=sample)
+
     def to_ibis(self):
         from .lower import _Resolver
 
@@ -857,6 +880,154 @@ class SemanticLimit(Relation):
     def to_ibis(self):
         tbl = _to_ibis(self.source)
         return tbl.limit(self.n) if self.offset == 0 else tbl.limit(self.n, offset=self.offset)
+
+    def execute(self):
+        return self.to_ibis().execute()
+
+
+def _get_field_type_str(field_type: Any) -> str:
+    return ("string" if field_type.is_string()
+            else "number" if field_type.is_numeric()
+            else "date" if field_type.is_temporal()
+            else str(field_type))
+
+
+def _get_weight_expr(base_tbl: Any, by_measure: Optional[str], all_roots: list, is_string: bool) -> Any:
+    import ibis
+    if not by_measure:
+        return ibis._.count()
+
+    merged_measures = _get_merged_fields(all_roots, 'measures')
+    return (merged_measures[by_measure](base_tbl) if by_measure in merged_measures
+            else ibis._.count())
+
+
+def _build_string_index_fragment(base_tbl: Any, field_expr: Any, field_name: str,
+                                 field_path: str, type_str: str, weight_expr: Any) -> Any:
+    import ibis
+    return (base_tbl
+            .group_by(field_expr.name("value"))
+            .aggregate(weight=weight_expr)
+            .select(
+                fieldName=ibis.literal(field_name.split("__")[-1]),
+                fieldPath=ibis.literal(field_path),
+                fieldType=ibis.literal(type_str),
+                fieldValue=ibis._["value"].cast("string"),
+                weight=ibis._["weight"],
+            ))
+
+
+def _build_numeric_index_fragment(base_tbl: Any, field_expr: Any, field_name: str,
+                                  field_path: str, type_str: str, weight_expr: Any) -> Any:
+    import ibis
+    return (base_tbl
+            .select(field_expr.name("value"))
+            .filter(ibis._["value"].notnull())
+            .aggregate(
+                min_val=ibis._["value"].min(),
+                max_val=ibis._["value"].max(),
+                weight=weight_expr,
+            )
+            .select(
+                fieldName=ibis.literal(field_name.split("__")[-1]),
+                fieldPath=ibis.literal(field_path),
+                fieldType=ibis.literal(type_str),
+                fieldValue=(ibis._["min_val"].cast("string") + " to " + ibis._["max_val"].cast("string")),
+                weight=ibis._["weight"],
+            ))
+
+
+def _get_fields_to_index(fields: tuple, merged_dimensions: dict, base_tbl: Any) -> list[str]:
+    if "*" not in fields:
+        return [f for f in fields if f in merged_dimensions]
+
+    result = list(merged_dimensions.keys())
+    result.extend(col for col in base_tbl.columns
+                 if col not in result and base_tbl[col].type().is_string())
+    return result
+
+
+class SemanticIndex(Relation):
+    source: Any
+    fields: tuple[str, ...]
+    by_measure: Optional[str] = None
+    sample_size: Optional[int] = None
+
+    def __init__(
+        self,
+        source: Any,
+        fields: Iterable[str] = ("*",),
+        by_measure: Optional[str] = None,
+        sample_size: Optional[int] = None,
+    ) -> None:
+        super().__init__(
+            source=Relation.__coerce__(source),
+            fields=tuple(fields),
+            by_measure=by_measure,
+            sample_size=sample_size,
+        )
+
+    @property
+    def values(self) -> FrozenOrderedDict[str, Any]:
+        import ibis
+        return FrozenOrderedDict({
+            "fieldName": ibis.literal("").op(),
+            "fieldPath": ibis.literal("").op(),
+            "fieldType": ibis.literal("").op(),
+            "fieldValue": ibis.literal("").op(),
+            "weight": ibis.literal(0).op(),
+        })
+
+    @property
+    def schema(self) -> Schema:
+        return Schema({
+            "fieldName": "string",
+            "fieldPath": "string",
+            "fieldType": "string",
+            "fieldValue": "string",
+            "weight": "int64",
+        })
+
+    def to_ibis(self):
+        import ibis
+        from functools import reduce
+
+        all_roots = _find_all_root_models(self.source)
+        base_tbl = (_to_ibis(self.source).limit(self.sample_size)
+                   if self.sample_size else _to_ibis(self.source))
+
+        merged_dimensions = _get_merged_fields(all_roots, 'dims')
+        fields_to_index = _get_fields_to_index(self.fields, merged_dimensions, base_tbl)
+
+        if not fields_to_index:
+            return ibis.memtable({
+                "fieldName": [], "fieldPath": [], "fieldType": [],
+                "fieldValue": [], "weight": []
+            })
+
+        def build_fragment(field_name: str) -> Any:
+            field_expr = (merged_dimensions[field_name](base_tbl)
+                         if field_name in merged_dimensions
+                         else base_tbl[field_name])
+            field_type = field_expr.type()
+            type_str = _get_field_type_str(field_type)
+            weight_expr = _get_weight_expr(base_tbl, self.by_measure, all_roots, field_type.is_string())
+
+            return (_build_string_index_fragment(base_tbl, field_expr, field_name, field_name, type_str, weight_expr)
+                   if field_type.is_string() or not field_type.is_numeric()
+                   else _build_numeric_index_fragment(base_tbl, field_expr, field_name, field_name, type_str, weight_expr))
+
+        fragments = [build_fragment(f) for f in fields_to_index]
+        return reduce(lambda acc, frag: acc.union(frag), fragments[1:], fragments[0])
+
+    def filter(self, predicate: Callable) -> "SemanticFilter":
+        return SemanticFilter(source=self, predicate=predicate)
+
+    def order_by(self, *keys: Any) -> "SemanticOrderBy":
+        return SemanticOrderBy(source=self, keys=keys)
+
+    def limit(self, n: int, offset: int = 0) -> "SemanticLimit":
+        return SemanticLimit(source=self, n=n, offset=offset)
 
     def execute(self):
         return self.to_ibis().execute()
