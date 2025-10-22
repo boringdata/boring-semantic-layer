@@ -70,6 +70,27 @@ def _ensure_wrapped(fn: Any) -> _CallableWrapper:
     return fn if isinstance(fn, _CallableWrapper) else _CallableWrapper(fn)
 
 
+def _classify_measure(fn_or_expr: Any, scope: Any):
+    from .measure_nodes import MeasureRef, AllOf, BinOp
+    from .measure_scope import ColumnScope
+
+    val = _resolve_expr(fn_or_expr, scope)
+    is_calc = isinstance(val, (MeasureRef, AllOf, BinOp, int, float))
+
+    if is_calc:
+        return ('calc', val)
+    elif isinstance(fn_or_expr, Measure):
+        return ('base', fn_or_expr)
+    else:
+        return ('base', Measure(
+            expr=lambda t, fn=fn_or_expr: (
+                fn.resolve(ColumnScope(t)) if isinstance(fn, Deferred)
+                else fn(ColumnScope(t))
+            ),
+            description=None
+        ))
+
+
 @frozen(kw_only=True, slots=True)
 class Dimension:
     expr: Callable[[Any], Any] | Deferred
@@ -235,8 +256,7 @@ class SemanticTable(Relation):
         )
 
     def with_measures(self, **meas) -> "SemanticTable":
-        from .measure_scope import MeasureScope, ColumnScope
-        from .measure_nodes import MeasureRef, AllOf, BinOp
+        from .measure_scope import MeasureScope
 
         new_base_meas = dict(self._measures_dict())
         new_calc_meas = dict(self._calc_measures_dict())
@@ -246,21 +266,8 @@ class SemanticTable(Relation):
         scope = MeasureScope(base_tbl, known_measures=all_measure_names)
 
         for name, fn_or_expr in meas.items():
-            val = (fn_or_expr.resolve(scope) if isinstance(fn_or_expr, Deferred)
-                   else fn_or_expr(scope) if callable(fn_or_expr) else fn_or_expr)
-
-            if isinstance(val, (MeasureRef, AllOf, BinOp, int, float)):
-                new_calc_meas[name] = val
-            elif isinstance(fn_or_expr, Measure):
-                new_base_meas[name] = fn_or_expr
-            else:
-                new_base_meas[name] = Measure(
-                    expr=lambda t, fn=fn_or_expr: (
-                        fn.resolve(ColumnScope(t)) if isinstance(fn, Deferred)
-                        else fn(ColumnScope(t))
-                    ),
-                    description=None
-                )
+            kind, value = _classify_measure(fn_or_expr, scope)
+            (new_calc_meas if kind == 'calc' else new_base_meas)[name] = value
 
         return SemanticTable(
             table=self.table.to_expr(),
@@ -735,59 +742,27 @@ class SemanticJoin(Relation):
     def with_measures(self, **meas) -> "SemanticTable":
         """Add measures after join (fluent API). Returns new SemanticTable wrapping the join."""
         from .measure_scope import MeasureScope
-        from .measure_nodes import MeasureRef, AllOf, BinOp
-        from ibis.common.deferred import Deferred
 
-        # Get all existing dimensions and measures from both sides (already prefixed)
         existing_dimensions = self._dims_dict()
         existing_base_measures = self._measures_dict()
         existing_calc_measures = self._calc_measures_dict()
 
-        # Create list of all known measure names for MeasureScope (preserves order for deterministic resolution)
         all_known_measures = list(existing_base_measures.keys()) + list(existing_calc_measures.keys()) + list(meas.keys())
-
-        # Materialize the join to create the base table
         joined_tbl = self.to_ibis()
-
-        # Create a MeasureScope for resolving measure references
         scope = MeasureScope(joined_tbl, known_measures=all_known_measures)
 
-        # Start with existing base and calc measures from the join
         new_base_meas = dict(existing_base_measures)
         new_calc_meas = dict(existing_calc_measures)
 
         for name, fn_or_expr in meas.items():
-            # Resolve the expression
-            if isinstance(fn_or_expr, Deferred):
-                val = fn_or_expr.resolve(scope)
-            elif callable(fn_or_expr):
-                val = fn_or_expr(scope)
-            else:
-                val = fn_or_expr
-
-            # Check if it's a calculated measure (returns MeasureRef, AllOf, BinOp, or number)
-            if isinstance(val, (MeasureRef, AllOf, BinOp, int, float)):
-                new_calc_meas[name] = val
-            else:
-                # It's a base measure - store as Measure object
-                if isinstance(fn_or_expr, Measure):
-                    new_base_meas[name] = fn_or_expr
-                else:
-                    # Wrap in lambda that evaluates against the joined table
-                    from .measure_scope import ColumnScope
-                    new_base_meas[name] = Measure(
-                        expr=lambda t, fn=fn_or_expr: (
-                            fn.resolve(ColumnScope(t)) if isinstance(fn, Deferred)
-                            else fn(ColumnScope(t))
-                        ),
-                        description=None
-                    )
+            kind, value = _classify_measure(fn_or_expr, scope)
+            (new_calc_meas if kind == 'calc' else new_base_meas)[name] = value
 
         return SemanticTable(
             table=joined_tbl,
-            dimensions=dict(existing_dimensions),  # Preserve dimensions from join
-            measures=new_base_meas,  # Include both existing and new measures
-            calc_measures=new_calc_meas,  # Include both existing and new calc measures
+            dimensions=dict(existing_dimensions),
+            measures=new_base_meas,
+            calc_measures=new_calc_meas,
             name=None
         )
 
