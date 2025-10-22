@@ -61,7 +61,7 @@ def _lower_ibis_project(op: IbisProject, catalog, *args):
 
 @convert.register(SemanticTable)
 def _lower_semantic_table(node: SemanticTable, catalog, *args):
-    return node.table.to_expr()
+    return convert(node.table, catalog=catalog)
 
 
 @convert.register(SemanticFilter)

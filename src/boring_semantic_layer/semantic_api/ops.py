@@ -9,6 +9,23 @@ from ibis.expr.operations.relations import Relation
 from ibis.expr.schema import Schema
 
 
+@frozen
+class _CallableWrapper:
+    """Hashable wrapper for callables and deferred expressions."""
+    _fn: Any
+
+    def __call__(self, *args, **kwargs):
+        return self._fn(*args, **kwargs)
+
+    def __hash__(self):
+        # Use id for hashing since the actual callable/deferred may not be hashable
+        return hash(id(self._fn))
+
+    @property
+    def unwrap(self):
+        return self._fn
+
+
 @frozen(kw_only=True, slots=True)
 class Dimension:
     expr: Callable[[Any], Any] | Deferred
@@ -178,13 +195,77 @@ class SemanticTable(Relation):
 
         return definition
 
+    def with_dimensions(self, **dims) -> "SemanticTable":
+        """Add dimensions to the semantic table (fluent API). Returns new SemanticTable."""
+        new_dims = dict(self.dimensions)
+        new_dims.update({
+            name: self._create_dimension(d) for name, d in dims.items()
+        })
+        return SemanticTable(
+            table=self.table.to_expr(),
+            dimensions=new_dims,
+            measures=dict(self.measures),
+            name=self.name
+        )
+
+    def with_measures(self, **meas) -> "SemanticTable":
+        """Add measures to the semantic table (fluent API). Returns new SemanticTable."""
+        new_meas = dict(self.measures)
+        new_meas.update({
+            name: m if isinstance(m, Measure) else Measure(expr=m)
+            for name, m in meas.items()
+        })
+        return SemanticTable(
+            table=self.table.to_expr(),
+            dimensions=dict(self.dimensions),
+            measures=new_meas,
+            name=self.name
+        )
+
+    def filter(self, predicate: Callable) -> "SemanticFilter":
+        """Filter rows (fluent API). Returns SemanticFilter operation."""
+        return SemanticFilter(source=self, predicate=predicate)
+
+    def group_by(self, *keys: str) -> "SemanticGroupBy":
+        """Group by dimensions (fluent API). Returns SemanticGroupBy operation."""
+        return SemanticGroupBy(source=self, keys=keys)
+
+    def join(self, other: "SemanticTable", on: Callable[[Any, Any], Any] | None = None, how: str = "inner") -> "SemanticJoin":
+        """Join with another semantic table (fluent API). Returns SemanticJoin operation."""
+        return SemanticJoin(left=self, right=other, on=on, how=how)
+
+    def join_one(self, other: "SemanticTable", left_on: str, right_on: str) -> "SemanticJoin":
+        """Inner join one-to-one or many-to-one on primary/foreign keys."""
+        def predicate(left, right):
+            return getattr(left, left_on) == getattr(right, right_on)
+        return SemanticJoin(left=self, right=other, on=predicate, how="inner")
+
+    def join_many(self, other: "SemanticTable", left_on: str, right_on: str) -> "SemanticJoin":
+        """Left join one-to-many on primary/foreign keys."""
+        def predicate(left, right):
+            return getattr(left, left_on) == getattr(right, right_on)
+        return SemanticJoin(left=self, right=other, on=predicate, how="left")
+
+    def join_cross(self, other: "SemanticTable") -> "SemanticJoin":
+        """Cross join two semantic tables."""
+        return SemanticJoin(left=self, right=other, on=None, how="cross")
+
+    def to_ibis(self):
+        """Convert to regular Ibis expression."""
+        return self.table.to_expr()
+
+    def execute(self):
+        """Execute the query and return results as a pandas DataFrame."""
+        return self.to_ibis().execute()
+
 
 class SemanticFilter(Relation):
     source: Any
-    predicate: Callable
+    predicate: Any  # Can be Callable, Deferred, or _CallableWrapper
 
     def __init__(self, source: Any, predicate: Callable) -> None:
-        super().__init__(source=Relation.__coerce__(source), predicate=predicate)
+        wrapped_pred = _CallableWrapper(predicate) if not isinstance(predicate, _CallableWrapper) else predicate
+        super().__init__(source=Relation.__coerce__(source), predicate=wrapped_pred)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -193,6 +274,43 @@ class SemanticFilter(Relation):
     @property
     def schema(self) -> Schema:
         return self.source.schema
+
+    def filter(self, predicate: Callable) -> "SemanticFilter":
+        """Chain another filter (fluent API)."""
+        return SemanticFilter(source=self, predicate=predicate)
+
+    def group_by(self, *keys: str) -> "SemanticGroupBy":
+        """Group by dimensions (fluent API)."""
+        return SemanticGroupBy(source=self, keys=keys)
+
+    def to_ibis(self):
+        """Convert to regular Ibis expression."""
+        from .lower import _Resolver
+
+        all_roots = _find_all_root_models(self.source)
+        base_tbl = self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
+
+        # Check if filtering after aggregation
+        if isinstance(self.source, SemanticAggregate):
+            dim_map = {}
+        else:
+            if len(all_roots) > 1:
+                dim_map = _merge_fields_with_prefixing(all_roots, lambda r: r.dimensions)
+            else:
+                dim_map = all_roots[0].dimensions if all_roots else {}
+
+        # Unwrap the predicate if it's wrapped
+        pred_fn = self.predicate.unwrap if isinstance(self.predicate, _CallableWrapper) else self.predicate
+        # Handle both Deferred and Callable predicates
+        if isinstance(pred_fn, Deferred):
+            pred = pred_fn.resolve(_Resolver(base_tbl, dim_map))
+        else:
+            pred = pred_fn(_Resolver(base_tbl, dim_map))
+        return base_tbl.filter(pred)
+
+    def execute(self):
+        """Execute the query and return results as a pandas DataFrame."""
+        return self.to_ibis().execute()
 
 
 class SemanticProject(Relation):
@@ -213,6 +331,45 @@ class SemanticProject(Relation):
     def schema(self) -> Schema:
         return Schema({k: v.dtype for k, v in self.values.items()})
 
+    def to_ibis(self):
+        """Convert to regular Ibis expression."""
+        all_roots = _find_all_root_models(self.source)
+        if not all_roots:
+            tbl = self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
+            cols = [getattr(tbl, f) for f in self.fields]
+            return tbl.select(cols)
+
+        tbl = self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
+
+        # Get merged fields
+        if len(all_roots) > 1:
+            merged_dimensions = _merge_fields_with_prefixing(all_roots, lambda r: r.dimensions)
+            merged_measures = _merge_fields_with_prefixing(all_roots, lambda r: r.measures)
+        else:
+            merged_dimensions = all_roots[0].dimensions if all_roots else {}
+            merged_measures = all_roots[0].measures if all_roots else {}
+
+        dims = [f for f in self.fields if f in merged_dimensions]
+        meas = [f for f in self.fields if f in merged_measures]
+        raw_fields = [f for f in self.fields if f not in merged_dimensions and f not in merged_measures]
+
+        dim_exprs = [merged_dimensions[name](tbl).name(name) for name in dims]
+        meas_exprs = [merged_measures[name](tbl).name(name) for name in meas]
+        raw_exprs = [getattr(tbl, name) for name in raw_fields if hasattr(tbl, name)]
+
+        if meas_exprs:
+            if dim_exprs:
+                return tbl.group_by(dim_exprs).aggregate(meas_exprs)
+            else:
+                return tbl.aggregate(meas_exprs)
+        else:
+            all_exprs = dim_exprs + raw_exprs
+            return tbl.select(all_exprs) if all_exprs else tbl
+
+    def execute(self):
+        """Execute the query and return results as a pandas DataFrame."""
+        return self.to_ibis().execute()
+
 
 class SemanticGroupBy(Relation):
     source: Any
@@ -229,11 +386,26 @@ class SemanticGroupBy(Relation):
     def schema(self) -> Schema:
         return self.source.schema
 
+    def aggregate(self, *measure_names: str, **aliased) -> "SemanticAggregate":
+        """Aggregate measures (fluent API)."""
+        aggs = {name: lambda t, n=name: getattr(t, n) for name in measure_names}
+        aggs.update(aliased)
+        return SemanticAggregate(source=self, keys=self.keys, aggs=aggs)
+
+    def to_ibis(self):
+        """Convert to regular Ibis expression."""
+        # SemanticGroupBy is just a holder - return the source as-is
+        return self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
+
+    def execute(self):
+        """Execute the query and return results as a pandas DataFrame."""
+        return self.to_ibis().execute()
+
 
 class SemanticAggregate(Relation):
     source: Any
     keys: tuple[str, ...]
-    aggs: Any  # FrozenDict[str, Callable]
+    aggs: Any  # FrozenDict[str, _CallableWrapper]
 
     def __init__(
         self,
@@ -241,7 +413,12 @@ class SemanticAggregate(Relation):
         keys: Iterable[str],
         aggs: dict[str, Callable] | None,
     ) -> None:
-        frozen_aggs = FrozenDict(aggs or {})
+        # Wrap all callables/deferred in _CallableWrapper to make them hashable
+        wrapped_aggs = {
+            name: _CallableWrapper(fn) if not isinstance(fn, _CallableWrapper) else fn
+            for name, fn in (aggs or {}).items()
+        }
+        frozen_aggs = FrozenDict(wrapped_aggs)
         super().__init__(
             source=Relation.__coerce__(source), keys=tuple(keys), aggs=frozen_aggs
         )
@@ -273,13 +450,107 @@ class SemanticAggregate(Relation):
     def schema(self) -> Schema:
         return Schema({n: v.dtype for n, v in self.values.items()})
 
+    def mutate(self, **post) -> "SemanticMutate":
+        """Add computed columns (fluent API)."""
+        return SemanticMutate(source=self, post=post)
+
+    def order_by(self, *keys: Any) -> "SemanticOrderBy":
+        """Order results (fluent API)."""
+        return SemanticOrderBy(source=self, keys=keys)
+
+    def limit(self, n: int, offset: int = 0) -> "SemanticLimit":
+        """Limit results (fluent API)."""
+        return SemanticLimit(source=self, n=n, offset=offset)
+
+    def filter(self, predicate: Callable) -> "SemanticFilter":
+        """Filter aggregated results (fluent API)."""
+        return SemanticFilter(source=self, predicate=predicate)
+
+    def to_ibis(self):
+        """Convert to regular Ibis expression."""
+        from attrs import frozen
+        from .lower import _Resolver
+
+        all_roots = _find_all_root_models(self.source)
+        tbl = self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
+
+        # Get merged fields
+        if len(all_roots) > 1:
+            merged_dimensions = _merge_fields_with_prefixing(all_roots, lambda r: r.dimensions)
+            merged_measures = _merge_fields_with_prefixing(all_roots, lambda r: r.measures)
+        else:
+            merged_dimensions = all_roots[0].dimensions if all_roots else {}
+            merged_measures = all_roots[0].measures if all_roots else {}
+
+        # Build group by expressions
+        group_exprs = []
+        for k in self.keys:
+            if k in merged_dimensions:
+                group_exprs.append(merged_dimensions[k](tbl).name(k))
+            else:
+                group_exprs.append(getattr(tbl, k).name(k))
+
+        # Build aggregate expressions
+        @frozen
+        class _AggResolver:
+            _t: Any
+            _dims: dict[str, Callable]
+            _meas: dict[str, Callable]
+
+            def __getattr__(self, key: str):
+                if key in self._dims:
+                    return self._dims[key](self._t)
+                if key in self._meas:
+                    return self._meas[key](self._t)
+
+                for dim_name, dim_func in self._dims.items():
+                    if dim_name.endswith(f"__{key}"):
+                        return dim_func(self._t)
+                for meas_name, meas_func in self._meas.items():
+                    if meas_name.endswith(f"__{key}"):
+                        return meas_func(self._t)
+
+                return getattr(self._t, key)
+
+            def __getitem__(self, key: str):
+                return getattr(self._t, key)
+
+        proxy = _AggResolver(tbl, merged_dimensions, merged_measures)
+        meas_exprs = []
+        for name, fn_wrapped in self.aggs.items():
+            # Unwrap the callable/deferred
+            fn = fn_wrapped.unwrap if isinstance(fn_wrapped, _CallableWrapper) else fn_wrapped
+            # Handle both Deferred and Callable
+            if isinstance(fn, Deferred):
+                expr = fn.resolve(proxy)
+            else:
+                expr = fn(proxy)
+            meas_exprs.append(expr.name(name))
+
+        # Build metrics mapping
+        metrics = FrozenOrderedDict({expr.get_name(): expr for expr in meas_exprs})
+
+        if group_exprs:
+            return tbl.group_by(group_exprs).aggregate(metrics)
+        else:
+            return tbl.aggregate(metrics)
+
+    def execute(self):
+        """Execute the query and return results as a pandas DataFrame."""
+        return self.to_ibis().execute()
+
 
 class SemanticMutate(Relation):
     source: Any
-    post: Any  # FrozenDict[str, Callable]
+    post: Any  # FrozenDict[str, _CallableWrapper]
 
     def __init__(self, source: Any, post: dict[str, Callable] | None) -> None:
-        frozen_post = FrozenDict(post or {})
+        # Wrap all callables/deferred in _CallableWrapper to make them hashable
+        wrapped_post = {
+            name: _CallableWrapper(fn) if not isinstance(fn, _CallableWrapper) else fn
+            for name, fn in (post or {}).items()
+        }
+        frozen_post = FrozenDict(wrapped_post)
         super().__init__(source=Relation.__coerce__(source), post=frozen_post)
 
     @property
@@ -289,6 +560,39 @@ class SemanticMutate(Relation):
     @property
     def schema(self) -> Schema:
         return self.source.schema
+
+    def to_ibis(self):
+        """Convert to regular Ibis expression."""
+        from attrs import frozen
+
+        agg_tbl = self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
+
+        @frozen
+        class _AggProxy:
+            _t: Any
+
+            def __getattr__(self, key: str):
+                return self._t[key]
+
+            def __getitem__(self, key: str):
+                return self._t[key]
+
+        proxy = _AggProxy(agg_tbl)
+        new_cols = []
+        for name, fn_wrapped in self.post.items():
+            # Unwrap the callable/deferred
+            fn = fn_wrapped.unwrap if isinstance(fn_wrapped, _CallableWrapper) else fn_wrapped
+            # Handle both Deferred and Callable
+            if isinstance(fn, Deferred):
+                expr = fn.resolve(proxy)
+            else:
+                expr = fn(proxy)
+            new_cols.append(expr.name(name))
+        return agg_tbl.mutate(new_cols) if new_cols else agg_tbl
+
+    def execute(self):
+        """Execute the query and return results as a pandas DataFrame."""
+        return self.to_ibis().execute()
 
 
 class SemanticJoin(Relation):
@@ -358,6 +662,23 @@ class SemanticJoin(Relation):
             "name": None,  # Joined tables don't have a single name
         }
 
+    def to_ibis(self):
+        """Convert to regular Ibis expression."""
+        from .lower import _Resolver
+
+        left_tbl = self.left.to_ibis() if hasattr(self.left, 'to_ibis') else self.left.to_expr()
+        right_tbl = self.right.to_ibis() if hasattr(self.right, 'to_ibis') else self.right.to_expr()
+
+        if self.on is not None:
+            pred = self.on(_Resolver(left_tbl), _Resolver(right_tbl))
+            return left_tbl.join(right_tbl, pred, how=self.how)
+        else:
+            return left_tbl.join(right_tbl, how=self.how)
+
+    def execute(self):
+        """Execute the query and return results as a pandas DataFrame."""
+        return self.to_ibis().execute()
+
 
 class SemanticOrderBy(Relation):
     source: Any
@@ -373,6 +694,31 @@ class SemanticOrderBy(Relation):
     @property
     def schema(self) -> Schema:
         return self.source.schema
+
+    def to_ibis(self):
+        """Convert to regular Ibis expression."""
+        from .lower import _Resolver
+
+        tbl = self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
+        order_keys = []
+
+        for key in self.keys:
+            if isinstance(key, str):
+                if hasattr(tbl, key) or key in tbl.columns:
+                    order_keys.append(tbl[key] if key in tbl.columns else getattr(tbl, key))
+                else:
+                    order_keys.append(key)
+            elif isinstance(key, tuple) and len(key) == 2 and key[0] == "__deferred__":
+                deferred_fn = key[1]
+                order_keys.append(deferred_fn(tbl))
+            else:
+                order_keys.append(key)
+
+        return tbl.order_by(order_keys)
+
+    def execute(self):
+        """Execute the query and return results as a pandas DataFrame."""
+        return self.to_ibis().execute()
 
 
 class SemanticLimit(Relation):
@@ -390,6 +736,18 @@ class SemanticLimit(Relation):
     @property
     def schema(self) -> Schema:
         return self.source.schema
+
+    def to_ibis(self):
+        """Convert to regular Ibis expression."""
+        tbl = self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
+        if self.offset == 0:
+            return tbl.limit(self.n)
+        else:
+            return tbl.limit(self.n, offset=self.offset)
+
+    def execute(self):
+        """Execute the query and return results as a pandas DataFrame."""
+        return self.to_ibis().execute()
 
 
 def _find_root_model(node: Any) -> SemanticTable | None:

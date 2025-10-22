@@ -2,9 +2,28 @@
 API utilities for chainable semantic table operations.
 """
 
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
-from .table import SemanticTable
+from .ops import SemanticTable
+
+
+def to_semantic_table(ibis_table, name: Optional[str] = None) -> SemanticTable:
+    """
+    Factory function to create a SemanticTable from an Ibis table.
+
+    Args:
+        ibis_table: An Ibis table expression
+        name: Optional name for the semantic table
+
+    Returns:
+        SemanticTable: A new semantic table with no dimensions or measures
+    """
+    return SemanticTable(
+        table=ibis_table,
+        dimensions=None,
+        measures=None,
+        name=name
+    )
 
 
 def join_one(
