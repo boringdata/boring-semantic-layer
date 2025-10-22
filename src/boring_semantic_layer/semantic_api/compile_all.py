@@ -32,7 +32,21 @@ def compile_grouped_with_all(
     by_cols: Iterable[str],
     agg_specs: Dict[str, callable],
     calc_specs: Dict[str, MeasureExpr],
+    requested_measures: Iterable[str] = None,
 ):
+    """
+    Compile grouped aggregation with support for t.all() grand totals.
+
+    Args:
+        base_tbl: Base table to aggregate
+        by_cols: Columns to group by
+        agg_specs: Base measure aggregation functions
+        calc_specs: Calculated measure expressions
+        requested_measures: Measures explicitly requested (None = all measures)
+
+    Returns:
+        Ibis table with requested measures only
+    """
     grouped_aggs = {name: agg_fn(base_tbl) for name, agg_fn in agg_specs.items()}
     by_tbl = base_tbl.group_by([base_tbl[c] for c in by_cols]).aggregate(**grouped_aggs)
 
@@ -49,4 +63,14 @@ def compile_grouped_with_all(
         out = by_tbl
 
     calc_cols = {name: _compile_formula(ast, by_tbl, all_tbl) for name, ast in calc_specs.items()}
-    return out.mutate(**calc_cols)
+    out = out.mutate(**calc_cols)
+
+    # If requested_measures is specified, only select those columns (plus group by cols and calc measures)
+    if requested_measures is not None:
+        select_cols = list(by_cols) + list(requested_measures) + list(calc_specs.keys())
+        # Remove duplicates while preserving order
+        seen = set()
+        select_cols = [c for c in select_cols if not (c in seen or seen.add(c))]
+        out = out.select([out[c] for c in select_cols])
+
+    return out

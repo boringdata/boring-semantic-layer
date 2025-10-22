@@ -40,7 +40,7 @@ def build_query(
     Returns:
         SemanticTable: A properly configured semantic table
     """
-    from .table import SemanticTable
+    from .ops import SemanticTable
 
     # semantic_table is always a SemanticTable instance
     expr = semantic_table

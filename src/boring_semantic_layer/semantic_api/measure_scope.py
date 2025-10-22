@@ -16,7 +16,9 @@ class MeasureScope:
     """
     def __init__(self, ibis_table, known_measures: Iterable[str], post_aggregation: bool = False):
         self._tbl = ibis_table
-        self._known = set(known_measures)
+        # Keep as list to preserve order for deterministic short name resolution
+        self._known = list(known_measures) if not isinstance(known_measures, list) else known_measures
+        self._known_set = set(self._known)  # For fast lookup
         self._post_agg = post_aggregation
 
     def __getattr__(self, name: str):
@@ -25,9 +27,9 @@ class MeasureScope:
             return getattr(self._tbl, name)
         # In pre-aggregation context, return MeasureRef for known measures
         # 1. Try exact match first
-        if name in self._known:
+        if name in self._known_set:
             return MeasureRef(name)
-        # 2. Try to find prefixed version (table__name format)
+        # 2. Try to find prefixed version (table__name format) - return FIRST match
         for known_name in self._known:
             if known_name.endswith(f"__{name}"):
                 return MeasureRef(known_name)
@@ -51,9 +53,9 @@ class MeasureScope:
             return self._tbl[name]
         # Pre-aggregation: return MeasureRef for known measures
         # 1. Try exact match first
-        if name in self._known:
+        if name in self._known_set:
             return MeasureRef(name)
-        # 2. Try to find prefixed version (table__name format)
+        # 2. Try to find prefixed version (table__name format) - return FIRST match
         for known_name in self._known:
             if known_name.endswith(f"__{name}"):
                 return MeasureRef(known_name)
@@ -78,9 +80,9 @@ class MeasureScope:
                 return self._tbl[ref].sum().over(ibis_mod.window())
             # Pre-aggregation: convert string to MeasureRef
             # 1. Try exact match first
-            if ref in self._known:
+            if ref in self._known_set:
                 return AllOf(MeasureRef(ref))
-            # 2. Try to find prefixed version (table__name format)
+            # 2. Try to find prefixed version (table__name format) - return FIRST match
             for known_name in self._known:
                 if known_name.endswith(f"__{ref}"):
                     return AllOf(MeasureRef(known_name))

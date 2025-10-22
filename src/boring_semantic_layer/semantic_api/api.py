@@ -22,6 +22,7 @@ def to_semantic_table(ibis_table, name: Optional[str] = None) -> SemanticTable:
         table=ibis_table,
         dimensions=None,
         measures=None,
+        calc_measures=None,
         name=name
     )
 

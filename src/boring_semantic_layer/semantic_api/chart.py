@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from boring_semantic_layer.semantic_api.table import SemanticTable
+    from boring_semantic_layer.semantic_api.ops import SemanticTable
 
 
 class SemanticChartRenderer(ABC):

@@ -80,9 +80,9 @@ def _lower_semantic_filter(node: SemanticFilter, catalog, *args):
     else:
         # Pre-aggregation filter: use semantic dimensions
         if len(all_roots) > 1:  # Joined table
-            dim_map = _merge_fields_with_prefixing(all_roots, lambda r: r.dimensions)
+            dim_map = _merge_fields_with_prefixing(all_roots, lambda r: r._get_dimensions_dict() if hasattr(r, '_get_dimensions_dict') else r.dimensions)
         else:  # Single table
-            dim_map = all_roots[0].dimensions if all_roots else {}
+            dim_map = (all_roots[0]._get_dimensions_dict() if hasattr(all_roots[0], '_get_dimensions_dict') else all_roots[0].dimensions) if all_roots else {}
 
     pred = node.predicate(_Resolver(base_tbl, dim_map))
     return base_tbl.filter(pred)
@@ -101,11 +101,11 @@ def _lower_semantic_project(node: SemanticProject, catalog, *args):
     
     # Get merged fields with __ separator
     if len(all_roots) > 1:  # Joined table
-        merged_dimensions = _merge_fields_with_prefixing(all_roots, lambda r: r.dimensions)
-        merged_measures = _merge_fields_with_prefixing(all_roots, lambda r: r.measures)
+        merged_dimensions = _merge_fields_with_prefixing(all_roots, lambda r: r._get_dimensions_dict() if hasattr(r, '_get_dimensions_dict') else r.dimensions)
+        merged_measures = _merge_fields_with_prefixing(all_roots, lambda r: r._get_measures_dict() if hasattr(r, '_get_measures_dict') else r.measures)
     else:  # Single table
-        merged_dimensions = all_roots[0].dimensions if all_roots else {}
-        merged_measures = all_roots[0].measures if all_roots else {}
+        merged_dimensions = (all_roots[0]._get_dimensions_dict() if hasattr(all_roots[0], '_get_dimensions_dict') else all_roots[0].dimensions) if all_roots else {}
+        merged_measures = (all_roots[0]._get_measures_dict() if hasattr(all_roots[0], '_get_measures_dict') else all_roots[0].measures) if all_roots else {}
     
     dims = [f for f in node.fields if f in merged_dimensions]
     meas = [f for f in node.fields if f in merged_measures]
@@ -151,11 +151,11 @@ def _lower_semantic_aggregate(node: SemanticAggregate, catalog, *args):
     
     # Get merged fields with __ separator
     if len(all_roots) > 1:  # Joined table
-        merged_dimensions = _merge_fields_with_prefixing(all_roots, lambda r: r.dimensions)
-        merged_measures = _merge_fields_with_prefixing(all_roots, lambda r: r.measures)
+        merged_dimensions = _merge_fields_with_prefixing(all_roots, lambda r: r._get_dimensions_dict() if hasattr(r, '_get_dimensions_dict') else r.dimensions)
+        merged_measures = _merge_fields_with_prefixing(all_roots, lambda r: r._get_measures_dict() if hasattr(r, '_get_measures_dict') else r.measures)
     else:  # Single table - use original fields
-        merged_dimensions = all_roots[0].dimensions if all_roots else {}
-        merged_measures = all_roots[0].measures if all_roots else {}
+        merged_dimensions = (all_roots[0]._get_dimensions_dict() if hasattr(all_roots[0], '_get_dimensions_dict') else all_roots[0].dimensions) if all_roots else {}
+        merged_measures = (all_roots[0]._get_measures_dict() if hasattr(all_roots[0], '_get_measures_dict') else all_roots[0].measures) if all_roots else {}
 
     group_exprs = []
     for k in node.keys:
