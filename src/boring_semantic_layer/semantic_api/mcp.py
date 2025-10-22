@@ -2,26 +2,24 @@
 
 from mcp.server.fastmcp import FastMCP
 from typing import Annotated, Any, Dict, List, Optional, Union, Tuple, Literal
-from .time_grain import TIME_GRAIN_ORDER
-
-from .semantic_model import SemanticModel
-from .semantic_api import SemanticTable
+from .table import SemanticTable
+from .query import _find_time_dimension
 
 
 class MCPSemanticModel(FastMCP):
     """
-    MCP server specialized for semantic models.
+    MCP server specialized for semantic models using SemanticTable.
 
     Provides tools:
     - list_models: list all model names
-    - get_model: get model metadata
-    - get_time_range: get available time range
-    - query_model: execute queries and return records and optional charts
+    - get_model: get model metadata (dimensions, measures, time dimensions)
+    - get_time_range: get available time range for time dimensions
+    - query_model: execute queries with time_grain and time_range support
     """
 
     def __init__(
         self,
-        models: Dict[str, Union[SemanticModel, SemanticTable]],
+        models: Dict[str, SemanticTable],
         name: str = "Semantic Layer MCP Server",
         *args,
         **kwargs,
@@ -32,16 +30,43 @@ class MCPSemanticModel(FastMCP):
 
     def _register_tools(self):
         @self.tool()
-        def list_models() -> List[str]:
-            """List all available semantic model names."""
-            return list(self.models.keys())
+        def list_models() -> Dict[str, str]:
+            """List all available semantic model names with their descriptions."""
+            return {
+                name: model._description or "No description available"
+                for name, model in self.models.items()
+            }
 
         @self.tool()
         def get_model(model_name: str) -> Dict[str, Any]:
             """Get details about a specific semantic model including available dimensions and measures."""
             if model_name not in self.models:
                 raise ValueError(f"Model {model_name} not found")
-            return self.models[model_name].json_definition
+
+            model = self.models[model_name]
+
+            # Build dimension info with metadata
+            dimensions = {}
+            for name, dim in model._dims.items():
+                dimensions[name] = {
+                    "description": dim.description,
+                    "is_time_dimension": dim.is_time_dimension,
+                    "smallest_time_grain": dim.smallest_time_grain
+                }
+
+            # Build measure info with metadata
+            measures = {}
+            for name, meas in model._base_measures.items():
+                measures[name] = {
+                    "description": meas.description
+                }
+
+            return {
+                "name": model._name or "unnamed",
+                "dimensions": dimensions,
+                "measures": measures,
+                "calculated_measures": list(model._calc_measures.keys())
+            }
 
         @self.tool()
         def get_time_range(model_name: str) -> Dict[str, Any]:
@@ -52,7 +77,33 @@ class MCPSemanticModel(FastMCP):
             """
             if model_name not in self.models:
                 raise ValueError(f"Model {model_name} not found")
-            return self.models[model_name].get_time_range()
+
+            model = self.models[model_name]
+
+            # Find first time dimension using utility function
+            # Note: We need to pass all dimensions, not just query dimensions
+            all_dims = list(model._dims.keys())
+            time_dim_name = _find_time_dimension(model, all_dims)
+
+            if not time_dim_name:
+                raise ValueError(f"Model {model_name} has no time dimension")
+
+            # Get the dimension expression
+            time_dim_expr = model._dims[time_dim_name].expr
+
+            # Get min/max directly from base table using ibis
+            tbl = model._base_tbl
+            time_col = time_dim_expr(tbl)
+            result = tbl.aggregate(
+                start=time_col.min(),
+                end=time_col.max()
+            ).execute()
+
+            return {
+                "start": str(result['start'].iloc[0]),
+                "end": str(result['end'].iloc[0]),
+                "time_dimension": time_dim_name
+            }
 
         @self.tool()
         def query_model(
@@ -304,15 +355,10 @@ class MCPSemanticModel(FastMCP):
             # Validate model existence
             if model_name not in self.models:
                 raise ValueError(f"Model {model_name} not found")
-            # Validate time_grain is not finer than allowed
-            smallest = self.models[model_name].smallest_time_grain
-            if time_grain is not None and smallest is not None:
-                if TIME_GRAIN_ORDER.index(time_grain) < TIME_GRAIN_ORDER.index(
-                    smallest
-                ):
-                    raise ValueError(
-                        f"Time grain {time_grain} is smaller than model's smallest allowed grain {smallest}"
-                    )
+
+            # Note: time_grain validation is now handled automatically by build_query()
+            # which checks each time dimension's smallest_time_grain metadata
+
             # Validate order_by directions
             for item in order_by:
                 # item is a tuple (field, direction)
