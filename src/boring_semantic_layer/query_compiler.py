@@ -129,14 +129,10 @@ def _compile_query(qe: Any) -> Expr:
 
     # Apply ordering
     if qe.order_by:
-        order_exprs = []
-        for field, direction in qe.order_by:
-            col_name = field.replace(".", "_")
-            col = result[col_name]
-            order_exprs.append(
-                col.desc() if direction.lower().startswith("desc") else col.asc()
-            )
-        result = result.order_by(order_exprs)
+        result = result.order_by([
+            (col := result[field.replace(".", "_")]).desc() if direction.lower().startswith("desc") else col.asc()
+            for field, direction in qe.order_by
+        ])
 
     # Apply limit
     if qe.limit is not None:
