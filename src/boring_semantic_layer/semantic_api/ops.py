@@ -279,23 +279,13 @@ class SemanticFilter(Relation):
         all_roots = _find_all_root_models(self.source)
         base_tbl = self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
 
-        # Check if filtering after aggregation
-        if isinstance(self.source, SemanticAggregate):
-            dim_map = {}
-        else:
-            if len(all_roots) > 1:
-                dim_map = _merge_fields_with_prefixing(all_roots, lambda r: r._dims_dict() if hasattr(r, '_dims_dict') else r.dimensions)
-            else:
-                dims_dict = all_roots[0]._dims_dict() if hasattr(all_roots[0], '_dims_dict') else all_roots[0].dimensions
-                dim_map = dims_dict if all_roots else {}
+        dim_map = ({} if isinstance(self.source, SemanticAggregate) else
+                   _merge_fields_with_prefixing(all_roots, lambda r: r._dims_dict() if hasattr(r, '_dims_dict') else r.dimensions) if len(all_roots) > 1 else
+                   (all_roots[0]._dims_dict() if hasattr(all_roots[0], '_dims_dict') else all_roots[0].dimensions) if all_roots else {})
 
-        # Unwrap the predicate if it's wrapped
         pred_fn = self.predicate.unwrap if isinstance(self.predicate, _CallableWrapper) else self.predicate
-        # Handle both Deferred and Callable predicates
-        if isinstance(pred_fn, Deferred):
-            pred = pred_fn.resolve(_Resolver(base_tbl, dim_map))
-        else:
-            pred = pred_fn(_Resolver(base_tbl, dim_map))
+        pred = (pred_fn.resolve(_Resolver(base_tbl, dim_map)) if isinstance(pred_fn, Deferred)
+                else pred_fn(_Resolver(base_tbl, dim_map)))
         return base_tbl.filter(pred)
 
     def execute(self):
