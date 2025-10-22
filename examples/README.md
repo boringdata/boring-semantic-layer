@@ -18,6 +18,9 @@ python examples/03_window_functions.py
 
 # Example 4: Joins and foreign sums/averages
 python examples/04_joins.py
+
+# Example 5: Bucketing with 'Other' (Top N with rollup)
+python examples/05_bucketing_with_other.py
 ```
 
 ## Examples Overview
@@ -64,6 +67,19 @@ Understand how joins work correctly with aggregations (Malloy-style "foreign sum
 - Cross-team composability example
 
 **Key Concepts**: join_one(), foreign sums, join tree aggregations, composability
+
+### 05_bucketing_with_other.py - Bucketing with 'Other' (Top N Analysis)
+
+Master the "bucketing with OTHER" pattern for clean reports and visualizations:
+- Show top N items individually, group rest as 'OTHER'
+- Use `ibis.rank()` with window functions for rankings
+- Use `ibis.case()` for bucketing logic
+- Drop to ibis level with `.to_ibis()` for second aggregation
+- Top N per group (e.g., top 3 states per facility type)
+- Dynamic thresholds (e.g., states covering 80% of total)
+- Pie-chart-ready aggregations with limited slices
+
+**Key Concepts**: window functions, rankings, case expressions, multi-level aggregation, Malloy bucketing pattern
 
 ## Additional Resources
 
