@@ -94,9 +94,9 @@ def find_dimensions_and_measures(expr: Expr) -> Tuple[Dict[str, Any], Dict[str, 
     node = to_node(expr)
     roots = _find_all_root_models(node)
     dimensions = _merge_fields_with_prefixing(
-        roots, lambda r: r._get_dimensions_dict() if hasattr(r, '_get_dimensions_dict') else getattr(r, "dimensions", {})
+        roots, lambda r: r._dims_dict() if hasattr(r, '_dims_dict') else getattr(r, "dimensions", {})
     )
     measures = _merge_fields_with_prefixing(
-        roots, lambda r: r._get_measures_dict() if hasattr(r, '_get_measures_dict') else getattr(r, "measures", {})
+        roots, lambda r: r._measures_dict() if hasattr(r, '_measures_dict') else getattr(r, "measures", {})
     )
     return dimensions, measures

@@ -11,14 +11,12 @@ from ibis.expr.schema import Schema
 
 @frozen
 class _CallableWrapper:
-    """Hashable wrapper for callables and deferred expressions."""
     _fn: Any
 
     def __call__(self, *args, **kwargs):
         return self._fn(*args, **kwargs)
 
     def __hash__(self):
-        # Use id for hashing since the actual callable/deferred may not be hashable
         return hash(id(self._fn))
 
     @property
@@ -34,22 +32,13 @@ class Dimension:
     smallest_time_grain: Optional[str] = None
 
     def __call__(self, table: Any) -> Any:
-        if isinstance(self.expr, Deferred):
-            return self.expr.resolve(table)
-        return self.expr(table)
+        return self.expr.resolve(table) if isinstance(self.expr, Deferred) else self.expr(table)
 
     def to_json(self) -> Dict[str, Any]:
-        """Convert dimension to JSON representation."""
-        if self.is_time_dimension:
-            return {
-                "description": self.description,
-                "smallest_time_grain": self.smallest_time_grain,
-            }
-        else:
-            return {"description": self.description}
+        base = {"description": self.description}
+        return {**base, "smallest_time_grain": self.smallest_time_grain} if self.is_time_dimension else base
 
     def __hash__(self) -> int:
-        # Hash only metadata (expr/Deferred is unhashable)
         return hash((self.description, self.is_time_dimension, self.smallest_time_grain))
 
 
@@ -59,73 +48,45 @@ class Measure:
     description: Optional[str] = None
 
     def __call__(self, table: Any) -> Any:
-        if isinstance(self.expr, Deferred):
-            return self.expr.resolve(table)
-        return self.expr(table)
+        return self.expr.resolve(table) if isinstance(self.expr, Deferred) else self.expr(table)
 
     def to_json(self) -> Dict[str, Any]:
-        """Convert measure to JSON representation."""
         return {"description": self.description}
 
     def __hash__(self) -> int:
-        # Hash only description (expr/Deferred is unhashable)
         return hash(self.description)
 
 
-# Notes on design:
-# - .values must map column name -> Value ops that reference *parent* relations.
-# - .schema must come from those values' dtypes, so Field(dtype) can resolve from rel.schema.
-
-
 class SemanticTable(Relation):
-    """Wrap a base Ibis table with semantic definitions (dimensions + measures)."""
-
-    table: Any  # Relation | ir.Table is fine; Relation.__coerce__ will handle Expr
-    dimensions: Any  # FrozenDict[str, Dimension]
-    measures: Any  # FrozenDict[str, Measure]
-    calc_measures: Any  # FrozenDict[str, MeasureExpr] - calculated measures that reference other measures
-    name: Optional[str] = None  # Name of the semantic table
+    table: Any
+    dimensions: Any
+    measures: Any
+    calc_measures: Any
+    name: Optional[str] = None
 
     def __init__(
         self,
         table: Any,
         dimensions: dict[str, Dimension | Callable | dict] | None = None,
         measures: dict[str, Measure | Callable] | None = None,
-        calc_measures: dict[str, Any] | None = None,  # MeasureExpr objects
+        calc_measures: dict[str, Any] | None = None,
         name: Optional[str] = None,
     ) -> None:
-        # Convert dimensions to Dimension objects, supporting dict format for time dimensions
-        dims = FrozenDict(
-            {
-                dim_name: self._create_dimension(dim)
-                for dim_name, dim in (dimensions or {}).items()
-            }
-        )
+        dims = FrozenDict({
+            dim_name: self._create_dimension(dim)
+            for dim_name, dim in (dimensions or {}).items()
+        })
 
-        meas = FrozenDict(
-            {
-                meas_name: measure
-                if isinstance(measure, Measure)
-                else Measure(expr=measure, description=None)
-                for meas_name, measure in (measures or {}).items()
-            }
-        )
+        meas = FrozenDict({
+            meas_name: measure if isinstance(measure, Measure) else Measure(expr=measure, description=None)
+            for meas_name, measure in (measures or {}).items()
+        })
 
         calc_meas = FrozenDict(calc_measures or {})
 
-        # Derive table name if not provided
-        if name is None:
-            try:
-                table_expr = table.to_expr() if hasattr(table, "to_expr") else table
-                derived_name = (
-                    table_expr.get_name() if hasattr(table_expr, "get_name") else None
-                )
-            except Exception:
-                derived_name = None
-        else:
-            derived_name = name
-
+        derived_name = name or self._derive_name(table)
         base_rel = Relation.__coerce__(table.op() if hasattr(table, "op") else table)
+
         super().__init__(
             table=base_rel,
             dimensions=dims,
@@ -134,42 +95,35 @@ class SemanticTable(Relation):
             name=derived_name,
         )
 
+    def _derive_name(self, table: Any) -> Optional[str]:
+        try:
+            table_expr = table.to_expr() if hasattr(table, "to_expr") else table
+            return table_expr.get_name() if hasattr(table_expr, "get_name") else None
+        except Exception:
+            return None
+
     def _create_dimension(self, expr) -> Dimension:
-        """Create a Dimension object from various input formats."""
         if isinstance(expr, Dimension):
             return expr
-        elif isinstance(expr, dict):
-            # Handle time dimension specification: {"expr": lambda t: t.col, "smallest_time_grain": "day", "description": "..."}
+        if isinstance(expr, dict):
             return Dimension(
                 expr=expr["expr"],
                 description=expr.get("description"),
                 is_time_dimension=expr.get("is_time_dimension", False),
                 smallest_time_grain=expr.get("smallest_time_grain"),
             )
-        else:
-            return Dimension(expr=expr, description=None)
+        return Dimension(expr=expr, description=None)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        """Expose semantic fields as expressions referencing the base relation."""
         base_tbl = self.table.to_expr()
-        out: dict[str, Any] = {}
+        out = {col_name: base_tbl[col_name].op() for col_name in base_tbl.columns}
 
-        # Include all base table columns first
-        for col_name in base_tbl.columns:
-            out[col_name] = base_tbl[col_name].op()
+        for name, fn in self._dims_dict().items():
+            out[name] = fn(base_tbl).op()
 
-        # Then add/override with semantic dimensions
-        dims_dict = self._get_dimensions_dict()
-        for name, fn in dims_dict.items():
-            expr = fn(base_tbl)
-            out[name] = expr.op()
-
-        # Then add measures
-        meas_dict = self._get_measures_dict()
-        for name, fn in meas_dict.items():
-            expr = fn(base_tbl)
-            out[name] = expr.op()
+        for name, fn in self._measures_dict().items():
+            out[name] = fn(base_tbl).op()
 
         return FrozenOrderedDict(out)
 
@@ -179,74 +133,46 @@ class SemanticTable(Relation):
 
     @property
     def json_definition(self) -> Dict[str, Any]:
-        """
-        Return a JSON-serializable definition of the semantic table.
+        dims_dict = self._dims_dict()
+        meas_dict = self._measures_dict()
 
-        Returns:
-            Dict[str, Any]: The semantic table metadata.
-        """
-        dims_dict = self._get_dimensions_dict()
-        meas_dict = self._get_measures_dict()
-
-        # Compute time dimensions on demand
-        time_dims = {
-            name: spec.to_json()
-            for name, spec in dims_dict.items()
-            if spec.is_time_dimension
-        }
-
-        definition = {
-            "dimensions": {
-                name: spec.to_json() for name, spec in dims_dict.items()
-            },
+        return {
+            "dimensions": {name: spec.to_json() for name, spec in dims_dict.items()},
             "measures": {name: spec.to_json() for name, spec in meas_dict.items()},
-            "time_dimensions": time_dims,
+            "time_dimensions": {
+                name: spec.to_json()
+                for name, spec in dims_dict.items()
+                if spec.is_time_dimension
+            },
             "name": self.name,
         }
 
-        return definition
-
     @property
     def dims(self) -> list[str]:
-        """Return list of dimension names (for introspection)."""
-        dims_dict = self._get_dimensions_dict()
-        return list(dims_dict.keys())
+        return list(self._dims_dict().keys())
 
     @property
     def _dims(self) -> dict[str, Dimension]:
-        """Return raw dimensions dict (for internal use in tests)."""
-        dims_dict = self._get_dimensions_dict()
-        return dict(dims_dict)
+        return dict(self._dims_dict())
 
     @property
     def _base_measures(self) -> dict[str, Measure]:
-        """Return raw base measures dict (for internal use in tests)."""
-        # Use object.__getattribute__ to bypass the override and get the actual FrozenDict
-        base_meas_frozen = object.__getattribute__(self, "measures")
-        return dict(base_meas_frozen)
+        return dict(object.__getattribute__(self, "measures"))
 
     @property
     def _calc_measures(self) -> dict[str, Any]:
-        """Return raw calculated measures dict (for internal use in tests)."""
-        # Use object.__getattribute__ to bypass the override and get the actual FrozenDict
-        calc_meas_frozen = object.__getattribute__(self, "calc_measures")
-        return dict(calc_meas_frozen)
+        return dict(object.__getattribute__(self, "calc_measures"))
 
-    def _get_measures_dict(self) -> FrozenDict:
-        """Internal helper to get the measures FrozenDict without triggering override."""
+    def _measures_dict(self) -> FrozenDict:
         return object.__getattribute__(self, "measures")
 
-    def _get_dimensions_dict(self) -> FrozenDict:
-        """Internal helper to get the dimensions FrozenDict without triggering override."""
+    def _dims_dict(self) -> FrozenDict:
         return object.__getattribute__(self, "dimensions")
 
-    def _get_calc_measures_dict(self) -> FrozenDict:
-        """Internal helper to get the calc_measures FrozenDict without triggering override."""
+    def _calc_measures_dict(self) -> FrozenDict:
         return object.__getattribute__(self, "calc_measures")
 
     def __getattribute__(self, name: str):
-        """Override to provide list access for measures while keeping internal dict access."""
-        # Special handling for .measures to return list instead of FrozenDict
         if name == "measures":
             base_meas = object.__getattribute__(self, "measures")
             calc_meas = object.__getattribute__(self, "calc_measures")
@@ -254,111 +180,74 @@ class SemanticTable(Relation):
         return object.__getattribute__(self, name)
 
     def with_dimensions(self, **dims) -> "SemanticTable":
-        """Add dimensions to the semantic table (fluent API). Returns new SemanticTable."""
-        dims_dict = self._get_dimensions_dict()
-        meas_dict = self._get_measures_dict()
-        calc_meas_dict = self._get_calc_measures_dict()
-
-        new_dims = dict(dims_dict)
-        new_dims.update({
-            name: self._create_dimension(d) for name, d in dims.items()
-        })
         return SemanticTable(
             table=self.table.to_expr(),
-            dimensions=new_dims,
-            measures=dict(meas_dict),
-            calc_measures=dict(calc_meas_dict),
+            dimensions={**self._dims_dict(), **{n: self._create_dimension(d) for n, d in dims.items()}},
+            measures=dict(self._measures_dict()),
+            calc_measures=dict(self._calc_measures_dict()),
             name=self.name
         )
 
     def with_measures(self, **meas) -> "SemanticTable":
-        """Add measures to the semantic table (fluent API). Returns new SemanticTable."""
         from .measure_scope import MeasureScope, ColumnScope
         from .measure_nodes import MeasureRef, AllOf, BinOp
 
-        dims_dict = self._get_dimensions_dict()
-        meas_dict = self._get_measures_dict()
-        calc_meas_dict = self._get_calc_measures_dict()
+        new_base_meas = dict(self._measures_dict())
+        new_calc_meas = dict(self._calc_measures_dict())
 
-        new_base_meas = dict(meas_dict)
-        new_calc_meas = dict(calc_meas_dict)
-
-        # Get all known measure names (existing + new)
-        # Use list to preserve order for deterministic short name resolution
         all_measure_names = list(new_base_meas.keys()) + list(new_calc_meas.keys()) + list(meas.keys())
-
-        # Create a MeasureScope for resolving references
         base_tbl = self.table.to_expr()
         scope = MeasureScope(base_tbl, known_measures=all_measure_names)
 
         for name, fn_or_expr in meas.items():
-            # Resolve the expression
-            if isinstance(fn_or_expr, Deferred):
-                val = fn_or_expr.resolve(scope)
-            elif callable(fn_or_expr):
-                val = fn_or_expr(scope)
-            else:
-                val = fn_or_expr
+            val = (fn_or_expr.resolve(scope) if isinstance(fn_or_expr, Deferred)
+                   else fn_or_expr(scope) if callable(fn_or_expr) else fn_or_expr)
 
-            # Check if it's a calculated measure (MeasureRef, AllOf, BinOp, or number)
             if isinstance(val, (MeasureRef, AllOf, BinOp, int, float)):
                 new_calc_meas[name] = val
+            elif isinstance(fn_or_expr, Measure):
+                new_base_meas[name] = fn_or_expr
             else:
-                # It's a base measure - store as Measure object
-                if isinstance(fn_or_expr, Measure):
-                    new_base_meas[name] = fn_or_expr
-                else:
-                    # Wrap in lambda that uses ColumnScope to evaluate against base table
-                    new_base_meas[name] = Measure(
-                        expr=lambda t, fn=fn_or_expr: (
-                            fn.resolve(ColumnScope(t)) if isinstance(fn, Deferred)
-                            else fn(ColumnScope(t))
-                        ),
-                        description=None
-                    )
+                new_base_meas[name] = Measure(
+                    expr=lambda t, fn=fn_or_expr: (
+                        fn.resolve(ColumnScope(t)) if isinstance(fn, Deferred)
+                        else fn(ColumnScope(t))
+                    ),
+                    description=None
+                )
 
         return SemanticTable(
             table=self.table.to_expr(),
-            dimensions=dict(dims_dict),
+            dimensions=dict(self._dims_dict()),
             measures=new_base_meas,
             calc_measures=new_calc_meas,
             name=self.name
         )
 
     def filter(self, predicate: Callable) -> "SemanticFilter":
-        """Filter rows (fluent API). Returns SemanticFilter operation."""
         return SemanticFilter(source=self, predicate=predicate)
 
     def group_by(self, *keys: str) -> "SemanticGroupBy":
-        """Group by dimensions (fluent API). Returns SemanticGroupBy operation."""
         return SemanticGroupBy(source=self, keys=keys)
 
     def join(self, other: "SemanticTable", on: Callable[[Any, Any], Any] | None = None, how: str = "inner") -> "SemanticJoin":
-        """Join with another semantic table (fluent API). Returns SemanticJoin operation."""
         return SemanticJoin(left=self, right=other, on=on, how=how)
 
     def join_one(self, other: "SemanticTable", left_on: str, right_on: str) -> "SemanticJoin":
-        """Inner join one-to-one or many-to-one on primary/foreign keys."""
-        def predicate(left, right):
-            return getattr(left, left_on) == getattr(right, right_on)
-        return SemanticJoin(left=self, right=other, on=predicate, how="inner")
+        return SemanticJoin(left=self, right=other,
+                          on=lambda l, r: getattr(l, left_on) == getattr(r, right_on), how="inner")
 
     def join_many(self, other: "SemanticTable", left_on: str, right_on: str) -> "SemanticJoin":
-        """Left join one-to-many on primary/foreign keys."""
-        def predicate(left, right):
-            return getattr(left, left_on) == getattr(right, right_on)
-        return SemanticJoin(left=self, right=other, on=predicate, how="left")
+        return SemanticJoin(left=self, right=other,
+                          on=lambda l, r: getattr(l, left_on) == getattr(r, right_on), how="left")
 
     def join_cross(self, other: "SemanticTable") -> "SemanticJoin":
-        """Cross join two semantic tables."""
         return SemanticJoin(left=self, right=other, on=None, how="cross")
 
     def to_ibis(self):
-        """Convert to regular Ibis expression."""
         return self.table.to_expr()
 
     def execute(self):
-        """Execute the query and return results as a pandas DataFrame."""
         return self.to_ibis().execute()
 
 
@@ -398,9 +287,9 @@ class SemanticFilter(Relation):
             dim_map = {}
         else:
             if len(all_roots) > 1:
-                dim_map = _merge_fields_with_prefixing(all_roots, lambda r: r._get_dimensions_dict() if hasattr(r, '_get_dimensions_dict') else r.dimensions)
+                dim_map = _merge_fields_with_prefixing(all_roots, lambda r: r._dims_dict() if hasattr(r, '_dims_dict') else r.dimensions)
             else:
-                dims_dict = all_roots[0]._get_dimensions_dict() if hasattr(all_roots[0], '_get_dimensions_dict') else all_roots[0].dimensions
+                dims_dict = all_roots[0]._dims_dict() if hasattr(all_roots[0], '_dims_dict') else all_roots[0].dimensions
                 dim_map = dims_dict if all_roots else {}
 
         # Unwrap the predicate if it's wrapped
@@ -447,11 +336,11 @@ class SemanticProject(Relation):
 
         # Get merged fields
         if len(all_roots) > 1:
-            merged_dimensions = _merge_fields_with_prefixing(all_roots, lambda r: r._get_dimensions_dict() if hasattr(r, '_get_dimensions_dict') else r.dimensions)
-            merged_measures = _merge_fields_with_prefixing(all_roots, lambda r: r._get_measures_dict() if hasattr(r, '_get_measures_dict') else r.measures)
+            merged_dimensions = _merge_fields_with_prefixing(all_roots, lambda r: r._dims_dict() if hasattr(r, '_dims_dict') else r.dimensions)
+            merged_measures = _merge_fields_with_prefixing(all_roots, lambda r: r._measures_dict() if hasattr(r, '_measures_dict') else r.measures)
         else:
-            dims_dict = all_roots[0]._get_dimensions_dict() if hasattr(all_roots[0], '_get_dimensions_dict') else all_roots[0].dimensions
-            meas_dict = all_roots[0]._get_measures_dict() if hasattr(all_roots[0], '_get_measures_dict') else all_roots[0].measures
+            dims_dict = all_roots[0]._dims_dict() if hasattr(all_roots[0], '_dims_dict') else all_roots[0].dimensions
+            meas_dict = all_roots[0]._measures_dict() if hasattr(all_roots[0], '_measures_dict') else all_roots[0].measures
             merged_dimensions = dims_dict if all_roots else {}
             merged_measures = meas_dict if all_roots else {}
 
@@ -620,13 +509,13 @@ class SemanticAggregate(Relation):
 
         # Get merged fields
         if len(all_roots) > 1:
-            merged_dimensions = _merge_fields_with_prefixing(all_roots, lambda r: r._get_dimensions_dict() if hasattr(r, '_get_dimensions_dict') else r.dimensions)
-            merged_base_measures = _merge_fields_with_prefixing(all_roots, lambda r: r._get_measures_dict() if hasattr(r, '_get_measures_dict') else r.measures)
-            merged_calc_measures = _merge_fields_with_prefixing(all_roots, lambda r: r._get_calc_measures_dict() if hasattr(r, '_get_calc_measures_dict') else r.calc_measures)
+            merged_dimensions = _merge_fields_with_prefixing(all_roots, lambda r: r._dims_dict() if hasattr(r, '_dims_dict') else r.dimensions)
+            merged_base_measures = _merge_fields_with_prefixing(all_roots, lambda r: r._measures_dict() if hasattr(r, '_measures_dict') else r.measures)
+            merged_calc_measures = _merge_fields_with_prefixing(all_roots, lambda r: r._calc_measures_dict() if hasattr(r, '_calc_measures_dict') else r.calc_measures)
         else:
-            dims_dict = all_roots[0]._get_dimensions_dict() if hasattr(all_roots[0], '_get_dimensions_dict') else all_roots[0].dimensions
-            meas_dict = all_roots[0]._get_measures_dict() if hasattr(all_roots[0], '_get_measures_dict') else all_roots[0].measures
-            calc_meas_dict = all_roots[0]._get_calc_measures_dict() if hasattr(all_roots[0], '_get_calc_measures_dict') else all_roots[0].calc_measures
+            dims_dict = all_roots[0]._dims_dict() if hasattr(all_roots[0], '_dims_dict') else all_roots[0].dimensions
+            meas_dict = all_roots[0]._measures_dict() if hasattr(all_roots[0], '_measures_dict') else all_roots[0].measures
+            calc_meas_dict = all_roots[0]._calc_measures_dict() if hasattr(all_roots[0], '_calc_measures_dict') else all_roots[0].calc_measures
             merged_dimensions = dims_dict if all_roots else {}
             merged_base_measures = meas_dict if all_roots else {}
             merged_calc_measures = calc_meas_dict if all_roots else {}
@@ -823,67 +712,67 @@ class SemanticJoin(Relation):
     def schema(self) -> Schema:
         return Schema({name: v.dtype for name, v in self.values.items()})
 
-    def _get_dimensions_dict(self) -> FrozenDict[str, Dimension]:
+    def _dims_dict(self) -> FrozenDict[str, Dimension]:
         """Internal: Get merged dimensions dict from both sides of the join."""
         all_roots = _find_all_root_models(self)
         merged_dims = _merge_fields_with_prefixing(
-            all_roots, lambda root: root._get_dimensions_dict() if hasattr(root, '_get_dimensions_dict') else root.dimensions
+            all_roots, lambda root: root._dims_dict() if hasattr(root, '_dims_dict') else root.dimensions
         )
         return FrozenDict(merged_dims)
 
-    def _get_measures_dict(self) -> FrozenDict[str, Measure]:
+    def _measures_dict(self) -> FrozenDict[str, Measure]:
         """Internal: Get merged base measures dict from both sides of the join."""
         all_roots = _find_all_root_models(self)
         merged_measures = _merge_fields_with_prefixing(
-            all_roots, lambda root: root._get_measures_dict() if hasattr(root, '_get_measures_dict') else root.measures
+            all_roots, lambda root: root._measures_dict() if hasattr(root, '_measures_dict') else root.measures
         )
         return FrozenDict(merged_measures)
 
-    def _get_calc_measures_dict(self) -> FrozenDict:
+    def _calc_measures_dict(self) -> FrozenDict:
         """Internal: Get merged calculated measures dict from both sides of the join."""
         all_roots = _find_all_root_models(self)
         merged_calc_measures = _merge_fields_with_prefixing(
-            all_roots, lambda root: root._get_calc_measures_dict() if hasattr(root, '_get_calc_measures_dict') else root.calc_measures
+            all_roots, lambda root: root._calc_measures_dict() if hasattr(root, '_calc_measures_dict') else root.calc_measures
         )
         return FrozenDict(merged_calc_measures)
 
     @property
     def dimensions(self) -> FrozenDict[str, Dimension]:
         """Merge all dimensions from both sides of the join with prefixing."""
-        return self._get_dimensions_dict()
+        return self._dims_dict()
 
     @property
     def dims(self) -> list[str]:
         """Return list of dimension names (for introspection)."""
-        return list(self._get_dimensions_dict().keys())
+        return list(self._dims_dict().keys())
 
     @property
     def _dims(self) -> dict[str, Dimension]:
         """Return raw dimensions dict (for tests)."""
-        return dict(self._get_dimensions_dict())
+        return dict(self._dims_dict())
 
     @property
     def _base_measures(self) -> dict[str, Measure]:
         """Return raw base measures dict (for tests)."""
-        return dict(self._get_measures_dict())
+        return dict(self._measures_dict())
 
     @property
     def _calc_measures(self) -> dict[str, Any]:
         """Return raw calculated measures dict (for tests)."""
-        return dict(self._get_calc_measures_dict())
+        return dict(self._calc_measures_dict())
 
     @property
     def measures(self) -> list[str]:
         """Return list of all measure names (for introspection)."""
-        base_measures = self._get_measures_dict()
-        calc_measures = self._get_calc_measures_dict()
+        base_measures = self._measures_dict()
+        calc_measures = self._calc_measures_dict()
         return list(base_measures.keys()) + list(calc_measures.keys())
 
     @property
     def json_definition(self) -> Dict[str, Any]:
         """Return a JSON-serializable definition of the joined semantic table."""
-        dims_dict = self._get_dimensions_dict()
-        meas_dict = self._get_measures_dict()
+        dims_dict = self._dims_dict()
+        meas_dict = self._measures_dict()
         return {
             "dimensions": {
                 name: dim.to_json() for name, dim in dims_dict.items()
@@ -902,9 +791,9 @@ class SemanticJoin(Relation):
     def with_dimensions(self, **dims) -> "SemanticTable":
         """Add dimensions after join (fluent API). Returns new SemanticTable wrapping the join."""
         # Get all existing dimensions and measures from both sides (already prefixed)
-        existing_dimensions = self._get_dimensions_dict()
-        existing_base_measures = self._get_measures_dict()
-        existing_calc_measures = self._get_calc_measures_dict()
+        existing_dimensions = self._dims_dict()
+        existing_base_measures = self._measures_dict()
+        existing_calc_measures = self._calc_measures_dict()
 
         # Materialize the join to create the base table
         joined_tbl = self.to_ibis()
@@ -928,9 +817,9 @@ class SemanticJoin(Relation):
         from ibis.common.deferred import Deferred
 
         # Get all existing dimensions and measures from both sides (already prefixed)
-        existing_dimensions = self._get_dimensions_dict()
-        existing_base_measures = self._get_measures_dict()
-        existing_calc_measures = self._get_calc_measures_dict()
+        existing_dimensions = self._dims_dict()
+        existing_base_measures = self._measures_dict()
+        existing_calc_measures = self._calc_measures_dict()
 
         # Create list of all known measure names for MeasureScope (preserves order for deterministic resolution)
         all_known_measures = list(existing_base_measures.keys()) + list(existing_calc_measures.keys()) + list(meas.keys())
@@ -1212,14 +1101,14 @@ def _merge_fields_with_prefixing(
             # Build prefix map for this root (old_name -> prefixed_name)
             prefix_map = {}
             # Get base measures for this root
-            if hasattr(root, '_get_measures_dict'):
-                base_measures = root._get_measures_dict()
+            if hasattr(root, '_measures_dict'):
+                base_measures = root._measures_dict()
                 for base_name in base_measures.keys():
                     prefix_map[base_name] = f"{root_name}__{base_name}"
 
             # Get calc measures for this root (for nested references)
-            if hasattr(root, '_get_calc_measures_dict'):
-                calc_measures = root._get_calc_measures_dict()
+            if hasattr(root, '_calc_measures_dict'):
+                calc_measures = root._calc_measures_dict()
                 for calc_name in calc_measures.keys():
                     prefix_map[calc_name] = f"{root_name}__{calc_name}"
 
