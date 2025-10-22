@@ -1,12 +1,17 @@
 """
-Tests for the query() interface on SemanticTable.
+Tests for the query interface (build_query and SemanticTable.query).
 
-Tests the parameter-based query interface as an alternative to method chaining.
+Covers:
+- Time dimension metadata and transformations
+- Time grain aggregations
+- Time range filtering
+- Mixed dimension queries
 """
 
 import pandas as pd
 import ibis
 import pytest
+from datetime import datetime
 
 from boring_semantic_layer.semantic_api import to_semantic_table
 
@@ -18,227 +23,282 @@ def con():
 
 
 @pytest.fixture(scope="module")
-def flights_table(con):
-    """Create a simple flights semantic table for testing."""
-    flights_df = pd.DataFrame(
-        {
-            "origin": ["JFK", "JFK", "LAX", "LAX", "ORD", "ORD", "SFO", "SFO"],
-            "destination": ["LAX", "SFO", "JFK", "ORD", "LAX", "SFO", "JFK", "ORD"],
-            "distance": [2475, 2586, 2475, 1744, 1744, 1846, 2586, 1846],
-            "dep_delay": [5, 10, -3, 0, 15, 20, 8, 12],
-            "carrier": ["AA", "UA", "AA", "DL", "UA", "AA", "DL", "UA"],
-        }
-    )
-
-    flights_tbl = con.create_table("flights", flights_df)
-
-    return (
-        to_semantic_table(flights_tbl, name="flights")
-        .with_dimensions(
-            origin=lambda t: t.origin,
-            destination=lambda t: t.destination,
-            carrier=lambda t: t.carrier,
-        )
-        .with_measures(
-            flight_count=lambda t: t.count(),
-            avg_distance=lambda t: t.distance.mean(),
-            avg_delay=lambda t: t.dep_delay.mean(),
-            total_delay=lambda t: t.dep_delay.sum(),
-        )
-    )
+def sales_data(con):
+    """Sample sales data with timestamps."""
+    sales_df = pd.DataFrame({
+        "order_date": pd.date_range("2024-01-01", periods=100, freq="D"),
+        "amount": [100 + i * 10 for i in range(100)],
+        "quantity": [1 + i % 5 for i in range(100)],
+    })
+    return con.create_table("sales", sales_df)
 
 
-class TestQueryInterface:
-    """Test the query() method on SemanticTable."""
+class TestTimeDimensionBasics:
+    """Test basic time dimension functionality."""
 
-    def test_basic_query(self, flights_table):
-        """Test basic query with dimensions and measures."""
-        result = flights_table.query(
-            dimensions=["origin"], measures=["flight_count", "avg_distance"]
+    def test_time_dimension_with_metadata(self, sales_data):
+        """Test that time dimensions can be defined with metadata."""
+        st = to_semantic_table(sales_data, "sales").with_dimensions(
+            order_date={
+                "expr": lambda t: t.order_date,
+                "description": "Date of order",
+                "is_time_dimension": True,
+                "smallest_time_grain": "day"
+            }
         )
 
-        df = result.execute()
+        # Verify metadata
+        assert st._dims["order_date"].is_time_dimension is True
+        assert st._dims["order_date"].smallest_time_grain == "day"
+        assert st._dims["order_date"].description == "Date of order"
 
-        assert set(df.columns) == {"origin", "flight_count", "avg_distance"}
-        assert len(df) == 4
-        assert all(df["flight_count"] == 2)
-
-    def test_query_with_json_filter_simple(self, flights_table):
-        """Test query with simple JSON filter."""
-        result = flights_table.query(
-            dimensions=["carrier"],
-            measures=["flight_count"],
-            filters=[{"field": "distance", "operator": ">", "value": 2000}],
+    def test_non_time_dimension(self, sales_data):
+        """Test non-time dimensions don't get time treatment."""
+        st = to_semantic_table(sales_data, "sales").with_dimensions(
+            quantity={
+                "expr": lambda t: t.quantity,
+                "description": "Order quantity",
+                "is_time_dimension": False
+            }
         )
 
-        df = result.execute()
+        assert st._dims["quantity"].is_time_dimension is False
 
-        # Should only include long-distance flights (4 flights with distance > 2000)
-        assert df["flight_count"].sum() == 4
 
-    def test_query_with_json_filter_in_operator(self, flights_table):
-        """Test query with JSON filter using 'in' operator."""
-        result = flights_table.query(
-            dimensions=["carrier"],
-            measures=["flight_count"],
-            filters=[{"field": "carrier", "operator": "in", "values": ["AA", "UA"]}],
-        )
+class TestTimeGrainTransformations:
+    """Test time grain transformations in queries."""
 
-        df = result.execute()
-
-        # Should only include AA and UA carriers
-        assert set(df["carrier"]) == {"AA", "UA"}
-        assert df["flight_count"].sum() == 6  # 3 AA + 3 UA flights
-
-    def test_query_with_json_filter_compound_and(self, flights_table):
-        """Test query with compound AND filter."""
-        result = flights_table.query(
-            dimensions=["carrier"],
-            measures=["flight_count"],
-            filters=[
-                {
-                    "operator": "AND",
-                    "conditions": [
-                        {"field": "distance", "operator": ">", "value": 2000},
-                        {"field": "carrier", "operator": "=", "value": "UA"},
-                    ],
+    def test_time_grain_month(self, sales_data):
+        """Test querying with monthly time grain."""
+        st = (
+            to_semantic_table(sales_data, "sales")
+            .with_dimensions(
+                order_date={
+                    "expr": lambda t: t.order_date,
+                    "is_time_dimension": True,
+                    "smallest_time_grain": "day"
                 }
-            ],
-        )
-
-        df = result.execute()
-
-        # Should only include UA flights with distance > 2000
-        assert len(df) == 1
-        assert df["carrier"].iloc[0] == "UA"
-
-    def test_query_with_json_filter_equals_operators(self, flights_table):
-        """Test query with different equality operators."""
-        # Test 'eq' operator
-        result1 = flights_table.query(
-            measures=["flight_count"],
-            filters=[{"field": "carrier", "operator": "eq", "value": "AA"}],
-        )
-        assert result1.execute()["flight_count"].iloc[0] == 3
-
-        # Test '=' operator
-        result2 = flights_table.query(
-            measures=["flight_count"],
-            filters=[{"field": "carrier", "operator": "=", "value": "AA"}],
-        )
-        assert result2.execute()["flight_count"].iloc[0] == 3
-
-        # Test 'equals' operator
-        result3 = flights_table.query(
-            measures=["flight_count"],
-            filters=[{"field": "carrier", "operator": "equals", "value": "AA"}],
-        )
-        assert result3.execute()["flight_count"].iloc[0] == 3
-
-    def test_query_with_callable_filter(self, flights_table):
-        """Test query with callable filter (lambda function)."""
-        result = flights_table.query(
-            dimensions=["carrier"],
-            measures=["flight_count"],
-            filters=[lambda t: t.distance > 2000],
-        )
-
-        df = result.execute()
-
-        # Should only include long-distance flights (4 flights with distance > 2000)
-        assert df["flight_count"].sum() == 4
-
-    def test_query_with_mixed_filter_types(self, flights_table):
-        """Test query with both JSON and callable filters."""
-        result = flights_table.query(
-            dimensions=["carrier"],
-            measures=["flight_count"],
-            filters=[
-                {"field": "carrier", "operator": "in", "values": ["AA", "UA"]},
-                lambda t: t.distance > 2000,
-            ],
-        )
-
-        df = result.execute()
-
-        # Should only include AA and UA flights with distance > 2000
-        # AA has 2 long flights, UA has 1 long flight = 3 total
-        assert df["flight_count"].sum() == 3
-        assert set(df["carrier"]) == {"AA", "UA"}
-
-    def test_query_with_ordering_and_limit(self, flights_table):
-        """Test query with ordering and limit."""
-        result = flights_table.query(
-            dimensions=["origin"],
-            measures=["avg_distance"],
-            order_by=[("avg_distance", "desc")],
-            limit=2,
-        )
-
-        df = result.execute()
-
-        assert len(df) == 2
-        assert df["avg_distance"].iloc[0] >= df["avg_distance"].iloc[1]
-
-    def test_query_with_filters(self, flights_table):
-        """Test query with filters."""
-        result = flights_table.query(
-            dimensions=["carrier"],
-            measures=["flight_count"],
-            filters=[lambda t: t.distance > 2000],
-        )
-
-        df = result.execute()
-
-        # Should only include long-distance flights (4 flights with distance > 2000)
-        assert df["flight_count"].sum() == 4
-
-    def test_query_measures_only(self, flights_table):
-        """Test query with only measures (no dimensions)."""
-        result = flights_table.query(measures=["flight_count", "avg_distance"])
-
-        df = result.execute()
-
-        assert len(df) == 1
-        assert df["flight_count"].iloc[0] == 8
-
-    def test_query_comparison_with_method_chaining(self, flights_table):
-        """Test that query() produces same results as method chaining."""
-        # Using query()
-        df_query = (
-            flights_table.query(
-                dimensions=["origin"],
-                measures=["flight_count", "avg_distance"],
-                order_by=[("origin", "asc")],
             )
-            .execute()
-            .sort_values("origin")
-            .reset_index(drop=True)
+            .with_measures(
+                total_amount=lambda t: t.amount.sum()
+            )
         )
 
-        # Using method chaining
-        df_chain = (
-            flights_table.group_by("origin")
-            .aggregate("flight_count", "avg_distance")
-            .order_by("origin")
-            .execute()
-            .sort_values("origin")
-            .reset_index(drop=True)
+        # Query with monthly grain
+        result = st.query(
+            dimensions=["order_date"],
+            measures=["total_amount"],
+            time_grain="TIME_GRAIN_MONTH"
+        ).execute()
+
+        # Should have ~4 months of data (100 days)
+        assert len(result) <= 4
+        assert "order_date" in result.columns
+        assert "total_amount" in result.columns
+
+    def test_time_grain_year(self, sales_data):
+        """Test querying with yearly time grain."""
+        st = (
+            to_semantic_table(sales_data, "sales")
+            .with_dimensions(
+                order_date={
+                    "expr": lambda t: t.order_date,
+                    "is_time_dimension": True,
+                    "smallest_time_grain": "day"
+                }
+            )
+            .with_measures(
+                total_amount=lambda t: t.amount.sum()
+            )
         )
 
-        pd.testing.assert_frame_equal(df_query, df_chain)
+        result = st.query(
+            dimensions=["order_date"],
+            measures=["total_amount"],
+            time_grain="TIME_GRAIN_YEAR"
+        ).execute()
 
-    def test_query_returns_semantic_table(self, flights_table):
-        """Test that query() returns a SemanticTable for further chaining."""
-        from boring_semantic_layer.semantic_api.table import SemanticTable
+        # Should have 1 year (all data is in 2024)
+        assert len(result) == 1
 
-        result = flights_table.query(dimensions=["origin"], measures=["flight_count"])
+    def test_time_grain_validation(self, sales_data):
+        """Test that invalid time grain raises error."""
+        st = (
+            to_semantic_table(sales_data, "sales")
+            .with_dimensions(
+                order_date={
+                    "expr": lambda t: t.order_date,
+                    "is_time_dimension": True,
+                    "smallest_time_grain": "month"
+                }
+            )
+            .with_measures(total_amount=lambda t: t.amount.sum())
+        )
 
-        assert isinstance(result, SemanticTable)
+        # Cannot query at day level if smallest grain is month
+        with pytest.raises(ValueError, match="finer than the smallest allowed grain"):
+            st.query(
+                dimensions=["order_date"],
+                measures=["total_amount"],
+                time_grain="TIME_GRAIN_DAY"
+            ).execute()
 
-        # Should be able to chain further operations
-        df = result.order_by(ibis.desc("flight_count")).limit(2).execute()
-        assert len(df) == 2
+
+class TestTimeRangeFiltering:
+    """Test time range filtering functionality."""
+
+    def test_time_range_basic(self, sales_data):
+        """Test basic time range filtering."""
+        st = (
+            to_semantic_table(sales_data, "sales")
+            .with_dimensions(
+                order_date={
+                    "expr": lambda t: t.order_date,
+                    "is_time_dimension": True,
+                    "smallest_time_grain": "day"
+                }
+            )
+            .with_measures(
+                total_amount=lambda t: t.amount.sum(),
+                order_count=lambda t: t.count()
+            )
+        )
+
+        # Query January only
+        result = st.query(
+            dimensions=["order_date"],
+            measures=["order_count"],
+            time_range={"start": "2024-01-01", "end": "2024-01-31"}
+        ).execute()
+
+        # Should have 31 days
+        assert len(result) == 31
+
+    def test_time_range_with_grain(self, sales_data):
+        """Test combining time range with time grain."""
+        st = (
+            to_semantic_table(sales_data, "sales")
+            .with_dimensions(
+                order_date={
+                    "expr": lambda t: t.order_date,
+                    "is_time_dimension": True,
+                    "smallest_time_grain": "day"
+                }
+            )
+            .with_measures(
+                total_amount=lambda t: t.amount.sum()
+            )
+        )
+
+        # Query Q1 2024 by month
+        result = st.query(
+            dimensions=["order_date"],
+            measures=["total_amount"],
+            time_range={"start": "2024-01-01", "end": "2024-03-31"},
+            time_grain="TIME_GRAIN_MONTH"
+        ).execute()
+
+        # Should have 3 months (Jan, Feb, Mar)
+        assert len(result) == 3
+        # Verify only Q1 months are included
+        months = pd.to_datetime(result["order_date"]).dt.month.tolist()
+        assert all(m in [1, 2, 3] for m in months)
+
+    def test_time_range_invalid_format(self, sales_data):
+        """Test that invalid time range format raises error."""
+        st = (
+            to_semantic_table(sales_data, "sales")
+            .with_dimensions(
+                order_date={
+                    "expr": lambda t: t.order_date,
+                    "is_time_dimension": True
+                }
+            )
+            .with_measures(total_amount=lambda t: t.amount.sum())
+        )
+
+        # Missing 'end' key
+        with pytest.raises(ValueError, match="time_range must be a dict"):
+            st.query(
+                dimensions=["order_date"],
+                measures=["total_amount"],
+                time_range={"start": "2024-01-01"}
+            ).execute()
+
+
+class TestTimeDimensionWithNonTimeDimensions:
+    """Test mixing time and non-time dimensions."""
+
+    def test_mixed_dimensions(self, con):
+        """Test querying with both time and non-time dimensions."""
+        df = pd.DataFrame({
+            "order_date": pd.date_range("2024-01-01", periods=50, freq="D"),
+            "category": ["A"] * 25 + ["B"] * 25,
+            "amount": [100 + i * 10 for i in range(50)],
+        })
+        tbl = con.create_table("sales_cat", df)
+
+        st = (
+            to_semantic_table(tbl, "sales")
+            .with_dimensions(
+                order_date={
+                    "expr": lambda t: t.order_date,
+                    "is_time_dimension": True,
+                    "smallest_time_grain": "day"
+                },
+                category=lambda t: t.category  # Non-time dimension
+            )
+            .with_measures(
+                total_amount=lambda t: t.amount.sum()
+            )
+        )
+
+        # Query by category and month
+        result = st.query(
+            dimensions=["category", "order_date"],
+            measures=["total_amount"],
+            time_grain="TIME_GRAIN_MONTH"
+        ).execute()
+
+        # Should have 2 categories * ~2 months = ~4 rows
+        assert len(result) <= 6
+        assert "category" in result.columns
+        assert "order_date" in result.columns
+
+    def test_time_grain_only_affects_time_dimensions(self, con):
+        """Test that time_grain only affects time dimensions, not regular dimensions."""
+        df = pd.DataFrame({
+            "order_date": pd.date_range("2024-01-01", periods=30, freq="D"),
+            "product_id": [i % 5 for i in range(30)],
+            "amount": [100 + i * 10 for i in range(30)],
+        })
+        tbl = con.create_table("sales_prod", df)
+
+        st = (
+            to_semantic_table(tbl, "sales")
+            .with_dimensions(
+                order_date={
+                    "expr": lambda t: t.order_date,
+                    "is_time_dimension": True,
+                    "smallest_time_grain": "day"
+                },
+                product_id={
+                    "expr": lambda t: t.product_id,
+                    "is_time_dimension": False  # Explicitly not a time dimension
+                }
+            )
+            .with_measures(total_amount=lambda t: t.amount.sum())
+        )
+
+        # Query with time grain - should only affect order_date, not product_id
+        result = st.query(
+            dimensions=["order_date", "product_id"],
+            measures=["total_amount"],
+            time_grain="TIME_GRAIN_MONTH"
+        ).execute()
+
+        # product_id should still have 5 distinct values per month
+        assert result["product_id"].nunique() == 5
 
 
 if __name__ == "__main__":

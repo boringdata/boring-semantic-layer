@@ -55,8 +55,9 @@ class Measure:
 
 
 class SemanticTable:
-    def __init__(self, ibis_table, name: str):
+    def __init__(self, ibis_table, name: str, description: Optional[str] = None):
         self._name = name
+        self._description = description
         self._base_tbl = ibis_table
         self._dims: Dict[str, Dimension] = {}
         self._base_measures: Dict[str, Measure] = {}
@@ -369,11 +370,40 @@ class SemanticTable:
         filters: Optional[list[Union[dict, str, Callable]]] = None,
         order_by: Optional[list[tuple[str, str]]] = None,
         limit: Optional[int] = None,
+        time_grain: Optional[str] = None,
+        time_range: Optional[dict[str, str]] = None,
     ) -> "SemanticTable":
         """
         Query using parameter-based interface (alternative to method chaining).
 
         Filters support JSON dicts, callables, or strings. Returns a new SemanticTable.
+
+        Args:
+            dimensions: List of dimension names to include
+            measures: List of measure names to include
+            filters: List of filters (dict, str, or callable)
+            order_by: List of (field, direction) tuples for ordering
+            limit: Maximum number of rows to return
+            time_grain: Optional time grain (e.g., "TIME_GRAIN_MONTH") to apply to time dimensions
+            time_range: Optional time range filter with 'start' and 'end' keys
+
+        Examples:
+            # Basic query
+            result = table.query(dimensions=["country"], measures=["total_sales"])
+
+            # Query with time grain
+            result = table.query(
+                dimensions=["order_date"],
+                measures=["revenue"],
+                time_grain="TIME_GRAIN_MONTH"
+            )
+
+            # Query with time range
+            result = table.query(
+                dimensions=["order_date"],
+                measures=["revenue"],
+                time_range={"start": "2024-01-01", "end": "2024-12-31"}
+            )
         """
         from .query import build_query
 
@@ -384,8 +414,10 @@ class SemanticTable:
             filters=filters,
             order_by=order_by,
             limit=limit,
+            time_grain=time_grain,
+            time_range=time_range,
         )
 
 
-def to_semantic_table(ibis_table, name: Optional[str] = None) -> SemanticTable:
-    return SemanticTable(ibis_table, name=name)
+def to_semantic_table(ibis_table, name: Optional[str] = None, description: Optional[str] = None) -> SemanticTable:
+    return SemanticTable(ibis_table, name=name, description=description)

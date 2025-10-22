@@ -64,6 +64,44 @@ TIME_GRAIN_ORDER = [
     "TIME_GRAIN_YEAR",
 ]
 
+
+def _find_time_dimension(semantic_table: "SemanticTable", dimensions: List[str]) -> Optional[str]:
+    """Find the first time dimension in the query dimensions list."""
+    for dim_name in dimensions:
+        if dim_name in semantic_table._dims and semantic_table._dims[dim_name].is_time_dimension:
+            return dim_name
+    return None
+
+
+def _validate_time_grain(time_grain: TimeGrain, smallest_allowed_grain: Optional[str], dimension_name: str) -> None:
+    """
+    Validate that the requested time grain is not finer than the smallest allowed grain.
+
+    Args:
+        time_grain: The requested time grain
+        smallest_allowed_grain: The smallest allowed grain for this dimension (e.g., "day", "month")
+        dimension_name: Name of the dimension being validated (for error messages)
+
+    Raises:
+        ValueError: If the requested grain is finer than the smallest allowed grain
+    """
+    if not smallest_allowed_grain:
+        return
+
+    smallest_grain = f"TIME_GRAIN_{smallest_allowed_grain.upper()}"
+    if smallest_grain not in TIME_GRAIN_ORDER:
+        return
+
+    requested_idx = TIME_GRAIN_ORDER.index(time_grain)
+    smallest_idx = TIME_GRAIN_ORDER.index(smallest_grain)
+
+    if requested_idx < smallest_idx:
+        raise ValueError(
+            f"Requested time grain '{time_grain}' is finer than the smallest "
+            f"allowed grain '{smallest_allowed_grain}' for dimension '{dimension_name}'"
+        )
+
+
 # Mapping of operators to Ibis expressions
 OPERATOR_MAPPING: Dict[str, Callable[[Expr, Any], Expr]] = {
     "=": lambda x, y: x == y,
@@ -212,12 +250,15 @@ def build_query(
     filters: Optional[List[Union[Dict[str, Any], str, Callable]]] = None,
     order_by: Optional[List[Tuple[str, str]]] = None,
     limit: Optional[int] = None,
+    time_grain: Optional[TimeGrain] = None,
+    time_range: Optional[Dict[str, str]] = None,
 ) -> SemanticTable:
     """
-    Build a SemanticTable from query parameters.
+    Build a SemanticTable from query parameters with time dimension support.
 
     This function provides a convenient way to query semantic tables without
-    using method chaining.
+    using method chaining. It automatically handles time dimensions based on
+    their metadata.
 
     Args:
         semantic_table: The base SemanticTable to query
@@ -226,9 +267,26 @@ def build_query(
         filters: List of filters (dict, str, callable, or Filter)
         order_by: List of (field, direction) tuples for ordering
         limit: Maximum number of rows to return
+        time_grain: Optional time grain to apply to time dimensions (e.g., "TIME_GRAIN_MONTH")
+        time_range: Optional time range filter with 'start' and 'end' keys (ISO format)
 
     Returns:
         SemanticTable: A properly configured semantic table
+
+    Examples:
+        # Query with time grain
+        result = semantic_table.query(
+            dimensions=["date"],
+            measures=["total_sales"],
+            time_grain="TIME_GRAIN_MONTH"
+        )
+
+        # Query with time range
+        result = semantic_table.query(
+            dimensions=["date"],
+            measures=["total_sales"],
+            time_range={"start": "2024-01-01", "end": "2024-12-31"}
+        )
     """
     from .table import SemanticTable
 
@@ -238,7 +296,53 @@ def build_query(
     if dimensions is None:
         dimensions = []
 
-    # Step 1: Apply filters first (before grouping/aggregation)
+    if filters is None:
+        filters = []
+    else:
+        filters = list(filters)  # Make a copy to avoid mutating input
+
+    # Step 0: Add time_range as a filter if specified
+    if time_range:
+        if not isinstance(time_range, dict) or 'start' not in time_range or 'end' not in time_range:
+            raise ValueError("time_range must be a dict with 'start' and 'end' keys")
+
+        time_dim_name = _find_time_dimension(result, dimensions)
+        if time_dim_name:
+            # Add time range as a lambda filter
+            start = time_range['start']
+            end = time_range['end']
+            filters.append(lambda t, dim=time_dim_name, s=start, e=end: (t[dim] >= s) & (t[dim] <= e))
+
+    # Step 1: Handle time grain transformations
+    if time_grain:
+        if time_grain not in TIME_GRAIN_TRANSFORMATIONS:
+            raise ValueError(f"Invalid time_grain: {time_grain}. Must be one of {list(TIME_GRAIN_TRANSFORMATIONS.keys())}")
+
+        # Find time dimensions and apply grain transformation
+        time_dims_to_transform = {}
+        for dim_name in dimensions:
+            if dim_name in result._dims:
+                dim_obj = result._dims[dim_name]
+                if dim_obj.is_time_dimension:
+                    # Validate grain against smallest allowed grain
+                    _validate_time_grain(time_grain, dim_obj.smallest_time_grain, dim_name)
+
+                    # Create transformed dimension while preserving metadata
+                    from .table import Dimension
+                    transform_fn = TIME_GRAIN_TRANSFORMATIONS[time_grain]
+                    orig_expr = dim_obj.expr
+                    time_dims_to_transform[dim_name] = Dimension(
+                        expr=lambda t, orig=orig_expr, trans=transform_fn: trans(orig(t)),
+                        description=dim_obj.description,
+                        is_time_dimension=dim_obj.is_time_dimension,
+                        smallest_time_grain=dim_obj.smallest_time_grain
+                    )
+
+        # Apply transformations
+        if time_dims_to_transform:
+            result = result.with_dimensions(**time_dims_to_transform)
+
+    # Step 2: Apply filters (before grouping/aggregation)
     if filters:
         for filter_spec in filters:
             if isinstance(filter_spec, Filter):
@@ -258,7 +362,7 @@ def build_query(
             else:
                 raise ValueError(f"Unsupported filter type: {type(filter_spec)}")
 
-    # Step 2: Group by dimensions and aggregate
+    # Step 3: Group by dimensions and aggregate
     if len(dimensions) > 0:
         result = result.group_by(*dimensions)
 
@@ -301,7 +405,7 @@ def build_query(
         result._base_measures = {}
         result._calc_measures = {}
 
-    # Step 5: Apply ordering
+    # Step 4: Apply ordering
     if order_by:
         order_keys = []
         for field, direction in order_by:
@@ -311,7 +415,7 @@ def build_query(
                 order_keys.append(field)
         result = result.order_by(*order_keys)
 
-    # Step 6: Apply limit
+    # Step 5: Apply limit
     if limit:
         result = result.limit(limit)
 
