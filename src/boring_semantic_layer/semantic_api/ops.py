@@ -834,19 +834,9 @@ class SemanticOrderBy(Relation):
     keys: tuple[Any, ...]  # Can be strings or _CallableWrapper (wrapping Deferred/callable)
 
     def __init__(self, source: Any, keys: Iterable[Any]) -> None:
-        # Wrap non-hashable items (Deferred, callables) in _CallableWrapper
-        wrapped_keys = []
-        for key in keys:
-            if isinstance(key, str):
-                # Strings are already hashable
-                wrapped_keys.append(key)
-            elif isinstance(key, _CallableWrapper):
-                # Already wrapped
-                wrapped_keys.append(key)
-            else:
-                # Wrap Deferred expressions and callables
-                wrapped_keys.append(_CallableWrapper(key))
-        super().__init__(source=Relation.__coerce__(source), keys=tuple(wrapped_keys))
+        def wrap_key(k):
+            return k if isinstance(k, (str, _CallableWrapper)) else _CallableWrapper(k)
+        super().__init__(source=Relation.__coerce__(source), keys=tuple(wrap_key(k) for k in keys))
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
