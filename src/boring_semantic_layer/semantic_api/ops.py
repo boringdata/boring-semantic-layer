@@ -644,25 +644,19 @@ class SemanticJoin(Relation):
     def _dims_dict(self) -> FrozenDict[str, Dimension]:
         """Internal: Get merged dimensions dict from both sides of the join."""
         all_roots = _find_all_root_models(self)
-        merged_dims = _merge_fields_with_prefixing(
-            all_roots, lambda root: root._dims_dict() if hasattr(root, '_dims_dict') else root.dimensions
-        )
+        merged_dims = _merge_fields_with_prefixing(all_roots, lambda r: _get_field_dict(r, 'dims'))
         return FrozenDict(merged_dims)
 
     def _measures_dict(self) -> FrozenDict[str, Measure]:
         """Internal: Get merged base measures dict from both sides of the join."""
         all_roots = _find_all_root_models(self)
-        merged_measures = _merge_fields_with_prefixing(
-            all_roots, lambda root: root._measures_dict() if hasattr(root, '_measures_dict') else root.measures
-        )
+        merged_measures = _merge_fields_with_prefixing(all_roots, lambda r: _get_field_dict(r, 'measures'))
         return FrozenDict(merged_measures)
 
     def _calc_measures_dict(self) -> FrozenDict:
         """Internal: Get merged calculated measures dict from both sides of the join."""
         all_roots = _find_all_root_models(self)
-        merged_calc_measures = _merge_fields_with_prefixing(
-            all_roots, lambda root: root._calc_measures_dict() if hasattr(root, '_calc_measures_dict') else root.calc_measures
-        )
+        merged_calc_measures = _merge_fields_with_prefixing(all_roots, lambda r: _get_field_dict(r, 'calc_measures'))
         return FrozenDict(merged_calc_measures)
 
     @property
