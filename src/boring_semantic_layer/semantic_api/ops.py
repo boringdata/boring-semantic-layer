@@ -66,6 +66,10 @@ class _CallableWrapper:
         return self._fn
 
 
+def _ensure_wrapped(fn: Any) -> _CallableWrapper:
+    return fn if isinstance(fn, _CallableWrapper) else _CallableWrapper(fn)
+
+
 @frozen(kw_only=True, slots=True)
 class Dimension:
     expr: Callable[[Any], Any] | Deferred
@@ -298,8 +302,7 @@ class SemanticFilter(Relation):
     predicate: Any  # Can be Callable, Deferred, or _CallableWrapper
 
     def __init__(self, source: Any, predicate: Callable) -> None:
-        wrapped_pred = _CallableWrapper(predicate) if not isinstance(predicate, _CallableWrapper) else predicate
-        super().__init__(source=Relation.__coerce__(source), predicate=wrapped_pred)
+        super().__init__(source=Relation.__coerce__(source), predicate=_ensure_wrapped(predicate))
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -433,12 +436,7 @@ class SemanticAggregate(Relation):
         keys: Iterable[str],
         aggs: dict[str, Callable] | None,
     ) -> None:
-        # Wrap all callables/deferred in _CallableWrapper to make them hashable
-        wrapped_aggs = {
-            name: _CallableWrapper(fn) if not isinstance(fn, _CallableWrapper) else fn
-            for name, fn in (aggs or {}).items()
-        }
-        frozen_aggs = FrozenDict(wrapped_aggs)
+        frozen_aggs = FrozenDict({name: _ensure_wrapped(fn) for name, fn in (aggs or {}).items()})
         super().__init__(
             source=Relation.__coerce__(source), keys=tuple(keys), aggs=frozen_aggs
         )
@@ -563,12 +561,7 @@ class SemanticMutate(Relation):
     post: Any  # FrozenDict[str, _CallableWrapper]
 
     def __init__(self, source: Any, post: dict[str, Callable] | None) -> None:
-        # Wrap all callables/deferred in _CallableWrapper to make them hashable
-        wrapped_post = {
-            name: _CallableWrapper(fn) if not isinstance(fn, _CallableWrapper) else fn
-            for name, fn in (post or {}).items()
-        }
-        frozen_post = FrozenDict(wrapped_post)
+        frozen_post = FrozenDict({name: _ensure_wrapped(fn) for name, fn in (post or {}).items()})
         super().__init__(source=Relation.__coerce__(source), post=frozen_post)
 
     @property
@@ -580,12 +573,7 @@ class SemanticMutate(Relation):
         return self.source.schema
 
     def mutate(self, **post) -> "SemanticMutate":
-        """Chain another mutate (fluent API)."""
-        # Merge with existing post mutations
-        new_post = dict(self.post)
-        for name, fn in post.items():
-            wrapped_fn = _CallableWrapper(fn) if not isinstance(fn, _CallableWrapper) else fn
-            new_post[name] = wrapped_fn
+        new_post = {**self.post, **{name: _ensure_wrapped(fn) for name, fn in post.items()}}
         return SemanticMutate(source=self.source, post=new_post)
 
     def order_by(self, *keys: Any) -> "SemanticOrderBy":
