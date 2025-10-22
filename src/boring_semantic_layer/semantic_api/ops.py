@@ -268,15 +268,12 @@ class SemanticFilter(Relation):
         return self.source.schema
 
     def filter(self, predicate: Callable) -> "SemanticFilter":
-        """Chain another filter (fluent API)."""
         return SemanticFilter(source=self, predicate=predicate)
 
     def group_by(self, *keys: str) -> "SemanticGroupBy":
-        """Group by dimensions (fluent API)."""
         return SemanticGroupBy(source=self, keys=keys)
 
     def to_ibis(self):
-        """Convert to regular Ibis expression."""
         from .lower import _Resolver
 
         all_roots = _find_all_root_models(self.source)
@@ -302,7 +299,6 @@ class SemanticFilter(Relation):
         return base_tbl.filter(pred)
 
     def execute(self):
-        """Execute the query and return results as a pandas DataFrame."""
         return self.to_ibis().execute()
 
 
@@ -362,7 +358,6 @@ class SemanticProject(Relation):
             return tbl.select(all_exprs) if all_exprs else tbl
 
     def execute(self):
-        """Execute the query and return results as a pandas DataFrame."""
         return self.to_ibis().execute()
 
 
@@ -409,7 +404,6 @@ class SemanticGroupBy(Relation):
         return self.source.to_ibis() if hasattr(self.source, 'to_ibis') else self.source.to_expr()
 
     def execute(self):
-        """Execute the query and return results as a pandas DataFrame."""
         return self.to_ibis().execute()
 
 
@@ -467,36 +461,27 @@ class SemanticAggregate(Relation):
         return []
 
     def mutate(self, **post) -> "SemanticMutate":
-        """Add computed columns (fluent API)."""
         return SemanticMutate(source=self, post=post)
 
     def order_by(self, *keys: Any) -> "SemanticOrderBy":
-        """Order results (fluent API)."""
         return SemanticOrderBy(source=self, keys=keys)
 
     def limit(self, n: int, offset: int = 0) -> "SemanticLimit":
-        """Limit results (fluent API)."""
         return SemanticLimit(source=self, n=n, offset=offset)
 
     def filter(self, predicate: Callable) -> "SemanticFilter":
-        """Filter aggregated results (fluent API)."""
         return SemanticFilter(source=self, predicate=predicate)
 
     def join(self, other: "SemanticTable", on: Callable[[Any, Any], Any] | None = None, how: str = "inner") -> "SemanticJoin":
-        """Join with another semantic table (fluent API). Returns SemanticJoin operation."""
         return SemanticJoin(left=self, right=other, on=on, how=how)
 
     def join_one(self, other: "SemanticTable", left_on: str, right_on: str) -> "SemanticJoin":
-        """Inner join one-to-one or many-to-one on primary/foreign keys."""
-        def predicate(left, right):
-            return left[left_on] == right[right_on]
-        return SemanticJoin(left=self, right=other, on=predicate, how="inner")
+        return SemanticJoin(left=self, right=other,
+                          on=lambda l, r: l[left_on] == r[right_on], how="inner")
 
     def join_many(self, other: "SemanticTable", left_on: str, right_on: str) -> "SemanticJoin":
-        """Left join one-to-many on primary/foreign keys."""
-        def predicate(left, right):
-            return left[left_on] == right[right_on]
-        return SemanticJoin(left=self, right=other, on=predicate, how="left")
+        return SemanticJoin(left=self, right=other,
+                          on=lambda l, r: l[left_on] == r[right_on], how="left")
 
     def to_ibis(self):
         """Convert to regular Ibis expression."""
@@ -608,7 +593,6 @@ class SemanticAggregate(Relation):
             return tbl.aggregate(**grouped_aggs)
 
     def execute(self):
-        """Execute the query and return results as a pandas DataFrame."""
         return self.to_ibis().execute()
 
 
@@ -677,7 +661,6 @@ class SemanticMutate(Relation):
         return agg_tbl.mutate(new_cols) if new_cols else agg_tbl
 
     def execute(self):
-        """Execute the query and return results as a pandas DataFrame."""
         return self.to_ibis().execute()
 
 
@@ -907,7 +890,6 @@ class SemanticJoin(Relation):
             return left_tbl.join(right_tbl, how=self.how)
 
     def execute(self):
-        """Execute the query and return results as a pandas DataFrame."""
         return self.to_ibis().execute()
 
 
@@ -972,7 +954,6 @@ class SemanticOrderBy(Relation):
         return tbl.order_by(order_keys)
 
     def execute(self):
-        """Execute the query and return results as a pandas DataFrame."""
         return self.to_ibis().execute()
 
 
@@ -1001,7 +982,6 @@ class SemanticLimit(Relation):
             return tbl.limit(self.n, offset=self.offset)
 
     def execute(self):
-        """Execute the query and return results as a pandas DataFrame."""
         return self.to_ibis().execute()
 
 
