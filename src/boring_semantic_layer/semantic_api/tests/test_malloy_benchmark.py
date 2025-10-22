@@ -5,7 +5,7 @@ from malloy.data.duckdb import DuckDbConnection
 import asyncio
 import importlib
 import sys
-import pytest
+import gc
 
 # Import utilities
 from test_malloy_benchmark_utils import (
@@ -58,6 +58,11 @@ async def run_malloy_query(query_file: str, query_name: str):
             )
 
             df = data.to_dataframe()
+
+        # Force garbage collection to clean up subprocesses before event loop closes
+        gc.collect()
+        # Give a brief moment for any pending cleanup
+        await asyncio.sleep(0.01)
 
         return df
     finally:

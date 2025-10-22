@@ -68,11 +68,11 @@ class TestSessionization:
 
         # Create session boundaries where gap > 1200 seconds (20 min)
         events_with_boundaries = events_with_lag.mutate(
-            is_new_session=ibis.case()
-            .when(_.prev_time.isnull(), 1)
-            .when(_.time_diff > 1200, 1)
-            .else_(0)
-            .end()
+            is_new_session=ibis.cases(
+                (_.prev_time.isnull(), 1),
+                (_.time_diff > 1200, 1),
+                else_=0
+            )
         )
 
         # Cumulative sum to create session IDs

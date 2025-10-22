@@ -600,7 +600,7 @@ class TestAdvancedAnalytics:
     @pytest.fixture(scope="class")
     def time_series_data(self, con):
         """Setup time series test data."""
-        dates = pd.date_range("2023-01-01", periods=12, freq="M")
+        dates = pd.date_range("2023-01-01", periods=12, freq="ME")
         ts_df = pd.DataFrame({
             "date": dates,
             "metric_value": [100, 120, 115, 130, 140, 135, 150, 160, 155, 170, 180, 175],
