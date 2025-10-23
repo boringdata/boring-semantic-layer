@@ -74,20 +74,28 @@ def _classify_measure(fn_or_expr: Any, scope: Any):
     from .measure_nodes import MeasureRef, AllOf, BinOp
     from .measure_scope import ColumnScope
 
+    # Handle dict inputs by extracting expr and description
+    if isinstance(fn_or_expr, dict):
+        description = fn_or_expr.get("description")
+        fn_or_expr = fn_or_expr["expr"]
+    elif isinstance(fn_or_expr, Measure):
+        description = fn_or_expr.description
+        fn_or_expr = fn_or_expr.expr
+    else:
+        description = None
+
     val = _resolve_expr(fn_or_expr, scope)
     is_calc = isinstance(val, (MeasureRef, AllOf, BinOp, int, float))
 
     if is_calc:
         return ('calc', val)
-    elif isinstance(fn_or_expr, Measure):
-        return ('base', fn_or_expr)
     else:
         return ('base', Measure(
             expr=lambda t, fn=fn_or_expr: (
                 fn.resolve(ColumnScope(t)) if isinstance(fn, Deferred)
                 else fn(ColumnScope(t))
             ),
-            description=None
+            description=description
         ))
 
 
