@@ -92,8 +92,8 @@ capabilities.
 ### Tests
 
 For more advanced examples and patterns, see the test suite:
-- `src/boring_semantic_layer/semantic_api/tests/test_real_world_scenarios.py`
-- `src/boring_semantic_layer/semantic_api/tests/malloy_equivalence/`
+- `src/boring_semantic_layer/api/tests/test_real_world_scenarios.py`
+- `src/boring_semantic_layer/api/tests/malloy_equivalence/`
 
 ## Data Sources
 
@@ -108,7 +108,7 @@ analytical patterns.
 ### Basic Query Pattern
 
 ```python
-from boring_semantic_layer.semantic_api import to_semantic_table
+from boring_semantic_layer.api import to_semantic_table
 import ibis
 from ibis import _
 

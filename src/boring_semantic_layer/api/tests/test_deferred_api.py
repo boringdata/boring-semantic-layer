@@ -11,7 +11,7 @@ import ibis
 from ibis import _
 import pytest
 
-from boring_semantic_layer.semantic_api import to_semantic_table
+from boring_semantic_layer.api import to_semantic_table
 
 
 def test_deferred_in_with_measures():

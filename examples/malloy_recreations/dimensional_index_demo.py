@@ -21,7 +21,7 @@ Use cases:
 import pandas as pd
 import ibis
 import ibis.selectors as s
-from boring_semantic_layer.semantic_api import to_semantic_table
+from boring_semantic_layer.api import to_semantic_table
 
 
 def create_sample_airports():

@@ -15,7 +15,7 @@ origin, destination, distance, and carrier information.
 import pandas as pd
 import ibis
 from ibis import _
-from boring_semantic_layer.semantic_api import to_semantic_table
+from boring_semantic_layer.api import to_semantic_table
 
 
 def main():

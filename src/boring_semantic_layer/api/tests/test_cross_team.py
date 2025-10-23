@@ -1,7 +1,7 @@
 import pandas as pd
 import ibis
 
-from boring_semantic_layer.semantic_api import to_semantic_table
+from boring_semantic_layer.api import to_semantic_table
 
 def test_cross_team_aggregated_measure_refs():
     marketing_df = pd.DataFrame(

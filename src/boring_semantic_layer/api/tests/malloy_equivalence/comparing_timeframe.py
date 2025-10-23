@@ -1,5 +1,5 @@
 import ibis
-from boring_semantic_layer.semantic_api import to_semantic_table
+from boring_semantic_layer.api import to_semantic_table
 
 con = ibis.duckdb.connect()
 BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"

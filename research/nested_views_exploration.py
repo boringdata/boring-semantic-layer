@@ -12,7 +12,7 @@ Nested views requirements:
 """
 import pandas as pd
 import ibis
-from boring_semantic_layer.semantic_api import to_semantic_table
+from boring_semantic_layer.api import to_semantic_table
 
 # Sample data
 con = ibis.duckdb.connect(":memory:")

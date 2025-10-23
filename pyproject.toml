@@ -26,7 +26,7 @@ dev = [
     "pandas>=2.3.0",
     "urllib3>=2.2.3",
     "pytest-asyncio",
-    "malloy>=0.1.0", # for semantic_api Malloy-style tests
+    "malloy>=0.1.0", # for api Malloy-style tests
 ]
 
 [build-system]

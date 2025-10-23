@@ -1,5 +1,5 @@
 """
-Real-world integration tests for BSL v2 semantic_api.
+Real-world integration tests for BSL v2 api.
 
 These tests demonstrate practical business intelligence scenarios:
 - E-commerce analytics (cohort analysis, retention, sales metrics)
@@ -11,7 +11,7 @@ These tests demonstrate practical business intelligence scenarios:
 import ibis
 import pandas as pd
 import pytest
-from boring_semantic_layer.semantic_api import to_semantic_table
+from boring_semantic_layer.api import to_semantic_table
 
 
 @pytest.fixture(scope="module")

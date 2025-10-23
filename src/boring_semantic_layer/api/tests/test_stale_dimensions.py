@@ -7,8 +7,8 @@ import pytest
 
 import pandas as pd
 import ibis
-from boring_semantic_layer.semantic_api import to_semantic_table
-from boring_semantic_layer.semantic_api.api import join_one, group_by_, aggregate_
+from boring_semantic_layer.api import to_semantic_table
+from boring_semantic_layer.api.api import join_one, group_by_, aggregate_
 
 
 def test_bracket_filter_after_join_and_aggregate():

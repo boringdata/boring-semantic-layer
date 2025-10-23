@@ -1,5 +1,5 @@
 """
-Pytest configuration and shared fixtures for semantic_api tests.
+Pytest configuration and shared fixtures for api tests.
 
 This module provides common test fixtures for:
 - Database connections (Ibis/DuckDB and Malloy)
