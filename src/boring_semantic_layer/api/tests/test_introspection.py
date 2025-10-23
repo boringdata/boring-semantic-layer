@@ -141,7 +141,7 @@ def test_dims_after_join():
     joined = flights_st.join(carriers_st, on=lambda f, c: f.carrier == c.code)
 
     # After join, dimensions should be prefixed
-    assert set(joined.dims) == {"flights__carrier", "carriers__code", "carriers__name"}
+    assert set(joined.dims) == {"flights.carrier", "carriers.code", "carriers.name"}
 
 
 def test_measures_after_join():
@@ -163,7 +163,7 @@ def test_measures_after_join():
     joined = flights_st.join(carriers_st, on=lambda f, c: f.carrier == c.code)
 
     # After join, measures should be prefixed
-    assert set(joined.measures) == {"flights__flight_count", "carriers__carrier_count"}
+    assert set(joined.measures) == {"flights.flight_count", "carriers.carrier_count"}
 
 
 def test_measures_after_aggregate():

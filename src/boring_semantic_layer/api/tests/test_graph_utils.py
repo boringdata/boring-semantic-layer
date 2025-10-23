@@ -67,5 +67,5 @@ def test_find_dimensions_and_measures_semantic_table():
     semantic = SemanticTable(table=t, dimensions=dims_defs, measures=meas_defs, calc_measures=None, name="mytable")
     expr = semantic.to_expr()
     dims, meas = find_dimensions_and_measures(expr)
-    assert dims == {"mytable__x": dims_defs["x"]}
-    assert meas == {"mytable__sum_x": meas_defs["sum_x"]}
+    assert dims == {"mytable.x": dims_defs["x"]}
+    assert meas == {"mytable.sum_x": meas_defs["sum_x"]}

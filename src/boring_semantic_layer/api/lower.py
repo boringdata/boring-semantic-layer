@@ -34,7 +34,7 @@ class _Resolver:
         return (self._dims[name](self._t).name(name) if name in self._dims
                 else next((dim_func(self._t).name(dim_name)
                          for dim_name, dim_func in self._dims.items()
-                         if dim_name.endswith(f"__{name}")), getattr(self._t, name)))
+                         if dim_name.endswith(f".{name}")), getattr(self._t, name)))
 
     def __getitem__(self, name: str):
         return getattr(self._t, name)
@@ -133,9 +133,9 @@ def _lower_semantic_aggregate(node: SemanticAggregate, catalog, *args):
             return (self._dims[key](self._t) if key in self._dims
                     else self._meas[key](self._t) if key in self._meas
                     else next((dim_func(self._t) for dim_name, dim_func in self._dims.items()
-                             if dim_name.endswith(f"__{key}")), None) or
+                             if dim_name.endswith(f".{key}")), None) or
                          next((meas_func(self._t) for meas_name, meas_func in self._meas.items()
-                              if meas_name.endswith(f"__{key}")), None) or
+                              if meas_name.endswith(f".{key}")), None) or
                          getattr(self._t, key))
 
         def __getitem__(self, key: str):

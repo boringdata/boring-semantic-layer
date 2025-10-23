@@ -5,7 +5,7 @@ from .measure_nodes import MeasureRef, AllOf
 
 def _resolve_measure_name(name: str, known: list[str], known_set: set[str]) -> str | None:
     return (name if name in known_set
-            else next((k for k in known if k.endswith(f"__{name}")), None))
+            else next((k for k in known if k.endswith(f".{name}")), None))
 
 
 class MeasureScope:

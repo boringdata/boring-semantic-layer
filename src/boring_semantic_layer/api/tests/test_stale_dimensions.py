@@ -64,10 +64,10 @@ def test_bracket_filter_after_join_and_aggregate():
 
     step1 = join_one(model_a, model_b, "order_id", "order_id")
     step2 = aggregate_(
-        group_by_(step1, "orders__region", "orders__customer_id"),
-        lambda t: t.orders__order_count,
+        group_by_(step1, "orders.region", "orders.customer_id"),
+        lambda t: t["orders.order_count"],
     )
-    final = join_one(step2, model_c, "orders__customer_id", "customer_id")
+    final = join_one(step2, model_c, "orders.customer_id", "customer_id")
 
-    df = final.filter(lambda t: t["orders__region"] == "North").execute()
+    df = final.filter(lambda t: t["orders.region"] == "North").execute()
     assert df.shape[0] == 2

@@ -1279,7 +1279,7 @@ def _build_string_index_fragment(base_tbl: Any, field_expr: Any, field_name: str
             .group_by(field_expr.name("value"))
             .aggregate(weight=weight_expr)
             .select(
-                fieldName=ibis.literal(field_name.split("__")[-1]),
+                fieldName=ibis.literal(field_name.split(".")[-1]),
                 fieldPath=ibis.literal(field_path),
                 fieldType=ibis.literal(type_str),
                 fieldValue=ibis._["value"].cast("string"),
@@ -1299,7 +1299,7 @@ def _build_numeric_index_fragment(base_tbl: Any, field_expr: Any, field_name: st
                 weight=weight_expr,
             )
             .select(
-                fieldName=ibis.literal(field_name.split("__")[-1]),
+                fieldName=ibis.literal(field_name.split(".")[-1]),
                 fieldPath=ibis.literal(field_path),
                 fieldType=ibis.literal(type_str),
                 fieldValue=(ibis._["min_val"].cast("string") + " to " + ibis._["max_val"].cast("string")),
@@ -1575,14 +1575,14 @@ def _merge_fields_with_prefixing(
         fields_dict = field_accessor(root)
 
         if is_calc_measures and root_name:
-            base_map = {k: f"{root_name}__{k}" for k in root._measures_dict().keys()} if hasattr(root, '_measures_dict') else {}
-            calc_map = {k: f"{root_name}__{k}" for k in root._calc_measures_dict().keys()} if hasattr(root, '_calc_measures_dict') else {}
+            base_map = {k: f"{root_name}.{k}" for k in root._measures_dict().keys()} if hasattr(root, '_measures_dict') else {}
+            calc_map = {k: f"{root_name}.{k}" for k in root._calc_measures_dict().keys()} if hasattr(root, '_calc_measures_dict') else {}
             prefix_map = {**base_map, **calc_map}
 
         for field_name, field_value in fields_dict.items():
             if root_name:
-                # Always use prefixed name with __ separator
-                prefixed_name = f"{root_name}__{field_name}"
+                # Always use prefixed name with . separator
+                prefixed_name = f"{root_name}.{field_name}"
 
                 # If it's a calculated measure, update internal MeasureRefs
                 if is_calc_measures:
