@@ -10,7 +10,7 @@ For percentage calculations using t.all(), use .mutate() after .aggregate().
 
 Structure:
 1. Define dataset
-2. Compute Semantic Layer with base measures  
+2. Compute Semantic Layer with base measures
 3. Query SL and calculate percentages with t.all() in mutate
 """
 
@@ -35,12 +35,14 @@ def main():
     con = ibis.duckdb.connect(":memory:")
 
     # Flights data with carriers
-    flights_df = pd.DataFrame({
-        "origin": ["JFK"] * 4 + ["LAX"] * 4 + ["ORD"] * 4,
-        "destination": ["LAX", "ORD", "MIA", "DFW"] * 3,
-        "distance": [2475, 740, 1090, 1391] * 3,
-        "carrier": ["AA", "UA", "DL", "AA"] * 3,
-    })
+    flights_df = pd.DataFrame(
+        {
+            "origin": ["JFK"] * 4 + ["LAX"] * 4 + ["ORD"] * 4,
+            "destination": ["LAX", "ORD", "MIA", "DFW"] * 3,
+            "distance": [2475, 740, 1090, 1391] * 3,
+            "carrier": ["AA", "UA", "DL", "AA"] * 3,
+        }
+    )
 
     flights_tbl = con.create_table("flights", flights_df)
 
@@ -75,7 +77,9 @@ def main():
             market_share=lambda t: t.flight_count / t.all(t.flight_count),
             market_share_pct=lambda t: t.flight_count / t.all(t.flight_count) * 100,
             distance_share=lambda t: t.total_distance / t.all(t.total_distance),
-            distance_share_pct=lambda t: t.total_distance / t.all(t.total_distance) * 100,
+            distance_share_pct=lambda t: t.total_distance
+            / t.all(t.total_distance)
+            * 100,
         )
     )
 
@@ -97,8 +101,7 @@ def main():
     print("-" * 80)
 
     result = (
-        flights
-        .group_by("carrier")
+        flights.group_by("carrier")
         .aggregate("flight_count", "market_share")  # Both from semantic layer!
         .order_by(_.market_share.desc())
         .execute()
@@ -114,8 +117,7 @@ def main():
     print("-" * 80)
 
     result = (
-        flights
-        .group_by("carrier")
+        flights.group_by("carrier")
         .aggregate("flight_count", "market_share_pct")  # Both from SL!
         .order_by(_.market_share_pct.desc())
         .execute()
@@ -130,13 +132,12 @@ def main():
     print("-" * 80)
 
     result = (
-        flights
-        .group_by("carrier")
+        flights.group_by("carrier")
         .aggregate(
             "flight_count",
             "total_distance",
             "distance_share",  # From SL!
-            "avg_distance",    # From SL!
+            "avg_distance",  # From SL!
         )
         .order_by(_.distance_share.desc())
         .execute()
@@ -151,8 +152,7 @@ def main():
     print("-" * 80)
 
     result = (
-        flights
-        .group_by("origin")
+        flights.group_by("origin")
         .aggregate("flight_count", "market_share_pct")  # Both from SL!
         .order_by(_.flight_count.desc())
         .execute()
@@ -168,14 +168,13 @@ def main():
     print("(Note: Grand total % from SL, within-group % needs .mutate())")
 
     result = (
-        flights
-        .group_by("origin", "carrier")
+        flights.group_by("origin", "carrier")
         .aggregate("flight_count", "market_share_pct")  # Grand total from SL!
         .mutate(
             # Percent of origin's flights (within-group calc needs window function)
-            pct_of_origin=lambda t: t["flight_count"] / t["flight_count"].sum().over(
-                ibis.window(group_by="origin")
-            ) * 100,
+            pct_of_origin=lambda t: t["flight_count"]
+            / t["flight_count"].sum().over(ibis.window(group_by="origin"))
+            * 100,
         )
         .order_by("origin", _.pct_of_origin.desc())
         .execute()
@@ -190,14 +189,13 @@ def main():
     print("-" * 80)
 
     result = (
-        flights
-        .group_by("carrier")
+        flights.group_by("carrier")
         .aggregate(
             "flight_count",
             "total_distance",
             "avg_distance",
-            "market_share_pct",      # From SL!
-            "distance_share_pct",    # From SL!
+            "market_share_pct",  # From SL!
+            "distance_share_pct",  # From SL!
         )
         .order_by(_.market_share_pct.desc())
         .execute()
@@ -214,7 +212,9 @@ def main():
     print("  ✓ You CAN define percentage measures in the semantic layer!")
     print("  ✓ Use t.all(t.measure) to reference grand totals in measure definitions")
     print("  ✓ Percentage measures work across ANY grouping (carrier, origin, etc.)")
-    print("  ✓ Grand total %: Define in SL | Within-group %: Use .mutate() + window function")
+    print(
+        "  ✓ Grand total %: Define in SL | Within-group %: Use .mutate() + window function"
+    )
     print("  ✓ Result: Reusable percentage metrics, no .mutate() for common cases")
     print("\n📚 Next: See window_functions.py for rolling averages and rankings")
     print()

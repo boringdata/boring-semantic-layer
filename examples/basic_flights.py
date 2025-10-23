@@ -36,12 +36,14 @@ def main():
     con = ibis.duckdb.connect(":memory:")
 
     # Sample flights data
-    flights_df = pd.DataFrame({
-        "origin": ["JFK", "LAX", "JFK", "ORD", "LAX", "JFK", "ORD", "LAX"],
-        "destination": ["LAX", "JFK", "ORD", "JFK", "ORD", "LAX", "LAX", "ORD"],
-        "distance": [2475, 2475, 740, 740, 1744, 2475, 987, 1744],
-        "carrier": ["AA", "UA", "AA", "UA", "AA", "UA", "AA", "UA"],
-    })
+    flights_df = pd.DataFrame(
+        {
+            "origin": ["JFK", "LAX", "JFK", "ORD", "LAX", "JFK", "ORD", "LAX"],
+            "destination": ["LAX", "JFK", "ORD", "JFK", "ORD", "LAX", "LAX", "ORD"],
+            "distance": [2475, 2475, 740, 740, 1744, 2475, 987, 1744],
+            "carrier": ["AA", "UA", "AA", "UA", "AA", "UA", "AA", "UA"],
+        }
+    )
 
     flights_tbl = con.create_table("flights", flights_df)
 
@@ -54,7 +56,9 @@ def main():
     print("\n" + "-" * 80)
     print("STEP 2: Compute Semantic Layer - Define dimensions AND measures")
     print("-" * 80)
-    print("\n💡 KEY INSIGHT: Define ALL your metrics as measures in the semantic layer.")
+    print(
+        "\n💡 KEY INSIGHT: Define ALL your metrics as measures in the semantic layer."
+    )
     print("   This makes them reusable and distributes calculation logic to users.")
 
     flights = (
@@ -68,12 +72,10 @@ def main():
             # Basic counts and sums
             flight_count=lambda t: t.count(),
             total_distance=lambda t: t.distance.sum(),
-
             # Statistical measures - define these as measures, not in mutate!
             avg_distance=lambda t: t.distance.mean(),
             max_distance=lambda t: t.distance.max(),
             min_distance=lambda t: t.distance.min(),
-
             # Complex calculated measures can also be defined here
             # (we'll add more complex ones later)
         )
@@ -95,12 +97,7 @@ def main():
     print("Query 1: Flight counts by origin - Using semantic measures")
     print("-" * 80)
 
-    result = (
-        flights
-        .group_by("origin")
-        .aggregate("flight_count")
-        .execute()
-    )
+    result = flights.group_by("origin").aggregate("flight_count").execute()
 
     print(result)
 
@@ -110,8 +107,7 @@ def main():
     print("-" * 80)
 
     result = (
-        flights
-        .group_by("origin", "carrier")
+        flights.group_by("origin", "carrier")
         .aggregate("flight_count", "avg_distance")
         .order_by(_.flight_count.desc())
         .execute()
@@ -126,8 +122,7 @@ def main():
     print("✓ No ad-hoc lambdas - all metrics defined in semantic layer!")
 
     result = (
-        flights
-        .group_by("origin")
+        flights.group_by("origin")
         .aggregate(
             "flight_count",
             "max_distance",  # Defined in semantic layer
@@ -153,8 +148,7 @@ def main():
     )
 
     result = (
-        flights_enhanced
-        .group_by("carrier")
+        flights_enhanced.group_by("carrier")
         .aggregate("flight_count", "total_distance", "distance_per_flight")
         .order_by(_.distance_per_flight.desc())
         .execute()
@@ -173,8 +167,7 @@ def main():
     long_haul_flights = flights_enhanced.filter(lambda t: t.distance > 1000)
 
     result = (
-        long_haul_flights
-        .group_by("carrier")
+        long_haul_flights.group_by("carrier")
         .aggregate("flight_count", "avg_distance")  # Same measures from SL!
         .execute()
     )
@@ -189,8 +182,7 @@ def main():
     print("-" * 80)
 
     result = (
-        flights_enhanced
-        .group_by("carrier")
+        flights_enhanced.group_by("carrier")
         .aggregate("flight_count", "total_distance", "distance_per_flight")
         .order_by(_.distance_per_flight.desc())
         .execute()

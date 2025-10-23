@@ -31,21 +31,27 @@ def main():
     con = ibis.duckdb.connect(":memory:")
 
     # Create order items data with dates spanning multiple years
-    np_random = __import__('numpy').random
+    np_random = __import__("numpy").random
     np_random.seed(42)
 
     # Generate dates across 4 years (2019-2022)
     base_date = datetime(2019, 1, 1)
     n_orders = 2000
 
-    dates = [base_date + timedelta(days=int(x)) for x in np_random.uniform(0, 1460, n_orders)]
+    dates = [
+        base_date + timedelta(days=int(x)) for x in np_random.uniform(0, 1460, n_orders)
+    ]
 
-    orders_df = pd.DataFrame({
-        "id": list(range(1, n_orders + 1)),
-        "created_at": dates,
-        "sale_price": np_random.uniform(10, 500, n_orders),
-        "product_category": np_random.choice(["Electronics", "Clothing", "Home", "Sports"], n_orders),
-    })
+    orders_df = pd.DataFrame(
+        {
+            "id": list(range(1, n_orders + 1)),
+            "created_at": dates,
+            "sale_price": np_random.uniform(10, 500, n_orders),
+            "product_category": np_random.choice(
+                ["Electronics", "Clothing", "Home", "Sports"], n_orders
+            ),
+        }
+    )
 
     # Add computed date columns
     orders_df["year"] = orders_df["created_at"].dt.year
@@ -58,7 +64,9 @@ def main():
     print("\n📊 Sample Order Items Data:")
     print(orders_df.head(10))
     print(f"\nTotal orders: {len(orders_df)}")
-    print(f"Date range: {orders_df['created_at'].min().date()} to {orders_df['created_at'].max().date()}")
+    print(
+        f"Date range: {orders_df['created_at'].min().date()} to {orders_df['created_at'].max().date()}"
+    )
     print(f"Total sales: ${orders_df['sale_price'].sum():,.2f}")
 
     # Create semantic table
@@ -84,8 +92,7 @@ def main():
     print("-" * 80)
 
     annual_sales = (
-        order_items
-        .group_by("year")
+        order_items.group_by("year")
         .aggregate("total_sales", "order_count")
         .order_by(lambda t: ibis.desc(t.year))
         .execute()
@@ -100,8 +107,7 @@ def main():
     print("-" * 80)
 
     quarterly_sales = (
-        order_items
-        .group_by("year", "quarter")
+        order_items.group_by("year", "quarter")
         .aggregate("total_sales", "order_count")
         .order_by(lambda t: ibis.desc(t.year), "quarter")
         .execute()
@@ -114,7 +120,7 @@ def main():
         print(f"\n{year} - Total Sales: ${year_total:,.2f}")
         print("  Quarterly breakdown:")
         for _, row in year_data.iterrows():
-            pct = (row["total_sales"] / year_total * 100)
+            pct = row["total_sales"] / year_total * 100
             print(f"    {row['quarter']}: ${row['total_sales']:>12,.2f} ({pct:>5.1f}%)")
 
     # Level 3: Drill down even further - Top 5 days per quarter
@@ -124,14 +130,12 @@ def main():
 
     # Get top 5 days per quarter using window functions
     daily_sales = (
-        order_items
-        .group_by("year", "quarter", "day")
+        order_items.group_by("year", "quarter", "day")
         .aggregate("total_sales")
         .mutate(
             rank_in_quarter=lambda t: ibis.rank().over(
                 ibis.window(
-                    group_by=["year", "quarter"],
-                    order_by=ibis.desc(t["total_sales"])
+                    group_by=["year", "quarter"], order_by=ibis.desc(t["total_sales"])
                 )
             )
         )
@@ -152,13 +156,14 @@ def main():
             print("    Top 5 days:")
 
             top_days = daily_sales[
-                (daily_sales["year"] == year) &
-                (daily_sales["quarter"] == quarter)
+                (daily_sales["year"] == year) & (daily_sales["quarter"] == quarter)
             ]
 
             for _, day_row in top_days.iterrows():
-                day_pct = (day_row["total_sales"] / q_total * 100)
-                print(f"      {day_row['day']}: ${day_row['total_sales']:>10,.2f} ({day_pct:>4.1f}%)")
+                day_pct = day_row["total_sales"] / q_total * 100
+                print(
+                    f"      {day_row['day']}: ${day_row['total_sales']:>10,.2f} ({day_pct:>4.1f}%)"
+                )
 
     # Example 4: Nested by Product Category
     print("\n" + "-" * 80)
@@ -166,8 +171,7 @@ def main():
     print("-" * 80)
 
     category_sales = (
-        order_items
-        .group_by("year", "product_category")
+        order_items.group_by("year", "product_category")
         .aggregate("total_sales", "order_count")
         .order_by(lambda t: ibis.desc(t.year), lambda t: ibis.desc(t.total_sales))
         .execute()
@@ -180,8 +184,10 @@ def main():
         print(f"\n{year} - Total Sales: ${year_total:,.2f}")
         print("  Category breakdown:")
         for _, row in year_data.iterrows():
-            pct = (row["total_sales"] / year_total * 100)
-            print(f"    {row['product_category']:<15}: ${row['total_sales']:>12,.2f} ({pct:>5.1f}%) - {row['order_count']} orders")
+            pct = row["total_sales"] / year_total * 100
+            print(
+                f"    {row['product_category']:<15}: ${row['total_sales']:>12,.2f} ({pct:>5.1f}%) - {row['order_count']} orders"
+            )
 
     # Example 5: Multi-level with filtering
     print("\n" + "-" * 80)
@@ -193,8 +199,7 @@ def main():
 
     # Aggregate using semantic layer measures - no need to recreate!
     electronics_by_month = (
-        electronics
-        .group_by("year", "month")  # Dimensions from semantic layer!
+        electronics.group_by("year", "month")  # Dimensions from semantic layer!
         .aggregate("total_sales", "order_count")  # Measures from semantic layer!
         .order_by("year", "month")
         .execute()
@@ -204,10 +209,12 @@ def main():
     elec_2022 = electronics_by_month[electronics_by_month["year"] == 2022]
     for _, row in elec_2022.iterrows():
         # Month is already a string like '2022-01', parse it to get the month name
-        month_str = str(row['month'])
+        month_str = str(row["month"])
         month_date = pd.to_datetime(month_str)
         month_name = month_date.strftime("%B")
-        print(f"  {month_name:>10}: ${row['total_sales']:>10,.2f} ({int(row['order_count'])} orders)")
+        print(
+            f"  {month_name:>10}: ${row['total_sales']:>10,.2f} ({int(row['order_count'])} orders)"
+        )
 
     print("\n" + "=" * 80)
     print("✅ Example completed successfully!")

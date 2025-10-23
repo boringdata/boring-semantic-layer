@@ -37,7 +37,7 @@ def main():
 
     # Create flight events data - each row is a flight
     # We'll create multiple flights per tail_num per day to show sessionization
-    np_random = __import__('numpy').random
+    np_random = __import__("numpy").random
     np_random.seed(42)
 
     # Generate flight events
@@ -61,28 +61,46 @@ def main():
         minute = np_random.randint(0, 60)
         dep_time = flight_date + timedelta(hours=hour, minutes=minute)
 
-        flights_data.append({
-            "id": i + 1,
-            "carrier": np_random.choice(carriers),
-            "tail_num": tail,
-            "dep_time": dep_time,
-            "origin": np_random.choice(origins),
-            "destination": np_random.choice(destinations),
-            "dep_delay": int(np_random.normal(15, 30)),  # minutes
-            "arr_delay": int(np_random.normal(10, 25)),  # minutes
-            "distance": int(np_random.uniform(200, 1200)),  # miles
-        })
+        flights_data.append(
+            {
+                "id": i + 1,
+                "carrier": np_random.choice(carriers),
+                "tail_num": tail,
+                "dep_time": dep_time,
+                "origin": np_random.choice(origins),
+                "destination": np_random.choice(destinations),
+                "dep_delay": int(np_random.normal(15, 30)),  # minutes
+                "arr_delay": int(np_random.normal(10, 25)),  # minutes
+                "distance": int(np_random.uniform(200, 1200)),  # miles
+            }
+        )
 
     flights_df = pd.DataFrame(flights_data)
     flights_df["flight_date"] = flights_df["dep_time"].dt.date
-    flights_df["dep_minute"] = flights_df["dep_time"].dt.hour * 60 + flights_df["dep_time"].dt.minute
+    flights_df["dep_minute"] = (
+        flights_df["dep_time"].dt.hour * 60 + flights_df["dep_time"].dt.minute
+    )
 
     flights_tbl = con.create_table("flights", flights_df)
 
     print("\n📊 Sample Flight Events Data:")
-    print(flights_df.head(10)[["id", "carrier", "tail_num", "dep_time", "origin", "destination", "dep_delay"]])
+    print(
+        flights_df.head(10)[
+            [
+                "id",
+                "carrier",
+                "tail_num",
+                "dep_time",
+                "origin",
+                "destination",
+                "dep_delay",
+            ]
+        ]
+    )
     print(f"\nTotal flight events: {len(flights_df)}")
-    print(f"Date range: {flights_df['flight_date'].min()} to {flights_df['flight_date'].max()}")
+    print(
+        f"Date range: {flights_df['flight_date'].min()} to {flights_df['flight_date'].max()}"
+    )
     print(f"Unique aircraft: {flights_df['tail_num'].nunique()}")
     print(f"Unique carriers: {flights_df['carrier'].nunique()}")
 
@@ -113,24 +131,28 @@ def main():
     # Filter to specific carrier and date range for focused example
     # ✅ GOOD: Use .filter() directly on semantic table - preserves measures!
     filtered_flights = flights.filter(
-        lambda t: (t.carrier == "WN") & (t.flight_date == pd.to_datetime("2002-03-03").date())
+        lambda t: (t.carrier == "WN")
+        & (t.flight_date == pd.to_datetime("2002-03-03").date())
     )
 
     # Create sessions: group by date, carrier, tail_num
     # Use semantic layer measures for aggregation!
     sessions = (
-        filtered_flights
-        .group_by("flight_date", "carrier", "tail_num")
-        .aggregate("flight_count", "total_distance", "max_delay")  # From semantic layer!
-        .mutate(
-            session_id=lambda t: ibis.row_number().over(ibis.window())
-        )
+        filtered_flights.group_by("flight_date", "carrier", "tail_num")
+        .aggregate(
+            "flight_count", "total_distance", "max_delay"
+        )  # From semantic layer!
+        .mutate(session_id=lambda t: ibis.row_number().over(ibis.window()))
         .order_by("session_id")
         .execute()
     )
 
     print("\nSessions (WN flights on 2002-03-03):")
-    print(sessions[["session_id", "tail_num", "flight_count", "total_distance", "max_delay"]].head(10))
+    print(
+        sessions[
+            ["session_id", "tail_num", "flight_count", "total_distance", "max_delay"]
+        ].head(10)
+    )
     print(f"\nTotal sessions: {len(sessions)}")
 
     # Example 2: Sessionized with Flight Legs (Nested Detail)
@@ -140,26 +162,20 @@ def main():
 
     # Get the detailed flight legs with session info
     flight_legs = (
-        filtered_flights
-        .to_ibis()
+        filtered_flights.to_ibis()
         .mutate(
             flight_date=lambda t: t.dep_time.date(),
         )
         .mutate(
             # Add session identifier
             session_key=lambda t: (
-                t.flight_date.cast(str) + "_" +
-                t.carrier + "_" +
-                t.tail_num
+                t.flight_date.cast(str) + "_" + t.carrier + "_" + t.tail_num
             )
         )
         .mutate(
             # Add flight leg number within session
             flight_leg=lambda t: ibis.row_number().over(
-                ibis.window(
-                    group_by="session_key",
-                    order_by="dep_time"
-                )
+                ibis.window(group_by="session_key", order_by="dep_time")
             )
         )
         .order_by("session_key", "flight_leg")
@@ -167,7 +183,16 @@ def main():
     )
 
     print("\nFlight legs with session and leg numbers:")
-    display_cols = ["tail_num", "flight_leg", "dep_minute", "origin", "destination", "dep_delay", "arr_delay", "distance"]
+    display_cols = [
+        "tail_num",
+        "flight_leg",
+        "dep_minute",
+        "origin",
+        "destination",
+        "dep_delay",
+        "arr_delay",
+        "distance",
+    ]
 
     # Show a few sessions
     sample_sessions = flight_legs["session_key"].unique()[:3]
@@ -178,13 +203,17 @@ def main():
         max_del = session_legs["dep_delay"].max()
 
         print(f"\nSession: {tail} on 2002-03-03")
-        print(f"  Metrics: {len(session_legs)} flights, {total_dist} miles, max delay {max_del} min")
+        print(
+            f"  Metrics: {len(session_legs)} flights, {total_dist} miles, max delay {max_del} min"
+        )
         print("  Flight legs:")
         for _, leg in session_legs.iterrows():
-            print(f"    Leg {leg['flight_leg']}: {leg['origin']:>3} → {leg['destination']:<3} "
-                  f"@ {leg['dep_minute']:>4} min | "
-                  f"Delay: {leg['dep_delay']:>3} min | "
-                  f"Distance: {leg['distance']:>4} mi")
+            print(
+                f"    Leg {leg['flight_leg']}: {leg['origin']:>3} → {leg['destination']:<3} "
+                f"@ {leg['dep_minute']:>4} min | "
+                f"Delay: {leg['dep_delay']:>3} min | "
+                f"Distance: {leg['distance']:>4} mi"
+            )
 
     # Example 3: Multi-day Sessions
     print("\n" + "-" * 80)
@@ -198,9 +227,10 @@ def main():
     # Create sessions across multiple days
     # Use semantic layer measures for aggregation!
     wn_sessions = (
-        wn_flights
-        .group_by("flight_date", "tail_num")
-        .aggregate("flight_count", "total_distance", "max_delay", "avg_delay")  # From SL!
+        wn_flights.group_by("flight_date", "tail_num")
+        .aggregate(
+            "flight_count", "total_distance", "max_delay", "avg_delay"
+        )  # From SL!
         .order_by("flight_date", "tail_num")
         .execute()
     )
@@ -213,7 +243,9 @@ def main():
     print(f"  Unique dates: {wn_sessions['flight_date'].nunique()}")
     print(f"  Unique aircraft: {wn_sessions['tail_num'].nunique()}")
     print(f"  Avg flights per session: {wn_sessions['flight_count'].mean():.1f}")
-    print(f"  Avg distance per session: {wn_sessions['total_distance'].mean():.0f} miles")
+    print(
+        f"  Avg distance per session: {wn_sessions['total_distance'].mean():.0f} miles"
+    )
 
     # Example 4: Identify High-Activity Sessions
     print("\n" + "-" * 80)
@@ -225,10 +257,12 @@ def main():
 
     print("\nTop 10 sessions by flight count:")
     for _, session in top_sessions.iterrows():
-        print(f"  {session['flight_date']} | {session['tail_num']} | "
-              f"{session['flight_count']} flights | "
-              f"{session['total_distance']} mi | "
-              f"Max delay: {session['max_delay']} min")
+        print(
+            f"  {session['flight_date']} | {session['tail_num']} | "
+            f"{session['flight_count']} flights | "
+            f"{session['total_distance']} mi | "
+            f"Max delay: {session['max_delay']} min"
+        )
 
     # Example 5: Session-level Analysis with Filtering
     print("\n" + "-" * 80)
@@ -240,10 +274,12 @@ def main():
     print(f"\nSessions with significant delays (max > 30 min): {len(delayed_sessions)}")
     print("\nSample delayed sessions:")
     for _, session in delayed_sessions.head(8).iterrows():
-        print(f"  {session['flight_date']} | {session['tail_num']} | "
-              f"{session['flight_count']} flights | "
-              f"Max delay: {session['max_delay']} min | "
-              f"Avg delay: {session['avg_delay']:.0f} min")
+        print(
+            f"  {session['flight_date']} | {session['tail_num']} | "
+            f"{session['flight_count']} flights | "
+            f"Max delay: {session['max_delay']} min | "
+            f"Avg delay: {session['avg_delay']:.0f} min"
+        )
 
     print("\n" + "=" * 80)
     print("✅ Example completed successfully!")
