@@ -20,6 +20,7 @@ Use cases:
 
 import pandas as pd
 import ibis
+import ibis.selectors as s
 from boring_semantic_layer.semantic_api import to_semantic_table
 
 
@@ -73,7 +74,7 @@ def demo_simple_index():
     print("  run: airports -> { index: * }\n")
 
     airports = create_sample_airports()
-    result = airports.index("*").execute()
+    result = airports.index(s.all()).execute()
     print(result)
     print()
 
@@ -93,7 +94,7 @@ def demo_index_with_ordering():
     airports = create_sample_airports()
     result = (
         airports
-        .index("*")
+        .index(s.all())
         .filter(lambda t: t.fieldType == "string")
         .order_by(lambda t: t.weight.desc())
         .execute()
@@ -116,7 +117,7 @@ def demo_index_search():
     airports = create_sample_airports()
     result = (
         airports
-        .index("*")
+        .index(s.all())
         .filter(lambda t: t.fieldValue.like("New%"))
         .order_by(lambda t: t.weight.desc())
         .execute()
@@ -183,7 +184,7 @@ def demo_index_specific_fields():
     airports = create_sample_airports()
     result = (
         airports
-        .index("state", "city")
+        .index(s.c("state", "city"))
         .order_by(lambda t: t.weight.desc())
         .execute()
     )
@@ -209,7 +210,7 @@ def demo_top_values_per_dimension():
     airports = create_sample_airports()
 
     # Since bslv2 doesn't have nested views yet, we'll show it per field
-    index_result = airports.index("*").execute()
+    index_result = airports.index(s.all()).execute()
 
     print("\nTop 5 values by field:")
     for field_name in index_result["fieldName"].unique():

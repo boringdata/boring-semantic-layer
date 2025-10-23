@@ -306,8 +306,8 @@ class SemanticTable(Relation):
     def join_cross(self, other: "SemanticTable") -> "SemanticJoin":
         return SemanticJoin(left=self, right=other, on=None, how="cross")
 
-    def index(self, *fields: str, by: Optional[str] = None, sample: Optional[int] = None) -> "SemanticIndex":
-        return SemanticIndex(source=self, fields=fields or ("*",), by_measure=by, sample_size=sample)
+    def index(self, selector: Any = None, by: Optional[str] = None, sample: Optional[int] = None) -> "SemanticIndex":
+        return SemanticIndex(source=self, selector=selector, by_measure=by, sample_size=sample)
 
     def to_ibis(self):
         return self.table.to_expr()
@@ -804,8 +804,8 @@ class SemanticJoin(Relation):
             return getattr(left, left_on) == getattr(right, right_on)
         return SemanticJoin(left=self, right=other, on=predicate, how="left")
 
-    def index(self, *fields: str, by: Optional[str] = None, sample: Optional[int] = None) -> "SemanticIndex":
-        return SemanticIndex(source=self, fields=fields or ("*",), by_measure=by, sample_size=sample)
+    def index(self, selector: Any = None, by: Optional[str] = None, sample: Optional[int] = None) -> "SemanticIndex":
+        return SemanticIndex(source=self, selector=selector, by_measure=by, sample_size=sample)
 
     def to_ibis(self):
         from .lower import _Resolver
@@ -937,32 +937,45 @@ def _build_numeric_index_fragment(base_tbl: Any, field_expr: Any, field_name: st
             ))
 
 
-def _get_fields_to_index(fields: tuple, merged_dimensions: dict, base_tbl: Any) -> list[str]:
-    if "*" not in fields:
-        return [f for f in fields if f in merged_dimensions]
+def _resolve_selector(selector: Any, base_tbl: Any) -> list[str]:
+    import ibis.selectors as s
+    if selector is None:
+        return list(base_tbl.columns)
+    try:
+        selected = base_tbl.select(selector)
+        return list(selected.columns)
+    except Exception:
+        return []
 
+
+def _get_fields_to_index(selector: Any, merged_dimensions: dict, base_tbl: Any) -> list[str]:
+    import ibis.selectors as s
+
+    if selector is None:
+        selector = s.all()
+
+    raw_fields = _resolve_selector(selector, base_tbl)
     result = list(merged_dimensions.keys())
-    result.extend(col for col in base_tbl.columns
-                 if col not in result and base_tbl[col].type().is_string())
+    result.extend(col for col in raw_fields if col not in result)
     return result
 
 
 class SemanticIndex(Relation):
     source: Any
-    fields: tuple[str, ...]
+    selector: Any
     by_measure: Optional[str] = None
     sample_size: Optional[int] = None
 
     def __init__(
         self,
         source: Any,
-        fields: Iterable[str] = ("*",),
+        selector: Any = None,
         by_measure: Optional[str] = None,
         sample_size: Optional[int] = None,
     ) -> None:
         super().__init__(
             source=Relation.__coerce__(source),
-            fields=tuple(fields),
+            selector=selector,
             by_measure=by_measure,
             sample_size=sample_size,
         )
@@ -997,7 +1010,7 @@ class SemanticIndex(Relation):
                    if self.sample_size else _to_ibis(self.source))
 
         merged_dimensions = _get_merged_fields(all_roots, 'dims')
-        fields_to_index = _get_fields_to_index(self.fields, merged_dimensions, base_tbl)
+        fields_to_index = _get_fields_to_index(self.selector, merged_dimensions, base_tbl)
 
         if not fields_to_index:
             return ibis.memtable({
