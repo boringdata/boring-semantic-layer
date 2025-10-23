@@ -355,6 +355,65 @@ class SemanticTable(Relation):
     def pipe(self, func, *args, **kwargs):
         return func(self, *args, **kwargs)
 
+    def query(
+        self,
+        dimensions: Optional[list[str]] = None,
+        measures: Optional[list[str]] = None,
+        filters: Optional[list] = None,
+        order_by: Optional[list[tuple[str, str]]] = None,
+        limit: Optional[int] = None,
+        time_grain: Optional[str] = None,
+        time_range: Optional[dict[str, str]] = None,
+    ):
+        """
+        Query using parameter-based interface with filter and time dimension support.
+
+        Args:
+            dimensions: List of dimension names to group by
+            measures: List of measure names to aggregate
+            filters: List of filters (dict, str, callable, or Filter objects)
+            order_by: List of (field, direction) tuples
+            limit: Maximum number of rows to return
+            time_grain: Optional time grain (e.g., "TIME_GRAIN_MONTH")
+            time_range: Optional time range with 'start' and 'end' keys
+
+        Returns:
+            SemanticAggregate or SemanticTable ready for execution
+
+        Examples:
+            # Basic query
+            result = st.query(
+                dimensions=["carrier"],
+                measures=["flight_count"]
+            ).execute()
+
+            # With JSON filter
+            result = st.query(
+                dimensions=["carrier"],
+                measures=["flight_count"],
+                filters=[{"field": "distance", "operator": ">", "value": 1000}]
+            ).execute()
+
+            # With time grain
+            result = st.query(
+                dimensions=["order_date"],
+                measures=["total_sales"],
+                time_grain="TIME_GRAIN_MONTH"
+            ).execute()
+        """
+        from .query import query as build_query
+
+        return build_query(
+            semantic_table=self,
+            dimensions=dimensions,
+            measures=measures,
+            filters=filters,
+            order_by=order_by,
+            limit=limit,
+            time_grain=time_grain,
+            time_range=time_range,
+        )
+
     def __repr__(self) -> str:
         dims = list(self._dims_dict().keys())
         dims_str = ", ".join(dims[:5])
