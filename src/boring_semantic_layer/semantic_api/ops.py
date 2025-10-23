@@ -1184,12 +1184,20 @@ def _resolve_selector(selector: Any, base_tbl: Any) -> list[str]:
 def _get_fields_to_index(selector: Any, merged_dimensions: dict, base_tbl: Any) -> list[str]:
     import ibis.selectors as s
 
+    # Handle None as "all fields"
     if selector is None:
         selector = s.all()
 
     raw_fields = _resolve_selector(selector, base_tbl)
-    result = list(merged_dimensions.keys())
-    result.extend(col for col in raw_fields if col not in result)
+
+    # If raw_fields is empty (selector failed to resolve), include all fields
+    if not raw_fields:
+        result = list(merged_dimensions.keys())
+        result.extend(col for col in base_tbl.columns if col not in result)
+    else:
+        # Only include selected fields that exist in dimensions or base table
+        result = [col for col in raw_fields if col in merged_dimensions or col in base_tbl.columns]
+
     return result
 
 

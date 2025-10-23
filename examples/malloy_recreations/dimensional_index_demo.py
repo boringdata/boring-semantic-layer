@@ -140,7 +140,7 @@ def demo_index_with_custom_weight():
     airports = create_sample_airports()
     result = (
         airports
-        .index("*", by="avg_elevation")
+        .index(s.all(), by="avg_elevation")
         .filter(lambda t: t.fieldType == "string")
         .order_by(lambda t: t.weight.desc())
         .limit(10)
@@ -164,7 +164,7 @@ def demo_index_sampling():
     airports = create_sample_airports()
     result = (
         airports
-        .index("*", sample=10)
+        .index(s.all(), sample=10)
         .filter(lambda t: t.fieldType == "string")
         .order_by(lambda t: t.weight.desc())
         .execute()
@@ -184,7 +184,7 @@ def demo_index_specific_fields():
     airports = create_sample_airports()
     result = (
         airports
-        .index(s.c("state", "city"))
+        .index(s.cols("state", "city"))
         .order_by(lambda t: t.weight.desc())
         .execute()
     )
