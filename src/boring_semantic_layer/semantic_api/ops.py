@@ -315,6 +315,34 @@ class SemanticTable(Relation):
     def execute(self):
         return self.to_ibis().execute()
 
+    def op(self):
+        return self
+
+    def compile(self, **kwargs):
+        return self.to_ibis().compile(**kwargs)
+
+    def sql(self, **kwargs):
+        import ibis
+        return ibis.to_sql(self.to_ibis(), **kwargs)
+
+    def __getitem__(self, key):
+        dims_dict = self._dims_dict()
+        if key in dims_dict:
+            return dims_dict[key]
+
+        meas_dict = self._measures_dict()
+        if key in meas_dict:
+            return meas_dict[key]
+
+        calc_meas_dict = self._calc_measures_dict()
+        if key in calc_meas_dict:
+            return calc_meas_dict[key]
+
+        raise KeyError(f"'{key}' not found in dimensions, measures, or calculated measures")
+
+    def pipe(self, func, *args, **kwargs):
+        return func(self, *args, **kwargs)
+
     def __repr__(self) -> str:
         dims = list(self._dims_dict().keys())
         dims_str = ", ".join(dims[:5])
@@ -377,6 +405,22 @@ class SemanticFilter(Relation):
     def execute(self):
         return self.to_ibis().execute()
 
+    def op(self):
+        return self
+
+    def compile(self, **kwargs):
+        return self.to_ibis().compile(**kwargs)
+
+    def sql(self, **kwargs):
+        import ibis
+        return ibis.to_sql(self.to_ibis(), **kwargs)
+
+    def __getitem__(self, key):
+        return self.to_ibis()[key]
+
+    def pipe(self, func, *args, **kwargs):
+        return func(self, *args, **kwargs)
+
     def __repr__(self) -> str:
         return "SemanticFilter(predicate=<function>)"
 
@@ -425,6 +469,22 @@ class SemanticProject(Relation):
     def execute(self):
         return self.to_ibis().execute()
 
+    def op(self):
+        return self
+
+    def compile(self, **kwargs):
+        return self.to_ibis().compile(**kwargs)
+
+    def sql(self, **kwargs):
+        import ibis
+        return ibis.to_sql(self.to_ibis(), **kwargs)
+
+    def __getitem__(self, key):
+        return self.to_ibis()[key]
+
+    def pipe(self, func, *args, **kwargs):
+        return func(self, *args, **kwargs)
+
 
 class SemanticGroupBy(Relation):
     source: Any
@@ -470,6 +530,22 @@ class SemanticGroupBy(Relation):
 
     def execute(self):
         return self.to_ibis().execute()
+
+    def op(self):
+        return self
+
+    def compile(self, **kwargs):
+        return self.to_ibis().compile(**kwargs)
+
+    def sql(self, **kwargs):
+        import ibis
+        return ibis.to_sql(self.to_ibis(), **kwargs)
+
+    def __getitem__(self, key):
+        return self.to_ibis()[key]
+
+    def pipe(self, func, *args, **kwargs):
+        return func(self, *args, **kwargs)
 
     def __repr__(self) -> str:
         keys_str = ", ".join(repr(k) for k in self.keys)
@@ -606,6 +682,22 @@ class SemanticAggregate(Relation):
     def execute(self):
         return self.to_ibis().execute()
 
+    def op(self):
+        return self
+
+    def compile(self, **kwargs):
+        return self.to_ibis().compile(**kwargs)
+
+    def sql(self, **kwargs):
+        import ibis
+        return ibis.to_sql(self.to_ibis(), **kwargs)
+
+    def __getitem__(self, key):
+        return self.to_ibis()[key]
+
+    def pipe(self, func, *args, **kwargs):
+        return func(self, *args, **kwargs)
+
     def __repr__(self) -> str:
         keys_str = ", ".join(repr(k) for k in self.keys)
         aggs = list(self.aggs.keys())
@@ -660,6 +752,22 @@ class SemanticMutate(Relation):
 
     def execute(self):
         return self.to_ibis().execute()
+
+    def op(self):
+        return self
+
+    def compile(self, **kwargs):
+        return self.to_ibis().compile(**kwargs)
+
+    def sql(self, **kwargs):
+        import ibis
+        return ibis.to_sql(self.to_ibis(), **kwargs)
+
+    def __getitem__(self, key):
+        return self.to_ibis()[key]
+
+    def pipe(self, func, *args, **kwargs):
+        return func(self, *args, **kwargs)
 
     def __repr__(self) -> str:
         cols = list(self.post.keys())
@@ -859,6 +967,34 @@ class SemanticJoin(Relation):
     def execute(self):
         return self.to_ibis().execute()
 
+    def op(self):
+        return self
+
+    def compile(self, **kwargs):
+        return self.to_ibis().compile(**kwargs)
+
+    def sql(self, **kwargs):
+        import ibis
+        return ibis.to_sql(self.to_ibis(), **kwargs)
+
+    def __getitem__(self, key):
+        dims_dict = self._dims_dict()
+        if key in dims_dict:
+            return dims_dict[key]
+
+        meas_dict = self._measures_dict()
+        if key in meas_dict:
+            return meas_dict[key]
+
+        calc_meas_dict = self._calc_measures_dict()
+        if key in calc_meas_dict:
+            return calc_meas_dict[key]
+
+        raise KeyError(f"'{key}' not found in dimensions, measures, or calculated measures")
+
+    def pipe(self, func, *args, **kwargs):
+        return func(self, *args, **kwargs)
+
     def __repr__(self) -> str:
         left_name = getattr(self.left, "name", None) or "<expr>"
         right_name = getattr(self.right, "name", None) or "<expr>"
@@ -905,6 +1041,22 @@ class SemanticOrderBy(Relation):
     def execute(self):
         return self.to_ibis().execute()
 
+    def op(self):
+        return self
+
+    def compile(self, **kwargs):
+        return self.to_ibis().compile(**kwargs)
+
+    def sql(self, **kwargs):
+        import ibis
+        return ibis.to_sql(self.to_ibis(), **kwargs)
+
+    def __getitem__(self, key):
+        return self.to_ibis()[key]
+
+    def pipe(self, func, *args, **kwargs):
+        return func(self, *args, **kwargs)
+
     def __repr__(self) -> str:
         keys_list = []
         for k in list(self.keys)[:3]:
@@ -943,6 +1095,22 @@ class SemanticLimit(Relation):
 
     def execute(self):
         return self.to_ibis().execute()
+
+    def op(self):
+        return self
+
+    def compile(self, **kwargs):
+        return self.to_ibis().compile(**kwargs)
+
+    def sql(self, **kwargs):
+        import ibis
+        return ibis.to_sql(self.to_ibis(), **kwargs)
+
+    def __getitem__(self, key):
+        return self.to_ibis()[key]
+
+    def pipe(self, func, *args, **kwargs):
+        return func(self, *args, **kwargs)
 
     def __repr__(self) -> str:
         if self.offset:
@@ -1125,6 +1293,22 @@ class SemanticIndex(Relation):
 
     def execute(self):
         return self.to_ibis().execute()
+
+    def op(self):
+        return self
+
+    def compile(self, **kwargs):
+        return self.to_ibis().compile(**kwargs)
+
+    def sql(self, **kwargs):
+        import ibis
+        return ibis.to_sql(self.to_ibis(), **kwargs)
+
+    def __getitem__(self, key):
+        return self.to_ibis()[key]
+
+    def pipe(self, func, *args, **kwargs):
+        return func(self, *args, **kwargs)
 
     def __repr__(self) -> str:
         parts = []
