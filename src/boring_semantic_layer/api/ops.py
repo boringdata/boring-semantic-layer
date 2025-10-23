@@ -312,6 +312,10 @@ class SemanticTable(Relation):
     def to_ibis(self):
         return self.table.to_expr()
 
+    def as_expr(self):
+        """Return self as expression."""
+        return self
+
     def execute(self):
         return self.to_ibis().execute()
 
@@ -421,6 +425,31 @@ class SemanticFilter(Relation):
     def pipe(self, func, *args, **kwargs):
         return func(self, *args, **kwargs)
 
+    def as_table(self) -> "SemanticTable":
+        """Convert to SemanticTable, preserving semantic metadata from source."""
+        all_roots = _find_all_root_models(self.source)
+
+        if all_roots:
+            # Preserve semantic metadata from source
+            dims = _get_merged_fields(all_roots, 'dims')
+            measures = _get_merged_fields(all_roots, 'measures')
+            calc_measures = _get_merged_fields(all_roots, 'calc_measures')
+
+            return SemanticTable(
+                table=self.to_ibis(),
+                dimensions=dims,
+                measures=measures,
+                calc_measures=calc_measures
+            )
+        else:
+            # No semantic metadata in source
+            return SemanticTable(
+                table=self.to_ibis(),
+                dimensions={},
+                measures={},
+                calc_measures={}
+            )
+
     def __repr__(self) -> str:
         return "SemanticFilter(predicate=<function>)"
 
@@ -484,6 +513,37 @@ class SemanticProject(Relation):
 
     def pipe(self, func, *args, **kwargs):
         return func(self, *args, **kwargs)
+
+    def as_table(self) -> "SemanticTable":
+        """Convert to SemanticTable, preserving only projected fields' metadata."""
+        all_roots = _find_all_root_models(self.source)
+
+        if all_roots:
+            # Get all available semantic metadata
+            all_dims = _get_merged_fields(all_roots, 'dims')
+            all_measures = _get_merged_fields(all_roots, 'measures')
+            all_calc_measures = _get_merged_fields(all_roots, 'calc_measures')
+
+            # Filter to only include projected fields
+            projected_fields = set(self.fields)
+            filtered_dims = {k: v for k, v in all_dims.items() if k in projected_fields}
+            filtered_measures = {k: v for k, v in all_measures.items() if k in projected_fields}
+            filtered_calc_measures = {k: v for k, v in all_calc_measures.items() if k in projected_fields}
+
+            return SemanticTable(
+                table=self.to_ibis(),
+                dimensions=filtered_dims,
+                measures=filtered_measures,
+                calc_measures=filtered_calc_measures
+            )
+        else:
+            # No semantic metadata in source
+            return SemanticTable(
+                table=self.to_ibis(),
+                dimensions={},
+                measures={},
+                calc_measures={}
+            )
 
 
 class SemanticGroupBy(Relation):
@@ -698,6 +758,15 @@ class SemanticAggregate(Relation):
     def pipe(self, func, *args, **kwargs):
         return func(self, *args, **kwargs)
 
+    def as_table(self) -> "SemanticTable":
+        """Convert to SemanticTable with no semantic metadata (columns are materialized)."""
+        return SemanticTable(
+            table=self.to_ibis(),
+            dimensions={},
+            measures={},
+            calc_measures={}
+        )
+
     def __repr__(self) -> str:
         keys_str = ", ".join(repr(k) for k in self.keys)
         aggs = list(self.aggs.keys())
@@ -768,6 +837,15 @@ class SemanticMutate(Relation):
 
     def pipe(self, func, *args, **kwargs):
         return func(self, *args, **kwargs)
+
+    def as_table(self) -> "SemanticTable":
+        """Convert to SemanticTable with no semantic metadata (columns are materialized)."""
+        return SemanticTable(
+            table=self.to_ibis(),
+            dimensions={},
+            measures={},
+            calc_measures={}
+        )
 
     def __repr__(self) -> str:
         cols = list(self.post.keys())
@@ -995,6 +1073,15 @@ class SemanticJoin(Relation):
     def pipe(self, func, *args, **kwargs):
         return func(self, *args, **kwargs)
 
+    def as_table(self) -> "SemanticTable":
+        """Convert to SemanticTable, preserving merged metadata from both sides."""
+        return SemanticTable(
+            table=self.to_ibis(),
+            dimensions=dict(self._dims_dict()),
+            measures=dict(self._measures_dict()),
+            calc_measures=dict(self._calc_measures_dict())
+        )
+
     def __repr__(self) -> str:
         left_name = getattr(self.left, "name", None) or "<expr>"
         right_name = getattr(self.right, "name", None) or "<expr>"
@@ -1057,6 +1144,31 @@ class SemanticOrderBy(Relation):
     def pipe(self, func, *args, **kwargs):
         return func(self, *args, **kwargs)
 
+    def as_table(self) -> "SemanticTable":
+        """Convert to SemanticTable, preserving semantic metadata from source."""
+        all_roots = _find_all_root_models(self.source)
+
+        if all_roots:
+            # Preserve semantic metadata from source
+            dims = _get_merged_fields(all_roots, 'dims')
+            measures = _get_merged_fields(all_roots, 'measures')
+            calc_measures = _get_merged_fields(all_roots, 'calc_measures')
+
+            return SemanticTable(
+                table=self.to_ibis(),
+                dimensions=dims,
+                measures=measures,
+                calc_measures=calc_measures
+            )
+        else:
+            # No semantic metadata in source
+            return SemanticTable(
+                table=self.to_ibis(),
+                dimensions={},
+                measures={},
+                calc_measures={}
+            )
+
     def __repr__(self) -> str:
         keys_list = []
         for k in list(self.keys)[:3]:
@@ -1111,6 +1223,31 @@ class SemanticLimit(Relation):
 
     def pipe(self, func, *args, **kwargs):
         return func(self, *args, **kwargs)
+
+    def as_table(self) -> "SemanticTable":
+        """Convert to SemanticTable, preserving semantic metadata from source."""
+        all_roots = _find_all_root_models(self.source)
+
+        if all_roots:
+            # Preserve semantic metadata from source
+            dims = _get_merged_fields(all_roots, 'dims')
+            measures = _get_merged_fields(all_roots, 'measures')
+            calc_measures = _get_merged_fields(all_roots, 'calc_measures')
+
+            return SemanticTable(
+                table=self.to_ibis(),
+                dimensions=dims,
+                measures=measures,
+                calc_measures=calc_measures
+            )
+        else:
+            # No semantic metadata in source
+            return SemanticTable(
+                table=self.to_ibis(),
+                dimensions={},
+                measures={},
+                calc_measures={}
+            )
 
     def __repr__(self) -> str:
         if self.offset:
@@ -1301,6 +1438,10 @@ class SemanticIndex(Relation):
 
     def execute(self):
         return self.to_ibis().execute()
+
+    def as_expr(self):
+        """Return self as expression."""
+        return self
 
     def op(self):
         return self
