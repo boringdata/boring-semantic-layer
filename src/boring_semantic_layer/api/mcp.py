@@ -1,7 +1,7 @@
 """MCP functionality for semantic models."""
 
 from mcp.server.fastmcp import FastMCP
-from typing import Any, Dict, List, Optional, Union, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from .query import _find_time_dimension
 
 
@@ -115,7 +115,7 @@ class MCPSemanticModel(FastMCP):
                 time_range: Optional time range with 'start' and 'end' keys
 
             Returns:
-                Query results as markdown table
+                Query results as JSON string
             """
             if model_name not in self.models:
                 raise ValueError(f"Model {model_name} not found")
@@ -133,8 +133,8 @@ class MCPSemanticModel(FastMCP):
                 time_range=time_range,
             ).execute()
 
-            # Format as markdown table
-            return result.to_markdown(index=False)
+            # Format as JSON
+            return result.to_json(orient="records", date_format="iso")
 
 
 def create_mcp_server(

@@ -1,7 +1,6 @@
 """Tests for MCPSemanticModel using FastMCP client-server pattern with SemanticTable."""
 
 import pytest
-import json
 import pandas as pd
 import ibis
 
@@ -111,7 +110,7 @@ class TestListModels:
 
         async with Client(mcp) as client:
             result = await client.call_tool("list_models", {})
-            models = json.loads(result[0].text)
+            models = result.structured_content["result"]
 
             assert "flights" in models
             assert "carriers" in models
@@ -124,7 +123,7 @@ class TestListModels:
 
         async with Client(mcp) as client:
             result = await client.call_tool("list_models", {})
-            models = json.loads(result[0].text)
+            models = result.structured_content["result"]
 
             assert models == {}
 
@@ -139,7 +138,7 @@ class TestGetModel:
 
         async with Client(mcp) as client:
             result = await client.call_tool("get_model", {"model_name": "flights"})
-            model_info = json.loads(result[0].text)
+            model_info = result.structured_content["result"]
 
             assert model_info["name"] == "flights"
             assert "origin" in model_info["dimensions"]
@@ -177,7 +176,7 @@ class TestGetTimeRange:
 
         async with Client(mcp) as client:
             result = await client.call_tool("get_time_range", {"model_name": "flights"})
-            time_range = json.loads(result[0].text)
+            time_range = result.structured_content["result"]
 
             assert "start" in time_range
             assert "end" in time_range
@@ -221,9 +220,9 @@ class TestQueryModel:
                 },
             )
 
-            assert result[0].text is not None
-            assert "carrier" in result[0].text
-            assert "flight_count" in result[0].text
+            assert result.content[0].text is not None
+            assert "carrier" in result.content[0].text
+            assert "flight_count" in result.content[0].text
 
     @pytest.mark.asyncio
     async def test_query_with_filter(self, sample_models):
@@ -241,7 +240,7 @@ class TestQueryModel:
                 },
             )
 
-            assert "AA" in result[0].text
+            assert "AA" in result.content[0].text
 
     @pytest.mark.asyncio
     async def test_query_with_time_grain(self, sample_models):
@@ -259,8 +258,8 @@ class TestQueryModel:
                 },
             )
 
-            assert result[0].text is not None
-            assert "flight_date" in result[0].text
+            assert result.content[0].text is not None
+            assert "flight_date" in result.content[0].text
 
     @pytest.mark.asyncio
     async def test_query_with_time_range(self, sample_models):
@@ -278,7 +277,7 @@ class TestQueryModel:
                 },
             )
 
-            assert result[0].text is not None
+            assert result.content[0].text is not None
 
     @pytest.mark.asyncio
     async def test_query_with_order_by(self, sample_models):
@@ -296,7 +295,7 @@ class TestQueryModel:
                 },
             )
 
-            assert result[0].text is not None
+            assert result.content[0].text is not None
 
     @pytest.mark.asyncio
     async def test_query_with_limit(self, sample_models):
@@ -314,7 +313,7 @@ class TestQueryModel:
                 },
             )
 
-            assert result[0].text is not None
+            assert result.content[0].text is not None
 
 
 if __name__ == "__main__":
