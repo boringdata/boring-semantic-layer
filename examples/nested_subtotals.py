@@ -19,7 +19,6 @@ multiple aggregation levels and pandas grouping.
 
 import pandas as pd
 import ibis
-from ibis import _
 from datetime import datetime, timedelta
 from boring_semantic_layer.semantic_api import to_semantic_table
 
@@ -189,29 +188,14 @@ def main():
     print("Level 5: Nested with Filtering - Electronics Category Only")
     print("-" * 80)
 
-    electronics_monthly = (
-        order_items
-        .to_ibis()
-        .filter(lambda t: t.product_category == "Electronics")
-    )
+    # ✅ GOOD: Use .filter() directly - preserves semantic layer measures and dimensions!
+    electronics = order_items.filter(lambda t: t.product_category == "Electronics")
 
-    electronics = to_semantic_table(electronics_monthly, name="electronics").with_measures(
-        total_sales=lambda t: t.sale_price.sum(),
-        order_count=lambda t: t.count(),
-    )
-
+    # Aggregate using semantic layer measures - no need to recreate!
     electronics_by_month = (
         electronics
-        .to_ibis()
-        .mutate(
-            year=lambda t: t.created_at.year(),
-            month=lambda t: t.created_at.month(),
-        )
-        .group_by("year", "month")
-        .aggregate(
-            total_sales=lambda t: t.sale_price.sum(),
-            order_count=lambda t: t.count()
-        )
+        .group_by("year", "month")  # Dimensions from semantic layer!
+        .aggregate("total_sales", "order_count")  # Measures from semantic layer!
         .order_by("year", "month")
         .execute()
     )
@@ -219,8 +203,10 @@ def main():
     print("\nElectronics sales by month (2022 only):")
     elec_2022 = electronics_by_month[electronics_by_month["year"] == 2022]
     for _, row in elec_2022.iterrows():
-        month_num = int(row['month'])
-        month_name = pd.to_datetime(f"2022-{month_num:02d}-01").strftime("%B")
+        # Month is already a string like '2022-01', parse it to get the month name
+        month_str = str(row['month'])
+        month_date = pd.to_datetime(month_str)
+        month_name = month_date.strftime("%B")
         print(f"  {month_name:>10}: ${row['total_sales']:>10,.2f} ({int(row['order_count'])} orders)")
 
     print("\n" + "=" * 80)

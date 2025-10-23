@@ -24,7 +24,6 @@ and flight legs.
 
 import pandas as pd
 import ibis
-from ibis import _
 from datetime import datetime, timedelta
 from boring_semantic_layer.semantic_api import to_semantic_table
 
@@ -112,31 +111,17 @@ def main():
     print("-" * 80)
 
     # Filter to specific carrier and date range for focused example
-    filtered_flights = (
-        flights
-        .to_ibis()
-        .filter(lambda t: (t.carrier == "WN") & (t.flight_date == pd.to_datetime("2002-03-03").date()))
-    )
-
-    filtered_semantic = to_semantic_table(filtered_flights, name="flights_filtered").with_measures(
-        flight_count=lambda t: t.count(),
-        total_distance=lambda t: t.distance.sum(),
-        max_delay=lambda t: t.dep_delay.max(),
+    # ✅ GOOD: Use .filter() directly on semantic table - preserves measures!
+    filtered_flights = flights.filter(
+        lambda t: (t.carrier == "WN") & (t.flight_date == pd.to_datetime("2002-03-03").date())
     )
 
     # Create sessions: group by date, carrier, tail_num
+    # Use semantic layer measures for aggregation!
     sessions = (
-        filtered_semantic
-        .to_ibis()
-        .mutate(
-            flight_date=lambda t: t.dep_time.date(),
-        )
+        filtered_flights
         .group_by("flight_date", "carrier", "tail_num")
-        .aggregate(
-            flight_count=lambda t: t.count(),
-            total_distance=lambda t: t.distance.sum(),
-            max_delay=lambda t: t.dep_delay.max(),
-        )
+        .aggregate("flight_count", "total_distance", "max_delay")  # From semantic layer!
         .mutate(
             session_id=lambda t: ibis.row_number().over(ibis.window())
         )
@@ -155,7 +140,7 @@ def main():
 
     # Get the detailed flight legs with session info
     flight_legs = (
-        filtered_semantic
+        filtered_flights
         .to_ibis()
         .mutate(
             flight_date=lambda t: t.dep_time.date(),
@@ -207,31 +192,15 @@ def main():
     print("-" * 80)
 
     # All WN flights across all dates
-    wn_flights = (
-        flights
-        .to_ibis()
-        .filter(lambda t: t.carrier == "WN")
-    )
-
-    wn_semantic = to_semantic_table(wn_flights, name="wn_flights").with_measures(
-        flight_count=lambda t: t.count(),
-        total_distance=lambda t: t.distance.sum(),
-    )
+    # ✅ GOOD: Use .filter() directly - preserves semantic layer measures!
+    wn_flights = flights.filter(lambda t: t.carrier == "WN")
 
     # Create sessions across multiple days
+    # Use semantic layer measures for aggregation!
     wn_sessions = (
-        wn_semantic
-        .to_ibis()
-        .mutate(
-            flight_date=lambda t: t.dep_time.date(),
-        )
+        wn_flights
         .group_by("flight_date", "tail_num")
-        .aggregate(
-            flight_count=lambda t: t.count(),
-            total_distance=lambda t: t.distance.sum(),
-            max_delay=lambda t: t.dep_delay.max(),
-            avg_delay=lambda t: t.dep_delay.mean(),
-        )
+        .aggregate("flight_count", "total_distance", "max_delay", "avg_delay")  # From SL!
         .order_by("flight_date", "tail_num")
         .execute()
     )
@@ -239,7 +208,7 @@ def main():
     print("\nWN sessions by aircraft and date:")
     print(wn_sessions.head(15))
 
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  Total sessions: {len(wn_sessions)}")
     print(f"  Unique dates: {wn_sessions['flight_date'].nunique()}")
     print(f"  Unique aircraft: {wn_sessions['tail_num'].nunique()}")

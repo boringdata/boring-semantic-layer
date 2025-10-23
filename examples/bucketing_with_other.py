@@ -17,7 +17,6 @@ This is equivalent to Malloy's "Bucketing with 'Other'" pattern.
 
 import pandas as pd
 import ibis
-from ibis import _
 from boring_semantic_layer.semantic_api import to_semantic_table
 
 
@@ -105,7 +104,7 @@ def main():
         .execute()
     )
 
-    print(f"\nTop 5 states + OTHER bucket:")
+    print("\nTop 5 states + OTHER bucket:")
     print(result)
 
     other_count = result[result["state_bucket"] == "OTHER"]["airports"].iloc[0] if "OTHER" in result["state_bucket"].values else 0
@@ -196,7 +195,7 @@ def main():
         .execute()
     )
 
-    print(f"\nStates covering 80% + OTHER:")
+    print("\nStates covering 80% + OTHER:")
     print(result)
 
     top_count = len(result) - (1 if "OTHER" in result["state_bucket"].values else 0)
