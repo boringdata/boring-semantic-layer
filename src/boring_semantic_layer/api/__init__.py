@@ -15,6 +15,7 @@ from .ops import (
     Measure,
 )
 
+
 __all__ = [
     "to_semantic_table",
     "SemanticTable",

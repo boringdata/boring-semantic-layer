@@ -833,6 +833,10 @@ class SemanticAggregate(Relation):
             measures={},
             calc_measures={}
         )
+    
+    def chart(self, backend: str = "altair", chart_type: str | None = None): 
+        from .chart import chart as create_chart
+        return create_chart(self, backend=backend, chart_type=chart_type)
 
     def __repr__(self) -> str:
         keys_str = ", ".join(repr(k) for k in self.keys)
@@ -1235,6 +1239,16 @@ class SemanticOrderBy(Relation):
                 measures={},
                 calc_measures={}
             )
+    
+    def chart(self, backend: str = "altair", chart_type: str | None = None):
+        from .chart import chart as create_chart
+        # Get the original aggregate to extract dimensions/measures
+        source = self.source
+        while hasattr(source, 'source') and not hasattr(source, 'aggs'):
+            source = source.source
+        if hasattr(source, 'aggs'):
+            return create_chart(source, backend=backend, chart_type=chart_type)
+        raise ValueError("Cannot create chart: no aggregate found in query chain")
 
     def __repr__(self) -> str:
         keys_list = []
@@ -1315,6 +1329,25 @@ class SemanticLimit(Relation):
                 measures={},
                 calc_measures={}
             )
+    def chart(self, backend: str = "altair", chart_type: str | None = None):
+        """
+        Generate a chart visualization for the query results.
+
+        Args:
+            backend: Visualization backend ("altair" or "plotly")
+            chart_type: Optional manual chart type override
+
+        Returns:
+            Chart object (altair.Chart or plotly Figure)
+        """
+        from .chart import chart as create_chart
+        # Get the original aggregate to extract dimensions/measures
+        source = self.source
+        while hasattr(source, 'source') and not hasattr(source, 'aggs'):
+            source = source.source
+        if hasattr(source, 'aggs'):
+            return create_chart(source, backend=backend, chart_type=chart_type)
+        raise ValueError("Cannot create chart: no aggregate found in query chain")
 
     def __repr__(self) -> str:
         if self.offset:
