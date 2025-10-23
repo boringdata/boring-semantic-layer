@@ -315,6 +315,23 @@ class SemanticTable(Relation):
     def execute(self):
         return self.to_ibis().execute()
 
+    def __repr__(self) -> str:
+        dims = list(self._dims_dict().keys())
+        dims_str = ", ".join(dims[:5])
+        if len(dims) > 5:
+            dims_str += f", ... ({len(dims)} total)"
+
+        meas = self.measures
+        meas_str = ", ".join(meas[:5])
+        if len(meas) > 5:
+            meas_str += f", ... ({len(meas)} total)"
+
+        return (
+            f"SemanticTable(name={self.name!r}, "
+            f"dims=[{dims_str}], "
+            f"measures=[{meas_str}])"
+        )
+
 
 class SemanticFilter(Relation):
     source: Any
@@ -359,6 +376,9 @@ class SemanticFilter(Relation):
 
     def execute(self):
         return self.to_ibis().execute()
+
+    def __repr__(self) -> str:
+        return "SemanticFilter(predicate=<function>)"
 
 
 class SemanticProject(Relation):
@@ -450,6 +470,10 @@ class SemanticGroupBy(Relation):
 
     def execute(self):
         return self.to_ibis().execute()
+
+    def __repr__(self) -> str:
+        keys_str = ", ".join(repr(k) for k in self.keys)
+        return f"SemanticGroupBy(keys=[{keys_str}])"
 
 
 class SemanticAggregate(Relation):
@@ -582,6 +606,14 @@ class SemanticAggregate(Relation):
     def execute(self):
         return self.to_ibis().execute()
 
+    def __repr__(self) -> str:
+        keys_str = ", ".join(repr(k) for k in self.keys)
+        aggs = list(self.aggs.keys())
+        aggs_str = ", ".join(aggs[:5])
+        if len(aggs) > 5:
+            aggs_str += f", ... ({len(aggs)} total)"
+        return f"SemanticAggregate(by=[{keys_str}], aggs=[{aggs_str}])"
+
 
 class SemanticMutate(Relation):
     source: Any
@@ -628,6 +660,13 @@ class SemanticMutate(Relation):
 
     def execute(self):
         return self.to_ibis().execute()
+
+    def __repr__(self) -> str:
+        cols = list(self.post.keys())
+        cols_str = ", ".join(cols[:5])
+        if len(cols) > 5:
+            cols_str += f", ... ({len(cols)} total)"
+        return f"SemanticMutate(cols=[{cols_str}])"
 
 
 class SemanticJoin(Relation):
@@ -820,6 +859,12 @@ class SemanticJoin(Relation):
     def execute(self):
         return self.to_ibis().execute()
 
+    def __repr__(self) -> str:
+        left_name = getattr(self.left, "name", None) or "<expr>"
+        right_name = getattr(self.right, "name", None) or "<expr>"
+        on_str = "<function>" if self.on else "cross"
+        return f"SemanticJoin(left={left_name!r}, right={right_name!r}, how={self.how!r}, on={on_str})"
+
 
 class SemanticOrderBy(Relation):
     source: Any
@@ -860,6 +905,17 @@ class SemanticOrderBy(Relation):
     def execute(self):
         return self.to_ibis().execute()
 
+    def __repr__(self) -> str:
+        keys_list = []
+        for k in list(self.keys)[:3]:
+            if isinstance(k, str):
+                keys_list.append(repr(k))
+            else:
+                keys_list.append("<expr>")
+        if len(self.keys) > 3:
+            keys_list.append(f"... ({len(self.keys)} total)")
+        return f"SemanticOrderBy(keys=[{', '.join(keys_list)}])"
+
 
 class SemanticLimit(Relation):
     source: Any
@@ -887,6 +943,11 @@ class SemanticLimit(Relation):
 
     def execute(self):
         return self.to_ibis().execute()
+
+    def __repr__(self) -> str:
+        if self.offset:
+            return f"SemanticLimit(n={self.n}, offset={self.offset})"
+        return f"SemanticLimit(n={self.n})"
 
 
 def _get_field_type_str(field_type: Any) -> str:
@@ -1064,6 +1125,28 @@ class SemanticIndex(Relation):
 
     def execute(self):
         return self.to_ibis().execute()
+
+    def __repr__(self) -> str:
+        parts = []
+        if self.selector is not None:
+            # Try to show selector repr, fallback to generic
+            try:
+                selector_repr = repr(self.selector)
+                # If it's too long, truncate
+                if len(selector_repr) > 50:
+                    selector_repr = selector_repr[:47] + "..."
+                parts.append(f"selector={selector_repr}")
+            except:
+                parts.append("selector=<selector>")
+        else:
+            parts.append("selector=all()")
+
+        if self.by:
+            parts.append(f"by={self.by!r}")
+        if self.sample:
+            parts.append(f"sample={self.sample}")
+
+        return f"SemanticIndex({', '.join(parts)})"
 
 
 def _find_root_model(node: Any) -> SemanticTable | None:
