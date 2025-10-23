@@ -121,20 +121,11 @@ def inventory_items_dataset(dataset_manager):
     return dataset_manager.get("inventory_items")
 
 
-# Convenience fixture for loading datasets into Ibis
 @pytest.fixture
 def load_dataset(connection_manager):
-    """
-    Fixture that returns a function to load datasets into Ibis.
-
-    Usage in tests:
-        def test_something(load_dataset):
-            flights = load_dataset("flights")
-            # Use flights as an Ibis table expression
-    """
+    """Fixture that returns a function to load datasets into Ibis."""
 
     def _load(dataset_name: str):
-        """Load a dataset by name into Ibis."""
         path = get_dataset(dataset_name)
         return connection_manager.load_parquet_ibis(path)
 
