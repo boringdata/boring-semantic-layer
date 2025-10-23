@@ -2,9 +2,77 @@
 Compile QueryExpr instances into Ibis expressions.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from .filters import Filter
+
+
+def _find_similar(name: str, available: List[str], max_suggestions: int = 3) -> List[str]:
+    """Find similar names using simple string distance."""
+    import difflib
+    return difflib.get_close_matches(name, available, n=max_suggestions, cutoff=0.6)
+
+
+def _validate_dimension(dim: str, model: Any, available_dims: List[str]) -> None:
+    """Validate a dimension exists and provide helpful error message if not."""
+    if "." in dim:
+        alias, field = dim.split(".", 1)
+        join = model.joins.get(alias)
+        if not join:
+            available_joins = list(model.joins.keys())
+            suggestions = _find_similar(alias, available_joins)
+            suggestion_text = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+            raise KeyError(
+                f"Unknown join alias '{alias}'.{suggestion_text} "
+                f"Available joins: {', '.join(available_joins) or 'none'}"
+            )
+        if field not in join.model.dimensions:
+            join_dims = list(join.model.dimensions.keys())
+            suggestions = _find_similar(field, join_dims)
+            suggestion_text = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+            raise KeyError(
+                f"Unknown dimension '{field}' in join '{alias}'.{suggestion_text} "
+                f"Available dimensions in '{alias}': {', '.join(join_dims) or 'none'}"
+            )
+    else:
+        if dim not in available_dims:
+            suggestions = _find_similar(dim, available_dims)
+            suggestion_text = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+            raise KeyError(
+                f"Unknown dimension '{dim}'.{suggestion_text} "
+                f"Available dimensions: {', '.join(available_dims) or 'none'}"
+            )
+
+
+def _validate_measure(measure: str, model: Any, available_measures: List[str]) -> None:
+    """Validate a measure exists and provide helpful error message if not."""
+    if "." in measure:
+        alias, field = measure.split(".", 1)
+        join = model.joins.get(alias)
+        if not join:
+            available_joins = list(model.joins.keys())
+            suggestions = _find_similar(alias, available_joins)
+            suggestion_text = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+            raise KeyError(
+                f"Unknown join alias '{alias}'.{suggestion_text} "
+                f"Available joins: {', '.join(available_joins) or 'none'}"
+            )
+        if field not in join.model.measures:
+            join_measures = list(join.model.measures)
+            suggestions = _find_similar(field, join_measures)
+            suggestion_text = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+            raise KeyError(
+                f"Unknown measure '{field}' in join '{alias}'.{suggestion_text} "
+                f"Available measures in '{alias}': {', '.join(join_measures) or 'none'}"
+            )
+    else:
+        if measure not in available_measures:
+            suggestions = _find_similar(measure, available_measures)
+            suggestion_text = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+            raise KeyError(
+                f"Unknown measure '{measure}'.{suggestion_text} "
+                f"Available measures: {', '.join(available_measures) or 'none'}"
+            )
 
 try:
     import xorq.vendor.ibis as ibis_mod
@@ -70,24 +138,14 @@ def _compile_query(qe: Any) -> Expr:
     measures = list(qe.measures)
 
     # Validate dimensions
+    available_dimensions = list(model.dimensions.keys())
     for d in dimensions:
-        if "." in d:
-            alias, field = d.split(".", 1)
-            join = model.joins.get(alias)
-            if not join or field not in join.model.dimensions:
-                raise KeyError(f"Unknown dimension: {d}")
-        elif d not in dimensions:
-            raise KeyError(f"Unknown dimension: {d}")
+        _validate_dimension(d, model, available_dimensions)
 
     # Validate measures
+    available_measures = model.measures
     for m in measures:
-        if "." in m:
-            alias, field = m.split(".", 1)
-            join = model.joins.get(alias)
-            if not join or field not in join.model.measures:
-                raise KeyError(f"Unknown measure: {m}")
-        elif m not in model.measures:
-            raise KeyError(f"Unknown measure: {m}")
+        _validate_measure(m, model, available_measures)
 
     # Build aggregate expressions
     agg_kwargs: Dict[str, Expr] = {}

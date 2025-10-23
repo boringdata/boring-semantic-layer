@@ -307,7 +307,7 @@ class SemanticTable(Relation):
         return SemanticJoin(left=self, right=other, on=None, how="cross")
 
     def index(self, selector: Any = None, by: Optional[str] = None, sample: Optional[int] = None) -> "SemanticIndex":
-        return SemanticIndex(source=self, selector=selector, by_measure=by, sample_size=sample)
+        return SemanticIndex(source=self, selector=selector, by=by, sample=sample)
 
     def to_ibis(self):
         return self.table.to_expr()
@@ -805,7 +805,7 @@ class SemanticJoin(Relation):
         return SemanticJoin(left=self, right=other, on=predicate, how="left")
 
     def index(self, selector: Any = None, by: Optional[str] = None, sample: Optional[int] = None) -> "SemanticIndex":
-        return SemanticIndex(source=self, selector=selector, by_measure=by, sample_size=sample)
+        return SemanticIndex(source=self, selector=selector, by=by, sample=sample)
 
     def to_ibis(self):
         from .lower import _Resolver
@@ -867,6 +867,10 @@ class SemanticLimit(Relation):
     offset: int
 
     def __init__(self, source: Any, n: int, offset: int = 0) -> None:
+        if n <= 0:
+            raise ValueError(f"limit must be positive, got {n}")
+        if offset < 0:
+            raise ValueError(f"offset must be non-negative, got {offset}")
         super().__init__(source=Relation.__coerce__(source), n=n, offset=offset)
 
     @property
@@ -963,21 +967,37 @@ def _get_fields_to_index(selector: Any, merged_dimensions: dict, base_tbl: Any) 
 class SemanticIndex(Relation):
     source: Any
     selector: Any
-    by_measure: Optional[str] = None
-    sample_size: Optional[int] = None
+    by: Optional[str] = None
+    sample: Optional[int] = None
 
     def __init__(
         self,
         source: Any,
         selector: Any = None,
-        by_measure: Optional[str] = None,
-        sample_size: Optional[int] = None,
+        by: Optional[str] = None,
+        sample: Optional[int] = None,
     ) -> None:
+        # Validate sample parameter
+        if sample is not None and sample <= 0:
+            raise ValueError(f"sample must be positive, got {sample}")
+
+        # Validate 'by' measure exists if provided
+        if by is not None:
+            all_roots = _find_all_root_models(source)
+            if all_roots:
+                merged_measures = _get_merged_fields(all_roots, 'measures')
+                if by not in merged_measures:
+                    available = list(merged_measures.keys())
+                    raise KeyError(
+                        f"Unknown measure '{by}' for weight calculation. "
+                        f"Available measures: {', '.join(available) or 'none'}"
+                    )
+
         super().__init__(
             source=Relation.__coerce__(source),
             selector=selector,
-            by_measure=by_measure,
-            sample_size=sample_size,
+            by=by,
+            sample=sample,
         )
 
     @property
@@ -1006,8 +1026,8 @@ class SemanticIndex(Relation):
         from functools import reduce
 
         all_roots = _find_all_root_models(self.source)
-        base_tbl = (_to_ibis(self.source).limit(self.sample_size)
-                   if self.sample_size else _to_ibis(self.source))
+        base_tbl = (_to_ibis(self.source).limit(self.sample)
+                   if self.sample else _to_ibis(self.source))
 
         merged_dimensions = _get_merged_fields(all_roots, 'dims')
         fields_to_index = _get_fields_to_index(self.selector, merged_dimensions, base_tbl)
@@ -1024,7 +1044,7 @@ class SemanticIndex(Relation):
                          else base_tbl[field_name])
             field_type = field_expr.type()
             type_str = _get_field_type_str(field_type)
-            weight_expr = _get_weight_expr(base_tbl, self.by_measure, all_roots, field_type.is_string())
+            weight_expr = _get_weight_expr(base_tbl, self.by, all_roots, field_type.is_string())
 
             return (_build_string_index_fragment(base_tbl, field_expr, field_name, field_name, type_str, weight_expr)
                    if field_type.is_string() or not field_type.is_numeric()
