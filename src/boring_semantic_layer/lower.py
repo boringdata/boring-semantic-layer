@@ -59,6 +59,32 @@ def _format_semantic_table(op: SemanticTableRelation, **kwargs):
     return '\n'.join(lines)
 
 
+# Register custom formatter for SemanticFilterRelation
+@fmt.fmt.register(SemanticFilterRelation)
+def _format_semantic_filter(op: SemanticFilterRelation, **kwargs):
+    """Format SemanticFilterRelation showing source and predicate info."""
+    source_type = type(op.source).__name__
+
+    lines = ["SemanticFilterRelation"]
+    lines.append(f"  source: {source_type}")
+    lines.append(f"  predicate: <function>")
+
+    # If source has dimensions/measures, show count
+    if hasattr(op.source, 'dimensions'):
+        dims_dict = object.__getattribute__(op.source, 'dimensions')
+        if dims_dict:
+            lines.append(f"  inherited dimensions: {len(dims_dict)}")
+
+    if hasattr(op.source, 'measures'):
+        meas_dict = object.__getattribute__(op.source, 'measures')
+        calc_dict = object.__getattribute__(op.source, 'calc_measures')
+        total_measures = len(meas_dict) + len(calc_dict)
+        if total_measures:
+            lines.append(f"  inherited measures: {total_measures}")
+
+    return '\n'.join(lines)
+
+
 @frozen
 class _Resolver:
     _t: Any
