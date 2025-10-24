@@ -4,7 +4,7 @@ import pytest
 import ibis
 import tempfile
 import os
-from boring_semantic_layer import from_yaml, SemanticTable
+from boring_semantic_layer import from_yaml, SemanticModel, SemanticTable
 
 
 @pytest.fixture

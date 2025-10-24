@@ -1,33 +1,33 @@
 from typing import Any, Callable, Optional
-from .expr import SemanticTable
+from .expr import SemanticModel, SemanticTable
 
 
-def to_semantic_table(ibis_table, name: Optional[str] = None) -> SemanticTable:
-    return SemanticTable(table=ibis_table, dimensions=None, measures=None,
+def to_semantic_table(ibis_table, name: Optional[str] = None) -> SemanticModel:
+    return SemanticModel(table=ibis_table, dimensions=None, measures=None,
                         calc_measures=None, name=name)
 
 
-def join_one(left: SemanticTable, other: SemanticTable, left_on: str, right_on: str) -> SemanticTable:
+def join_one(left: SemanticModel, other: SemanticModel, left_on: str, right_on: str) -> SemanticModel:
     return left.join_one(other, left_on, right_on)
 
 
-def join_many(left: SemanticTable, other: SemanticTable, left_on: str, right_on: str) -> SemanticTable:
+def join_many(left: SemanticModel, other: SemanticModel, left_on: str, right_on: str) -> SemanticModel:
     return left.join_many(other, left_on, right_on)
 
 
-def join_cross(left: SemanticTable, other: SemanticTable) -> SemanticTable:
+def join_cross(left: SemanticModel, other: SemanticModel) -> SemanticModel:
     return left.join_cross(other)
 
 
-def filter_(table: SemanticTable, predicate: Callable[[Any], Any]) -> Any:
+def filter_(table: SemanticModel, predicate: Callable[[Any], Any]) -> Any:
     return table.filter(predicate)
 
 
-def group_by_(table: SemanticTable, *dims: str) -> SemanticTable:
+def group_by_(table: SemanticModel, *dims: str) -> SemanticModel:
     return table.group_by(*dims)
 
 
-def aggregate_(table: SemanticTable, *measure_names: str, **aliased: str) -> Any:
+def aggregate_(table: SemanticModel, *measure_names: str, **aliased: str) -> Any:
     return table.aggregate(*measure_names, **aliased)
 
 

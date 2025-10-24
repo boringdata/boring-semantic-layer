@@ -18,8 +18,8 @@ def _to_ibis(source: Any) -> Any:
 
 def _semantic_table(*args, **kwargs):
     """Late-binding import to avoid circular dependency."""
-    from .expr import SemanticTable
-    return SemanticTable(*args, **kwargs)
+    from .expr import SemanticModel
+    return SemanticModel(*args, **kwargs)
 
 
 def _unwrap_semantic_table(other: Any) -> Any:

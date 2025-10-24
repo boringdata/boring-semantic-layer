@@ -7,7 +7,7 @@ import yaml
 from ibis import _
 
 from .api import to_semantic_table
-from .expr import SemanticTable
+from .expr import SemanticModel, SemanticTable
 from .ops import Dimension, Measure
 
 
@@ -106,8 +106,8 @@ def _parse_joins(
     tables: Mapping[str, Any],
     yaml_configs: Mapping[str, Any],
     current_model_name: str,
-    models: Dict[str, SemanticTable],
-) -> SemanticTable:
+    models: Dict[str, SemanticModel],
+) -> SemanticModel:
     """Parse join configurations for a model.
 
     Note: The alias in the join config is used to look up the model to join.
@@ -125,15 +125,15 @@ def _parse_joins(
             join_model = models[join_model_name]
         elif join_model_name in tables:
             table = tables[join_model_name]
-            if isinstance(table, SemanticTable):
+            if isinstance(table, (SemanticModel, SemanticTable)):
                 join_model = table
             else:
                 raise TypeError(
-                    f"Join '{alias}' references '{join_model_name}' which is not a SemanticTable"
+                    f"Join '{alias}' references '{join_model_name}' which is not a SemanticModel or SemanticTable"
                 )
         else:
             available_models = list(yaml_configs.keys()) + [
-                k for k in tables.keys() if isinstance(tables.get(k), SemanticTable)
+                k for k in tables.keys() if isinstance(tables.get(k), (SemanticModel, SemanticTable))
             ]
             if join_model_name in yaml_configs:
                 raise ValueError(
@@ -185,7 +185,7 @@ def _parse_joins(
 def from_yaml(
     yaml_path: str,
     tables: Optional[Mapping[str, Any]] = None,
-) -> Dict[str, SemanticTable]:
+) -> Dict[str, SemanticModel]:
     """
     Load semantic tables from a YAML file.
 
@@ -194,7 +194,7 @@ def from_yaml(
         tables: Optional mapping of table names to ibis table expressions
 
     Returns:
-        Dict mapping model names to SemanticTable instances
+        Dict mapping model names to SemanticModel instances
 
     Example YAML format:
         flights:
@@ -228,7 +228,7 @@ def from_yaml(
     with open(yaml_path, "r") as f:
         yaml_configs = yaml.safe_load(f)
 
-    models: Dict[str, SemanticTable] = {}
+    models: Dict[str, SemanticModel] = {}
 
     # First pass: create models without joins
     for name, config in yaml_configs.items():

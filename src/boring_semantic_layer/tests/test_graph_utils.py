@@ -10,7 +10,7 @@ from boring_semantic_layer.graph_utils import (
     replace_nodes,
     find_dimensions_and_measures,
 )
-from boring_semantic_layer.expr import SemanticTable
+from boring_semantic_layer.expr import SemanticModel
 from boring_semantic_layer.ops import Dimension, Measure
 from ibis.expr.operations.relations import Aggregate
 
@@ -65,8 +65,8 @@ def test_find_dimensions_and_measures_semantic_table():
     t = ibis.memtable({"x": [1, 2, 3]}, name="t")
     dims_defs = {"x": Dimension(expr=lambda tbl: tbl.x, description="dim x")}
     meas_defs = {"sum_x": Measure(expr=lambda tbl: tbl.x.sum(), description="measure sum_x")}
-    semantic = SemanticTable(table=t, dimensions=dims_defs, measures=meas_defs, calc_measures=None, name="mytable")
-    # SemanticTable is the Expression - use it directly
+    semantic = SemanticModel(table=t, dimensions=dims_defs, measures=meas_defs, calc_measures=None, name="mytable")
+    # SemanticModel is the Expression - use it directly
     dims, meas = find_dimensions_and_measures(semantic)
     assert dims == {"mytable.x": dims_defs["x"]}
     assert meas == {"mytable.sum_x": meas_defs["sum_x"]}

@@ -10,6 +10,7 @@ from .api import (
     to_semantic_table,
 )
 from .expr import (
+    SemanticModel,
     SemanticTable,
 )
 from .ops import (
@@ -26,6 +27,7 @@ from .mcp import (
 
 __all__ = [
     "to_semantic_table",
+    "SemanticModel",
     "SemanticTable",
     "Dimension",
     "Measure",

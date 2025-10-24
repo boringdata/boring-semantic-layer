@@ -14,10 +14,10 @@ from ibis.expr import types as ir
 from .ops import Dimension, Measure, SemanticTableRelation
 
 
-class SemanticExpression(ir.Table):
-    """Base class for semantic expressions with common fluent API methods.
+class SemanticTable(ir.Table):
+    """Base class for semantic tables with common fluent API methods.
 
-    This provides the shared interface for all semantic expressions including
+    This provides the shared interface for all semantic tables including
     filter, group_by, order_by, limit, and other fluent methods.
     """
 
@@ -77,14 +77,14 @@ def _derive_name(table: Any) -> Optional[str]:
         return None
 
 
-class SemanticTable(SemanticExpression):
-    """User-facing semantic table with dimensions and measures.
+class SemanticModel(SemanticTable):
+    """User-facing semantic model with dimensions and measures.
 
     This is an Expression wrapper around SemanticTableRelation. It provides:
     - Flexible input types (Callable, dict, Dimension)
     - User-facing methods (with_dimensions, with_measures, etc.)
     - Type transformations from flexible inputs to strict Operation types
-    - Full Ibis Table API (execute, compile, etc.) inherited from SemanticExpression
+    - Full Ibis Table API (execute, compile, etc.) inherited from SemanticTable
 
     The underlying Operation (SemanticTableRelation) is the internal IR with strict,
     concrete types.
@@ -206,9 +206,9 @@ class SemanticTable(SemanticExpression):
         return self.op()._calc_measures_dict()
 
     # User-facing methods
-    def with_dimensions(self, **dims) -> "SemanticTable":
+    def with_dimensions(self, **dims) -> "SemanticModel":
         """Add or update dimensions."""
-        return SemanticTable(
+        return SemanticModel(
             table=self.op().table,  # Already an expression
             dimensions={**self._dims_dict(), **dims},
             measures=self._measures_dict(),
@@ -216,7 +216,7 @@ class SemanticTable(SemanticExpression):
             name=self.name
         )
 
-    def with_measures(self, **meas) -> "SemanticTable":
+    def with_measures(self, **meas) -> "SemanticModel":
         """Add or update measures."""
         from .measure_scope import MeasureScope
         from .ops import _classify_measure
@@ -232,7 +232,7 @@ class SemanticTable(SemanticExpression):
             kind, value = _classify_measure(fn_or_expr, scope)
             (new_calc_meas if kind == 'calc' else new_base_meas)[name] = value
 
-        return SemanticTable(
+        return SemanticModel(
             table=self.op().table,  # Already an expression
             dimensions=self._dims_dict(),
             measures=new_base_meas,
@@ -240,18 +240,18 @@ class SemanticTable(SemanticExpression):
             name=self.name
         )
 
-    # User-facing methods (filter, group_by, order_by, limit, pipe, sql, execute inherited from SemanticExpression)
+    # User-facing methods (filter, group_by, order_by, limit, pipe, sql, execute inherited from SemanticTable)
 
-    def join(self, other: "SemanticTable", on: Callable[[Any, Any], Any] | None = None, how: str = "inner"):
+    def join(self, other: "SemanticModel", on: Callable[[Any, Any], Any] | None = None, how: str = "inner"):
         """Join with another semantic table."""
         from .ops import SemanticJoin
-        other_op = other.op() if isinstance(other, SemanticTable) else other
+        other_op = other.op() if isinstance(other, SemanticModel) else other
         return SemanticJoin(left=self.op(), right=other_op, on=on, how=how)
 
-    def join_one(self, other: "SemanticTable", left_on: str, right_on: str):
+    def join_one(self, other: "SemanticModel", left_on: str, right_on: str):
         """Inner join one-to-one or many-to-one."""
         from .ops import SemanticJoin
-        other_op = other.op() if isinstance(other, SemanticTable) else other
+        other_op = other.op() if isinstance(other, SemanticModel) else other
         return SemanticJoin(
             left=self.op(),
             right=other_op,
@@ -259,10 +259,10 @@ class SemanticTable(SemanticExpression):
             how="inner"
         )
 
-    def join_many(self, other: "SemanticTable", left_on: str, right_on: str):
+    def join_many(self, other: "SemanticModel", left_on: str, right_on: str):
         """Left join one-to-many."""
         from .ops import SemanticJoin
-        other_op = other.op() if isinstance(other, SemanticTable) else other
+        other_op = other.op() if isinstance(other, SemanticModel) else other
         return SemanticJoin(
             left=self.op(),
             right=other_op,
@@ -270,10 +270,10 @@ class SemanticTable(SemanticExpression):
             how="left"
         )
 
-    def join_cross(self, other: "SemanticTable"):
+    def join_cross(self, other: "SemanticModel"):
         """Cross join."""
         from .ops import SemanticJoin
-        other_op = other.op() if isinstance(other, SemanticTable) else other
+        other_op = other.op() if isinstance(other, SemanticModel) else other
         return SemanticJoin(left=self.op(), right=other_op, on=None, how="cross")
 
     def index(self, selector: Any = None, by: Optional[str] = None, sample: Optional[int] = None):
@@ -348,7 +348,7 @@ class SemanticTable(SemanticExpression):
     # __repr__ inherited from ir.Table, uses custom formatter registered in lower.py
 
 
-class SemanticFilter(SemanticExpression):
+class SemanticFilter(SemanticTable):
     """User-facing filter expression wrapping SemanticFilterRelation Operation."""
 
     def __init__(self, source: Any, predicate: Callable) -> None:
@@ -377,18 +377,18 @@ class SemanticFilter(SemanticExpression):
         """Forward to Operation."""
         return self.op().schema
 
-    # filter, group_by, order_by, limit, execute, sql, pipe inherited from SemanticExpression
+    # filter, group_by, order_by, limit, execute, sql, pipe inherited from SemanticTable
 
-    def as_table(self) -> "SemanticTable":
+    def as_table(self) -> "SemanticModel":
         from .ops import _find_all_root_models, _get_merged_fields
 
         all_roots = _find_all_root_models(self.op().source)
-        return (SemanticTable(
+        return (SemanticModel(
             table=self.op().to_ibis(),
             dimensions=_get_merged_fields(all_roots, 'dims'),
             measures=_get_merged_fields(all_roots, 'measures'),
             calc_measures=_get_merged_fields(all_roots, 'calc_measures')
-        ) if all_roots else SemanticTable(
+        ) if all_roots else SemanticModel(
             table=self.op().to_ibis(),
             dimensions={},
             measures={},
