@@ -6,7 +6,7 @@ import ibis as ibis_mod
 from attrs import frozen, field
 from ibis.expr.sql import convert  # noqa: E402
 from boring_semantic_layer.ops import (  # noqa: E402
-    SemanticAggregate,
+    SemanticAggregateRelation,
     SemanticFilterRelation,
     SemanticGroupByRelation,
     SemanticJoin,
@@ -286,8 +286,41 @@ def _lower_semantic_join(node: SemanticJoin, catalog, *args):
             else left_tbl.join(right_tbl, how=node.how))
 
 
-@convert.register(SemanticAggregate)
-def _lower_semantic_aggregate(node: SemanticAggregate, catalog, *args):
+# Register custom formatter for SemanticAggregateRelation
+@fmt.fmt.register(SemanticAggregateRelation)
+def _format_semantic_aggregate(op: SemanticAggregateRelation, **kwargs):
+    """Format SemanticAggregateRelation showing source, keys, and aggs."""
+    source_type = type(op.source).__name__
+    keys_str = ', '.join(repr(k) for k in op.keys)
+    aggs = list(op.aggs.keys())
+    aggs_str = ', '.join(aggs[:5])
+    if len(aggs) > 5:
+        aggs_str += f', ... ({len(aggs)} total)'
+
+    lines = ["SemanticAggregateRelation"]
+    lines.append(f"  source: {source_type}")
+    if op.keys:
+        lines.append(f"  keys: [{keys_str}]")
+    lines.append(f"  aggs: [{aggs_str}]")
+
+    # If source has dimensions/measures, show count
+    if hasattr(op.source, 'dimensions'):
+        dims_dict = object.__getattribute__(op.source, 'dimensions')
+        if dims_dict:
+            lines.append(f"  inherited dimensions: {len(dims_dict)}")
+
+    if hasattr(op.source, 'measures'):
+        meas_dict = object.__getattribute__(op.source, 'measures')
+        calc_dict = object.__getattribute__(op.source, 'calc_measures')
+        total_measures = len(meas_dict) + len(calc_dict)
+        if total_measures:
+            lines.append(f"  inherited measures: {total_measures}")
+
+    return '\n'.join(lines)
+
+
+@convert.register(SemanticAggregateRelation)
+def _lower_semantic_aggregate(node: SemanticAggregateRelation, catalog, *args):
     from boring_semantic_layer.ops import _get_merged_fields
 
     all_roots = _find_all_root_models(node.source)

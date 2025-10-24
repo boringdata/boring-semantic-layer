@@ -426,7 +426,6 @@ class SemanticGroupBy(SemanticTable):
 
     def aggregate(self, *measure_names, **aliased):
         """Aggregate measures over grouped dimensions."""
-        from .ops import SemanticAggregate
         aggs = {}
         for item in measure_names:
             if isinstance(item, str):
@@ -437,6 +436,82 @@ class SemanticGroupBy(SemanticTable):
                 raise TypeError(f"measure_names must be strings or callables, got {type(item)}")
         aggs.update(aliased)
         return SemanticAggregate(source=self.op(), keys=self.keys, aggs=aggs)
+
+
+class SemanticAggregate(SemanticTable):
+    """User-facing aggregate expression wrapping SemanticAggregateRelation Operation."""
+
+    def __init__(self, source: Any, keys: tuple[str, ...], aggs: dict[str, Any]) -> None:
+        from .ops import SemanticAggregateRelation
+        op = SemanticAggregateRelation(source=source, keys=keys, aggs=aggs)
+        super().__init__(op)
+
+    @property
+    def source(self):
+        return self.op().source
+
+    @property
+    def keys(self):
+        return self.op().keys
+
+    @property
+    def aggs(self):
+        return self.op().aggs
+
+    @property
+    def values(self):
+        return self.op().values
+
+    @property
+    def schema(self):
+        return self.op().schema
+
+    @property
+    def measures(self):
+        return self.op().measures
+
+    def mutate(self, **post) -> "SemanticMutate":
+        """Add or update columns after aggregation."""
+        return SemanticMutate(source=self.op(), post=post)
+
+    def join(self, other: "SemanticModel", on: Any | None = None, how: str = "inner") -> "SemanticJoin":
+        """Join with another semantic table."""
+        from .ops import SemanticJoin, _unwrap_semantic_table
+        return SemanticJoin(left=self.op(), right=_unwrap_semantic_table(other), on=on, how=how)
+
+    def join_one(self, other: "SemanticModel", left_on: str, right_on: str) -> "SemanticJoin":
+        """Join with a one-to-one relationship."""
+        from .ops import SemanticJoin, _unwrap_semantic_table
+        return SemanticJoin(
+            left=self.op(),
+            right=_unwrap_semantic_table(other),
+            on=lambda l, r: l[left_on] == r[right_on],
+            how="inner"
+        )
+
+    def join_many(self, other: "SemanticModel", left_on: str, right_on: str) -> "SemanticJoin":
+        """Join with a one-to-many relationship."""
+        from .ops import SemanticJoin, _unwrap_semantic_table
+        return SemanticJoin(
+            left=self.op(),
+            right=_unwrap_semantic_table(other),
+            on=lambda l, r: l[left_on] == r[right_on],
+            how="left"
+        )
+
+    def as_table(self) -> "SemanticModel":
+        """Convert to SemanticModel with no semantic metadata (columns are materialized)."""
+        return SemanticModel(
+            table=self.op().to_ibis(),
+            dimensions={},
+            measures={},
+            calc_measures={}
+        )
+
+    def chart(self, backend: str = "altair", chart_type: str | None = None):
+        """Create a chart from the aggregate."""
+        from .chart import chart as create_chart
+        return create_chart(self.op(), backend=backend, chart_type=chart_type)
 
 
 class SemanticOrderBy(SemanticTable):

@@ -379,7 +379,7 @@ def chart(
         import altair as alt
 
         # Execute query to get data
-        df = semantic_aggregate.execute()
+        df = semantic_aggregate.to_ibis().execute()
 
         # Get chart spec
         if chart_type:
@@ -429,7 +429,7 @@ def chart(
             chart_type = _detect_plotly_chart_type(dimensions, measures, time_dimension)
 
         # Execute query and prepare parameters
-        df = semantic_aggregate.execute()
+        df = semantic_aggregate.to_ibis().execute()
 
         # Create a minimal query expression object for _prepare_plotly_data_and_params
         class QueryExpr:

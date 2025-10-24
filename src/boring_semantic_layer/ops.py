@@ -250,7 +250,7 @@ class SemanticFilterRelation(Relation):
 
         all_roots = _find_all_root_models(self.source)
         base_tbl = _to_ibis(self.source)
-        dim_map = {} if isinstance(self.source, SemanticAggregate) else _get_merged_fields(all_roots, 'dims')
+        dim_map = {} if isinstance(self.source, SemanticAggregateRelation) else _get_merged_fields(all_roots, 'dims')
 
         pred_fn = _unwrap(self.predicate)
         resolver = _Resolver(base_tbl, dim_map)
@@ -328,7 +328,7 @@ class SemanticGroupByRelation(Relation):
         return self
 
 
-class SemanticAggregate(Relation):
+class SemanticAggregateRelation(Relation):
     source: Any
     keys: tuple[str, ...]
     aggs: dict[str, Callable]  # Transformed to FrozenDict[str, _CallableWrapper] in __init__
@@ -374,33 +374,6 @@ class SemanticAggregate(Relation):
     @property
     def measures(self) -> tuple[str, ...]:
         return ()
-
-    def mutate(self, **post) -> "SemanticMutate":
-        from .expr import SemanticMutate
-        return SemanticMutate(source=self, post=post)
-
-    def order_by(self, *keys: Any) -> "SemanticOrderBy":
-        from .expr import SemanticOrderBy
-        return SemanticOrderBy(source=self, keys=keys)
-
-    def limit(self, n: int, offset: int = 0) -> "SemanticLimit":
-        from .expr import SemanticLimit
-        return SemanticLimit(source=self, n=n, offset=offset)
-
-    def filter(self, predicate: Callable) -> "SemanticFilter":
-        from .expr import SemanticFilter
-        return SemanticFilter(source=self, predicate=predicate)
-
-    def join(self, other: "SemanticTable", on: Callable[[Any, Any], Any] | None = None, how: str = "inner") -> "SemanticJoin":
-        return SemanticJoin(left=self, right=_unwrap_semantic_table(other), on=on, how=how)
-
-    def join_one(self, other: "SemanticTable", left_on: str, right_on: str) -> "SemanticJoin":
-        return SemanticJoin(left=self, right=_unwrap_semantic_table(other),
-                          on=lambda l, r: l[left_on] == r[right_on], how="inner")
-
-    def join_many(self, other: "SemanticTable", left_on: str, right_on: str) -> "SemanticJoin":
-        return SemanticJoin(left=self, right=_unwrap_semantic_table(other),
-                          on=lambda l, r: l[left_on] == r[right_on], how="left")
 
     def to_ibis(self):
         from .measure_scope import MeasureScope, ColumnScope
@@ -458,37 +431,8 @@ class SemanticAggregate(Relation):
                 if calc_specs or by_cols
                 else tbl.aggregate({name: agg_fn(tbl) for name, agg_fn in agg_specs.items()}))
 
-    def execute(self):
-        return self.to_ibis().execute()
-
     def op(self):
         return self
-
-    def compile(self, **kwargs):
-        return self.to_ibis().compile(**kwargs)
-
-    def sql(self, **kwargs):
-        import ibis
-        return ibis.to_sql(self.to_ibis(), **kwargs)
-
-    def __getitem__(self, key):
-        return self.to_ibis()[key]
-
-    def pipe(self, func, *args, **kwargs):
-        return func(self, *args, **kwargs)
-
-    def as_table(self) -> "SemanticTable":
-        """Convert to SemanticTable with no semantic metadata (columns are materialized)."""
-        return _semantic_table(
-            table=self.to_ibis(),
-            dimensions={},
-            measures={},
-            calc_measures={}
-        )
-
-    def chart(self, backend: str = "altair", chart_type: str | None = None):
-        from .chart import chart as create_chart
-        return create_chart(self, backend=backend, chart_type=chart_type)
 
     def __repr__(self) -> str:
         keys_str = ", ".join(repr(k) for k in self.keys)
@@ -496,7 +440,7 @@ class SemanticAggregate(Relation):
         aggs_str = ", ".join(aggs[:5])
         if len(aggs) > 5:
             aggs_str += f", ... ({len(aggs)} total)"
-        return f"SemanticAggregate(by=[{keys_str}], aggs=[{aggs_str}])"
+        return f"SemanticAggregateRelation(by=[{keys_str}], aggs=[{aggs_str}])"
 
 
 class SemanticMutateRelation(Relation):
