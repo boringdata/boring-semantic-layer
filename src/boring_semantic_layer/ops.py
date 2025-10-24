@@ -18,7 +18,7 @@ def _to_ibis(source: Any) -> Any:
 
 def _semantic_table(*args, **kwargs):
     """Late-binding import to avoid circular dependency."""
-    from .expressions import SemanticTable
+    from .expr import SemanticTable
     return SemanticTable(*args, **kwargs)
 
 

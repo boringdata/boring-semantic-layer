@@ -7,7 +7,7 @@ import yaml
 from ibis import _
 
 from .api import to_semantic_table
-from .expressions import SemanticTable
+from .expr import SemanticTable
 from .ops import Dimension, Measure
 
 

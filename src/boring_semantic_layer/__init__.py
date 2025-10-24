@@ -9,7 +9,7 @@ from . import lower  # noqa: F401
 from .api import (
     to_semantic_table,
 )
-from .expressions import (
+from .expr import (
     SemanticTable,
 )
 from .ops import (

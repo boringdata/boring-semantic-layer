@@ -1,5 +1,5 @@
 from typing import Any, Callable, Optional
-from .expressions import SemanticTable
+from .expr import SemanticTable
 
 
 def to_semantic_table(ibis_table, name: Optional[str] = None) -> SemanticTable:

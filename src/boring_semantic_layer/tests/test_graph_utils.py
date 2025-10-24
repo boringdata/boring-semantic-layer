@@ -10,7 +10,7 @@ from boring_semantic_layer.graph_utils import (
     replace_nodes,
     find_dimensions_and_measures,
 )
-from boring_semantic_layer.expressions import SemanticTable
+from boring_semantic_layer.expr import SemanticTable
 from boring_semantic_layer.ops import Dimension, Measure
 from ibis.expr.operations.relations import Aggregate
 
