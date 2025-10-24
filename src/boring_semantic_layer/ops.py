@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable, Optional, Sequence
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 from attrs import frozen
 from ibis.common.collections import FrozenDict, FrozenOrderedDict
@@ -118,7 +118,7 @@ class Dimension:
     def __call__(self, table: Any) -> Any:
         return self.expr.resolve(table) if isinstance(self.expr, Deferred) else self.expr(table)
 
-    def to_json(self) -> FrozenDict:
+    def to_json(self) -> Mapping[str, Any]:
         base = {"description": self.description}
         return {**base, "smallest_time_grain": self.smallest_time_grain} if self.is_time_dimension else base
 
@@ -134,7 +134,7 @@ class Measure:
     def __call__(self, table: Any) -> Any:
         return self.expr.resolve(table) if isinstance(self.expr, Deferred) else self.expr(table)
 
-    def to_json(self) -> FrozenDict:
+    def to_json(self) -> Mapping[str, Any]:
         return {"description": self.description}
 
     def __hash__(self) -> int:
@@ -216,7 +216,7 @@ class SemanticTable(Relation):
         return Schema({name: v.dtype for name, v in self.values.items()})
 
     @property
-    def json_definition(self) -> FrozenDict:
+    def json_definition(self) -> Mapping[str, Any]:
         dims_dict = self._dims_dict()
         meas_dict = self._measures_dict()
 
@@ -247,13 +247,13 @@ class SemanticTable(Relation):
     def _calc_measures(self) -> dict[str, Any]:
         return dict(object.__getattribute__(self, "calc_measures"))
 
-    def _measures_dict(self) -> FrozenDict:
+    def _measures_dict(self) -> Mapping[str, Measure]:
         return object.__getattribute__(self, "measures")
 
-    def _dims_dict(self) -> FrozenDict:
+    def _dims_dict(self) -> Mapping[str, Dimension]:
         return object.__getattribute__(self, "dimensions")
 
-    def _calc_measures_dict(self) -> FrozenDict:
+    def _calc_measures_dict(self) -> Mapping[str, Any]:
         return object.__getattribute__(self, "calc_measures")
 
     def __getattribute__(self, name: str):
@@ -833,8 +833,8 @@ class SemanticAggregate(Relation):
             measures={},
             calc_measures={}
         )
-    
-    def chart(self, backend: str = "altair", chart_type: str | None = None): 
+
+    def chart(self, backend: str = "altair", chart_type: str | None = None):
         from .chart import chart as create_chart
         return create_chart(self, backend=backend, chart_type=chart_type)
 
@@ -957,26 +957,26 @@ class SemanticJoin(Relation):
     def schema(self) -> Schema:
         return Schema({name: v.dtype for name, v in self.values.items()})
 
-    def _dims_dict(self) -> FrozenDict[str, Dimension]:
+    def _dims_dict(self) -> Mapping[str, Dimension]:
         """Internal: Get merged dimensions dict from both sides of the join."""
         all_roots = _find_all_root_models(self)
         merged_dims = _merge_fields_with_prefixing(all_roots, lambda r: _get_field_dict(r, 'dims'))
-        return FrozenDict(merged_dims)
+        return merged_dims
 
-    def _measures_dict(self) -> FrozenDict[str, Measure]:
+    def _measures_dict(self) -> Mapping[str, Measure]:
         """Internal: Get merged base measures dict from both sides of the join."""
         all_roots = _find_all_root_models(self)
         merged_measures = _merge_fields_with_prefixing(all_roots, lambda r: _get_field_dict(r, 'measures'))
-        return FrozenDict(merged_measures)
+        return merged_measures
 
-    def _calc_measures_dict(self) -> FrozenDict:
+    def _calc_measures_dict(self) -> Mapping[str, Any]:
         """Internal: Get merged calculated measures dict from both sides of the join."""
         all_roots = _find_all_root_models(self)
         merged_calc_measures = _merge_fields_with_prefixing(all_roots, lambda r: _get_field_dict(r, 'calc_measures'))
-        return FrozenDict(merged_calc_measures)
+        return merged_calc_measures
 
     @property
-    def dimensions(self) -> FrozenDict[str, Dimension]:
+    def dimensions(self) -> Mapping[str, Dimension]:
         """Merge all dimensions from both sides of the join with prefixing."""
         return self._dims_dict()
 
@@ -1008,7 +1008,7 @@ class SemanticJoin(Relation):
         return tuple(base_measures.keys()) + tuple(calc_measures.keys())
 
     @property
-    def json_definition(self) -> FrozenDict:
+    def json_definition(self) -> Mapping[str, Any]:
         """Return a JSON-serializable definition of the joined semantic table."""
         dims_dict = self._dims_dict()
         meas_dict = self._measures_dict()
@@ -1239,7 +1239,7 @@ class SemanticOrderBy(Relation):
                 measures={},
                 calc_measures={}
             )
-    
+
     def chart(self, backend: str = "altair", chart_type: str | None = None):
         from .chart import chart as create_chart
         # Get the original aggregate to extract dimensions/measures
