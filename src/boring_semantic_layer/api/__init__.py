@@ -14,6 +14,9 @@ from .ops import (
     Dimension,
     Measure,
 )
+from .yaml import (
+    from_yaml,
+)
 
 
 __all__ = [
@@ -21,4 +24,5 @@ __all__ = [
     "SemanticTable",
     "Dimension",
     "Measure",
+    "from_yaml",
 ]
