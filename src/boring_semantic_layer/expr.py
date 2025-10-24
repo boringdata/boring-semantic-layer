@@ -35,7 +35,6 @@ class SemanticTable(ir.Table):
 
     def limit(self, n: int, offset: int = 0):
         """Limit results."""
-        from .ops import SemanticLimit
         return SemanticLimit(source=self.op(), n=n, offset=offset)
 
     def pipe(self, func, *args, **kwargs):
@@ -495,6 +494,73 @@ class SemanticOrderBy(SemanticTable):
         """Create a chart from the ordered aggregate."""
         from .chart import chart as create_chart
         # Get the original aggregate to extract dimensions/measures
+        source = self.source
+        while hasattr(source, 'source') and not hasattr(source, 'aggs'):
+            source = source.source
+        if hasattr(source, 'aggs'):
+            return create_chart(source, backend=backend, chart_type=chart_type)
+        raise ValueError("Cannot create chart: no aggregate found in query chain")
+
+
+class SemanticLimit(SemanticTable):
+    """User-facing limit expression wrapping SemanticLimitRelation Operation."""
+
+    def __init__(self, source: Any, n: int, offset: int = 0) -> None:
+        from .ops import SemanticLimitRelation
+        op = SemanticLimitRelation(source=source, n=n, offset=offset)
+        super().__init__(op)
+
+    # Forward property accessors to Operation
+    @property
+    def source(self):
+        """Forward to Operation."""
+        return self.op().source
+
+    @property
+    def n(self):
+        """Forward to Operation."""
+        return self.op().n
+
+    @property
+    def offset(self):
+        """Forward to Operation."""
+        return self.op().offset
+
+    @property
+    def values(self):
+        """Forward to Operation."""
+        return self.op().values
+
+    @property
+    def schema(self):
+        """Forward to Operation."""
+        return self.op().schema
+
+    # filter, group_by, order_by, limit, execute, sql, pipe inherited from SemanticTable
+
+    def as_table(self) -> "SemanticModel":
+        """Convert to SemanticModel, preserving semantic metadata from source."""
+        from .ops import _find_all_root_models, _get_merged_fields
+
+        all_roots = _find_all_root_models(self.source)
+        if all_roots:
+            return SemanticModel(
+                table=self.op().to_ibis(),
+                dimensions=_get_merged_fields(all_roots, 'dims'),
+                measures=_get_merged_fields(all_roots, 'measures'),
+                calc_measures=_get_merged_fields(all_roots, 'calc_measures')
+            )
+        else:
+            return SemanticModel(
+                table=self.op().to_ibis(),
+                dimensions={},
+                measures={},
+                calc_measures={}
+            )
+
+    def chart(self, backend: str = "altair", chart_type: str | None = None):
+        """Create a chart from the limited aggregate."""
+        from .chart import chart as create_chart
         source = self.source
         while hasattr(source, 'source') and not hasattr(source, 'aggs'):
             source = source.source
