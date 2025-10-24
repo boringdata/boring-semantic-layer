@@ -14,7 +14,7 @@ Benefits of YAML configuration:
 
 import pandas as pd
 import ibis
-from boring_semantic_layer.api import from_yaml
+from boring_semantic_layer import from_yaml
 
 
 def main():

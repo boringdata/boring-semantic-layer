@@ -11,7 +11,7 @@ These tests demonstrate practical business intelligence scenarios:
 import ibis
 import pandas as pd
 import pytest
-from boring_semantic_layer.api import to_semantic_table
+from boring_semantic_layer import to_semantic_table
 
 
 @pytest.fixture(scope="module")

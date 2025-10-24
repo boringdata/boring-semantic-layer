@@ -17,6 +17,9 @@ from .ops import (
 from .yaml import (
     from_yaml,
 )
+from .mcp import (
+    MCPSemanticModel,
+)
 
 
 __all__ = [
@@ -25,4 +28,5 @@ __all__ = [
     "Dimension",
     "Measure",
     "from_yaml",
+    "MCPSemanticModel",
 ]

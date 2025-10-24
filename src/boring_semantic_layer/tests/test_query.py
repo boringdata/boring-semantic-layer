@@ -6,8 +6,8 @@ import pandas as pd
 import ibis
 import pytest
 
-from boring_semantic_layer.semantic_api import to_semantic_table
-from boring_semantic_layer.semantic_api.query import Filter
+from boring_semantic_layer import to_semantic_table
+from boring_semantic_layer.query import Filter
 
 
 @pytest.fixture(scope="module")

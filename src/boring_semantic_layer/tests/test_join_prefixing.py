@@ -9,7 +9,7 @@ import pandas as pd
 import ibis
 import pytest
 
-from boring_semantic_layer.api import to_semantic_table
+from boring_semantic_layer import to_semantic_table
 
 
 @pytest.fixture(scope="module")

@@ -2,7 +2,7 @@ import ibis
 
 import pytest
 
-from boring_semantic_layer.api.graph_utils import (
+from boring_semantic_layer.graph_utils import (
     to_node,
     gen_children_of,
     bfs,
@@ -10,7 +10,7 @@ from boring_semantic_layer.api.graph_utils import (
     replace_nodes,
     find_dimensions_and_measures,
 )
-from boring_semantic_layer.api.ops import Dimension, Measure, SemanticTable
+from boring_semantic_layer.ops import Dimension, Measure, SemanticTable
 from ibis.expr.operations.relations import Aggregate
 
 

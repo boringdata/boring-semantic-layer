@@ -17,7 +17,7 @@ Structure:
 import pandas as pd
 import ibis
 from ibis import _
-from boring_semantic_layer.api import to_semantic_table
+from boring_semantic_layer import to_semantic_table
 
 
 def main():

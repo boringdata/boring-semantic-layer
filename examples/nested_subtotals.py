@@ -20,7 +20,7 @@ multiple aggregation levels and pandas grouping.
 import pandas as pd
 import ibis
 from datetime import datetime, timedelta
-from boring_semantic_layer.api import to_semantic_table
+from boring_semantic_layer import to_semantic_table
 
 
 def main():

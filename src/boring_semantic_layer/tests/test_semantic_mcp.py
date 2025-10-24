@@ -4,8 +4,7 @@ import pytest
 import pandas as pd
 import ibis
 
-from boring_semantic_layer import MCPSemanticModel
-from boring_semantic_layer.semantic_api import to_semantic_table
+from boring_semantic_layer import MCPSemanticModel, to_semantic_table
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
