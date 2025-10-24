@@ -14,6 +14,46 @@ from ibis.expr import types as ir
 from .ops import Dimension, Measure, SemanticTableRelation
 
 
+class SemanticExpression(ir.Table):
+    """Base class for semantic expressions with common fluent API methods.
+
+    This provides the shared interface for all semantic expressions including
+    filter, group_by, order_by, limit, and other fluent methods.
+    """
+
+    def filter(self, predicate: Callable) -> "SemanticFilter":
+        """Apply a filter predicate."""
+        return SemanticFilter(source=self.op(), predicate=predicate)
+
+    def group_by(self, *keys: str):
+        """Group by dimensions."""
+        from .ops import SemanticGroupBy
+        return SemanticGroupBy(source=self.op(), keys=keys)
+
+    def order_by(self, *keys: Any):
+        """Order by fields."""
+        from .ops import SemanticOrderBy
+        return SemanticOrderBy(source=self.op(), keys=keys)
+
+    def limit(self, n: int, offset: int = 0):
+        """Limit results."""
+        from .ops import SemanticLimit
+        return SemanticLimit(source=self.op(), n=n, offset=offset)
+
+    def pipe(self, func, *args, **kwargs):
+        """Apply a function to self."""
+        return func(self, *args, **kwargs)
+
+    def sql(self, **kwargs):
+        """Generate SQL string."""
+        import ibis
+        return ibis.to_sql(self.op().to_ibis(), **kwargs)
+
+    def execute(self):
+        """Execute via to_ibis() to ensure proper lowering."""
+        return self.op().to_ibis().execute()
+
+
 def _create_dimension(expr: Dimension | Callable | dict) -> Dimension:
     """Transform various input types to Dimension."""
     if isinstance(expr, Dimension):
@@ -37,14 +77,14 @@ def _derive_name(table: Any) -> Optional[str]:
         return None
 
 
-class SemanticTable(ir.Table):
+class SemanticTable(SemanticExpression):
     """User-facing semantic table with dimensions and measures.
 
     This is an Expression wrapper around SemanticTableRelation. It provides:
     - Flexible input types (Callable, dict, Dimension)
     - User-facing methods (with_dimensions, with_measures, etc.)
     - Type transformations from flexible inputs to strict Operation types
-    - Full Ibis Table API (execute, compile, etc.) inherited from ir.Table
+    - Full Ibis Table API (execute, compile, etc.) inherited from SemanticExpression
 
     The underlying Operation (SemanticTableRelation) is the internal IR with strict,
     concrete types.
@@ -200,13 +240,7 @@ class SemanticTable(ir.Table):
             name=self.name
         )
 
-    def filter(self, predicate: Callable) -> "SemanticFilter":
-        return SemanticFilter(source=self.op(), predicate=predicate)
-
-    def group_by(self, *keys: str):
-        """Group by dimensions."""
-        from .ops import SemanticGroupBy
-        return SemanticGroupBy(source=self.op(), keys=keys)
+    # User-facing methods (filter, group_by, order_by, limit, pipe, sql, execute inherited from SemanticExpression)
 
     def join(self, other: "SemanticTable", on: Callable[[Any, Any], Any] | None = None, how: str = "inner"):
         """Join with another semantic table."""
@@ -255,13 +289,8 @@ class SemanticTable(ir.Table):
         """Return self as expression."""
         return self
 
-    # execute(), compile() are inherited from ir.Table
+    # execute(), compile() are inherited from SemanticExpression
     # But we can override if needed for custom behavior
-
-    def sql(self, **kwargs):
-        """Generate SQL string."""
-        import ibis
-        return ibis.to_sql(self.to_ibis(), **kwargs)
 
     def __getitem__(self, key):
         """Get dimension or measure by name."""
@@ -278,10 +307,6 @@ class SemanticTable(ir.Table):
             return calc_meas_dict[key]
 
         raise KeyError(f"'{key}' not found in dimensions, measures, or calculated measures")
-
-    def pipe(self, func, *args, **kwargs):
-        """Apply a function to self."""
-        return func(self, *args, **kwargs)
 
     def query(
         self,
@@ -323,7 +348,7 @@ class SemanticTable(ir.Table):
     # __repr__ inherited from ir.Table, uses custom formatter registered in lower.py
 
 
-class SemanticFilter(ir.Table):
+class SemanticFilter(SemanticExpression):
     """User-facing filter expression wrapping SemanticFilterRelation Operation."""
 
     def __init__(self, source: Any, predicate: Callable) -> None:
@@ -352,31 +377,7 @@ class SemanticFilter(ir.Table):
         """Forward to Operation."""
         return self.op().schema
 
-    def filter(self, predicate: Callable) -> "SemanticFilter":
-        return SemanticFilter(source=self.op(), predicate=predicate)
-
-    def group_by(self, *keys: str):
-        from .ops import SemanticGroupBy
-        return SemanticGroupBy(source=self.op(), keys=keys)
-
-    def order_by(self, *keys: Any):
-        from .ops import SemanticOrderBy
-        return SemanticOrderBy(source=self.op(), keys=keys)
-
-    def limit(self, n: int, offset: int = 0):
-        from .ops import SemanticLimit
-        return SemanticLimit(source=self.op(), n=n, offset=offset)
-
-    def execute(self):
-        """Execute via to_ibis() to ensure proper lowering."""
-        return self.op().to_ibis().execute()
-
-    def sql(self, **kwargs):
-        import ibis
-        return ibis.to_sql(self.op().to_ibis(), **kwargs)
-
-    def pipe(self, func, *args, **kwargs):
-        return func(self, *args, **kwargs)
+    # filter, group_by, order_by, limit, execute, sql, pipe inherited from SemanticExpression
 
     def as_table(self) -> "SemanticTable":
         from .ops import _find_all_root_models, _get_merged_fields
