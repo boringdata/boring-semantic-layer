@@ -10,7 +10,7 @@ from boring_semantic_layer.ops import (  # noqa: E402
     SemanticFilterRelation,
     SemanticGroupByRelation,
     SemanticJoin,
-    SemanticMutate,
+    SemanticMutateRelation,
     SemanticOrderByRelation,
     SemanticProject,
     SemanticTableRelation,
@@ -167,6 +167,23 @@ def _format_semantic_limit(op: SemanticLimitRelation, **kwargs):
     return '\n'.join(lines)
 
 
+# Register custom formatter for SemanticMutateRelation
+@fmt.fmt.register(SemanticMutateRelation)
+def _format_semantic_mutate(op: SemanticMutateRelation, **kwargs):
+    """Format SemanticMutateRelation showing source and columns."""
+    source_type = type(op.source).__name__
+    cols = list(op.post.keys())
+    cols_str = ', '.join(cols[:5])
+    if len(cols) > 5:
+        cols_str += f', ... ({len(cols)} total)'
+
+    lines = ["SemanticMutateRelation"]
+    lines.append(f"  source: {source_type}")
+    lines.append(f"  columns: [{cols_str}]")
+
+    return '\n'.join(lines)
+
+
 @frozen
 class _Resolver:
     _t: Any
@@ -290,8 +307,8 @@ def _lower_semantic_aggregate(node: SemanticAggregate, catalog, *args):
     return tbl.group_by(group_exprs).aggregate(metrics) if group_exprs else tbl.aggregate(metrics)
 
 
-@convert.register(SemanticMutate)
-def _lower_semantic_mutate(node: SemanticMutate, catalog, *args):
+@convert.register(SemanticMutateRelation)
+def _lower_semantic_mutate(node: SemanticMutateRelation, catalog, *args):
     agg_tbl = convert(node.source, catalog=catalog)
 
     @frozen

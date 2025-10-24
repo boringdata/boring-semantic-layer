@@ -567,3 +567,50 @@ class SemanticLimit(SemanticTable):
         if hasattr(source, 'aggs'):
             return create_chart(source, backend=backend, chart_type=chart_type)
         raise ValueError("Cannot create chart: no aggregate found in query chain")
+
+
+class SemanticMutate(SemanticTable):
+    """User-facing mutate expression wrapping SemanticMutateRelation Operation."""
+
+    def __init__(self, source: Any, post: dict[str, Any] | None = None) -> None:
+        from .ops import SemanticMutateRelation
+        op = SemanticMutateRelation(source=source, post=post)
+        super().__init__(op)
+
+    # Forward property accessors to Operation
+    @property
+    def source(self):
+        """Forward to Operation."""
+        return self.op().source
+
+    @property
+    def post(self):
+        """Forward to Operation."""
+        return self.op().post
+
+    @property
+    def values(self):
+        """Forward to Operation."""
+        return self.op().values
+
+    @property
+    def schema(self):
+        """Forward to Operation."""
+        return self.op().schema
+
+    # filter, group_by, order_by, limit, execute, sql, pipe inherited from SemanticTable
+
+    def mutate(self, **post) -> "SemanticMutate":
+        """Add or update columns."""
+        from .ops import _ensure_wrapped
+        new_post = {**self.post, **{name: _ensure_wrapped(fn) for name, fn in post.items()}}
+        return SemanticMutate(source=self.source, post=new_post)
+
+    def as_table(self) -> "SemanticModel":
+        """Convert to SemanticModel with no semantic metadata (columns are materialized)."""
+        return SemanticModel(
+            table=self.op().to_ibis(),
+            dimensions={},
+            measures={},
+            calc_measures={}
+        )

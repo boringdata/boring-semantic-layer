@@ -423,6 +423,7 @@ class SemanticAggregate(Relation):
         return ()
 
     def mutate(self, **post) -> "SemanticMutate":
+        from .expr import SemanticMutate
         return SemanticMutate(source=self, post=post)
 
     def order_by(self, *keys: Any) -> "SemanticOrderBy":
@@ -545,7 +546,7 @@ class SemanticAggregate(Relation):
         return f"SemanticAggregate(by=[{keys_str}], aggs=[{aggs_str}])"
 
 
-class SemanticMutate(Relation):
+class SemanticMutateRelation(Relation):
     source: Any
     post: dict[str, Callable]  # Transformed to FrozenDict[str, _CallableWrapper] in __init__
 
@@ -561,22 +562,6 @@ class SemanticMutate(Relation):
     def schema(self) -> Schema:
         return self.source.schema
 
-    def mutate(self, **post) -> "SemanticMutate":
-        new_post = {**self.post, **{name: _ensure_wrapped(fn) for name, fn in post.items()}}
-        return SemanticMutate(source=self.source, post=new_post)
-
-    def order_by(self, *keys: Any) -> "SemanticOrderBy":
-        from .expr import SemanticOrderBy
-        return SemanticOrderBy(source=self, keys=keys)
-
-    def limit(self, n: int, offset: int = 0) -> "SemanticLimit":
-        from .expr import SemanticLimit
-        return SemanticLimit(source=self, n=n, offset=offset)
-
-    def filter(self, predicate: Callable) -> "SemanticFilter":
-        from .expr import SemanticFilter
-        return SemanticFilter(source=self, predicate=predicate)
-
     def to_ibis(self):
         from .measure_scope import MeasureScope
 
@@ -588,33 +573,8 @@ class SemanticMutate(Relation):
 
         return agg_tbl.mutate(new_cols) if new_cols else agg_tbl
 
-    def execute(self):
-        return self.to_ibis().execute()
-
     def op(self):
         return self
-
-    def compile(self, **kwargs):
-        return self.to_ibis().compile(**kwargs)
-
-    def sql(self, **kwargs):
-        import ibis
-        return ibis.to_sql(self.to_ibis(), **kwargs)
-
-    def __getitem__(self, key):
-        return self.to_ibis()[key]
-
-    def pipe(self, func, *args, **kwargs):
-        return func(self, *args, **kwargs)
-
-    def as_table(self) -> "SemanticTable":
-        """Convert to SemanticTable with no semantic metadata (columns are materialized)."""
-        return _semantic_table(
-            table=self.to_ibis(),
-            dimensions={},
-            measures={},
-            calc_measures={}
-        )
 
     def __repr__(self) -> str:
         cols = list(self.post.keys())
