@@ -9,8 +9,10 @@ from . import lower  # noqa: F401
 from .api import (
     to_semantic_table,
 )
-from .ops import (
+from .expressions import (
     SemanticTable,
+)
+from .ops import (
     Dimension,
     Measure,
 )

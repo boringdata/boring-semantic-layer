@@ -13,16 +13,50 @@ from boring_semantic_layer.ops import (  # noqa: E402
     SemanticMutate,
     SemanticOrderBy,
     SemanticProject,
-    SemanticTable,
+    SemanticTableRelation,
     SemanticLimit,
     _find_all_root_models,
     _merge_fields_with_prefixing,
 )
 from ibis.common.collections import FrozenOrderedDict
+from ibis.expr import format as fmt
 
 IbisTableExpr = ibis_mod.expr.api.Table
 
 IbisProject = ibis_mod.expr.operations.relations.Project
+
+
+# Register custom formatter for SemanticTableRelation
+@fmt.fmt.register(SemanticTableRelation)
+def _format_semantic_table(op: SemanticTableRelation, **kwargs):
+    """Format SemanticTableRelation with semantic metadata."""
+    # Access the FrozenDicts directly via object.__getattribute__ to bypass custom __getattribute__
+    dims_dict = object.__getattribute__(op, 'dimensions')
+    base_measures = object.__getattribute__(op, 'measures')
+    calc_measures = object.__getattribute__(op, 'calc_measures')
+
+    dims = list(dims_dict.keys())
+    measures = list(base_measures.keys()) + list(calc_measures.keys())
+
+    dims_str = ', '.join(dims[:5])
+    if len(dims) > 5:
+        dims_str += f', ... ({len(dims)} total)'
+
+    meas_str = ', '.join(measures[:5])
+    if len(measures) > 5:
+        meas_str += f', ... ({len(measures)} total)'
+
+    lines = [f"SemanticTableRelation[{op.name}]"]
+    if dims:
+        lines.append(f"  dimensions: {dims_str}")
+    if measures:
+        lines.append(f"  measures: {meas_str}")
+
+    # Show underlying table type
+    table_type = type(op.table).__name__
+    lines.append(f"  table: {table_type}")
+
+    return '\n'.join(lines)
 
 
 @frozen
@@ -52,8 +86,8 @@ def _lower_ibis_project(op: IbisProject, catalog, *args):
     return tbl.select(cols)
 
 
-@convert.register(SemanticTable)
-def _lower_semantic_table(node: SemanticTable, catalog, *args):
+@convert.register(SemanticTableRelation)
+def _lower_semantic_table(node: SemanticTableRelation, catalog, *args):
     return convert(node.table, catalog=catalog)
 
 

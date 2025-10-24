@@ -7,7 +7,8 @@ import yaml
 from ibis import _
 
 from .api import to_semantic_table
-from .ops import SemanticTable, Dimension, Measure
+from .expressions import SemanticTable
+from .ops import Dimension, Measure
 
 
 def _parse_dimensions(dimensions: Mapping[str, Any]) -> Dict[str, Dimension]:

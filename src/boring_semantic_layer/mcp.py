@@ -81,7 +81,7 @@ class MCPSemanticModel(FastMCP):
             time_dim = model._dims_dict()[time_dim_name]
 
             # Get min/max from base table
-            tbl = model.table.to_expr()
+            tbl = model.table  # Already an expression
             time_col = time_dim.expr(tbl)
             result = tbl.aggregate(start=time_col.min(), end=time_col.max()).execute()
 

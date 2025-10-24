@@ -7,6 +7,7 @@ from ibis.expr.operations.core import Node
 def to_node(maybe_expr: Any) -> Node:
     return (maybe_expr if isinstance(maybe_expr, Node)
             else maybe_expr.op() if isinstance(maybe_expr, Expr)
+            else maybe_expr.op() if hasattr(maybe_expr, 'op') and callable(maybe_expr.op)
             else (_ for _ in ()).throw(ValueError(f"Cannot convert type {type(maybe_expr)} to Node")))
 
 
