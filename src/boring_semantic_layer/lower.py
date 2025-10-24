@@ -11,7 +11,7 @@ from boring_semantic_layer.ops import (  # noqa: E402
     SemanticGroupByRelation,
     SemanticJoin,
     SemanticMutate,
-    SemanticOrderBy,
+    SemanticOrderByRelation,
     SemanticProject,
     SemanticTableRelation,
     SemanticLimit,
@@ -93,6 +93,33 @@ def _format_semantic_groupby(op: SemanticGroupByRelation, **kwargs):
     keys_str = ', '.join(repr(k) for k in op.keys)
 
     lines = ["SemanticGroupByRelation"]
+    lines.append(f"  source: {source_type}")
+    lines.append(f"  keys: [{keys_str}]")
+
+    # If source has dimensions/measures, show count
+    if hasattr(op.source, 'dimensions'):
+        dims_dict = object.__getattribute__(op.source, 'dimensions')
+        if dims_dict:
+            lines.append(f"  inherited dimensions: {len(dims_dict)}")
+
+    if hasattr(op.source, 'measures'):
+        meas_dict = object.__getattribute__(op.source, 'measures')
+        calc_dict = object.__getattribute__(op.source, 'calc_measures')
+        total_measures = len(meas_dict) + len(calc_dict)
+        if total_measures:
+            lines.append(f"  inherited measures: {total_measures}")
+
+    return '\n'.join(lines)
+
+
+# Register custom formatter for SemanticOrderByRelation
+@fmt.fmt.register(SemanticOrderByRelation)
+def _format_semantic_orderby(op: SemanticOrderByRelation, **kwargs):
+    """Format SemanticOrderByRelation showing source and keys."""
+    source_type = type(op.source).__name__
+    keys_str = ', '.join(repr(k) if isinstance(k, str) else '<expr>' for k in op.keys)
+
+    lines = ["SemanticOrderByRelation"]
     lines.append(f"  source: {source_type}")
     lines.append(f"  keys: [{keys_str}]")
 
@@ -254,8 +281,8 @@ def _lower_semantic_mutate(node: SemanticMutate, catalog, *args):
     return agg_tbl.mutate(new_cols) if new_cols else agg_tbl
 
 
-@convert.register(SemanticOrderBy)
-def _lower_semantic_orderby(node: SemanticOrderBy, catalog, *args):
+@convert.register(SemanticOrderByRelation)
+def _lower_semantic_orderby(node: SemanticOrderByRelation, catalog, *args):
     tbl = convert(node.source, catalog=catalog)
 
     def resolve_key(key):

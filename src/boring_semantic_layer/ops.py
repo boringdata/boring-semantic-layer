@@ -426,6 +426,7 @@ class SemanticAggregate(Relation):
         return SemanticMutate(source=self, post=post)
 
     def order_by(self, *keys: Any) -> "SemanticOrderBy":
+        from .expr import SemanticOrderBy
         return SemanticOrderBy(source=self, keys=keys)
 
     def limit(self, n: int, offset: int = 0) -> "SemanticLimit":
@@ -564,6 +565,7 @@ class SemanticMutate(Relation):
         return SemanticMutate(source=self.source, post=new_post)
 
     def order_by(self, *keys: Any) -> "SemanticOrderBy":
+        from .expr import SemanticOrderBy
         return SemanticOrderBy(source=self, keys=keys)
 
     def limit(self, n: int, offset: int = 0) -> "SemanticLimit":
@@ -807,7 +809,7 @@ class SemanticJoin(Relation):
         return f"SemanticJoin(left={left_name!r}, right={right_name!r}, how={self.how!r}, on={on_str})"
 
 
-class SemanticOrderBy(Relation):
+class SemanticOrderByRelation(Relation):
     source: Any
     keys: tuple[Any, ...]  # Transformed to tuple[str | _CallableWrapper, ...] in __init__
 
@@ -824,9 +826,6 @@ class SemanticOrderBy(Relation):
     def schema(self) -> Schema:
         return self.source.schema
 
-    def limit(self, n: int, offset: int = 0) -> "SemanticLimit":
-        return SemanticLimit(source=self, n=n, offset=offset)
-
     def to_ibis(self):
         tbl = _to_ibis(self.source)
 
@@ -842,59 +841,8 @@ class SemanticOrderBy(Relation):
 
         return tbl.order_by([resolve_order_key(key) for key in self.keys])
 
-    def execute(self):
-        return self.to_ibis().execute()
-
     def op(self):
         return self
-
-    def compile(self, **kwargs):
-        return self.to_ibis().compile(**kwargs)
-
-    def sql(self, **kwargs):
-        import ibis
-        return ibis.to_sql(self.to_ibis(), **kwargs)
-
-    def __getitem__(self, key):
-        return self.to_ibis()[key]
-
-    def pipe(self, func, *args, **kwargs):
-        return func(self, *args, **kwargs)
-
-    def as_table(self) -> "SemanticTable":
-        """Convert to SemanticTable, preserving semantic metadata from source."""
-        all_roots = _find_all_root_models(self.source)
-
-        if all_roots:
-            # Preserve semantic metadata from source
-            dims = _get_merged_fields(all_roots, 'dims')
-            measures = _get_merged_fields(all_roots, 'measures')
-            calc_measures = _get_merged_fields(all_roots, 'calc_measures')
-
-            return _semantic_table(
-                table=self.to_ibis(),
-                dimensions=dims,
-                measures=measures,
-                calc_measures=calc_measures
-            )
-        else:
-            # No semantic metadata in source
-            return _semantic_table(
-                table=self.to_ibis(),
-                dimensions={},
-                measures={},
-                calc_measures={}
-            )
-
-    def chart(self, backend: str = "altair", chart_type: str | None = None):
-        from .chart import chart as create_chart
-        # Get the original aggregate to extract dimensions/measures
-        source = self.source
-        while hasattr(source, 'source') and not hasattr(source, 'aggs'):
-            source = source.source
-        if hasattr(source, 'aggs'):
-            return create_chart(source, backend=backend, chart_type=chart_type)
-        raise ValueError("Cannot create chart: no aggregate found in query chain")
 
     def __repr__(self) -> str:
         keys_list = []
@@ -1167,6 +1115,7 @@ class SemanticIndex(Relation):
         return SemanticFilter(source=self, predicate=predicate)
 
     def order_by(self, *keys: Any) -> "SemanticOrderBy":
+        from .expr import SemanticOrderBy
         return SemanticOrderBy(source=self, keys=keys)
 
     def limit(self, n: int, offset: int = 0) -> "SemanticLimit":

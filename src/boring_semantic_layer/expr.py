@@ -31,7 +31,6 @@ class SemanticTable(ir.Table):
 
     def order_by(self, *keys: Any):
         """Order by fields."""
-        from .ops import SemanticOrderBy
         return SemanticOrderBy(source=self.op(), keys=keys)
 
     def limit(self, n: int, offset: int = 0):
@@ -439,3 +438,66 @@ class SemanticGroupBy(SemanticTable):
                 raise TypeError(f"measure_names must be strings or callables, got {type(item)}")
         aggs.update(aliased)
         return SemanticAggregate(source=self.op(), keys=self.keys, aggs=aggs)
+
+
+class SemanticOrderBy(SemanticTable):
+    """User-facing order by expression wrapping SemanticOrderByRelation Operation."""
+
+    def __init__(self, source: Any, keys: tuple[Any, ...]) -> None:
+        from .ops import SemanticOrderByRelation
+        op = SemanticOrderByRelation(source=source, keys=keys)
+        super().__init__(op)
+
+    # Forward property accessors to Operation
+    @property
+    def source(self):
+        """Forward to Operation."""
+        return self.op().source
+
+    @property
+    def keys(self):
+        """Forward to Operation."""
+        return self.op().keys
+
+    @property
+    def values(self):
+        """Forward to Operation."""
+        return self.op().values
+
+    @property
+    def schema(self):
+        """Forward to Operation."""
+        return self.op().schema
+
+    # filter, group_by, order_by, limit, execute, sql, pipe inherited from SemanticTable
+
+    def as_table(self) -> "SemanticModel":
+        """Convert to SemanticModel, preserving semantic metadata from source."""
+        from .ops import _find_all_root_models, _get_merged_fields
+
+        all_roots = _find_all_root_models(self.source)
+        if all_roots:
+            return SemanticModel(
+                table=self.op().to_ibis(),
+                dimensions=_get_merged_fields(all_roots, 'dims'),
+                measures=_get_merged_fields(all_roots, 'measures'),
+                calc_measures=_get_merged_fields(all_roots, 'calc_measures')
+            )
+        else:
+            return SemanticModel(
+                table=self.op().to_ibis(),
+                dimensions={},
+                measures={},
+                calc_measures={}
+            )
+
+    def chart(self, backend: str = "altair", chart_type: str | None = None):
+        """Create a chart from the ordered aggregate."""
+        from .chart import chart as create_chart
+        # Get the original aggregate to extract dimensions/measures
+        source = self.source
+        while hasattr(source, 'source') and not hasattr(source, 'aggs'):
+            source = source.source
+        if hasattr(source, 'aggs'):
+            return create_chart(source, backend=backend, chart_type=chart_type)
+        raise ValueError("Cannot create chart: no aggregate found in query chain")
