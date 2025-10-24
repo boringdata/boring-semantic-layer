@@ -5,9 +5,13 @@ Provides parameter-based querying as an alternative to method chaining.
 """
 
 from __future__ import annotations
-from typing import Any, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Callable, ClassVar, Literal, Optional, Sequence, Union
+from operator import eq, ne, gt, ge, lt, le, and_, or_
+from functools import partial
 
 from attrs import frozen
+from toolz import curry
+from ibis.common.collections import FrozenDict
 import ibis
 
 # Time grain type alias
@@ -22,8 +26,8 @@ TimeGrain = Literal[
     "TIME_GRAIN_SECOND",
 ]
 
-# Mapping of time grain identifiers to ibis truncate units
-TIME_GRAIN_TRANSFORMATIONS: Dict[str, str] = {
+# Mapping of time grain identifiers to ibis truncate units (immutable)
+TIME_GRAIN_TRANSFORMATIONS: FrozenDict = {
     "TIME_GRAIN_YEAR": "Y",
     "TIME_GRAIN_QUARTER": "Q",
     "TIME_GRAIN_MONTH": "M",
@@ -34,8 +38,8 @@ TIME_GRAIN_TRANSFORMATIONS: Dict[str, str] = {
     "TIME_GRAIN_SECOND": "s",
 }
 
-# Order of grains from finest to coarsest
-TIME_GRAIN_ORDER = [
+# Order of grains from finest to coarsest (immutable)
+TIME_GRAIN_ORDER: Tuple[str, ...] = (
     "TIME_GRAIN_SECOND",
     "TIME_GRAIN_MINUTE",
     "TIME_GRAIN_HOUR",
@@ -44,48 +48,79 @@ TIME_GRAIN_ORDER = [
     "TIME_GRAIN_MONTH",
     "TIME_GRAIN_QUARTER",
     "TIME_GRAIN_YEAR",
-]
+)
 
-# Operator mapping for filter expressions
-OPERATOR_MAPPING: Dict[str, Callable] = {
-    "=": lambda x, y: x == y,
-    "eq": lambda x, y: x == y,
-    "equals": lambda x, y: x == y,
-    "!=": lambda x, y: x != y,
-    ">": lambda x, y: x > y,
-    ">=": lambda x, y: x >= y,
-    "<": lambda x, y: x < y,
-    "<=": lambda x, y: x <= y,
-    "in": lambda x, y: x.isin(y),
-    "not in": lambda x, y: ~x.isin(y),
-    "like": lambda x, y: x.like(y),
-    "not like": lambda x, y: ~x.like(y),
-    "ilike": lambda x, y: x.ilike(y),
-    "not ilike": lambda x, y: ~x.ilike(y),
-    "is null": lambda x, _: x.isnull(),
-    "is not null": lambda x, _: x.notnull(),
-    "AND": lambda x, y: x & y,
-    "OR": lambda x, y: x | y,
+# Helper functions using operator module instead of lambdas
+def _ibis_isin(x, y): return x.isin(y)
+def _ibis_not_isin(x, y): return ~x.isin(y)
+def _ibis_like(x, y): return x.like(y)
+def _ibis_not_like(x, y): return ~x.like(y)
+def _ibis_ilike(x, y): return x.ilike(y)
+def _ibis_not_ilike(x, y): return ~x.ilike(y)
+def _ibis_isnull(x, _): return x.isnull()
+def _ibis_notnull(x, _): return x.notnull()
+def _ibis_and(x, y): return x & y
+def _ibis_or(x, y): return x | y
+
+# Operator mapping using operator module functions where possible
+OPERATOR_MAPPING: FrozenDict = {
+    "=": eq,
+    "eq": eq,
+    "equals": eq,
+    "!=": ne,
+    ">": gt,
+    ">=": ge,
+    "<": lt,
+    "<=": le,
+    "in": _ibis_isin,
+    "not in": _ibis_not_isin,
+    "like": _ibis_like,
+    "not like": _ibis_not_like,
+    "ilike": _ibis_ilike,
+    "not ilike": _ibis_not_ilike,
+    "is null": _ibis_isnull,
+    "is not null": _ibis_notnull,
+    "AND": _ibis_and,
+    "OR": _ibis_or,
 }
 
 
+@curry
+def _is_time_dimension(dims_dict: Dict, dim_name: str) -> bool:
+    """Check if a dimension is a time dimension (curried for partial application)."""
+    return dim_name in dims_dict and dims_dict[dim_name].is_time_dimension
+
+
 def _find_time_dimension(semantic_table: Any, dimensions: List[str]) -> Optional[str]:
-    """Find the first time dimension in the query dimensions list."""
+    """
+    Find the first time dimension in the query dimensions list.
+
+    Uses functional composition to find matching dimension.
+    """
     dims_dict = semantic_table._dims_dict()
-    for dim_name in dimensions:
-        if dim_name in dims_dict and dims_dict[dim_name].is_time_dimension:
-            return dim_name
-    return None
+    is_time_dim = _is_time_dimension(dims_dict)
+    return next((dim for dim in dimensions if is_time_dim(dim)), None)
+
+
+@curry
+def _make_grain_id(grain: str) -> str:
+    """Convert grain name to TIME_GRAIN_ identifier (curried)."""
+    return f"TIME_GRAIN_{grain.upper()}"
 
 
 def _validate_time_grain(
     time_grain: TimeGrain, smallest_allowed_grain: Optional[str], dimension_name: str
 ) -> None:
-    """Validate that requested time grain is not finer than smallest allowed grain."""
+    """
+    Validate that requested time grain is not finer than smallest allowed grain.
+
+    Raises:
+        ValueError: If requested grain is finer than allowed grain.
+    """
     if not smallest_allowed_grain:
         return
 
-    smallest_grain = f"TIME_GRAIN_{smallest_allowed_grain.upper()}"
+    smallest_grain = _make_grain_id(smallest_allowed_grain)
     if smallest_grain not in TIME_GRAIN_ORDER:
         return
 
@@ -124,7 +159,7 @@ class Filter:
         Filter(filter=lambda t: t.amount > 1000)
     """
 
-    filter: Union[Dict[str, Any], str, Callable]
+    filter: Union[FrozenDict, str, Callable]
 
     OPERATORS: ClassVar[set] = set(OPERATOR_MAPPING.keys())
     COMPOUND_OPERATORS: ClassVar[set] = {"AND", "OR"}
@@ -140,7 +175,7 @@ class Filter:
             return getattr(getattr(ibis._, table_name), field_name)
         return getattr(ibis._, field)
 
-    def _parse_json_filter(self, filter_obj: Dict[str, Any]) -> Any:
+    def _parse_json_filter(self, filter_obj: FrozenDict) -> Any:
         """Parse JSON filter object into ibis expression."""
         # Compound filters (AND/OR)
         if filter_obj.get("operator") in self.COMPOUND_OPERATORS:
@@ -201,15 +236,46 @@ class Filter:
         raise ValueError("Filter must be a dict, string, or callable")
 
 
+@curry
+def _normalize_filter(filter_spec: Union[Dict, str, Callable, Filter]) -> Callable:
+    """
+    Normalize filter specification to callable (curried for composition).
+
+    Accepts dict, string, callable, or Filter and returns unified callable.
+    """
+    if isinstance(filter_spec, Filter):
+        return filter_spec.to_callable()
+    elif isinstance(filter_spec, dict):
+        return Filter(filter=filter_spec).to_callable()
+    elif isinstance(filter_spec, str):
+        return Filter(filter=filter_spec).to_callable()
+    elif callable(filter_spec):
+        return filter_spec
+    else:
+        raise ValueError(f"Unsupported filter type: {type(filter_spec)}")
+
+
+@curry
+def _make_time_range_filter(time_dim_name: str, start: str, end: str) -> Callable:
+    """Create time range filter predicate (curried)."""
+    return lambda t, dim=time_dim_name, s=start, e=end: (t[dim] >= s) & (t[dim] <= e)
+
+
+@curry
+def _make_order_key(field: str, direction: str):
+    """Create order key for sorting (curried)."""
+    return ibis.desc(field) if direction.lower() == "desc" else field
+
+
 def query(
     semantic_table: Any,
-    dimensions: Optional[List[str]] = None,
-    measures: Optional[List[str]] = None,
-    filters: Optional[List[Union[Dict[str, Any], str, Callable, Filter]]] = None,
-    order_by: Optional[List[Tuple[str, str]]] = None,
+    dimensions: Optional[Sequence[str]] = None,
+    measures: Optional[Sequence[str]] = None,
+    filters: Optional[Sequence[Union[FrozenDict, str, Callable, Filter]]] = None,
+    order_by: Optional[Sequence[Tuple[str, str]]] = None,
     limit: Optional[int] = None,
     time_grain: Optional[TimeGrain] = None,
-    time_range: Optional[Dict[str, str]] = None,
+    time_range: Optional[Mapping[str, str]] = None,
 ) -> Any:
     """
     Query semantic table using parameter-based interface with time dimension support.
@@ -258,14 +324,8 @@ def query(
     from .ops import Dimension
 
     result = semantic_table
-
-    if dimensions is None:
-        dimensions = []
-
-    if filters is None:
-        filters = []
-    else:
-        filters = list(filters)  # Copy to avoid mutating input
+    dimensions = dimensions or []
+    filters = list(filters or [])  # Copy to avoid mutating input
 
     # Step 0: Add time_range as a filter if specified
     if time_range:
@@ -278,10 +338,8 @@ def query(
 
         time_dim_name = _find_time_dimension(result, dimensions)
         if time_dim_name:
-            start = time_range["start"]
-            end = time_range["end"]
             filters.append(
-                lambda t, dim=time_dim_name, s=start, e=end: (t[dim] >= s) & (t[dim] <= e)
+                _make_time_range_filter(time_dim_name, time_range["start"], time_range["end"])
             )
 
     # Step 1: Handle time grain transformations
@@ -317,21 +375,10 @@ def query(
         if time_dims_to_transform:
             result = result.with_dimensions(**time_dims_to_transform)
 
-    # Step 2: Apply filters
-    if filters:
-        for filter_spec in filters:
-            if isinstance(filter_spec, Filter):
-                filter_fn = filter_spec.to_callable()
-            elif isinstance(filter_spec, dict):
-                filter_fn = Filter(filter=filter_spec).to_callable()
-            elif isinstance(filter_spec, str):
-                filter_fn = Filter(filter=filter_spec).to_callable()
-            elif callable(filter_spec):
-                filter_fn = filter_spec
-            else:
-                raise ValueError(f"Unsupported filter type: {type(filter_spec)}")
-
-            result = result.filter(filter_fn)
+    # Step 2: Apply filters using functional composition
+    for filter_spec in filters:
+        filter_fn = _normalize_filter(filter_spec)
+        result = result.filter(filter_fn)
 
     # Step 3: Group by and aggregate
     if dimensions:
@@ -342,14 +389,9 @@ def query(
         # No dimensions = grand total aggregation
         result = result.group_by().aggregate(*measures)
 
-    # Step 4: Apply ordering
+    # Step 4: Apply ordering using functional composition
     if order_by:
-        order_keys = []
-        for field, direction in order_by:
-            if direction.lower() == "desc":
-                order_keys.append(ibis.desc(field))
-            else:
-                order_keys.append(field)
+        order_keys = [_make_order_key(field, direction) for field, direction in order_by]
         result = result.order_by(*order_keys)
 
     # Step 5: Apply limit

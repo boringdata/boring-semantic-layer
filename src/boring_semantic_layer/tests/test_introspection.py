@@ -19,8 +19,8 @@ def test_empty_semantic_table():
 
     st = to_semantic_table(tbl, "test")
 
-    assert st.dims == []
-    assert st.measures == []
+    assert st.dims == ()
+    assert st.measures == ()
 
 
 def test_dims_property():
@@ -117,7 +117,7 @@ def test_dims_and_measures_together():
         )
     )
 
-    assert st.dims == ["carrier"]
+    assert st.dims == ("carrier",)
     assert set(st.measures) == {"flight_count", "total_distance"}
 
 
@@ -177,11 +177,11 @@ def test_measures_after_aggregate():
     )
 
     # Before aggregation, we have measures
-    assert st.measures == ["flight_count"]
+    assert st.measures == ("flight_count",)
 
     # After aggregation, measures are materialized as columns
     aggregated = st.group_by("carrier").aggregate("flight_count")
-    assert aggregated.measures == []  # No semantic measures anymore
+    assert aggregated.measures == ()  # No semantic measures anymore
 
 
 def test_chaining_maintains_introspection():
@@ -191,19 +191,19 @@ def test_chaining_maintains_introspection():
     tbl = con.create_table("flights", df)
 
     st = to_semantic_table(tbl, "flights")
-    assert st.dims == []
-    assert st.measures == []
+    assert st.dims == ()
+    assert st.measures == ()
 
     st = st.with_dimensions(carrier=lambda t: t.carrier)
-    assert st.dims == ["carrier"]
-    assert st.measures == []
+    assert st.dims == ("carrier",)
+    assert st.measures == ()
 
     st = st.with_measures(flight_count=lambda t: t.count())
-    assert st.dims == ["carrier"]
-    assert st.measures == ["flight_count"]
+    assert st.dims == ("carrier",)
+    assert st.measures == ("flight_count",)
 
     st = st.with_measures(total_distance=lambda t: t.distance.sum())
-    assert st.dims == ["carrier"]
+    assert st.dims == ("carrier",)
     assert set(st.measures) == {"flight_count", "total_distance"}
 
 
@@ -219,7 +219,7 @@ def test_introspection_with_inline_measures():
     )
 
     # Initially only flight_count
-    assert st.measures == ["flight_count"]
+    assert st.measures == ("flight_count",)
 
     # After defining inline measures, they should be included
     # Note: We need to define them via with_measures, not in aggregate()
@@ -245,4 +245,4 @@ def test_introspection_preserves_definition_order():
     )
 
     # Dict keys preserve insertion order in Python 3.7+
-    assert st.dims == ["dim_a", "dim_b", "dim_c"]
+    assert st.dims == ("dim_a", "dim_b", "dim_c")

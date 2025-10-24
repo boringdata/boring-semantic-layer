@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Sequence
 
 import ibis as ibis_mod
 from attrs import frozen, field

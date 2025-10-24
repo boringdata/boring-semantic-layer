@@ -1,7 +1,7 @@
 """MCP functionality for semantic models."""
 
 from mcp.server.fastmcp import FastMCP
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Mapping, Sequence
 from .query import _find_time_dimension
 
 
@@ -18,7 +18,7 @@ class MCPSemanticModel(FastMCP):
 
     def __init__(
         self,
-        models: Dict[str, Any],
+        models: Mapping[str, Any],
         name: str = "Semantic Layer MCP Server",
         *args,
         **kwargs,
@@ -29,12 +29,12 @@ class MCPSemanticModel(FastMCP):
 
     def _register_tools(self):
         @self.tool()
-        def list_models() -> Dict[str, str]:
+        def list_models() -> Mapping[str, str]:
             """List all available semantic model names."""
             return {name: f"Semantic model: {name}" for name in self.models.keys()}
 
         @self.tool()
-        def get_model(model_name: str) -> Dict[str, Any]:
+        def get_model(model_name: str) -> Mapping[str, Any]:
             """Get details about a specific semantic model including dimensions and measures."""
             if model_name not in self.models:
                 raise ValueError(f"Model {model_name} not found")
@@ -63,7 +63,7 @@ class MCPSemanticModel(FastMCP):
             }
 
         @self.tool()
-        def get_time_range(model_name: str) -> Dict[str, Any]:
+        def get_time_range(model_name: str) -> Mapping[str, Any]:
             """Get the available time range for a model's time dimension."""
             if model_name not in self.models:
                 raise ValueError(f"Model {model_name} not found")
@@ -93,13 +93,13 @@ class MCPSemanticModel(FastMCP):
         @self.tool()
         def query_model(
             model_name: str,
-            dimensions: Optional[List[str]] = None,
-            measures: Optional[List[str]] = None,
-            filters: Optional[List[Dict[str, Any]]] = None,
-            order_by: Optional[List[Tuple[str, str]]] = None,
+            dimensions: Optional[Sequence[str]] = None,
+            measures: Optional[Sequence[str]] = None,
+            filters: Optional[Sequence[Mapping[str, Any]]] = None,
+            order_by: Optional[Sequence[Tuple[str, str]]] = None,
             limit: Optional[int] = None,
             time_grain: Optional[str] = None,
-            time_range: Optional[Dict[str, str]] = None,
+            time_range: Optional[Mapping[str, str]] = None,
         ) -> str:
             """
             Query a semantic model with support for filters and time dimensions.
@@ -138,7 +138,7 @@ class MCPSemanticModel(FastMCP):
 
 
 def create_mcp_server(
-    models: Dict[str, Any], name: str = "Semantic Layer MCP Server"
+    models: Mapping[str, Any], name: str = "Semantic Layer MCP Server"
 ) -> MCPSemanticModel:
     """
     Create an MCP server for semantic models.

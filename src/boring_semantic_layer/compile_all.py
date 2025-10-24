@@ -1,7 +1,7 @@
 from __future__ import annotations
 import ibis
 from typing import Dict, Iterable
-from .measure_nodes import MeasureRef, AllOf, BinOp, MeasureExpr
+from .measure_scope import MeasureRef, AllOf, BinOp, MeasureExpr
 
 def _collect_all_refs(expr: MeasureExpr, out: set[str]) -> None:
     if isinstance(expr, AllOf):

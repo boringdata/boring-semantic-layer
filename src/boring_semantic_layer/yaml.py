@@ -2,7 +2,7 @@
 YAML loader for Boring Semantic Layer models using the semantic API.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Mapping, Sequence
 import yaml
 from ibis import _
 
@@ -10,7 +10,7 @@ from .api import to_semantic_table
 from .ops import SemanticTable, Dimension, Measure
 
 
-def _parse_dimensions(dimensions: Dict[str, Any]) -> Dict[str, Dimension]:
+def _parse_dimensions(dimensions: Mapping[str, Any]) -> Dict[str, Dimension]:
     """Parse dimension expressions from YAML configurations.
 
     Supports two formats:
@@ -58,7 +58,7 @@ def _parse_dimensions(dimensions: Dict[str, Any]) -> Dict[str, Dimension]:
     return result
 
 
-def _parse_measures(measures: Dict[str, Any]) -> Dict[str, Measure]:
+def _parse_measures(measures: Mapping[str, Any]) -> Dict[str, Measure]:
     """Parse measure expressions from YAML configurations.
 
     Supports two formats:
@@ -101,9 +101,9 @@ def _parse_measures(measures: Dict[str, Any]) -> Dict[str, Measure]:
 
 
 def _parse_joins(
-    joins_config: Dict[str, Dict[str, Any]],
-    tables: Dict[str, Any],
-    yaml_configs: Dict[str, Any],
+    joins_config: Dict[str, Mapping[str, Any]],
+    tables: Mapping[str, Any],
+    yaml_configs: Mapping[str, Any],
     current_model_name: str,
     models: Dict[str, SemanticTable],
 ) -> SemanticTable:
@@ -183,7 +183,7 @@ def _parse_joins(
 
 def from_yaml(
     yaml_path: str,
-    tables: Optional[Dict[str, Any]] = None,
+    tables: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, SemanticTable]:
     """
     Load semantic tables from a YAML file.

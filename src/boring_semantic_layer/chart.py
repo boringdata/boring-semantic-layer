@@ -5,15 +5,16 @@ Auto-detect Altair chart specifications based on query dimensions and measures.
 Provides chart() method for SemanticAggregate results.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional, Sequence
+from ibis.common.collections import FrozenDict
 
 
 def _detect_altair_spec(
-    dimensions: List[str],
-    measures: List[str],
+    dimensions: Sequence[str],
+    measures: Sequence[str],
     time_dimension: Optional[str] = None,
     time_grain: Optional[str] = None,
-) -> Dict[str, Any]:
+) -> FrozenDict:
     """
     Detect an appropriate chart type and return an Altair specification.
 
@@ -186,7 +187,7 @@ def _detect_altair_spec(
 
 
 def _detect_plotly_chart_type(
-    dimensions: List[str], measures: List[str], time_dimension: Optional[str] = None
+    dimensions: Sequence[str], measures: Sequence[str], time_dimension: Optional[str] = None
 ) -> str:
     """
     Auto-detect appropriate chart type based on query structure for Plotly backend.
