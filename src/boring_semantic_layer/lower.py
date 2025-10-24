@@ -8,7 +8,7 @@ from ibis.expr.sql import convert  # noqa: E402
 from boring_semantic_layer.ops import (  # noqa: E402
     SemanticAggregate,
     SemanticFilterRelation,
-    SemanticGroupBy,
+    SemanticGroupByRelation,
     SemanticJoin,
     SemanticMutate,
     SemanticOrderBy,
@@ -68,6 +68,33 @@ def _format_semantic_filter(op: SemanticFilterRelation, **kwargs):
     lines = ["SemanticFilterRelation"]
     lines.append(f"  source: {source_type}")
     lines.append(f"  predicate: <function>")
+
+    # If source has dimensions/measures, show count
+    if hasattr(op.source, 'dimensions'):
+        dims_dict = object.__getattribute__(op.source, 'dimensions')
+        if dims_dict:
+            lines.append(f"  inherited dimensions: {len(dims_dict)}")
+
+    if hasattr(op.source, 'measures'):
+        meas_dict = object.__getattribute__(op.source, 'measures')
+        calc_dict = object.__getattribute__(op.source, 'calc_measures')
+        total_measures = len(meas_dict) + len(calc_dict)
+        if total_measures:
+            lines.append(f"  inherited measures: {total_measures}")
+
+    return '\n'.join(lines)
+
+
+# Register custom formatter for SemanticGroupByRelation
+@fmt.fmt.register(SemanticGroupByRelation)
+def _format_semantic_groupby(op: SemanticGroupByRelation, **kwargs):
+    """Format SemanticGroupByRelation showing source and keys."""
+    source_type = type(op.source).__name__
+    keys_str = ', '.join(repr(k) for k in op.keys)
+
+    lines = ["SemanticGroupByRelation"]
+    lines.append(f"  source: {source_type}")
+    lines.append(f"  keys: [{keys_str}]")
 
     # If source has dimensions/measures, show count
     if hasattr(op.source, 'dimensions'):
@@ -156,8 +183,8 @@ def _lower_semantic_project(node: SemanticProject, catalog, *args):
             else tbl)
 
 
-@convert.register(SemanticGroupBy)
-def _lower_semantic_groupby(node: SemanticGroupBy, catalog, *args):
+@convert.register(SemanticGroupByRelation)
+def _lower_semantic_groupby(node: SemanticGroupByRelation, catalog, *args):
     return convert(node.source, catalog=catalog)
 
 

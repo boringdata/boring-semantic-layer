@@ -353,7 +353,7 @@ class SemanticProject(Relation):
             )
 
 
-class SemanticGroupBy(Relation):
+class SemanticGroupByRelation(Relation):
     source: Any
     keys: tuple[str, ...]
 
@@ -368,43 +368,11 @@ class SemanticGroupBy(Relation):
     def schema(self) -> Schema:
         return self.source.schema
 
-    def aggregate(self, *measure_names, **aliased) -> "SemanticAggregate":
-        aggs = {}
-        for item in measure_names:
-            if isinstance(item, str):
-                aggs[item] = lambda t, n=item: getattr(t, n)
-            elif callable(item):
-                aggs[f"_measure_{id(item)}"] = item
-            else:
-                raise TypeError(f"measure_names must be strings or callables, got {type(item)}")
-        aggs.update(aliased)
-        return SemanticAggregate(source=self, keys=self.keys, aggs=aggs)
-
     def to_ibis(self):
         return _to_ibis(self.source)
 
-    def execute(self):
-        return self.to_ibis().execute()
-
     def op(self):
         return self
-
-    def compile(self, **kwargs):
-        return self.to_ibis().compile(**kwargs)
-
-    def sql(self, **kwargs):
-        import ibis
-        return ibis.to_sql(self.to_ibis(), **kwargs)
-
-    def __getitem__(self, key):
-        return self.to_ibis()[key]
-
-    def pipe(self, func, *args, **kwargs):
-        return func(self, *args, **kwargs)
-
-    def __repr__(self) -> str:
-        keys_str = ", ".join(repr(k) for k in self.keys)
-        return f"SemanticGroupBy(keys=[{keys_str}])"
 
 
 class SemanticAggregate(Relation):
@@ -753,6 +721,7 @@ class SemanticJoin(Relation):
         )
 
     def group_by(self, *keys: str) -> "SemanticGroupBy":
+        from .expr import SemanticGroupBy
         return SemanticGroupBy(source=self, keys=keys)
 
     def filter(self, predicate: Callable) -> "SemanticFilter":

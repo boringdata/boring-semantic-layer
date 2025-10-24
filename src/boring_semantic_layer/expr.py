@@ -27,7 +27,6 @@ class SemanticTable(ir.Table):
 
     def group_by(self, *keys: str):
         """Group by dimensions."""
-        from .ops import SemanticGroupBy
         return SemanticGroupBy(source=self.op(), keys=keys)
 
     def order_by(self, *keys: Any):
@@ -394,3 +393,49 @@ class SemanticFilter(SemanticTable):
             measures={},
             calc_measures={}
         ))
+
+
+class SemanticGroupBy(SemanticTable):
+    """User-facing group by expression wrapping SemanticGroupByRelation Operation."""
+
+    def __init__(self, source: Any, keys: tuple[str, ...]) -> None:
+        from .ops import SemanticGroupByRelation
+        op = SemanticGroupByRelation(source=source, keys=keys)
+        super().__init__(op)
+
+    # Forward property accessors to Operation
+    @property
+    def source(self):
+        """Forward to Operation."""
+        return self.op().source
+
+    @property
+    def keys(self):
+        """Forward to Operation."""
+        return self.op().keys
+
+    @property
+    def values(self):
+        """Forward to Operation."""
+        return self.op().values
+
+    @property
+    def schema(self):
+        """Forward to Operation."""
+        return self.op().schema
+
+    # filter, group_by, order_by, limit, execute, sql, pipe inherited from SemanticTable
+
+    def aggregate(self, *measure_names, **aliased):
+        """Aggregate measures over grouped dimensions."""
+        from .ops import SemanticAggregate
+        aggs = {}
+        for item in measure_names:
+            if isinstance(item, str):
+                aggs[item] = lambda t, n=item: getattr(t, n)
+            elif callable(item):
+                aggs[f"_measure_{id(item)}"] = item
+            else:
+                raise TypeError(f"measure_names must be strings or callables, got {type(item)}")
+        aggs.update(aliased)
+        return SemanticAggregate(source=self.op(), keys=self.keys, aggs=aggs)
