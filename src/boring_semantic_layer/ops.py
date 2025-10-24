@@ -142,18 +142,18 @@ class Measure:
 
 
 class SemanticTable(Relation):
-    table: Any
-    dimensions: Any
-    measures: Any
-    calc_measures: Any
+    table: Relation
+    dimensions: dict[str, Dimension | Callable | dict] | None
+    measures: dict[str, Measure | Callable] | None
+    calc_measures: dict[str, Any] | None
     name: Optional[str] = None
 
     def __init__(
         self,
         table: Any,
-        dimensions: dict[str, Dimension | Callable | dict] | None = None,
-        measures: dict[str, Measure | Callable] | None = None,
-        calc_measures: dict[str, Any] | None = None,
+        dimensions: Mapping[str, Dimension | Callable | dict] | None = None,
+        measures: Mapping[str, Measure | Callable] | None = None,
+        calc_measures: Mapping[str, Any] | None = None,
         name: Optional[str] = None,
     ) -> None:
         dims = FrozenDict({
@@ -267,8 +267,8 @@ class SemanticTable(Relation):
         return SemanticTable(
             table=self.table.to_expr(),
             dimensions={**self._dims_dict(), **{n: self._create_dimension(d) for n, d in dims.items()}},
-            measures=dict(self._measures_dict()),
-            calc_measures=dict(self._calc_measures_dict()),
+            measures=self._measures_dict(),
+            calc_measures=self._calc_measures_dict(),
             name=self.name
         )
 
@@ -288,7 +288,7 @@ class SemanticTable(Relation):
 
         return SemanticTable(
             table=self.table.to_expr(),
-            dimensions=dict(self._dims_dict()),
+            dimensions=self._dims_dict(),
             measures=new_base_meas,
             calc_measures=new_calc_meas,
             name=self.name
@@ -434,7 +434,7 @@ class SemanticTable(Relation):
 
 class SemanticFilter(Relation):
     source: Any
-    predicate: Any  # Can be Callable, Deferred, or _CallableWrapper
+    predicate: Callable  # Transformed to _CallableWrapper in __init__
 
     def __init__(self, source: Any, predicate: Callable) -> None:
         super().__init__(source=Relation.__coerce__(source), predicate=_ensure_wrapped(predicate))
@@ -682,7 +682,7 @@ class SemanticGroupBy(Relation):
 class SemanticAggregate(Relation):
     source: Any
     keys: tuple[str, ...]
-    aggs: Any  # FrozenDict[str, _CallableWrapper]
+    aggs: dict[str, Callable]  # Transformed to FrozenDict[str, _CallableWrapper] in __init__
 
     def __init__(
         self,
@@ -849,7 +849,7 @@ class SemanticAggregate(Relation):
 
 class SemanticMutate(Relation):
     source: Any
-    post: Any  # FrozenDict[str, _CallableWrapper]
+    post: dict[str, Callable]  # Transformed to FrozenDict[str, _CallableWrapper] in __init__
 
     def __init__(self, source: Any, post: dict[str, Callable] | None) -> None:
         frozen_post = FrozenDict({name: _ensure_wrapped(fn) for name, fn in (post or {}).items()})
@@ -1044,8 +1044,8 @@ class SemanticJoin(Relation):
         return SemanticTable(
             table=joined_tbl,
             dimensions=merged_dimensions,  # Include both existing and new dimensions
-            measures=dict(existing_base_measures),  # Preserve existing base measures
-            calc_measures=dict(existing_calc_measures),  # Preserve existing calc measures
+            measures=existing_base_measures,  # Preserve existing base measures
+            calc_measures=existing_calc_measures,  # Preserve existing calc measures
             name=None
         )
 
@@ -1070,7 +1070,7 @@ class SemanticJoin(Relation):
 
         return SemanticTable(
             table=joined_tbl,
-            dimensions=dict(existing_dimensions),
+            dimensions=existing_dimensions,
             measures=new_base_meas,
             calc_measures=new_calc_meas,
             name=None
@@ -1148,9 +1148,9 @@ class SemanticJoin(Relation):
         """Convert to SemanticTable, preserving merged metadata from both sides."""
         return SemanticTable(
             table=self.to_ibis(),
-            dimensions=dict(self._dims_dict()),
-            measures=dict(self._measures_dict()),
-            calc_measures=dict(self._calc_measures_dict())
+            dimensions=self._dims_dict(),
+            measures=self._measures_dict(),
+            calc_measures=self._calc_measures_dict()
         )
 
     def __repr__(self) -> str:
@@ -1162,7 +1162,7 @@ class SemanticJoin(Relation):
 
 class SemanticOrderBy(Relation):
     source: Any
-    keys: tuple[Any, ...]  # Can be strings or _CallableWrapper (wrapping Deferred/callable)
+    keys: tuple[Any, ...]  # Transformed to tuple[str | _CallableWrapper, ...] in __init__
 
     def __init__(self, source: Any, keys: Iterable[Any]) -> None:
         def wrap_key(k):
@@ -1643,7 +1643,7 @@ def _update_measure_refs_in_calc(expr, prefix_map: dict[str, str]):
 
 def _merge_fields_with_prefixing(
     all_roots: Sequence[SemanticTable], field_accessor: callable
-) -> dict[str, Any]:
+) -> FrozenDict[str, Any]:
     """
     Generic function to merge any type of fields (dimensions, measures) with prefixing.
 
@@ -1652,10 +1652,10 @@ def _merge_fields_with_prefixing(
         field_accessor: Function that takes a root and returns the fields dict (e.g. lambda r: r.dimensions)
 
     Returns:
-        Dictionary mapping field names (always prefixed with table name) to field values
+        FrozenDict mapping field names (always prefixed with table name) to field values
     """
     if not all_roots:
-        return {}
+        return FrozenDict()
 
     merged_fields = {}
 
@@ -1693,4 +1693,4 @@ def _merge_fields_with_prefixing(
                 # Fallback to original name if no root name
                 merged_fields[field_name] = field_value
 
-    return merged_fields
+    return FrozenDict(merged_fields)
