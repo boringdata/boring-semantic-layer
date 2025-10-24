@@ -14,6 +14,33 @@ from ibis.expr import types as ir
 from .ops import Dimension, Measure, SemanticTableRelation
 
 
+def to_ibis(expr):
+    """Convert semantic expression or operation to Ibis expression.
+
+    This is the top-level conversion function matching ibis.to_sql() style.
+    Works with both Expression and Operation objects.
+
+    Args:
+        expr: SemanticTable expression or SemanticRelation operation
+
+    Returns:
+        Ibis Table expression
+
+    Examples:
+        >>> result = flights.group_by("carrier").aggregate("flight_count")
+        >>> ibis_expr = to_ibis(result)
+        >>> df = ibis_expr.execute()
+    """
+    # If it's an Expression, get its operation
+    if hasattr(expr, 'op'):
+        return expr.op().to_ibis()
+    # If it's an Operation, call its to_ibis method
+    elif hasattr(expr, 'to_ibis'):
+        return expr.to_ibis()
+    else:
+        raise TypeError(f"Cannot convert {type(expr)} to Ibis expression")
+
+
 class SemanticTable(ir.Table):
     """Base class for semantic tables with common fluent API methods.
 
@@ -41,14 +68,9 @@ class SemanticTable(ir.Table):
         """Apply a function to self."""
         return func(self, *args, **kwargs)
 
-    def sql(self, **kwargs):
-        """Generate SQL string."""
-        import ibis
-        return ibis.to_sql(self.op().to_ibis(), **kwargs)
-
     def execute(self):
         """Execute via to_ibis() to ensure proper lowering."""
-        return self.op().to_ibis().execute()
+        return to_ibis(self).execute()
 
 
 def _create_dimension(expr: Dimension | Callable | dict) -> Dimension:

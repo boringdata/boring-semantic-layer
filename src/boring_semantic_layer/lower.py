@@ -29,32 +29,38 @@ IbisProject = ibis_mod.expr.operations.relations.Project
 # Register custom formatter for SemanticTableRelation
 @fmt.fmt.register(SemanticTableRelation)
 def _format_semantic_table(op: SemanticTableRelation, **kwargs):
-    """Format SemanticTableRelation with semantic metadata."""
+    """Format SemanticTableRelation with concise metadata summary."""
     # Access the FrozenDicts directly via object.__getattribute__ to bypass custom __getattribute__
     dims_dict = object.__getattribute__(op, 'dimensions')
     base_measures = object.__getattribute__(op, 'measures')
     calc_measures = object.__getattribute__(op, 'calc_measures')
+    all_measures = {**base_measures, **calc_measures}
 
-    dims = list(dims_dict.keys())
-    measures = list(base_measures.keys()) + list(calc_measures.keys())
-
-    dims_str = ', '.join(dims[:5])
-    if len(dims) > 5:
-        dims_str += f', ... ({len(dims)} total)'
-
-    meas_str = ', '.join(measures[:5])
-    if len(measures) > 5:
-        meas_str += f', ... ({len(measures)} total)'
+    # Get counts
+    num_dims = len(dims_dict)
+    num_measures = len(all_measures)
 
     lines = [f"SemanticTableRelation[{op.name}]"]
-    if dims:
-        lines.append(f"  dimensions: {dims_str}")
-    if measures:
-        lines.append(f"  measures: {meas_str}")
 
-    # Show underlying table type
-    table_type = type(op.table).__name__
-    lines.append(f"  table: {table_type}")
+    # Show first few dimensions
+    if dims_dict:
+        dim_names = list(dims_dict.keys())
+        shown_dims = dim_names[:3]
+        dims_preview = ', '.join(shown_dims)
+        if num_dims > 3:
+            lines.append(f"  {num_dims} dimensions: {dims_preview}, ...")
+        else:
+            lines.append(f"  {num_dims} dimension{'s' if num_dims != 1 else ''}: {dims_preview}")
+
+    # Show first few measures
+    if all_measures:
+        meas_names = list(all_measures.keys())
+        shown_meas = meas_names[:3]
+        meas_preview = ', '.join(shown_meas)
+        if num_measures > 3:
+            lines.append(f"  {num_measures} measures: {meas_preview}, ...")
+        else:
+            lines.append(f"  {num_measures} measure{'s' if num_measures != 1 else ''}: {meas_preview}")
 
     return '\n'.join(lines)
 
@@ -240,7 +246,7 @@ def _lower_semantic_filter(node: SemanticFilterRelation, catalog, *args):
     all_roots = _find_all_root_models(node.source)
     base_tbl = convert(node.source, catalog=catalog)
 
-    dim_map = {} if isinstance(node.source, SemanticAggregate) else _get_merged_fields(all_roots, 'dims')
+    dim_map = {} if isinstance(node.source, SemanticAggregate) else _get_merged_fields(all_roots, 'dimensions')
     pred = node.predicate(_Resolver(base_tbl, dim_map))
     return base_tbl.filter(pred)
 
@@ -255,7 +261,7 @@ def _lower_semantic_project(node: SemanticProjectRelation, catalog, *args):
     if not all_roots:
         return tbl.select([getattr(tbl, f) for f in node.fields])
 
-    merged_dimensions = _get_merged_fields(all_roots, 'dims')
+    merged_dimensions = _get_merged_fields(all_roots, 'dimensions')
     merged_measures = _get_merged_fields(all_roots, 'measures')
 
     dims = [f for f in node.fields if f in merged_dimensions]
@@ -326,7 +332,7 @@ def _lower_semantic_aggregate(node: SemanticAggregateRelation, catalog, *args):
     all_roots = _find_all_root_models(node.source)
     tbl = convert(node.source, catalog=catalog)
 
-    merged_dimensions = _get_merged_fields(all_roots, 'dims')
+    merged_dimensions = _get_merged_fields(all_roots, 'dimensions')
     merged_measures = _get_merged_fields(all_roots, 'measures')
 
     group_exprs = [(merged_dimensions[k](tbl).name(k) if k in merged_dimensions

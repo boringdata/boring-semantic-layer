@@ -40,7 +40,7 @@ def _resolve_expr(expr: Any, scope: Any) -> Any:
 
 def _get_field_dict(root: Any, field_type: str) -> dict:
     method_map = {
-        'dims': ('_dims_dict', 'dimensions'),
+        'dimensions': ('_dims_dict', 'dimensions'),
         'measures': ('_measures_dict', 'measures'),
         'calc_measures': ('_calc_measures_dict', 'calc_measures')
     }
@@ -250,7 +250,7 @@ class SemanticFilterRelation(Relation):
 
         all_roots = _find_all_root_models(self.source)
         base_tbl = _to_ibis(self.source)
-        dim_map = {} if isinstance(self.source, SemanticAggregateRelation) else _get_merged_fields(all_roots, 'dims')
+        dim_map = {} if isinstance(self.source, SemanticAggregateRelation) else _get_merged_fields(all_roots, 'dimensions')
 
         pred_fn = _unwrap(self.predicate)
         resolver = _Resolver(base_tbl, dim_map)
@@ -286,7 +286,7 @@ class SemanticProjectRelation(Relation):
         if not all_roots:
             return tbl.select([getattr(tbl, f) for f in self.fields])
 
-        merged_dimensions = _get_merged_fields(all_roots, 'dims')
+        merged_dimensions = _get_merged_fields(all_roots, 'dimensions')
         merged_measures = _get_merged_fields(all_roots, 'measures')
 
         dims = [f for f in self.fields if f in merged_dimensions]
@@ -383,7 +383,7 @@ class SemanticAggregateRelation(Relation):
         all_roots = _find_all_root_models(self.source)
         tbl = _to_ibis(self.source)
 
-        merged_dimensions = _get_merged_fields(all_roots, 'dims')
+        merged_dimensions = _get_merged_fields(all_roots, 'dimensions')
         merged_base_measures = _get_merged_fields(all_roots, 'measures')
         merged_calc_measures = _get_merged_fields(all_roots, 'calc_measures')
 
@@ -514,7 +514,7 @@ class SemanticJoin(Relation):
 
     def _dims_dict(self) -> Mapping[str, Dimension]:
         all_roots = _find_all_root_models(self)
-        return _merge_fields_with_prefixing(all_roots, lambda r: _get_field_dict(r, 'dims'))
+        return _merge_fields_with_prefixing(all_roots, lambda r: _get_field_dict(r, 'dimensions'))
 
     def _measures_dict(self) -> Mapping[str, Measure]:
         all_roots = _find_all_root_models(self)
@@ -891,7 +891,7 @@ class SemanticIndex(Relation):
         base_tbl = (_to_ibis(self.source).limit(self.sample)
                    if self.sample else _to_ibis(self.source))
 
-        merged_dimensions = _get_merged_fields(all_roots, 'dims')
+        merged_dimensions = _get_merged_fields(all_roots, 'dimensions')
         fields_to_index = _get_fields_to_index(self.selector, merged_dimensions, base_tbl)
 
         if not fields_to_index:

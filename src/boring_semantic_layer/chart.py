@@ -367,7 +367,7 @@ def chart(
     time_grain = None
     all_roots = _find_all_root_models(semantic_aggregate.source)
     if all_roots:
-        dims_dict = _get_merged_fields(all_roots, 'dims')
+        dims_dict = _get_merged_fields(all_roots, 'dimensions')
         for dim_name in dimensions:
             if dim_name in dims_dict:
                 dim_obj = dims_dict[dim_name]

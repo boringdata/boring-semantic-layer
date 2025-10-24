@@ -12,6 +12,7 @@ from .api import (
 from .expr import (
     SemanticModel,
     SemanticTable,
+    to_ibis,
 )
 from .ops import (
     Dimension,
@@ -27,6 +28,7 @@ from .mcp import (
 
 __all__ = [
     "to_semantic_table",
+    "to_ibis",
     "SemanticModel",
     "SemanticTable",
     "Dimension",

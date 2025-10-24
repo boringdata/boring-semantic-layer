@@ -59,5 +59,5 @@ def replace_nodes(replacer, expr: Expr) -> Expr:
 def find_dimensions_and_measures(expr: Expr) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     from .ops import _find_all_root_models, _merge_fields_with_prefixing, _get_field_dict
     roots = _find_all_root_models(to_node(expr))
-    return (_merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, 'dims')),
+    return (_merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, 'dimensions')),
             _merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, 'measures')))

@@ -14,6 +14,7 @@ Benefits of YAML configuration:
 
 import pandas as pd
 import ibis
+from pathlib import Path
 from boring_semantic_layer import from_yaml
 
 
@@ -70,9 +71,10 @@ def main():
     print("STEP 2: Load semantic models from YAML")
     print("-" * 80)
 
-    # Load models from YAML file
+    # Load models from YAML file (path relative to this script)
+    yaml_path = Path(__file__).parent / "yaml_example.yml"
     models = from_yaml(
-        "yaml_example.yml",
+        str(yaml_path),
         tables={
             "carriers_tbl": carriers_tbl,
             "flights_tbl": flights_tbl,
