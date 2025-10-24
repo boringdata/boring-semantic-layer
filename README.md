@@ -19,40 +19,38 @@ We welcome feedback and contributions!
 ```python
 import ibis
 
-flights_tbl = ibis.table(
-    name="flights",
-    schema={"origin": "string", "carrier": "string"}
-)
+# Create a simple in-memory table
+flights_tbl = ibis.memtable({
+    "origin": ["JFK", "LAX", "JFK", "ORD", "LAX"],
+    "carrier": ["AA", "UA", "AA", "UA", "AA"]
+})
 ```
 
-**2. Define a semantic model**
+**2. Define a semantic table**
 
 ```python
-from boring_semantic_layer import SemanticModel
+from boring_semantic_layer.semantic_api import to_semantic_table
 
-flights_sm = SemanticModel(
-    table=flights_tbl,
-    dimensions={"origin": lambda t: t.origin},
-    measures={"flight_count": lambda t: t.count()}
+flights = (
+    to_semantic_table(flights_tbl, name="flights")
+    .with_dimensions(origin=lambda t: t.origin)
+    .with_measures(flight_count=lambda t: t.count())
 )
 ```
 
 **3. Query it**
 
 ```python
-flights_sm.query(
-    dimensions=["origin"],
-    measures=["flight_count"]
-).execute()
+flights.group_by("origin").aggregate("flight_count").execute()
 ```
 
 **Example output (dataframe):**
 
 | origin | flight_count |
 | ------ | ------------ |
-| JFK    | 3689         |
-| LGA    | 2941         |
-| ...    | ...          |
+| JFK    | 2            |
+| LAX    | 2            |
+| ORD    | 1            |
 
 
 -----
@@ -61,47 +59,44 @@ flights_sm.query(
 
 - [Boring Semantic Layer (BSL)](#boring-semantic-layer-bsl)
 - [Quick Example](#quick-example)
-  - [Table of Contents](#table-of-contents)
-  - [Installation](#installation)
-  - [Get Started](#get-started)
-    - [1. Get Sample Data](#1-get-sample-data)
-    - [2. Build a Semantic Model](#2-build-a-semantic-model)
-    - [Adding Descriptions to Semantic Models, Dimensions, and Measures](#adding-descriptions-to-semantic-models-dimensions-and-measures)
-    - [3. Query a Semantic Model](#3-query-a-semantic-model)
-  - [Features](#features)
-    - [Filters](#filters)
-      - [Ibis Expression](#ibis-expression)
-      - [JSON-based (MCP \& LLM friendly)](#json-based-mcp--llm-friendly)
-    - [Joins Across Semantic Models](#joins-across-semantic-models)
-      - [Classic SQL Joins](#classic-sql-joins)
-      - [join\_one](#join_one)
-      - [join\_many](#join_many)
-      - [join\_cross](#join_cross)
-  - [Model Context Protocol (MCP) Integration](#model-context-protocol-mcp-integration)
-    - [Installation](#installation-1)
-    - [Setting up an MCP Server](#setting-up-an-mcp-server)
-    - [Configuring Claude Desktop](#configuring-claude-desktop)
-    - [Available MCP Tools](#available-mcp-tools)
-  - [Chart Visualization](#chart-visualization)
-    - [Installation](#installation-2)
-    - [How BSL Charting Works](#how-bsl-charting-works)
-      - [Quick Start Example](#quick-start-example)
-      - [How It Works](#how-it-works)
-    - [Smart Chart Creation](#smart-chart-creation)
-      - [1. Auto-detected Bar Chart](#1-auto-detected-bar-chart)
-      - [2. Auto-detected Time Series Chart](#2-auto-detected-time-series-chart)
-      - [3. Auto-detected Heatmap](#3-auto-detected-heatmap)
-      - [4. Custom Mark with Auto-detection](#4-custom-mark-with-auto-detection)
-      - [5. Full Custom Specification](#5-full-custom-specification)
-      - [Export Formats](#export-formats)
-  - [Reference](#reference)
-    - [SemanticModel](#semanticmodel)
-      - [Spec Classes (for dimensions and measures with descriptions)](#spec-classes-for-dimensions-and-measures-with-descriptions)
-      - [Join object (for `joins`)](#join-object-for-joins)
-    - [Query (SemanticModel.query / QueryExpr)](#query-semanticmodelquery--queryexpr)
-      - [Filters](#filters-1)
-      - [Example](#example)
-    - [Chart API Reference](#chart-api-reference)
+- [Installation](#installation)
+- [Get Started](#get-started)
+  - [1. Get Sample Data](#1-get-sample-data)
+  - [2. Build a Semantic Table](#2-build-a-semantic-table)
+  - [Adding Descriptions to Dimensions and Measures](#adding-descriptions-to-dimensions-and-measures)
+  - [3. Query a Semantic Table](#3-query-a-semantic-table)
+- [Features](#features)
+  - [Filters](#filters)
+  - [Advanced Queries](#advanced-queries)
+    - [Percent of Total](#percent-of-total)
+    - [Window Functions](#window-functions)
+  - [Time-Based Dimensions](#time-based-dimensions)
+  - [Joins Across Semantic Tables](#joins-across-semantic-tables)
+    - [join_one (Many-to-One Relationships)](#join_one-many-to-one-relationships)
+    - [join_many (One-to-Many Relationships)](#join_many-one-to-many-relationships)
+    - [join_cross (Cross Product)](#join_cross-cross-product)
+    - [YAML Configuration for Joins](#yaml-configuration-for-joins)
+  - [Backward Compatibility: query() Method](#backward-compatibility-query-method)
+- [Model Context Protocol (MCP) Integration](#model-context-protocol-mcp-integration)
+  - [Installation](#installation-1)
+  - [Setting up an MCP Server](#setting-up-an-mcp-server)
+  - [Configuring Claude Desktop](#configuring-claude-desktop)
+  - [Available MCP Tools](#available-mcp-tools)
+- [Chart Visualization](#chart-visualization)
+  - [Installation](#installation-2)
+  - [How BSL Charting Works](#how-bsl-charting-works)
+  - [Backend Selection](#backend-selection)
+  - [Smart Chart Creation](#smart-chart-creation)
+    - [1. Auto-detected Bar Chart](#1-auto-detected-bar-chart)
+    - [2. Auto-detected Time Series Chart](#2-auto-detected-time-series-chart)
+    - [3. Auto-detected Heatmap](#3-auto-detected-heatmap)
+    - [4. Custom Mark with Auto-detection](#4-custom-mark-with-auto-detection)
+    - [5. Full Custom Specification](#5-full-custom-specification)
+  - [Export Formats](#export-formats)
+- [Reference](#reference)
+  - [SemanticTable API](#semantictable-api)
+  - [YAML Configuration Reference](#yaml-configuration-reference)
+  - [Chart API Reference](#chart-api-reference)
 
 -----
 
@@ -139,33 +134,32 @@ curl -L https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/carriers.parquet -o 
 
 **Note:** Examples use DuckDB, so install with: `pip install 'boring-semantic-layer[examples]'`
 
-### 2. Build a Semantic Model
+### 2. Build a Semantic Table
 
-Define your data source and create a semantic model that describes your data in terms of dimensions and measures.
+Define your data source and create a semantic table that describes your data in terms of dimensions and measures.
 
 ```python
 import ibis
-from boring_semantic_layer import SemanticModel
+from boring_semantic_layer.semantic_api import to_semantic_table
 
 # Connect to your database (here, DuckDB in-memory for demo)
 con = ibis.duckdb.connect(":memory:")
 flights_tbl = con.read_parquet("flights.parquet")
 carriers_tbl = con.read_parquet("carriers.parquet")
 
-# Define the semantic model
-flights_sm = SemanticModel(
-    name="flights",
-    table=flights_tbl,
-    dimensions={
-        'origin': lambda t: t.origin,
-        'destination': lambda t: t.dest,
-        'year': lambda t: t.year
-    },
-    measures={
-        'total_flights': lambda t: t.count(),
-        'total_distance': lambda t: t.distance.sum(),
-        'avg_distance': lambda t: t.distance.mean(),
-    }
+# Define the semantic table
+flights = (
+    to_semantic_table(flights_tbl, name="flights")
+    .with_dimensions(
+        origin=lambda t: t.origin,
+        destination=lambda t: t.dest,
+        year=lambda t: t.year
+    )
+    .with_measures(
+        total_flights=lambda t: t.count(),
+        total_distance=lambda t: t.distance.sum(),
+        avg_distance=lambda t: t.distance.mean(),
+    )
 )
 ```
 
@@ -178,7 +172,7 @@ Ibis expressions are Python functions that represent database operations.
 
 They allow you to write database queries using familiar Python syntax while Ibis handles the translation to optimized SQL for your specific database backend (like DuckDB, PostgreSQL, BigQuery, etc.).
 
-For example, in our semantic model:
+For example, in our semantic table:
 
 - `lambda t: t.origin` is an Ibis expression that references the "origin" column
 - `lambda t: t.count()` is an Ibis expression that counts rows
@@ -186,84 +180,70 @@ For example, in our semantic model:
 
 The `t` parameter represents the table, and you can chain operations like `t.origin.upper()` or `t.dep_delay > 0` to create complex expressions. Ibis ensures these expressions are translated to efficient SQL queries.
 
-### Adding Descriptions to Semantic Models, Dimensions, and Measures
+### Adding Descriptions to Dimensions and Measures
 
-BSL supports adding human-readable descriptions to dimensions, measures, and semantic models. This helps in documenting your data model and making it easier for others to understand and AI agents to interact with.
+BSL supports adding human-readable descriptions to dimensions and measures. This helps in documenting your data model and making it easier for others to understand and AI agents to interact with.
 
-Semantic model descriptions are an optional parameter than can be used to provide a summary of what the semantic model contains and what it should be used for.
+You can define dimensions and measures with descriptions by passing a dict with `expr` and `description` keys:
+
+**Simple format:**
 ```python
-from boring_semantic_layer import SemanticModel
-
-flights_sm = SemanticModel(
-    table=flights_tbl,
-    description="Flight data with departure and flight count information",
-    dimensions={"origin": lambda t: t.origin},
-    measures={"flight_count": lambda t: t.count()}
+flights = (
+    to_semantic_table(flights_tbl, name="flights")
+    .with_dimensions(origin=lambda t: t.origin)
+    .with_measures(flight_count=lambda t: t.count())
 )
 ```
 
-You can define dimensions and measures in two ways:
-
-**Classic format (still fully supported):**
+**With descriptions (dict format):**
 ```python
-from boring_semantic_layer import SemanticModel
+from boring_semantic_layer.semantic_api import to_semantic_table
 
-flights_sm = SemanticModel(
-    table=flights_tbl,
-    dimensions={"origin": lambda t: t.origin},
-    measures={"flight_count": lambda t: t.count()}
+flights = (
+    to_semantic_table(flights_tbl, name="flights")
+    .with_dimensions(
+        origin={
+            "expr": lambda t: t.origin,
+            "description": "Origin airport where the flight departed from"
+        }
+    )
+    .with_measures(
+        flight_count={
+            "expr": lambda t: t.count(),
+            "description": "Total number of flights"
+        }
+    )
 )
 ```
-**New format with descriptions:**
-```python
-from boring_semantic_layer import SemanticModel, DimensionSpec, MeasureSpec
 
-flights_sm = SemanticModel(
-    table=flights_tbl,
-    dimensions={
-        "origin": DimensionSpec(
-            expr=lambda t: t.origin,
-            description="Origin Airport where the flight departed from"
-        )
-    },
-    measures={
-        "flight_count": MeasureSpec(
-            expr=lambda t: t.count(),
-            description="Total number of flights"
-        )
-    }
-)
-```
 **Why use descriptions?**
-- **Human-readable**: Makes your models self documenting for team members.
-- **AI friendly**: Perfect for MCP agents and LLM's that need to understand your models in more detail and nuances between similar dimensions and measures.
-- **Flexible**: You can mix classic and descriptive formats seamlessly.
-- **Backwards compatible**: All existing models will continue to work without changes.
+- **Human-readable**: Makes your models self-documenting for team members.
+- **AI friendly**: Perfect for MCP agents and LLMs that need to understand your models in more detail and nuances between similar dimensions and measures.
+- **Flexible**: You can mix simple lambdas and dict formats seamlessly.
 
 **YAML Configuration Support:**
 
 You can also define models with descriptions using YAML configuration files:
 
 ```yaml
-
 flights:
-  table: flights_table
+  table: flights_tbl
   description: "Flight data with departure and arrival information"
 
   dimensions:
-    # Classic format
+    # Simple format
     origin: _.origin
 
-    # New format
+    # With description
     destination:
       expr: _.destination
       description: "Destination airport code where the flight arrived at"
 
   measures:
-    # Classic format
+    # Simple format
     flight_count: _.count()
 
-    # New format
+    # With description
     avg_distance:
       expr: _.distance.mean()
       description: "Average distance of flights in miles"
@@ -271,25 +251,24 @@ flights:
 
 Load the YAML model:
 ```python
-models = SemanticModel.from_yaml("flights_model.yml", tables={"flights_table": flights_table})
-flights_sm = models["flights"]
+from boring_semantic_layer.semantic_api import from_yaml
+
+models = from_yaml("flights_model.yml", tables={"flights_tbl": flights_tbl})
+flights = models["flights"]
 ```
 
 ---
 
-### 3. Query a Semantic Model
+### 3. Query a Semantic Table
 
-Use your semantic model to run queries—selecting dimensions, measures, and applying filters or limits.
+Use your semantic table to run queries—grouping by dimensions, aggregating measures, and applying filters or limits.
 
+**Basic query:**
 ```python
-flights_sm.query(
-    dimensions=['origin'],
-    measures=['total_flights', 'avg_distance'],
-    limit=10
-).execute()
+flights.group_by('origin').aggregate('total_flights', 'avg_distance').limit(10).execute()
 ```
 
-Example output:
+**Example output:**
 
 | origin | total_flights | avg_distance |
 | ------ | ------------- | ------------ |
@@ -297,172 +276,296 @@ Example output:
 | PHL    | 7708          | 1044.97      |
 | ...    | ...           | ...          |
 
+**On-the-fly transformations:**
+
+You can add computed dimensions and measures directly in your queries without modifying the semantic table:
+
+```python
+from ibis import _
+
+# Transform dimensions on-the-fly in group_by
+result = (
+    flights
+    .group_by(
+        origin_state=lambda t: t.origin[:2],  # First 2 chars of origin
+        is_long_haul=lambda t: t.distance > 1000  # Boolean dimension
+    )
+    .aggregate('total_flights', 'avg_distance')
+    .execute()
+)
+```
+
+**Example output:**
+
+| origin_state | is_long_haul | total_flights | avg_distance |
+| ------------ | ------------ | ------------- | ------------ |
+| JF           | True         | 2450          | 1547.32      |
+| JF           | False        | 1239          | 548.10       |
+| PH           | True         | 5234          | 1344.21      |
+| ...          | ...          | ...           | ...          |
+
+**Transform measures on-the-fly in aggregate:**
+
+```python
+from ibis import _
+
+# Add computed measures directly in aggregate
+result = (
+    flights
+    .group_by('origin')
+    .aggregate(
+        'total_flights',  # Use existing measure
+        'avg_distance',   # Use existing measure
+        total_miles=lambda t: t.distance.sum(),  # Add new measure on-the-fly
+        flight_density=lambda t: t.count() / t.origin.nunique()  # Complex calculation
+    )
+    .limit(5)
+    .execute()
+)
+```
+
+**Example output:**
+
+| origin | total_flights | avg_distance | total_miles | flight_density |
+| ------ | ------------- | ------------ | ----------- | -------------- |
+| JFK    | 3689          | 1047.71      | 3865221     | 23.1           |
+| PHL    | 7708          | 1044.97      | 8054836     | 48.2           |
+| ...    | ...           | ...          | ...         | ...            |
+
+**Combine both approaches:**
+
+```python
+# Transform both dimensions and measures in a single query
+result = (
+    flights
+    .filter(lambda t: t.year == 2024)
+    .group_by(
+        month=lambda t: t.date.month(),
+        is_domestic=lambda t: t.origin == t.dest
+    )
+    .aggregate(
+        'total_flights',
+        avg_delay_minutes=lambda t: t.dep_delay.mean(),
+        pct_on_time=lambda t: (t.dep_delay <= 0).mean() * 100
+    )
+    .order_by(_.month)
+    .execute()
+)
+```
+
+**Post-aggregation transformations with `mutate()`:**
+
+After aggregating, you can use `mutate()` to add derived columns based on aggregated results:
+
+```python
+from ibis import _
+
+# Add post-aggregation calculations
+result = (
+    flights
+    .group_by('origin', 'destination')
+    .aggregate(
+        'total_flights',
+        'avg_distance'
+    )
+    .mutate(
+        flights_per_100_miles=lambda t: (t.total_flights / t.avg_distance) * 100,
+        route_label=lambda t: t.origin + ' → ' + t.destination,
+        distance_category=lambda t: (
+            _.avg_distance
+            .case()
+            .when(_.avg_distance < 500, "short")
+            .when(_.avg_distance < 1500, "medium")
+            .else_("long")
+            .end()
+        )
+    )
+    .order_by(_.flights_per_100_miles.desc())
+    .limit(10)
+    .execute()
+)
+```
+
+**Example output:**
+
+| origin | destination | total_flights | avg_distance | flights_per_100_miles | route_label | distance_category |
+| ------ | ----------- | ------------- | ------------ | --------------------- | ----------- | ----------------- |
+| LAX    | SFO         | 4523          | 337          | 1342.13               | LAX → SFO   | short             |
+| JFK    | BOS         | 3891          | 187          | 2080.75               | JFK → BOS   | short             |
+| ATL    | MCO         | 2145          | 404          | 530.94                | ATL → MCO   | short             |
+| ...    | ...         | ...           | ...          | ...                   | ...         | ...               |
+
+**💡 Key difference:**
+- `.group_by()` + `.aggregate()`: Compute aggregations from raw data
+- `.mutate()`: Transform aggregated results (works on the already-aggregated dataframe)
+
+For more transformations, see [Ibis Table API reference](https://ibis-project.org/reference/expression-tables.html#ibis.expr.types.relations.Table.mutate).
+
+This approach lets you:
+- ✅ Keep your base semantic table clean and reusable
+- ✅ Add context-specific calculations without polluting the model
+- ✅ Mix predefined measures with ad-hoc calculations
+- ✅ Create complex analytical queries quickly
+- ✅ Transform aggregated results using the full power of Ibis
+
 -----
 
 ## Features
 
 ### Filters
 
-#### Ibis Expression
-
-The `query` method can filter data using raw Ibis expressions for full flexibility.
+You can filter data using raw Ibis expressions for full flexibility:
 
 ```python
-flights_sm.query(
-    dimensions=['origin'],
-    measures=['total_flights'],
-    filters=[
-        lambda t: t.origin == 'JFK'
-    ]
-)
+filtered = flights.filter(lambda t: t.origin == 'JFK')
+result = filtered.group_by('origin').aggregate('total_flights').execute()
 ```
 
+**Example output:**
 
 | origin | total_flights |
 | ------ | ------------- |
 | JFK    | 3689          |
 
-#### JSON-based (MCP & LLM friendly)
+You can also combine filters with chaining:
 
-A format that's easy to serialize, good for dynamic queries or LLM integration.
 ```python
-flights_sm.query(
-    dimensions=['origin'],
-    measures=['total_flights'],
-    filters=[
-        {
-            'operator': 'AND',
-            'conditions': [
-                {'field': 'origin', 'operator': 'in', 'values': ['JFK', 'LGA', 'PHL']}
-            ]
-        }
-    ]
-).execute()
+result = (
+    flights
+    .filter(lambda t: t.origin.isin(['JFK', 'LGA', 'PHL']))
+    .group_by('origin')
+    .aggregate('total_flights')
+    .execute()
+)
 ```
-**Example output (dataframe):**
+
+**Example output:**
 
 | origin | total_flights |
 | ------ | ------------- |
+| JFK    | 3689          |
 | LGA    | 7000          |
 | PHL    | 7708          |
 
-BSL supports the following operators: `=`, `!=`, `>`, `>=`, `in`, `not in`, `like`, `not like`, `is null`, `is not null`, `AND`, `OR`
+### Advanced Queries
 
-**Note on filtering measures:** filters only work with dimensions.
-```
+#### Percent of Total
 
-### Time-Based Dimensions and Queries
-
-BSL has built-in support for flexible time-based analysis.
-
-To use it, define a `time_dimension` in your `SemanticModel` that points to a timestamp column.
-
-You can also set `smallest_time_grain` to prevent incorrect time aggregations.
+Define calculated measures using `.all()` for percent-of-total calculations:
 
 ```python
-flights_sm_with_time = SemanticModel(
-    name="flights_timed",
-    table=flights_tbl,
-    dimensions={
-        'origin': lambda t: t.origin,
-        'destination': lambda t: t.dest,
-        'year': lambda t: t.year,
-    },
-    measures={
-        'total_flights': lambda t: t.count(),
-    },
-    time_dimension='dep_time', # The column containing timestamps. Crucial for time-based queries.
-    smallest_time_grain='TIME_GRAIN_SECOND' # Optional: sets the lowest granularity (e.g., DAY, MONTH).
+from ibis import _
+
+flights = (
+    to_semantic_table(flights_tbl, name="flights")
+    .with_dimensions(carrier=lambda t: t.carrier)
+    .with_measures(
+        flight_count=lambda t: t.count(),
+        market_share=lambda t: t.count() / t.all(t.count()) * 100
+    )
 )
 
-# With the time dimension defined, you can query using a specific time range and grain.
-query_time_based_df = flights_sm_with_time.query(
-    dimensions=['origin'],
-    measures=['total_flights'],
-    time_range={'start': '2013-01-01', 'end': '2013-01-31'},
-    time_grain='TIME_GRAIN_DAY' # Use specific TIME_GRAIN constants
-).execute()
-
-print(query_time_based_df)
+result = (
+    flights
+    .group_by("carrier")
+    .aggregate("flight_count", "market_share")
+    .order_by(_.market_share.desc())
+    .execute()
+)
 ```
-Example output:
 
-| origin | arr_time   | flight_count |
-| ------ | ---------- | ------------ |
-| PHL    | 2013-01-01 | 5            |
-| CLE    | 2013-01-01 | 5            |
-| DFW    | 2013-01-01 | 7            |
-| DFW    | 2013-01-02 | 9            |
-| DFW    | 2013-01-03 | 13           |
+**Output:**
 
-### Joins Across Semantic Models
+| carrier | flight_count | market_share |
+| ------- | ------------ | ------------ |
+| AA      | 3500         | 35.0         |
+| UA      | 3200         | 32.0         |
+| DL      | 3300         | 33.0         |
 
-BSL allows you to join multiple `SemanticModel` instances to enrich your data. Joins are defined in the `joins` parameter of a `SemanticModel`.
+#### Window Functions
 
-There are four main ways to define joins:
-
-#### Classic SQL Joins
-
-For full control, you can create a `Join` object directly, specifying the join condition with an `on` lambda function and the join type with `how` (e.g., `'inner'`, `'left'`).
-
-First, let's define two semantic models: one for flights and one for carriers.
-
-The flight model resulting from a join with the carriers model:
+Use window functions in measures for running calculations:
 
 ```python
-from boring_semantic_layer import  Join, SemanticModel
 import ibis
-import os
 
-# Assume `con` is an existing Ibis connection from the Quickstart example.
-con = ibis.duckdb.connect(":memory:")
-
-# Load the required tables from the sample data
-flights_tbl = con.read_parquet("malloy-samples/data/flights.parquet")
-carriers_tbl = con.read_parquet("malloy-samples/data/carriers.parquet")
-
-# First, define the 'carriers' semantic model to join with.
-carriers_sm = SemanticModel(
-    name="carriers",
-    table=carriers_tbl,
-    dimensions={
-        "code": lambda t: t.code,
-        "name": lambda t: t.name,
-        "nickname": lambda t: t.nickname,
-    },
-    measures={
-        "carrier_count": lambda t: t.count(),
-    }
+flights = (
+    to_semantic_table(flights_tbl, name="flights")
+    .with_dimensions(date=lambda t: t.date)
+    .with_measures(
+        flight_count=lambda t: t.count(),
+        rolling_avg=lambda t: t.count().mean().over(
+            ibis.window(order_by="date", rows=(1, 1))
+        )
+    )
 )
 
-# Now, define the 'flights' semantic model with a join to 'carriers'
-flight_sm = SemanticModel(
-    name="flights",
-    table=flights_tbl,
-    dimensions={
-        "origin": lambda t: t.origin,
-        "destination": lambda t: t.destination,
-        "carrier": lambda t: t.carrier, # This is the join key
-    },
-    measures={
-        "flight_count": lambda t: t.count(),
-    },
-    joins={
-        "carriers": Join(
-            model=carriers_sm,
-            on=lambda left, right: left.carrier == right.code,
-        ),
-    }
-)
-
-# Querying across the joined models to get flight counts by carrier name
-query_joined_df = flight_sm.query(
-    dimensions=['carriers.name', 'origin'],
-    measures=['flight_count'],
-    limit=10
-).execute()
+result = flights.group_by("date").aggregate("flight_count", "rolling_avg").execute()
 ```
-| carriers_name              | origin | flight_count |
+
+### Joins Across Semantic Tables
+
+BSL allows you to join multiple semantic tables to enrich your data. Joins use a fluent API inspired by [Malloy](https://docs.malloydata.dev/documentation/language/join).
+
+#### join_one (Many-to-One Relationships)
+
+Use `join_one()` for many-to-one or one-to-one relationships:
+
+```python
+from boring_semantic_layer.semantic_api import to_semantic_table
+import ibis
+
+con = ibis.duckdb.connect(":memory:")
+flights_tbl = con.read_parquet("flights.parquet")
+carriers_tbl = con.read_parquet("carriers.parquet")
+
+# Define the carriers semantic table
+carriers = (
+    to_semantic_table(carriers_tbl, name="carriers")
+    .with_dimensions(
+        code=lambda t: t.code,
+        name=lambda t: t.name,
+        nickname=lambda t: t.nickname,
+    )
+    .with_measures(
+        carrier_count=lambda t: t.count(),
+    )
+)
+
+# Define the flights semantic table
+flights = (
+    to_semantic_table(flights_tbl, name="flights")
+    .with_dimensions(
+        origin=lambda t: t.origin,
+        destination=lambda t: t.destination,
+        carrier=lambda t: t.carrier,
+    )
+    .with_measures(
+        flight_count=lambda t: t.count(),
+    )
+)
+
+# Join flights with carriers (many-to-one relationship)
+flights_with_carriers = flights.join_one(
+    carriers,
+    left_on="carrier",
+    right_on="code"
+)
+
+# Query using joined fields
+# Simple column names work when there's no conflict
+result = (
+    flights_with_carriers
+    .group_by("name", "origin")  # "name" comes from carriers, "origin" from flights
+    .aggregate("flight_count")
+    .limit(10)
+    .execute()
+)
+```
+
+**Example output:**
+
+| name                       | origin | flight_count |
 | -------------------------- | ------ | ------------ |
 | Delta Air Lines            | MDT    | 235          |
 | Delta Air Lines            | ATL    | 8419         |
@@ -470,82 +573,160 @@ query_joined_df = flight_sm.query(
 | American Airlines          | DFW    | 8742         |
 | American Eagle Airlines    | JFK    | 418          |
 
-#### join_one
+**Handling Name Conflicts:**
 
-For common join patterns, BSL provides helper class methods inspired by [Malloy](https://docs.malloydata.dev/documentation/language/join): `Join.one`, `Join.many`, and `Join.cross`.
-
-These simplify joins based on primary/foreign key relationships.
-
-To use them, first define a `primary_key` on the model you are joining to. The primary key should be one of the model's dimensions.
+When there are naming conflicts between joined tables, you can use the prefixed format with double underscores:
 
 ```python
-carriers_pk_sm = SemanticModel(
-    name="carriers",
-    table=con.read_parquet("malloy-samples/data/carriers.parquet"),
-    primary_key="code",
-    dimensions={
-        'code': lambda t: t.code,
-        'name': lambda t: t.name
-    },
-    measures={'carrier_count': lambda t: t.count()}
+# If both tables have a "name" column, use prefixes to disambiguate
+result = (
+    flights_with_carriers
+    .group_by("carriers__name", "flights__origin")
+    .aggregate("flights__flight_count")
+    .execute()
 )
 ```
 
-Now, you can use `Join.one` in the `flights` model to link to `carriers_pk_sm`. The `with_` parameter specifies the foreign key on the `flights` model.
+- Use simple column names (`name`, `flight_count`) when there's no conflict
+- Use prefixed names (`carriers__name`, `flights__flight_count`) only when needed to resolve ambiguity
+- Aggregations work correctly at each level of the join tree (similar to Malloy's "foreign sums")
+
+#### join_many (One-to-Many Relationships)
+
+Use `join_many()` for one-to-many relationships:
 
 ```python
-from boring_semantic_layer import Join
-
-flights_with_join_one_sm = SemanticModel(
-    name="flights",
-    table=flights_tbl,
-    dimensions={'origin': lambda t: t.origin},
-    measures={'flight_count': lambda t: t.count()},
-    joins={
-        "carriers": Join.one(
-            alias="carriers",
-            model=carriers_pk_sm,
-            with_=lambda t: t.carrier
-        )
-    }
+customer_orders = customers.join_many(
+    orders,
+    left_on="customer_id",
+    right_on="customer_id"
 )
 ```
 
-- **`Join.one(alias, model, with_)`**: Use for one-to-one or many-to-one relationships. It joins where the foreign key specified in `with_` matches the `primary_key` of the joined `model`.
+#### join_cross (Cross Product)
 
-#### join_many
-
-- **`Join.many(alias, model, with_)`**: Similar to `Join.one`, but semantically represents a one-to-many relationship.
-
-#### join_cross
-
-- **`Join.cross(alias, model)`**: Creates a cross product, joining every row from the left model with every row of the right `model`.
-
-Querying remains the same—just reference the joined fields using the alias.
+Use `join_cross()` to create a cross product (every row from left joined with every row from right):
 
 ```python
-flights_with_join_one_sm.query(
-    dimensions=["carriers.name"],
+full_combinations = table_a.join_cross(table_b)
+```
+
+#### YAML Configuration for Joins
+
+You can also define joins in YAML configuration files:
+
+```yaml
+carriers:
+  table: carriers_tbl
+  dimensions:
+    code: _.code
+    name: _.name
+  measures:
+    carrier_count: _.count()
+
+flights:
+  table: flights_tbl
+  dimensions:
+    origin: _.origin
+    carrier: _.carrier
+  measures:
+    flight_count: _.count()
+  joins:
+    carriers:
+      model: carriers
+      type: one          # Can be: one, many, or cross
+      left_on: carrier
+      right_on: code
+```
+
+Load and use:
+```python
+from boring_semantic_layer.semantic_api import from_yaml
+
+models = from_yaml("models.yml", tables={
+    "flights_tbl": flights_tbl,
+    "carriers_tbl": carriers_tbl
+})
+
+flights = models["flights"]  # Already has the join configured!
+```
+
+### Time-Based Dimensions
+
+BSL supports marking dimensions as time dimensions with an optional `smallest_time_grain` to prevent incorrect time aggregations.
+
+**Python API (dict format):**
+```python
+from boring_semantic_layer.semantic_api import to_semantic_table
+
+flights = (
+    to_semantic_table(flights_tbl, name="flights")
+    .with_dimensions(
+        origin=lambda t: t.origin,
+        arr_time={
+            "expr": lambda t: t.arr_time,
+            "description": "Arrival timestamp",
+            "is_time_dimension": True,
+            "smallest_time_grain": "TIME_GRAIN_DAY"
+        }
+    )
+    .with_measures(total_flights=lambda t: t.count())
+)
+```
+
+**YAML format:**
+```yaml
+flights:
+  table: flights_tbl
+  dimensions:
+    origin: _.origin
+    arr_time:
+      expr: _.arr_time
+      description: "Arrival timestamp"
+      is_time_dimension: true
+      smallest_time_grain: "TIME_GRAIN_DAY"
+  measures:
+    flight_count: _.count()
+```
+
+Supported time grains: `TIME_GRAIN_SECOND`, `TIME_GRAIN_MINUTE`, `TIME_GRAIN_HOUR`, `TIME_GRAIN_DAY`, `TIME_GRAIN_WEEK`, `TIME_GRAIN_MONTH`, `TIME_GRAIN_QUARTER`, `TIME_GRAIN_YEAR`
+
+### Backward Compatibility: query() Method
+
+For backward compatibility with existing code, BSL supports the legacy `.query()` API:
+
+```python
+from boring_semantic_layer.api import query
+
+result = query(
+    flights,
+    dimensions=["origin"],
     measures=["flight_count"],
-    limit=5
+    filters=[lambda t: t.origin == "JFK"],
+    limit=10
 ).execute()
 ```
 
-Example output:
+This is equivalent to the fluent API:
 
-| carriers_name      | flight_count |
-| ------------------ | ------------ |
-| Delta Air Lines    | 10000        |
-| American Airlines  | 9000         |
-| United Airlines    | 8500         |
-| Southwest Airlines | 8000         |
-| JetBlue Airways    | 7500         |
+```python
+result = (
+    flights
+    .filter(lambda t: t.origin == "JFK")
+    .group_by("origin")
+    .aggregate("flight_count")
+    .limit(10)
+    .execute()
+)
+```
+
+**Note:** The fluent API (`.group_by().aggregate()`) is recommended for new projects.
 
 ## Model Context Protocol (MCP) Integration
 
 BSL includes built-in support for the [Model Context Protocol (MCP)](https://github.com/modelcontextprotocol/python-sdk), allowing you to expose your semantic models to LLMs like Claude.
 
-**💡 Pro tip:** Use [descriptions in semantic models, dimensions and measures](#adding-descriptions-to-semantic-models-dimensions-and-measures) to make your models more AI-friendly. Descriptions help provide context to LLM's, enabling them to understand what each field represents and when to use them.
+**💡 Pro tip:** Use [descriptions in dimensions and measures](#adding-descriptions-to-dimensions-and-measures) to make your models more AI-friendly. Descriptions help provide context to LLMs, enabling them to understand what each field represents and when to use them.
 
 ### Installation
 
@@ -562,30 +743,30 @@ Create an MCP server script that exposes your semantic models:
 ```python
 # example_mcp.py
 import ibis
-from boring_semantic_layer import SemanticModel, MCPSemanticModel
+from boring_semantic_layer.semantic_api import to_semantic_table
+from boring_semantic_layer.api.mcp import MCPSemanticModel
 
 # Connect to your database
 con = ibis.duckdb.connect(":memory:")
 flights_tbl = con.read_parquet("path/to/flights.parquet")
 
-# Define your semantic model
-flights_sm = SemanticModel(
-    name="flights",
-    table=flights_tbl,
-    dimensions={
-        'origin': lambda t: t.origin,
-        'destination': lambda t: t.dest,
-        'carrier': lambda t: t.carrier,
-    },
-    measures={
-        'total_flights': lambda t: t.count(),
-        'avg_distance': lambda t: t.distance.mean(),
-    }
+# Define your semantic table
+flights = (
+    to_semantic_table(flights_tbl, name="flights")
+    .with_dimensions(
+        origin=lambda t: t.origin,
+        destination=lambda t: t.dest,
+        carrier=lambda t: t.carrier,
+    )
+    .with_measures(
+        total_flights=lambda t: t.count(),
+        avg_distance=lambda t: t.distance.mean(),
+    )
 )
 
 # Create and run the MCP server
 mcp_server = MCPSemanticModel(
-    models={"flights": flights_sm},
+    models={"flights": flights},
     name="Flight Data Server"
 )
 
@@ -663,17 +844,29 @@ BSL supports multiple output formats including interactive charts, static images
 Here's a minimal example showing how to create a chart with custom styling:
 
 ```python
-from examples.example_basic import flights_sm
+from boring_semantic_layer.semantic_api import to_semantic_table
+import ibis
+
+con = ibis.duckdb.connect(":memory:")
+flights_tbl = con.read_parquet("flights.parquet")
+
+flights = (
+    to_semantic_table(flights_tbl, name="flights")
+    .with_dimensions(origin=lambda t: t.origin)
+    .with_measures(flight_count=lambda t: t.count())
+)
 
 # Query with custom styling
-chart = flights_sm.query(
-    dimensions=["origin"],
-    measures=["flight_count"],
-    limit=5
-).chart(spec={
-    "mark": {"type": "bar", "color": "steelblue"},
-    "title": "Flights by Origin"
-})
+chart = (
+    flights
+    .group_by("origin")
+    .aggregate("flight_count")
+    .limit(5)
+    .chart(spec={
+        "mark": {"type": "bar", "color": "steelblue"},
+        "title": "Flights by Origin"
+    })
+)
 ```
 
 ![Quick Start Chart](docs/chart_quickstart.png)
@@ -734,14 +927,23 @@ Here are examples showing different chart types and customization options:
 BSL automatically creates a bar chart for categorical data:
 
 ```python
-from examples.example_basic import flights_sm
+from boring_semantic_layer.semantic_api import to_semantic_table
+from ibis import _
+
+# Assuming flights table is already defined
+flights = (
+    to_semantic_table(flights_tbl, name="flights")
+    .with_dimensions(destination=lambda t: t.destination)
+    .with_measures(flight_count=lambda t: t.count())
+)
 
 # Query top destinations by flight count
-query = flights_sm.query(
-    dimensions=["destination"],
-    measures=["flight_count"],
-    order_by=[("flight_count", "desc")],
-    limit=10
+query = (
+    flights
+    .group_by("destination")
+    .aggregate("flight_count")
+    .order_by(_.flight_count.desc())
+    .limit(10)
 )
 
 # Auto-detects bar chart (Altair)
@@ -758,12 +960,25 @@ plotly_chart = query.chart(backend="plotly")
 For time-based queries, BSL automatically creates line charts with proper time formatting:
 
 ```python
+# Define flights with time dimension
+flights = (
+    to_semantic_table(flights_tbl, name="flights")
+    .with_dimensions(
+        arr_time={
+            "expr": lambda t: t.arr_time,
+            "is_time_dimension": True,
+            "smallest_time_grain": "TIME_GRAIN_DAY"
+        }
+    )
+    .with_measures(flight_count=lambda t: t.count())
+)
+
 # Time series query
-time_query = flights_sm.query(
-    dimensions=["arr_time"],
-    measures=["flight_count"],
-    time_range={"start": "2003-01-01", "end": "2003-03-31"},
-    time_grain="TIME_GRAIN_WEEK"
+time_query = (
+    flights
+    .filter(lambda t: t.arr_time.between("2003-01-01", "2003-03-31"))
+    .group_by("arr_time")
+    .aggregate("flight_count")
 )
 
 # Auto-detects time series line chart (Altair)
@@ -780,11 +995,21 @@ plotly_chart = time_query.chart(backend="plotly")
 When querying two categorical dimensions with a measure, BSL creates a heatmap:
 
 ```python
+flights = (
+    to_semantic_table(flights_tbl, name="flights")
+    .with_dimensions(
+        destination=lambda t: t.destination,
+        origin=lambda t: t.origin
+    )
+    .with_measures(flight_count=lambda t: t.count())
+)
+
 # Two dimensions create a heatmap
-heatmap_query = flights_sm.query(
-    dimensions=["destination", "origin"],
-    measures=["flight_count"],
-    limit=50
+heatmap_query = (
+    flights
+    .group_by("destination", "origin")
+    .aggregate("flight_count")
+    .limit(50)
 )
 
 # Auto-detects heatmap with custom sizing (Altair)
@@ -804,12 +1029,21 @@ plotly_chart = heatmap_query.chart(backend="plotly")
 Mix your preferences with BSL's auto-detection by specifying only what you want to change:
 
 ```python
+from ibis import _
+
+flights = (
+    to_semantic_table(flights_tbl, name="flights")
+    .with_dimensions(destination=lambda t: t.destination)
+    .with_measures(avg_distance=lambda t: t.distance.mean())
+)
+
 # Change only the mark type, keep auto-detected encoding
-line_query = flights_sm.query(
-    dimensions=["destination"],
-    measures=["avg_distance"],
-    order_by=[("avg_distance", "desc")],
-    limit=15
+line_query = (
+    flights
+    .group_by("destination")
+    .aggregate("avg_distance")
+    .order_by(_.avg_distance.desc())
+    .limit(15)
 )
 
 # Just change to line chart, encoding auto-detected
@@ -823,12 +1057,33 @@ chart = line_query.chart(spec={"mark": "line"})
 For complete control, specify everything you need:
 
 ```python
+from ibis import _
+
+# Assuming carriers table and join are already defined
+carriers = (
+    to_semantic_table(carriers_tbl, name="carriers")
+    .with_dimensions(
+        code=lambda t: t.code,
+        name=lambda t: t.name
+    )
+    .with_measures(carrier_count=lambda t: t.count())
+)
+
+flights = (
+    to_semantic_table(flights_tbl, name="flights")
+    .with_dimensions(carrier=lambda t: t.carrier)
+    .with_measures(flight_count=lambda t: t.count())
+)
+
+flights_with_carriers = flights.join_one(carriers, left_on="carrier", right_on="code")
+
 # Full custom specification
-custom_query = flights_sm.query(
-    dimensions=["carriers.name"],
-    measures=["flight_count"],
-    order_by=[("flight_count", "desc")],
-    limit=8
+custom_query = (
+    flights_with_carriers
+    .group_by("name")
+    .aggregate("flight_count")
+    .order_by(_.flight_count.desc())
+    .limit(8)
 )
 
 # Complete custom chart specification
@@ -836,7 +1091,7 @@ chart = custom_query.chart(spec={
     "title": "Top Airlines by Flight Count",
     "mark": {"type": "bar", "color": "steelblue"},
     "encoding": {
-        "x": {"field": "carriers_name", "type": "nominal", "sort": "-y"},
+        "x": {"field": "name", "type": "nominal", "sort": "-y"},
         "y": {"field": "flight_count", "type": "quantitative"}
     },
     "width": 500,
@@ -865,114 +1120,172 @@ with open("my_chart.png", "wb") as f:
 
 ## Reference
 
-### SemanticModel
+### SemanticTable API
 
-| Field                 | Type                                 | Required | Allowed Values / Notes                                                                                                                                                      |
-| --------------------- | ------------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `table`               | Ibis table expression                | Yes      | Any Ibis table or view                                                                                                                                                      |
-| `dimensions`          | dict[str, callable or DimensionSpec] | Yes      | Keys: dimension names; Values: functions mapping table → column OR DimensionSpec objects with descriptions                                                                  |
-| `measures`            | dict[str, callable or MeasureSpec]   | Yes      | Keys: measure names; Values: functions mapping table → aggregation OR MeasureSpec objects with descriptions                                                                 |
-| `description`         | str                                  | No       | Optional description of the model                                                                                                                                           |
-| `joins`               | dict[str, Join]                      | No       | Keys: join alias; Values: `Join` object (see below)                                                                                                                         |
-| `primary_key`         | str                                  | No       | Name of the primary key dimension (required for certain join types)                                                                                                         |
-| `name`                | str                                  | No       | Optional model name (inferred from table if omitted)                                                                                                                        |
-| `time_dimension`      | str                                  | No       | Name of the column to use as the time dimension                                                                                                                             |
-| `smallest_time_grain` | str                                  | No       | One of:<br>`TIME_GRAIN_SECOND`, `TIME_GRAIN_MINUTE`, `TIME_GRAIN_HOUR`, `TIME_GRAIN_DAY`,<br>`TIME_GRAIN_WEEK`, `TIME_GRAIN_MONTH`, `TIME_GRAIN_QUARTER`, `TIME_GRAIN_YEAR` |
+The new semantic API provides a fluent interface for building and querying semantic tables.
 
-#### Spec Classes (for dimensions and measures with descriptions)
+#### Creating a Semantic Table
 
-**DimensionSpec:**
-| Field         | Type     | Required | Notes                                                 |
-| ------------- | -------- | -------- | ----------------------------------------------------- |
-| `expr`        | callable | Yes      | Function mapping table -> column expression           |
-| `description` | str      | No       | Human readable description (defaults to empty string) |
-
-**MeasureSpec:**
-| Field         | Type     | Required | Notes                                                 |
-| ------------- | -------- | -------- | ----------------------------------------------------- |
-| `expr`        | callable | Yes      | Function mapping table -> column expression           |
-| `description` | str      | No       | Human readable description (defaults to empty string) |
-
-**Example:**
 ```python
-from boring_semantic_layer import DimensionSpec, MeasureSpec
+from boring_semantic_layer.semantic_api import to_semantic_table
 
-# Define a dimension spec
-origin_dimension = DimensionSpec(
-    expr=lambda t: t.origin.upper(),
-    description='The airport origin code in upper case'
+table = to_semantic_table(ibis_table, name="table_name")
+```
+
+#### Adding Dimensions
+
+```python
+# Simple format (lambda)
+table = table.with_dimensions(
+    origin=lambda t: t.origin,
+    destination=lambda t: t.dest
 )
 
-# Define a measure spec
-avg_distance_measure = MeasureSpec(
-    expr=lambda t: t.distance.mean(),
-    description='Average flight distance in miles'
+# With descriptions (dict format)
+table = table.with_dimensions(
+    origin={
+        "expr": lambda t: t.origin,
+        "description": "Origin airport code"
+    }
+)
+
+# Time dimensions
+table = table.with_dimensions(
+    arr_time={
+        "expr": lambda t: t.arr_time,
+        "description": "Arrival timestamp",
+        "is_time_dimension": True,
+        "smallest_time_grain": "TIME_GRAIN_DAY"
+    }
 )
 ```
 
-#### Join object (for `joins`)
-- Use `Join.one(alias, model, with_)` for one-to-one/many-to-one
-- Use `Join.many(alias, model, with_)` for one-to-many
-- Use `Join.cross(alias, model)` for cross join
+**Dimension dict format:**
+| Field                 | Type     | Required | Notes                                                                                                                                                        |
+| --------------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `expr`                | callable | Yes      | Function mapping table → column expression                                                                                                                   |
+| `description`         | str      | No       | Human-readable description                                                                                                                                   |
+| `is_time_dimension`   | bool     | No       | Mark as a time dimension (default: False)                                                                                                                    |
+| `smallest_time_grain` | str      | No       | One of: `TIME_GRAIN_SECOND`, `TIME_GRAIN_MINUTE`, `TIME_GRAIN_HOUR`, `TIME_GRAIN_DAY`, `TIME_GRAIN_WEEK`, `TIME_GRAIN_MONTH`, `TIME_GRAIN_QUARTER`, `TIME_GRAIN_YEAR` |
 
----
-
-### Query (SemanticModel.query / QueryExpr)
-
-| Parameter    | Type                                           | Required | Allowed Values / Notes                                                                                                                                                      |
-| ------------ | ---------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dimensions` | list[str]                                      | No       | List of dimension names (can include joined fields, e.g. `"carriers.name"`)                                                                                                 |
-| `measures`   | list[str]                                      | No       | List of measure names (can include joined fields)                                                                                                                           |
-| `filters`    | list[dict/str/callable] or dict/str/callable   | No       | See below for filter formats and operators                                                                                                                                  |
-| `order_by`   | list[tuple[str, str]]                          | No       | List of (field, direction) tuples, e.g. `[("avg_delay", "desc")]`                                                                                                           |
-| `limit`      | int                                            | No       | Maximum number of rows to return                                                                                                                                            |
-| `time_range` | dict with `start` and `end` (ISO 8601 strings) | No       | Example: `{'start': '2024-01-01', 'end': '2024-12-31'}`                                                                                                                     |
-| `time_grain` | str                                            | No       | One of:<br>`TIME_GRAIN_SECOND`, `TIME_GRAIN_MINUTE`, `TIME_GRAIN_HOUR`, `TIME_GRAIN_DAY`,<br>`TIME_GRAIN_WEEK`, `TIME_GRAIN_MONTH`, `TIME_GRAIN_QUARTER`, `TIME_GRAIN_YEAR` |
-
-#### Filters
-
-- **Simple filter (dict):**
-  ```python
-  {"field": "origin", "operator": "=", "value": "JFK"}
-  ```
-- **Compound filter (dict):**
-  ```python
-  {
-    "operator": "AND",
-    "conditions": [
-      {"field": "origin", "operator": "in", "values": ["JFK", "LGA"]},
-      {"field": "year", "operator": ">", "value": 2010}
-    ]
-  }
-  ```
-- **Callable:** `lambda t: t.origin == 'JFK'`
-- **String:** `"_.origin == 'JFK'"`
-
-**Supported operators:** `=`, `!=`, `>`, `>=`, `<`, `<=`, `in`, `not in`, `like`, `not like`, `is null`, `is not null`, `AND`, `OR`
-
-#### Example
+#### Adding Measures
 
 ```python
-flights_sm.query(
-    dimensions=['origin', 'year'],
-    measures=['total_flights'],
-    filters=[
-        {"field": "origin", "operator": "in", "values": ["JFK", "LGA"]},
-        {"field": "year", "operator": ">", "value": 2010}
-    ],
-    order_by=[('total_flights', 'desc')],
-    limit=10,
-    time_range={'start': '2015-01-01', 'end': '2015-12-31'},
-    time_grain='TIME_GRAIN_MONTH'
+# Simple format (lambda)
+table = table.with_measures(
+    flight_count=lambda t: t.count(),
+    avg_distance=lambda t: t.distance.mean()
+)
+
+# With descriptions (dict format)
+table = table.with_measures(
+    flight_count={
+        "expr": lambda t: t.count(),
+        "description": "Total number of flights"
+    }
 )
 ```
 
-Example output:
+**Measure dict format:**
+| Field         | Type     | Required | Notes                                  |
+| ------------- | -------- | -------- | -------------------------------------- |
+| `expr`        | callable | Yes      | Function mapping table → aggregation   |
+| `description` | str      | No       | Human-readable description             |
 
-| origin | year | total_flights |
-| ------ | ---- | ------------- |
-| JFK    | 2015 | 350           |
-| LGA    | 2015 | 300           |
+#### Query Operations
+
+**Filtering:**
+```python
+filtered = table.filter(lambda t: t.origin == 'JFK')
+```
+
+**Grouping and Aggregating:**
+```python
+result = table.group_by("origin").aggregate("flight_count", "avg_distance")
+```
+
+**Ordering:**
+```python
+from ibis import _
+result = table.group_by("origin").aggregate("flight_count").order_by(_.flight_count.desc())
+```
+
+**Limiting:**
+```python
+result = table.group_by("origin").aggregate("flight_count").limit(10)
+```
+
+**Executing:**
+```python
+df = result.execute()
+```
+
+#### Joins
+
+**join_one (many-to-one):**
+```python
+joined = table.join_one(other_table, left_on="carrier", right_on="code")
+```
+
+**join_many (one-to-many):**
+```python
+joined = table.join_many(other_table, left_on="customer_id", right_on="customer_id")
+```
+
+**join_cross:**
+```python
+joined = table.join_cross(other_table)
+```
+
+### YAML Configuration Reference
+
+```yaml
+model_name:
+  table: table_reference
+  description: "Optional model description"
+
+  dimensions:
+    # Simple format
+    column_name: _.column_name
+
+    # With description
+    column_with_desc:
+      expr: _.column_name
+      description: "Column description"
+
+    # Time dimension
+    time_column:
+      expr: _.timestamp_column
+      description: "Timestamp column"
+      is_time_dimension: true
+      smallest_time_grain: "TIME_GRAIN_DAY"
+
+  measures:
+    # Simple format
+    count: _.count()
+
+    # With description
+    total:
+      expr: _.amount.sum()
+      description: "Total amount"
+
+  joins:
+    joined_table_alias:
+      model: other_model_name
+      type: one  # one, many, or cross
+      left_on: local_column
+      right_on: remote_column
+```
+
+**Loading YAML:**
+```python
+from boring_semantic_layer.semantic_api import from_yaml
+
+models = from_yaml("config.yml", tables={
+    "table_reference": ibis_table
+})
+model = models["model_name"]
+```
 
 ### Chart API Reference
 
