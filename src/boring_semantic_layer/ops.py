@@ -230,9 +230,9 @@ class SemanticTableRelation(Relation):
         return self
 
 
-class SemanticFilter(Relation):
+class SemanticFilterRelation(Relation):
     source: Any
-    predicate: Callable  # Transformed to _CallableWrapper in __init__
+    predicate: Callable
 
     def __init__(self, source: Any, predicate: Callable) -> None:
         super().__init__(source=Relation.__coerce__(source), predicate=_ensure_wrapped(predicate))
@@ -244,18 +244,6 @@ class SemanticFilter(Relation):
     @property
     def schema(self) -> Schema:
         return self.source.schema
-
-    def filter(self, predicate: Callable) -> "SemanticFilter":
-        return SemanticFilter(source=self, predicate=predicate)
-
-    def group_by(self, *keys: str) -> "SemanticGroupBy":
-        return SemanticGroupBy(source=self, keys=keys)
-
-    def order_by(self, *keys: Any) -> "SemanticOrderBy":
-        return SemanticOrderBy(source=self, keys=keys)
-
-    def limit(self, n: int, offset: int = 0) -> "SemanticLimit":
-        return SemanticLimit(source=self, n=n, offset=offset)
 
     def to_ibis(self):
         from .lower import _Resolver
@@ -269,52 +257,8 @@ class SemanticFilter(Relation):
         pred = _resolve_expr(pred_fn, resolver)
         return base_tbl.filter(pred)
 
-    def execute(self):
-        return self.to_ibis().execute()
-
     def op(self):
         return self
-
-    def compile(self, **kwargs):
-        return self.to_ibis().compile(**kwargs)
-
-    def sql(self, **kwargs):
-        import ibis
-        return ibis.to_sql(self.to_ibis(), **kwargs)
-
-    def __getitem__(self, key):
-        return self.to_ibis()[key]
-
-    def pipe(self, func, *args, **kwargs):
-        return func(self, *args, **kwargs)
-
-    def as_table(self) -> "SemanticTable":
-        """Convert to SemanticTable, preserving semantic metadata from source."""
-        all_roots = _find_all_root_models(self.source)
-
-        if all_roots:
-            # Preserve semantic metadata from source
-            dims = _get_merged_fields(all_roots, 'dims')
-            measures = _get_merged_fields(all_roots, 'measures')
-            calc_measures = _get_merged_fields(all_roots, 'calc_measures')
-
-            return _semantic_table(
-                table=self.to_ibis(),
-                dimensions=dims,
-                measures=measures,
-                calc_measures=calc_measures
-            )
-        else:
-            # No semantic metadata in source
-            return _semantic_table(
-                table=self.to_ibis(),
-                dimensions={},
-                measures={},
-                calc_measures={}
-            )
-
-    def __repr__(self) -> str:
-        return "SemanticFilter(predicate=<function>)"
 
 
 class SemanticProject(Relation):
@@ -520,6 +464,7 @@ class SemanticAggregate(Relation):
         return SemanticLimit(source=self, n=n, offset=offset)
 
     def filter(self, predicate: Callable) -> "SemanticFilter":
+        from .expr import SemanticFilter
         return SemanticFilter(source=self, predicate=predicate)
 
     def join(self, other: "SemanticTable", on: Callable[[Any, Any], Any] | None = None, how: str = "inner") -> "SemanticJoin":
@@ -657,6 +602,7 @@ class SemanticMutate(Relation):
         return SemanticLimit(source=self, n=n, offset=offset)
 
     def filter(self, predicate: Callable) -> "SemanticFilter":
+        from .expr import SemanticFilter
         return SemanticFilter(source=self, predicate=predicate)
 
     def to_ibis(self):
@@ -810,6 +756,7 @@ class SemanticJoin(Relation):
         return SemanticGroupBy(source=self, keys=keys)
 
     def filter(self, predicate: Callable) -> "SemanticFilter":
+        from .expr import SemanticFilter
         return SemanticFilter(source=self, predicate=predicate)
 
     def join(self, other: "SemanticTable", on: Callable[[Any, Any], Any] | None = None, how: str = "inner") -> "SemanticJoin":
@@ -1247,6 +1194,7 @@ class SemanticIndex(Relation):
         return reduce(lambda acc, frag: acc.union(frag), fragments[1:], fragments[0])
 
     def filter(self, predicate: Callable) -> "SemanticFilter":
+        from .expr import SemanticFilter
         return SemanticFilter(source=self, predicate=predicate)
 
     def order_by(self, *keys: Any) -> "SemanticOrderBy":

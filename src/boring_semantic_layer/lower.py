@@ -7,7 +7,7 @@ from attrs import frozen, field
 from ibis.expr.sql import convert  # noqa: E402
 from boring_semantic_layer.ops import (  # noqa: E402
     SemanticAggregate,
-    SemanticFilter,
+    SemanticFilterRelation,
     SemanticGroupBy,
     SemanticJoin,
     SemanticMutate,
@@ -91,8 +91,8 @@ def _lower_semantic_table(node: SemanticTableRelation, catalog, *args):
     return convert(node.table, catalog=catalog)
 
 
-@convert.register(SemanticFilter)
-def _lower_semantic_filter(node: SemanticFilter, catalog, *args):
+@convert.register(SemanticFilterRelation)
+def _lower_semantic_filter(node: SemanticFilterRelation, catalog, *args):
     from boring_semantic_layer.ops import SemanticAggregate, _get_merged_fields
 
     all_roots = _find_all_root_models(node.source)

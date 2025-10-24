@@ -200,9 +200,7 @@ class SemanticTable(ir.Table):
             name=self.name
         )
 
-    def filter(self, predicate: Callable):
-        """Filter rows using a predicate."""
-        from .ops import SemanticFilter
+    def filter(self, predicate: Callable) -> "SemanticFilter":
         return SemanticFilter(source=self.op(), predicate=predicate)
 
     def group_by(self, *keys: str):
@@ -323,3 +321,75 @@ class SemanticTable(ir.Table):
         )
 
     # __repr__ inherited from ir.Table, uses custom formatter registered in lower.py
+
+
+class SemanticFilter(ir.Table):
+    """User-facing filter expression wrapping SemanticFilterRelation Operation."""
+
+    def __init__(self, source: Any, predicate: Callable) -> None:
+        from .ops import SemanticFilterRelation
+        op = SemanticFilterRelation(source=source, predicate=predicate)
+        super().__init__(op)
+
+    # Forward property accessors to Operation
+    @property
+    def source(self):
+        """Forward to Operation."""
+        return self.op().source
+
+    @property
+    def predicate(self):
+        """Forward to Operation."""
+        return self.op().predicate
+
+    @property
+    def values(self):
+        """Forward to Operation."""
+        return self.op().values
+
+    @property
+    def schema(self):
+        """Forward to Operation."""
+        return self.op().schema
+
+    def filter(self, predicate: Callable) -> "SemanticFilter":
+        return SemanticFilter(source=self.op(), predicate=predicate)
+
+    def group_by(self, *keys: str):
+        from .ops import SemanticGroupBy
+        return SemanticGroupBy(source=self.op(), keys=keys)
+
+    def order_by(self, *keys: Any):
+        from .ops import SemanticOrderBy
+        return SemanticOrderBy(source=self.op(), keys=keys)
+
+    def limit(self, n: int, offset: int = 0):
+        from .ops import SemanticLimit
+        return SemanticLimit(source=self.op(), n=n, offset=offset)
+
+    def execute(self):
+        """Execute via to_ibis() to ensure proper lowering."""
+        return self.op().to_ibis().execute()
+
+    def sql(self, **kwargs):
+        import ibis
+        return ibis.to_sql(self.op().to_ibis(), **kwargs)
+
+    def pipe(self, func, *args, **kwargs):
+        return func(self, *args, **kwargs)
+
+    def as_table(self) -> "SemanticTable":
+        from .ops import _find_all_root_models, _get_merged_fields
+
+        all_roots = _find_all_root_models(self.op().source)
+        return (SemanticTable(
+            table=self.op().to_ibis(),
+            dimensions=_get_merged_fields(all_roots, 'dims'),
+            measures=_get_merged_fields(all_roots, 'measures'),
+            calc_measures=_get_merged_fields(all_roots, 'calc_measures')
+        ) if all_roots else SemanticTable(
+            table=self.op().to_ibis(),
+            dimensions={},
+            measures={},
+            calc_measures={}
+        ))
