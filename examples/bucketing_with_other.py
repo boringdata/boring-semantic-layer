@@ -17,7 +17,6 @@ This is equivalent to Malloy's "Bucketing with 'Other'" pattern.
 
 import pandas as pd
 import ibis
-from ibis import _
 from boring_semantic_layer.api import to_semantic_table
 
 
@@ -29,25 +28,47 @@ def main():
     con = ibis.duckdb.connect(":memory:")
 
     # Airport data
-    airports_df = pd.DataFrame({
-        "code": [f"K{i:03d}" for i in range(100)],
-        "state": (
-            ["CO"] * 20 + ["CA"] * 18 + ["TX"] * 15 +
-            ["FL"] * 12 + ["AK"] * 10 + ["NY"] * 8 +
-            ["WA"] * 5 + ["OR"] * 4 + ["NV"] * 3 +
-            ["ID"] * 2 + ["MT"] * 1 + ["WY"] * 1 + ["UT"] * 1
-        ),
-        "elevation": (
-            [6500] * 20 + [1200] * 18 + [800] * 15 +
-            [50] * 12 + [1500] * 10 + [500] * 8 +
-            [1000] * 5 + [1100] * 4 + [4500] * 3 +
-            [4200] * 2 + [3800] * 1 + [6000] * 1 + [5200] * 1
-        ),
-        "fac_type": (
-            ["AIRPORT"] * 70 + ["HELIPORT"] * 15 +
-            ["SEAPLANE BASE"] * 10 + ["GLIDERPORT"] * 5
-        ),
-    })
+    airports_df = pd.DataFrame(
+        {
+            "code": [f"K{i:03d}" for i in range(100)],
+            "state": (
+                ["CO"] * 20
+                + ["CA"] * 18
+                + ["TX"] * 15
+                + ["FL"] * 12
+                + ["AK"] * 10
+                + ["NY"] * 8
+                + ["WA"] * 5
+                + ["OR"] * 4
+                + ["NV"] * 3
+                + ["ID"] * 2
+                + ["MT"] * 1
+                + ["WY"] * 1
+                + ["UT"] * 1
+            ),
+            "elevation": (
+                [6500] * 20
+                + [1200] * 18
+                + [800] * 15
+                + [50] * 12
+                + [1500] * 10
+                + [500] * 8
+                + [1000] * 5
+                + [1100] * 4
+                + [4500] * 3
+                + [4200] * 2
+                + [3800] * 1
+                + [6000] * 1
+                + [5200] * 1
+            ),
+            "fac_type": (
+                ["AIRPORT"] * 70
+                + ["HELIPORT"] * 15
+                + ["SEAPLANE BASE"] * 10
+                + ["GLIDERPORT"] * 5
+            ),
+        }
+    )
 
     airports_tbl = con.create_table("airports", airports_df)
 
@@ -76,8 +97,7 @@ def main():
 
     # Calculate everything in one query using window functions and case
     result = (
-        airports
-        .group_by("state")
+        airports.group_by("state")
         .aggregate("airport_count", "avg_elevation")
         .mutate(
             # Add ranking
@@ -86,9 +106,13 @@ def main():
             ),
             # Add bucket based on rank
             state_bucket=lambda t: ibis.case()
-                .when(ibis.rank().over(ibis.window(order_by=ibis.desc(t["airport_count"]))) <= 5, t.state)
-                .else_("OTHER")
-                .end()
+            .when(
+                ibis.rank().over(ibis.window(order_by=ibis.desc(t["airport_count"])))
+                <= 5,
+                t.state,
+            )
+            .else_("OTHER")
+            .end(),
         )
         .to_ibis()
         # Now do SQL-level aggregation for the bucketing
@@ -97,18 +121,20 @@ def main():
             airports=lambda t: t.airport_count.sum(),
             weighted_elevation=lambda t: (t.avg_elevation * t.airport_count).sum(),
         )
-        .mutate(
-            avg_elevation=lambda t: t.weighted_elevation / t.airports
-        )
+        .mutate(avg_elevation=lambda t: t.weighted_elevation / t.airports)
         .select("state_bucket", "airports", "avg_elevation")
         .order_by(ibis.desc("airports"))
         .execute()
     )
 
-    print(f"\nTop 5 states + OTHER bucket:")
+    print("\nTop 5 states + OTHER bucket:")
     print(result)
 
-    other_count = result[result["state_bucket"] == "OTHER"]["airports"].iloc[0] if "OTHER" in result["state_bucket"].values else 0
+    other_count = (
+        result[result["state_bucket"] == "OTHER"]["airports"].iloc[0]
+        if "OTHER" in result["state_bucket"].values
+        else 0
+    )
     print(f"\n✓ Top 5 states shown individually, {other_count} airports in OTHER")
 
     # Example 2: Top 3 States per Facility Type
@@ -118,17 +144,24 @@ def main():
 
     # Calculate everything in one query
     result = (
-        airports
-        .group_by("fac_type", "state")
+        airports.group_by("fac_type", "state")
         .aggregate("airport_count")
         .mutate(
             rank_in_type=lambda t: ibis.rank().over(
                 ibis.window(group_by="fac_type", order_by=ibis.desc(t["airport_count"]))
             ),
             state_bucket=lambda t: ibis.case()
-                .when(ibis.rank().over(ibis.window(group_by="fac_type", order_by=ibis.desc(t["airport_count"]))) <= 3, t.state)
-                .else_("OTHER")
-                .end()
+            .when(
+                ibis.rank().over(
+                    ibis.window(
+                        group_by="fac_type", order_by=ibis.desc(t["airport_count"])
+                    )
+                )
+                <= 3,
+                t.state,
+            )
+            .else_("OTHER")
+            .end(),
         )
         .to_ibis()
         .group_by("fac_type", "state_bucket")
@@ -150,26 +183,28 @@ def main():
 
     # Calculate cumulative percentage and bucket in one query
     temp_result = (
-        airports
-        .group_by("state")
+        airports.group_by("state")
         .aggregate("airport_count")
         .mutate(
-            cumsum=lambda t: t["airport_count"].sum().over(
+            cumsum=lambda t: t["airport_count"]
+            .sum()
+            .over(
                 ibis.window(
-                    order_by=ibis.desc(t["airport_count"]),
-                    preceding=None,
-                    following=0
+                    order_by=ibis.desc(t["airport_count"]), preceding=None, following=0
                 )
             ),
             total=lambda t: t.all(t["airport_count"]),
             cum_pct=lambda t: (
-                t["airport_count"].sum().over(
+                t["airport_count"]
+                .sum()
+                .over(
                     ibis.window(
                         order_by=ibis.desc(t["airport_count"]),
                         preceding=None,
-                        following=0
+                        following=0,
                     )
-                ) / t.all(t["airport_count"])
+                )
+                / t.all(t["airport_count"])
             ),
         )
         .to_ibis()
@@ -180,23 +215,20 @@ def main():
 
     # Bucket by 80% threshold
     result = (
-        temp_result
-        .mutate(
+        temp_result.mutate(
             state_bucket=lambda t: ibis.case()
-                .when(t.cum_pct <= 0.80, t.state)
-                .else_("OTHER")
-                .end()
+            .when(t.cum_pct <= 0.80, t.state)
+            .else_("OTHER")
+            .end()
         )
         .group_by("state_bucket")
         .aggregate(airports=lambda t: t.airport_count.sum())
-        .mutate(
-            pct=lambda t: t.airports / t.airports.sum().over(ibis.window()) * 100
-        )
+        .mutate(pct=lambda t: t.airports / t.airports.sum().over(ibis.window()) * 100)
         .order_by(ibis.desc("airports"))
         .execute()
     )
 
-    print(f"\nStates covering 80% + OTHER:")
+    print("\nStates covering 80% + OTHER:")
     print(result)
 
     top_count = len(result) - (1 if "OTHER" in result["state_bucket"].values else 0)
@@ -208,23 +240,28 @@ def main():
     print("-" * 80)
 
     result = (
-        airports
-        .group_by("state")
+        airports.group_by("state")
         .aggregate("airport_count")
         .mutate(
             rank=lambda t: ibis.rank().over(
                 ibis.window(order_by=ibis.desc(t["airport_count"]))
             ),
             label=lambda t: ibis.case()
-                .when(ibis.rank().over(ibis.window(order_by=ibis.desc(t["airport_count"]))) <= 6, t.state)
-                .else_("OTHER")
-                .end()
+            .when(
+                ibis.rank().over(ibis.window(order_by=ibis.desc(t["airport_count"])))
+                <= 6,
+                t.state,
+            )
+            .else_("OTHER")
+            .end(),
         )
         .to_ibis()
         .group_by("label")
         .aggregate(value=lambda t: t.airport_count.sum())
         .mutate(
-            percentage=lambda t: (t.value / t.value.sum().over(ibis.window()) * 100).round(1)
+            percentage=lambda t: (
+                t.value / t.value.sum().over(ibis.window()) * 100
+            ).round(1)
         )
         .order_by(ibis.desc("value"))
         .execute()

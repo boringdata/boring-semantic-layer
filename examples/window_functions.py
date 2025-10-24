@@ -54,7 +54,7 @@ def main():
     print(flights_df.head())
     print("...")
 
-    # Create semantic table
+    # Create semantic table with window function measures
     flights = (
         to_semantic_table(flights_tbl, name="daily_flights")
         .with_dimensions(
@@ -62,11 +62,11 @@ def main():
             origin=lambda t: t.origin,
         )
         .with_measures(
+            # Base measures
             daily_flights=lambda t: t.flight_count.sum(),
             mean_delay=lambda t: t.avg_delay.mean(),
         )
     )
-
     # Example 1: 7-day rolling average
     print("\n" + "-" * 80)
     print("Query 1: 7-Day Rolling Average of Flights")
@@ -231,7 +231,6 @@ def main():
     print("  • Rankings: .rank().over(window(order_by=...))")
     print("  • Group windows with group_by parameter")
     print("  • Combine with t.all() for comprehensive analytics")
-    print("\nNext: See 04_joins.py for joining semantic tables")
     print()
 
 
