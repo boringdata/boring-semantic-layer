@@ -614,3 +614,68 @@ class SemanticMutate(SemanticTable):
             measures={},
             calc_measures={}
         )
+
+
+class SemanticProject(SemanticTable):
+    """User-facing project expression wrapping SemanticProjectRelation Operation."""
+
+    def __init__(self, source: Any, fields: tuple[str, ...]) -> None:
+        from .ops import SemanticProjectRelation
+        op = SemanticProjectRelation(source=source, fields=fields)
+        super().__init__(op)
+
+    # Forward property accessors to Operation
+    @property
+    def source(self):
+        """Forward to Operation."""
+        return self.op().source
+
+    @property
+    def fields(self):
+        """Forward to Operation."""
+        return self.op().fields
+
+    @property
+    def values(self):
+        """Forward to Operation."""
+        return self.op().values
+
+    @property
+    def schema(self):
+        """Forward to Operation."""
+        return self.op().schema
+
+    # filter, group_by, order_by, limit, execute, sql, pipe inherited from SemanticTable
+
+    def as_table(self) -> "SemanticModel":
+        """Convert to SemanticModel, preserving only projected fields' metadata."""
+        from .ops import _find_all_root_models, _get_merged_fields
+
+        all_roots = _find_all_root_models(self.source)
+
+        if all_roots:
+            # Get all available semantic metadata
+            all_dims = _get_merged_fields(all_roots, 'dims')
+            all_measures = _get_merged_fields(all_roots, 'measures')
+            all_calc_measures = _get_merged_fields(all_roots, 'calc_measures')
+
+            # Filter to only include projected fields
+            projected_fields = set(self.fields)
+            filtered_dims = {k: v for k, v in all_dims.items() if k in projected_fields}
+            filtered_measures = {k: v for k, v in all_measures.items() if k in projected_fields}
+            filtered_calc_measures = {k: v for k, v in all_calc_measures.items() if k in projected_fields}
+
+            return SemanticModel(
+                table=self.op().to_ibis(),
+                dimensions=filtered_dims,
+                measures=filtered_measures,
+                calc_measures=filtered_calc_measures
+            )
+        else:
+            # No semantic metadata in source
+            return SemanticModel(
+                table=self.op().to_ibis(),
+                dimensions={},
+                measures={},
+                calc_measures={}
+            )

@@ -261,7 +261,7 @@ class SemanticFilterRelation(Relation):
         return self
 
 
-class SemanticProject(Relation):
+class SemanticProjectRelation(Relation):
     source: Any
     fields: tuple[str, ...]
 
@@ -302,55 +302,8 @@ class SemanticProject(Relation):
                 else tbl.select(dim_exprs + raw_exprs) if dim_exprs or raw_exprs
                 else tbl)
 
-    def execute(self):
-        return self.to_ibis().execute()
-
     def op(self):
         return self
-
-    def compile(self, **kwargs):
-        return self.to_ibis().compile(**kwargs)
-
-    def sql(self, **kwargs):
-        import ibis
-        return ibis.to_sql(self.to_ibis(), **kwargs)
-
-    def __getitem__(self, key):
-        return self.to_ibis()[key]
-
-    def pipe(self, func, *args, **kwargs):
-        return func(self, *args, **kwargs)
-
-    def as_table(self) -> "SemanticTable":
-        """Convert to SemanticTable, preserving only projected fields' metadata."""
-        all_roots = _find_all_root_models(self.source)
-
-        if all_roots:
-            # Get all available semantic metadata
-            all_dims = _get_merged_fields(all_roots, 'dims')
-            all_measures = _get_merged_fields(all_roots, 'measures')
-            all_calc_measures = _get_merged_fields(all_roots, 'calc_measures')
-
-            # Filter to only include projected fields
-            projected_fields = set(self.fields)
-            filtered_dims = {k: v for k, v in all_dims.items() if k in projected_fields}
-            filtered_measures = {k: v for k, v in all_measures.items() if k in projected_fields}
-            filtered_calc_measures = {k: v for k, v in all_calc_measures.items() if k in projected_fields}
-
-            return _semantic_table(
-                table=self.to_ibis(),
-                dimensions=filtered_dims,
-                measures=filtered_measures,
-                calc_measures=filtered_calc_measures
-            )
-        else:
-            # No semantic metadata in source
-            return _semantic_table(
-                table=self.to_ibis(),
-                dimensions={},
-                measures={},
-                calc_measures={}
-            )
 
 
 class SemanticGroupByRelation(Relation):

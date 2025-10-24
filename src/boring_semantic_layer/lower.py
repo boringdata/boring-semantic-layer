@@ -12,7 +12,7 @@ from boring_semantic_layer.ops import (  # noqa: E402
     SemanticJoin,
     SemanticMutateRelation,
     SemanticOrderByRelation,
-    SemanticProject,
+    SemanticProjectRelation,
     SemanticTableRelation,
     SemanticLimitRelation,
     _find_all_root_models,
@@ -184,6 +184,23 @@ def _format_semantic_mutate(op: SemanticMutateRelation, **kwargs):
     return '\n'.join(lines)
 
 
+# Register custom formatter for SemanticProjectRelation
+@fmt.fmt.register(SemanticProjectRelation)
+def _format_semantic_project(op: SemanticProjectRelation, **kwargs):
+    """Format SemanticProjectRelation showing source and fields."""
+    source_type = type(op.source).__name__
+    fields = list(op.fields)
+    fields_str = ', '.join(repr(f) for f in fields[:5])
+    if len(fields) > 5:
+        fields_str += f', ... ({len(fields)} total)'
+
+    lines = ["SemanticProjectRelation"]
+    lines.append(f"  source: {source_type}")
+    lines.append(f"  fields: [{fields_str}]")
+
+    return '\n'.join(lines)
+
+
 @frozen
 class _Resolver:
     _t: Any
@@ -228,8 +245,8 @@ def _lower_semantic_filter(node: SemanticFilterRelation, catalog, *args):
     return base_tbl.filter(pred)
 
 
-@convert.register(SemanticProject)
-def _lower_semantic_project(node: SemanticProject, catalog, *args):
+@convert.register(SemanticProjectRelation)
+def _lower_semantic_project(node: SemanticProjectRelation, catalog, *args):
     from boring_semantic_layer.ops import _get_merged_fields
 
     all_roots = _find_all_root_models(node.source)
