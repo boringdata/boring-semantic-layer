@@ -529,15 +529,15 @@ class TestDictBasedMetadata:
         # Join and verify descriptions are preserved with prefixes
         joined = flights_st.join_one(carriers_st, "carrier", "code")
         assert (
-            joined._dims_dict()["flights__carrier"].description
+            joined._dims_dict()["flights.carrier"].description
             == "Airline carrier code"
         )
         assert (
-            joined._dims_dict()["carriers__code"].description
+            joined._dims_dict()["carriers.code"].description
             == "Carrier code for joining"
         )
         assert (
-            joined._measures_dict()["flights__flight_count"].description
+            joined._measures_dict()["flights.flight_count"].description
             == "Total number of flights"
         )
 
