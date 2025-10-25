@@ -1,6 +1,6 @@
 """MCP functionality for semantic models."""
 
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 from typing import Any, Optional, Tuple, Mapping, Sequence
 from .query import _find_time_dimension
 

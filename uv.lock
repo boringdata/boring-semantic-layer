@@ -119,7 +119,7 @@ wheels = [
 
 [[package]]
 name = "boring-semantic-layer"
-version = "0.1.10"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "attrs" },
@@ -131,11 +131,11 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "altair" },
+    { name = "duckdb" },
     { name = "fastmcp" },
     { name = "ibis-framework", extra = ["duckdb"] },
     { name = "kaleido" },
     { name = "malloy" },
-    { name = "mcp" },
     { name = "pandas" },
     { name = "plotly" },
     { name = "pre-commit" },
@@ -146,12 +146,12 @@ dev = [
     { name = "xorq" },
 ]
 examples = [
+    { name = "duckdb" },
     { name = "ibis-framework", extra = ["duckdb"] },
     { name = "xorq" },
 ]
-mcp = [
+fastmcp = [
     { name = "fastmcp" },
-    { name = "mcp" },
 ]
 viz-altair = [
     { name = "altair" },
@@ -174,14 +174,13 @@ dev = [
 requires-dist = [
     { name = "altair", marker = "extra == 'viz-altair'", specifier = ">=5.0.0" },
     { name = "attrs", specifier = ">=25.3.0" },
-    { name = "boring-semantic-layer", extras = ["mcp", "examples", "xorq", "viz-altair", "viz-plotly"], marker = "extra == 'dev'" },
-    { name = "fastmcp", marker = "extra == 'dev'", specifier = ">=2.12.5" },
-    { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=2.12.5" },
+    { name = "boring-semantic-layer", extras = ["fastmcp", "examples", "xorq", "viz-altair", "viz-plotly"], marker = "extra == 'dev'" },
+    { name = "duckdb", marker = "extra == 'examples'", specifier = "<1.4" },
+    { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=2.12.4" },
     { name = "ibis-framework" },
     { name = "ibis-framework", extras = ["duckdb"], marker = "extra == 'examples'", specifier = ">=10.6.0" },
     { name = "kaleido", marker = "extra == 'viz-plotly'" },
     { name = "malloy", marker = "extra == 'dev'", specifier = ">=0.1.0" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.10.1" },
     { name = "packaging" },
     { name = "pandas", marker = "extra == 'dev'", specifier = ">=2.3.0" },
     { name = "plotly", marker = "extra == 'viz-plotly'", specifier = ">=6.3.0" },
@@ -194,7 +193,7 @@ requires-dist = [
     { name = "xorq", marker = "extra == 'examples'" },
     { name = "xorq", marker = "extra == 'xorq'" },
 ]
-provides-extras = ["mcp", "examples", "xorq", "viz-altair", "viz-plotly", "dev"]
+provides-extras = ["examples", "xorq", "viz-altair", "viz-plotly", "dev", "fastmcp"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "ipython", specifier = ">=8.37.0" }]

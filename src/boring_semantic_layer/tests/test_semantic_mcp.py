@@ -3,6 +3,7 @@
 import pytest
 import pandas as pd
 import ibis
+import json
 
 from boring_semantic_layer import MCPSemanticModel, to_semantic_table
 from fastmcp import Client
@@ -109,7 +110,7 @@ class TestListModels:
 
         async with Client(mcp) as client:
             result = await client.call_tool("list_models", {})
-            models = result.structured_content["result"]
+            models = json.loads(result.content[0].text)
 
             assert "flights" in models
             assert "carriers" in models
@@ -122,7 +123,7 @@ class TestListModels:
 
         async with Client(mcp) as client:
             result = await client.call_tool("list_models", {})
-            models = result.structured_content["result"]
+            models = json.loads(result.content[0].text)
 
             assert models == {}
 
@@ -137,7 +138,7 @@ class TestGetModel:
 
         async with Client(mcp) as client:
             result = await client.call_tool("get_model", {"model_name": "flights"})
-            model_info = result.structured_content["result"]
+            model_info = json.loads(result.content[0].text)
 
             assert model_info["name"] == "flights"
             assert "origin" in model_info["dimensions"]
@@ -175,7 +176,7 @@ class TestGetTimeRange:
 
         async with Client(mcp) as client:
             result = await client.call_tool("get_time_range", {"model_name": "flights"})
-            time_range = result.structured_content["result"]
+            time_range = json.loads(result.content[0].text)
 
             assert "start" in time_range
             assert "end" in time_range

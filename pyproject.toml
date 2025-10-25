@@ -1,6 +1,6 @@
 [project]
 name = "boring-semantic-layer"
-version = "0.1.10"
+version = "0.2.0"
 description = "A boring semantic layer built with ibis"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -11,15 +11,18 @@ dependencies = [
     "PyYAML>=6.0",
 ]
 urls = { Homepage = "https://github.com/boringdata/boring-semantic-layer/tree/main" }
+license = "MIT"
+license-files = [
+    "LICENSE",
+]
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.10.1", "fastmcp>=2.12.5"]
-examples = ["ibis-framework[duckdb]>=10.6.0", "xorq"]
+examples = ["ibis-framework[duckdb]>=10.6.0", "xorq", "duckdb<1.4"]
 xorq = ["xorq"]
 viz-altair = ["altair>=5.0.0"]
 viz-plotly = ["plotly>=6.3.0", "kaleido"]
 dev = [
-    "boring-semantic-layer[mcp,examples,xorq,viz-altair,viz-plotly]",
+    "boring-semantic-layer[fastmcp,examples,xorq,viz-altair,viz-plotly]",
     "ruff>=0.6.7",
     "pre-commit>=4.2.0",
     "pytest",
@@ -27,7 +30,9 @@ dev = [
     "urllib3>=2.2.3",
     "pytest-asyncio",
     "malloy>=0.1.0", # Malloy tests
-    "fastmcp>=2.12.5", # MCP tests
+]
+fastmcp = [
+    "fastmcp>=2.12.4",
 ]
 
 [build-system]
