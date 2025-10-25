@@ -97,7 +97,7 @@ def _find_time_dimension(semantic_table: Any, dimensions: List[str]) -> Optional
 
     Uses functional composition to find matching dimension.
     """
-    dims_dict = semantic_table._dims_dict()
+    dims_dict = semantic_table.get_dimensions()
     is_time_dim = _is_time_dimension(dims_dict)
     return next((dim for dim in dimensions if is_time_dim(dim)), None)
 
@@ -351,7 +351,7 @@ def query(
 
         # Find time dimensions and apply grain transformation
         time_dims_to_transform = {}
-        dims_dict = result._dims_dict()
+        dims_dict = result.get_dimensions()
         for dim_name in dimensions:
             if dim_name in dims_dict:
                 dim_obj = dims_dict[dim_name]

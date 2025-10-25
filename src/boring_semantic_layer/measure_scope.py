@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import Any, Iterable, Union
-from dataclasses import dataclass
 from attrs import frozen, field
 from toolz import curry
 
@@ -18,17 +17,17 @@ class _Node:
     def __rtruediv__(self, o: Any): return BinOp("div", o, self)
 
 
-@dataclass(frozen=True)
+@frozen
 class MeasureRef(_Node):
     name: str
 
 
-@dataclass(frozen=True)
+@frozen
 class AllOf(_Node):
     ref: MeasureRef
 
 
-@dataclass(frozen=True)
+@frozen
 class BinOp(_Node):
     op: str
     left: Any

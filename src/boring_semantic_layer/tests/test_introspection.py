@@ -1,7 +1,7 @@
 """
 Test introspection capabilities of SemanticTable.
 
-Tests the .dims and .measures properties that allow inspecting
+Tests the .dimensions and .measures properties that allow inspecting
 what dimensions and measures are available on a semantic table.
 """
 import pandas as pd
@@ -12,19 +12,19 @@ from boring_semantic_layer import to_semantic_table
 
 
 def test_empty_semantic_table():
-    """Test that an empty semantic table has no dims or measures."""
+    """Test that an empty semantic table has no dimensions or measures."""
     con = ibis.duckdb.connect(":memory:")
     df = pd.DataFrame({"col1": [1, 2, 3]})
     tbl = con.create_table("test", df)
 
     st = to_semantic_table(tbl, "test")
 
-    assert st.dims == ()
+    assert st.dimensions == ()
     assert st.measures == ()
 
 
 def test_dims_property():
-    """Test that dims property returns list of dimension names."""
+    """Test that dimensions property returns list of dimension names."""
     con = ibis.duckdb.connect(":memory:")
     df = pd.DataFrame({"carrier": ["AA", "UA"], "date": ["2024-01-01", "2024-01-02"]})
     tbl = con.create_table("flights", df)
@@ -35,7 +35,7 @@ def test_dims_property():
         month=lambda t: t.date[5:7]
     )
 
-    assert set(st.dims) == {"carrier", "year", "month"}
+    assert set(st.dimensions) == {"carrier", "year", "month"}
 
 
 def test_measures_property_base_only():
@@ -100,7 +100,7 @@ def test_measures_property_mixed():
 
 
 def test_dims_and_measures_together():
-    """Test that both dims and measures can be inspected together."""
+    """Test that both dimensions and measures can be inspected together."""
     con = ibis.duckdb.connect(":memory:")
     df = pd.DataFrame({
         "carrier": ["AA", "UA"],
@@ -117,12 +117,12 @@ def test_dims_and_measures_together():
         )
     )
 
-    assert st.dims == ("carrier",)
+    assert st.dimensions == ("carrier",)
     assert set(st.measures) == {"flight_count", "total_distance"}
 
 
 def test_dims_after_join():
-    """Test that dims property works correctly after joins with prefixing."""
+    """Test that dimensions property works correctly after joins with prefixing."""
     con = ibis.duckdb.connect(":memory:")
     flights_df = pd.DataFrame({"carrier": ["AA", "UA"]})
     carriers_df = pd.DataFrame({"code": ["AA", "UA"], "name": ["American", "United"]})
@@ -141,7 +141,7 @@ def test_dims_after_join():
     joined = flights_st.join(carriers_st, on=lambda f, c: f.carrier == c.code)
 
     # After join, dimensions should be prefixed
-    assert set(joined.dims) == {"flights.carrier", "carriers.code", "carriers.name"}
+    assert set(joined.dimensions) == {"flights.carrier", "carriers.code", "carriers.name"}
 
 
 def test_measures_after_join():
@@ -185,25 +185,25 @@ def test_measures_after_aggregate():
 
 
 def test_chaining_maintains_introspection():
-    """Test that dims and measures are updated correctly through method chaining."""
+    """Test that dimensions and measures are updated correctly through method chaining."""
     con = ibis.duckdb.connect(":memory:")
     df = pd.DataFrame({"carrier": ["AA", "UA"], "distance": [100, 200]})
     tbl = con.create_table("flights", df)
 
     st = to_semantic_table(tbl, "flights")
-    assert st.dims == ()
+    assert st.dimensions == ()
     assert st.measures == ()
 
     st = st.with_dimensions(carrier=lambda t: t.carrier)
-    assert st.dims == ("carrier",)
+    assert st.dimensions == ("carrier",)
     assert st.measures == ()
 
     st = st.with_measures(flight_count=lambda t: t.count())
-    assert st.dims == ("carrier",)
+    assert st.dimensions == ("carrier",)
     assert st.measures == ("flight_count",)
 
     st = st.with_measures(total_distance=lambda t: t.distance.sum())
-    assert st.dims == ("carrier",)
+    assert st.dimensions == ("carrier",)
     assert set(st.measures) == {"flight_count", "total_distance"}
 
 
@@ -233,7 +233,7 @@ def test_introspection_with_inline_measures():
 
 
 def test_introspection_preserves_definition_order():
-    """Test that dims preserve definition order."""
+    """Test that dimensions preserve definition order."""
     con = ibis.duckdb.connect(":memory:")
     df = pd.DataFrame({"a": [1], "b": [2], "c": [3]})
     tbl = con.create_table("test", df)
@@ -245,4 +245,4 @@ def test_introspection_preserves_definition_order():
     )
 
     # Dict keys preserve insertion order in Python 3.7+
-    assert st.dims == ("dim_a", "dim_b", "dim_c")
+    assert st.dimensions == ("dim_a", "dim_b", "dim_c")

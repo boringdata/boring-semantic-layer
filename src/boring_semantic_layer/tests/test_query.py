@@ -214,7 +214,7 @@ class TestTimeDimensions:
             }
         )
 
-        dims_dict = st._dims_dict()
+        dims_dict = st.get_dimensions()
         assert dims_dict["order_date"].is_time_dimension is True
         assert dims_dict["order_date"].smallest_time_grain == "day"
 

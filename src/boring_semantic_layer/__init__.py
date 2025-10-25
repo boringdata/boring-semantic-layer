@@ -2,8 +2,8 @@
 Semantic API layer on top of external ibis.
 """
 
-# Import lower to register convert dispatch handlers for semantic operations
-from . import lower  # noqa: F401
+# Import convert to register convert dispatch handlers for semantic operations
+from . import convert  # noqa: F401
 
 # Main API exports
 from .api import (

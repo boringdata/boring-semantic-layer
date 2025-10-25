@@ -11,7 +11,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 from ibis.common.collections import FrozenDict
 from ibis.expr import types as ir
 
-from .ops import Dimension, Measure, SemanticTableRelation
+from .ops import Dimension, Measure, SemanticTableOp
 
 
 def to_ibis(expr):
@@ -21,7 +21,7 @@ def to_ibis(expr):
     Works with both Expression and Operation objects.
 
     Args:
-        expr: SemanticTable expression or SemanticRelation operation
+        expr: SemanticTable expression or Semantic operation
 
     Returns:
         Ibis Table expression
@@ -99,13 +99,13 @@ def _derive_name(table: Any) -> Optional[str]:
 class SemanticModel(SemanticTable):
     """User-facing semantic model with dimensions and measures.
 
-    This is an Expression wrapper around SemanticTableRelation. It provides:
+    This is an Expression wrapper around SemanticTableOp. It provides:
     - Flexible input types (Callable, dict, Dimension)
     - User-facing methods (with_dimensions, with_measures, etc.)
     - Type transformations from flexible inputs to strict Operation types
     - Full Ibis Table API (execute, compile, etc.) inherited from SemanticTable
 
-    The underlying Operation (SemanticTableRelation) is the internal IR with strict,
+    The underlying Operation (SemanticTableOp) is the internal IR with strict,
     concrete types.
     """
 
@@ -144,7 +144,7 @@ class SemanticModel(SemanticTable):
         # This avoids redundant .op() → .to_expr() roundtrips
 
         # Create the Operation with strict types
-        op = SemanticTableRelation(
+        op = SemanticTableOp(
             table=table,  # Pass expression as-is
             dimensions=dims,
             measures=meas,
@@ -155,83 +155,71 @@ class SemanticModel(SemanticTable):
         # Initialize parent Table class with our operation
         super().__init__(op)
 
-    # Forward property accessors to Operation
     # Note: .op() is inherited from ir.Table parent class
     @property
     def values(self):
-        """Forward to Operation."""
         return self.op().values
 
     @property
     def schema(self):
-        """Forward to Operation."""
         return self.op().schema
 
     @property
     def json_definition(self):
-        """Forward to Operation."""
         return self.op().json_definition
 
     @property
-    def dims(self):
-        """Forward to Operation."""
-        return self.op().dims
-
-    @property
-    def _dims(self):
-        """Forward to Operation."""
-        return self.op()._dims
-
-    @property
-    def _base_measures(self):
-        """Forward to Operation."""
-        return self.op()._base_measures
-
-    @property
-    def _calc_measures(self):
-        """Forward to Operation."""
-        return self.op()._calc_measures
-
-    @property
     def measures(self):
-        """Forward to Operation."""
         return self.op().measures
 
     @property
     def name(self):
-        """Forward to Operation."""
         return self.op().name
 
     @property
     def dimensions(self):
-        """Forward to Operation."""
+        """Get tuple of dimension names."""
         return self.op().dimensions
+
+    def get_dimensions(self):
+        """Get dictionary of dimensions with metadata."""
+        return self.op().get_dimensions()
+
+    def get_measures(self):
+        """Get dictionary of base measures with metadata."""
+        return self.op().get_measures()
+
+    def get_calculated_measures(self):
+        """Get dictionary of calculated measures with metadata."""
+        return self.op().get_calculated_measures()
+
+    @property
+    def _dims(self):
+        """Internal: Forward to Operation._dims (dict of Dimension objects)."""
+        return self.op()._dims
+
+    @property
+    def _base_measures(self):
+        """Internal: Forward to Operation._base_measures."""
+        return self.op()._base_measures
+
+    @property
+    def _calc_measures(self):
+        """Internal: Forward to Operation._calc_measures."""
+        return self.op()._calc_measures
 
     @property
     def table(self):
-        """Forward to Operation."""
         return self.op().table
-
-    def _dims_dict(self):
-        """Forward to Operation."""
-        return self.op()._dims_dict()
-
-    def _measures_dict(self):
-        """Forward to Operation."""
-        return self.op()._measures_dict()
-
-    def _calc_measures_dict(self):
-        """Forward to Operation."""
-        return self.op()._calc_measures_dict()
 
     # User-facing methods
     def with_dimensions(self, **dims) -> "SemanticModel":
         """Add or update dimensions."""
         return SemanticModel(
-            table=self.op().table,  # Already an expression
-            dimensions={**self._dims_dict(), **dims},
-            measures=self._measures_dict(),
-            calc_measures=self._calc_measures_dict(),
+            table=self.op().table,
+            dimensions={**self.get_dimensions(), **dims},
+            measures=self.get_measures(),
+            calc_measures=self.get_calculated_measures(),
             name=self.name
         )
 
@@ -240,11 +228,11 @@ class SemanticModel(SemanticTable):
         from .measure_scope import MeasureScope
         from .ops import _classify_measure
 
-        new_base_meas = dict(self._measures_dict())
-        new_calc_meas = dict(self._calc_measures_dict())
+        new_base_meas = dict(self.get_measures())
+        new_calc_meas = dict(self.get_calculated_measures())
 
         all_measure_names = tuple(new_base_meas.keys()) + tuple(new_calc_meas.keys()) + tuple(meas.keys())
-        base_tbl = self.op().table  # Already an expression
+        base_tbl = self.op().table
         scope = MeasureScope(_tbl=base_tbl, _known=all_measure_names)
 
         for name, fn_or_expr in meas.items():
@@ -252,26 +240,25 @@ class SemanticModel(SemanticTable):
             (new_calc_meas if kind == 'calc' else new_base_meas)[name] = value
 
         return SemanticModel(
-            table=self.op().table,  # Already an expression
-            dimensions=self._dims_dict(),
+            table=self.op().table,
+            dimensions=self.get_dimensions(),
             measures=new_base_meas,
             calc_measures=new_calc_meas,
             name=self.name
         )
 
-    # User-facing methods (filter, group_by, order_by, limit, pipe, sql, execute inherited from SemanticTable)
 
     def join(self, other: "SemanticModel", on: Callable[[Any, Any], Any] | None = None, how: str = "inner"):
         """Join with another semantic table."""
-        from .ops import SemanticJoin
+        from .ops import SemanticJoinOp
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how)
+        return SemanticJoinOp(left=self.op(), right=other_op, on=on, how=how)
 
     def join_one(self, other: "SemanticModel", left_on: str, right_on: str):
         """Inner join one-to-one or many-to-one."""
-        from .ops import SemanticJoin
+        from .ops import SemanticJoinOp
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(
+        return SemanticJoinOp(
             left=self.op(),
             right=other_op,
             on=lambda l, r: getattr(l, left_on) == getattr(r, right_on),
@@ -280,9 +267,9 @@ class SemanticModel(SemanticTable):
 
     def join_many(self, other: "SemanticModel", left_on: str, right_on: str):
         """Left join one-to-many."""
-        from .ops import SemanticJoin
+        from .ops import SemanticJoinOp
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(
+        return SemanticJoinOp(
             left=self.op(),
             right=other_op,
             on=lambda l, r: getattr(l, left_on) == getattr(r, right_on),
@@ -291,14 +278,14 @@ class SemanticModel(SemanticTable):
 
     def join_cross(self, other: "SemanticModel"):
         """Cross join."""
-        from .ops import SemanticJoin
+        from .ops import SemanticJoinOp
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(left=self.op(), right=other_op, on=None, how="cross")
+        return SemanticJoinOp(left=self.op(), right=other_op, on=None, how="cross")
 
     def index(self, selector: Any = None, by: Optional[str] = None, sample: Optional[int] = None):
         """Create an index for search/discovery."""
-        from .ops import SemanticIndex
-        return SemanticIndex(source=self.op(), selector=selector, by=by, sample=sample)
+        from .ops import SemanticIndexOp
+        return SemanticIndexOp(source=self.op(), selector=selector, by=by, sample=sample)
 
     def to_ibis(self):
         """Convert to Ibis expression."""
@@ -308,20 +295,18 @@ class SemanticModel(SemanticTable):
         """Return self as expression."""
         return self
 
-    # execute(), compile() are inherited from SemanticExpression
-    # But we can override if needed for custom behavior
 
     def __getitem__(self, key):
         """Get dimension or measure by name."""
-        dims_dict = self._dims_dict()
+        dims_dict = self.get_dimensions()
         if key in dims_dict:
             return dims_dict[key]
 
-        meas_dict = self._measures_dict()
+        meas_dict = self.get_measures()
         if key in meas_dict:
             return meas_dict[key]
 
-        calc_meas_dict = self._calc_measures_dict()
+        calc_meas_dict = self.get_calculated_measures()
         if key in calc_meas_dict:
             return calc_meas_dict[key]
 
@@ -354,7 +339,7 @@ class SemanticModel(SemanticTable):
         from .query import query as build_query
 
         return build_query(
-            semantic_table=self,  # Pass Expression, not Operation
+            semantic_table=self,
             dimensions=dimensions,
             measures=measures,
             filters=filters,
@@ -364,39 +349,33 @@ class SemanticModel(SemanticTable):
             time_range=time_range,
         )
 
-    # __repr__ inherited from ir.Table, uses custom formatter registered in lower.py
+    # __repr__ inherited from ir.Table, uses custom formatter registered in convert.py
 
 
 class SemanticFilter(SemanticTable):
-    """User-facing filter expression wrapping SemanticFilterRelation Operation."""
+    """User-facing filter expression wrapping SemanticFilterOp Operation."""
 
     def __init__(self, source: Any, predicate: Callable) -> None:
-        from .ops import SemanticFilterRelation
-        op = SemanticFilterRelation(source=source, predicate=predicate)
+        from .ops import SemanticFilterOp
+        op = SemanticFilterOp(source=source, predicate=predicate)
         super().__init__(op)
 
-    # Forward property accessors to Operation
     @property
     def source(self):
-        """Forward to Operation."""
         return self.op().source
 
     @property
     def predicate(self):
-        """Forward to Operation."""
         return self.op().predicate
 
     @property
     def values(self):
-        """Forward to Operation."""
         return self.op().values
 
     @property
     def schema(self):
-        """Forward to Operation."""
         return self.op().schema
 
-    # filter, group_by, order_by, limit, execute, sql, pipe inherited from SemanticTable
 
     def as_table(self) -> "SemanticModel":
         from .ops import _find_all_root_models, _get_merged_fields
@@ -416,35 +395,29 @@ class SemanticFilter(SemanticTable):
 
 
 class SemanticGroupBy(SemanticTable):
-    """User-facing group by expression wrapping SemanticGroupByRelation Operation."""
+    """User-facing group by expression wrapping SemanticGroupByOp Operation."""
 
     def __init__(self, source: Any, keys: tuple[str, ...]) -> None:
-        from .ops import SemanticGroupByRelation
-        op = SemanticGroupByRelation(source=source, keys=keys)
+        from .ops import SemanticGroupByOp
+        op = SemanticGroupByOp(source=source, keys=keys)
         super().__init__(op)
 
-    # Forward property accessors to Operation
     @property
     def source(self):
-        """Forward to Operation."""
         return self.op().source
 
     @property
     def keys(self):
-        """Forward to Operation."""
         return self.op().keys
 
     @property
     def values(self):
-        """Forward to Operation."""
         return self.op().values
 
     @property
     def schema(self):
-        """Forward to Operation."""
         return self.op().schema
 
-    # filter, group_by, order_by, limit, execute, sql, pipe inherited from SemanticTable
 
     def aggregate(self, *measure_names, **aliased):
         """Aggregate measures over grouped dimensions."""
@@ -461,11 +434,11 @@ class SemanticGroupBy(SemanticTable):
 
 
 class SemanticAggregate(SemanticTable):
-    """User-facing aggregate expression wrapping SemanticAggregateRelation Operation."""
+    """User-facing aggregate expression wrapping SemanticAggregateOp Operation."""
 
     def __init__(self, source: Any, keys: tuple[str, ...], aggs: dict[str, Any]) -> None:
-        from .ops import SemanticAggregateRelation
-        op = SemanticAggregateRelation(source=source, keys=keys, aggs=aggs)
+        from .ops import SemanticAggregateOp
+        op = SemanticAggregateOp(source=source, keys=keys, aggs=aggs)
         super().__init__(op)
 
     @property
@@ -496,25 +469,25 @@ class SemanticAggregate(SemanticTable):
         """Add or update columns after aggregation."""
         return SemanticMutate(source=self.op(), post=post)
 
-    def join(self, other: "SemanticModel", on: Any | None = None, how: str = "inner") -> "SemanticJoin":
+    def join(self, other: "SemanticModel", on: Any | None = None, how: str = "inner") -> "SemanticJoinOp":
         """Join with another semantic table."""
-        from .ops import SemanticJoin, _unwrap_semantic_table
-        return SemanticJoin(left=self.op(), right=_unwrap_semantic_table(other), on=on, how=how)
+        from .ops import SemanticJoinOp, _unwrap_semantic_table
+        return SemanticJoinOp(left=self.op(), right=_unwrap_semantic_table(other), on=on, how=how)
 
-    def join_one(self, other: "SemanticModel", left_on: str, right_on: str) -> "SemanticJoin":
+    def join_one(self, other: "SemanticModel", left_on: str, right_on: str) -> "SemanticJoinOp":
         """Join with a one-to-one relationship."""
-        from .ops import SemanticJoin, _unwrap_semantic_table
-        return SemanticJoin(
+        from .ops import SemanticJoinOp, _unwrap_semantic_table
+        return SemanticJoinOp(
             left=self.op(),
             right=_unwrap_semantic_table(other),
             on=lambda l, r: l[left_on] == r[right_on],
             how="inner"
         )
 
-    def join_many(self, other: "SemanticModel", left_on: str, right_on: str) -> "SemanticJoin":
+    def join_many(self, other: "SemanticModel", left_on: str, right_on: str) -> "SemanticJoinOp":
         """Join with a one-to-many relationship."""
-        from .ops import SemanticJoin, _unwrap_semantic_table
-        return SemanticJoin(
+        from .ops import SemanticJoinOp, _unwrap_semantic_table
+        return SemanticJoinOp(
             left=self.op(),
             right=_unwrap_semantic_table(other),
             on=lambda l, r: l[left_on] == r[right_on],
@@ -537,35 +510,29 @@ class SemanticAggregate(SemanticTable):
 
 
 class SemanticOrderBy(SemanticTable):
-    """User-facing order by expression wrapping SemanticOrderByRelation Operation."""
+    """User-facing order by expression wrapping SemanticOrderByOp Operation."""
 
     def __init__(self, source: Any, keys: tuple[Any, ...]) -> None:
-        from .ops import SemanticOrderByRelation
-        op = SemanticOrderByRelation(source=source, keys=keys)
+        from .ops import SemanticOrderByOp
+        op = SemanticOrderByOp(source=source, keys=keys)
         super().__init__(op)
 
-    # Forward property accessors to Operation
     @property
     def source(self):
-        """Forward to Operation."""
         return self.op().source
 
     @property
     def keys(self):
-        """Forward to Operation."""
         return self.op().keys
 
     @property
     def values(self):
-        """Forward to Operation."""
         return self.op().values
 
     @property
     def schema(self):
-        """Forward to Operation."""
         return self.op().schema
 
-    # filter, group_by, order_by, limit, execute, sql, pipe inherited from SemanticTable
 
     def as_table(self) -> "SemanticModel":
         """Convert to SemanticModel, preserving semantic metadata from source."""
@@ -600,40 +567,33 @@ class SemanticOrderBy(SemanticTable):
 
 
 class SemanticLimit(SemanticTable):
-    """User-facing limit expression wrapping SemanticLimitRelation Operation."""
+    """User-facing limit expression wrapping SemanticLimitOp Operation."""
 
     def __init__(self, source: Any, n: int, offset: int = 0) -> None:
-        from .ops import SemanticLimitRelation
-        op = SemanticLimitRelation(source=source, n=n, offset=offset)
+        from .ops import SemanticLimitOp
+        op = SemanticLimitOp(source=source, n=n, offset=offset)
         super().__init__(op)
 
-    # Forward property accessors to Operation
     @property
     def source(self):
-        """Forward to Operation."""
         return self.op().source
 
     @property
     def n(self):
-        """Forward to Operation."""
         return self.op().n
 
     @property
     def offset(self):
-        """Forward to Operation."""
         return self.op().offset
 
     @property
     def values(self):
-        """Forward to Operation."""
         return self.op().values
 
     @property
     def schema(self):
-        """Forward to Operation."""
         return self.op().schema
 
-    # filter, group_by, order_by, limit, execute, sql, pipe inherited from SemanticTable
 
     def as_table(self) -> "SemanticModel":
         """Convert to SemanticModel, preserving semantic metadata from source."""
@@ -667,35 +627,29 @@ class SemanticLimit(SemanticTable):
 
 
 class SemanticMutate(SemanticTable):
-    """User-facing mutate expression wrapping SemanticMutateRelation Operation."""
+    """User-facing mutate expression wrapping SemanticMutateOp Operation."""
 
     def __init__(self, source: Any, post: dict[str, Any] | None = None) -> None:
-        from .ops import SemanticMutateRelation
-        op = SemanticMutateRelation(source=source, post=post)
+        from .ops import SemanticMutateOp
+        op = SemanticMutateOp(source=source, post=post)
         super().__init__(op)
 
-    # Forward property accessors to Operation
     @property
     def source(self):
-        """Forward to Operation."""
         return self.op().source
 
     @property
     def post(self):
-        """Forward to Operation."""
         return self.op().post
 
     @property
     def values(self):
-        """Forward to Operation."""
         return self.op().values
 
     @property
     def schema(self):
-        """Forward to Operation."""
         return self.op().schema
 
-    # filter, group_by, order_by, limit, execute, sql, pipe inherited from SemanticTable
 
     def mutate(self, **post) -> "SemanticMutate":
         """Add or update columns."""
@@ -714,35 +668,29 @@ class SemanticMutate(SemanticTable):
 
 
 class SemanticProject(SemanticTable):
-    """User-facing project expression wrapping SemanticProjectRelation Operation."""
+    """User-facing project expression wrapping SemanticProjectOp Operation."""
 
     def __init__(self, source: Any, fields: tuple[str, ...]) -> None:
-        from .ops import SemanticProjectRelation
-        op = SemanticProjectRelation(source=source, fields=fields)
+        from .ops import SemanticProjectOp
+        op = SemanticProjectOp(source=source, fields=fields)
         super().__init__(op)
 
-    # Forward property accessors to Operation
     @property
     def source(self):
-        """Forward to Operation."""
         return self.op().source
 
     @property
     def fields(self):
-        """Forward to Operation."""
         return self.op().fields
 
     @property
     def values(self):
-        """Forward to Operation."""
         return self.op().values
 
     @property
     def schema(self):
-        """Forward to Operation."""
         return self.op().schema
 
-    # filter, group_by, order_by, limit, execute, sql, pipe inherited from SemanticTable
 
     def as_table(self) -> "SemanticModel":
         """Convert to SemanticModel, preserving only projected fields' metadata."""

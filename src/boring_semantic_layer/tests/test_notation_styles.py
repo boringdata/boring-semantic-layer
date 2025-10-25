@@ -349,9 +349,9 @@ class TestDictBasedMetadata:
         )
 
         # Verify metadata is stored
-        assert st._dims_dict()["carrier"].description == "Carrier code"
-        assert st._dims_dict()["distance"].description == "Flight distance in miles"
-        assert st._dims_dict()["distance"].is_time_dimension is False
+        assert st.get_dimensions()["carrier"].description == "Carrier code"
+        assert st.get_dimensions()["distance"].description == "Flight distance in miles"
+        assert st.get_dimensions()["distance"].is_time_dimension is False
 
         # Verify it still works in queries
         result = (
@@ -375,10 +375,10 @@ class TestDictBasedMetadata:
 
         # Verify metadata is stored
         assert (
-            st._measures_dict()["flight_count"].description == "Total number of flights"
+            st.get_measures()["flight_count"].description == "Total number of flights"
         )
         assert (
-            st._measures_dict()["total_distance"].description
+            st.get_measures()["total_distance"].description
             == "Sum of all flight distances"
         )
 
@@ -413,14 +413,14 @@ class TestDictBasedMetadata:
         )
 
         # Simple callable should have None description
-        assert st._dims_dict()["carrier"].description is None
+        assert st.get_dimensions()["carrier"].description is None
         # Dict should have description
-        assert st._dims_dict()["distance"].description == "Distance traveled"
+        assert st.get_dimensions()["distance"].description == "Distance traveled"
 
         # Same for measures
-        assert st._measures_dict()["flight_count"].description is None
+        assert st.get_measures()["flight_count"].description is None
         assert (
-            st._measures_dict()["avg_distance"].description == "Average flight distance"
+            st.get_measures()["avg_distance"].description == "Average flight distance"
         )
 
         # Both should work in queries
@@ -458,11 +458,11 @@ class TestDictBasedMetadata:
         filtered = flights_st.filter(lambda t: t.carrier == "AA")
         # SemanticFilter delegates to its source for dimensions and measures
         assert (
-            filtered.source._dims_dict()["carrier"].description
+            filtered.source.get_dimensions()["carrier"].description
             == "Airline carrier code"
         )
         assert (
-            filtered.source._measures_dict()["flight_count"].description
+            filtered.source.get_measures()["flight_count"].description
             == "Total number of flights"
         )
 
@@ -497,7 +497,7 @@ class TestDictBasedMetadata:
         # SemanticAggregate -> SemanticGroupBy -> SemanticTable chain
         # Access the root table through the chain
         assert (
-            aggregated.source.source._dims_dict()["carrier"].description
+            aggregated.source.source.get_dimensions()["carrier"].description
             == "Airline carrier code"
         )
 
@@ -529,15 +529,15 @@ class TestDictBasedMetadata:
         # Join and verify descriptions are preserved with prefixes
         joined = flights_st.join_one(carriers_st, "carrier", "code")
         assert (
-            joined._dims_dict()["flights.carrier"].description
+            joined.get_dimensions()["flights.carrier"].description
             == "Airline carrier code"
         )
         assert (
-            joined._dims_dict()["carriers.code"].description
+            joined.get_dimensions()["carriers.code"].description
             == "Carrier code for joining"
         )
         assert (
-            joined._measures_dict()["flights.flight_count"].description
+            joined.get_measures()["flights.flight_count"].description
             == "Total number of flights"
         )
 
@@ -560,15 +560,15 @@ class TestDictBasedMetadata:
         )
 
         # Verify time dimension metadata
-        assert st._dims_dict()["carrier"].is_time_dimension is False
-        assert st._dims_dict()["carrier"].smallest_time_grain is None
-        assert st._dims_dict()["distance"].is_time_dimension is False
-        assert st._dims_dict()["distance"].smallest_time_grain is None
+        assert st.get_dimensions()["carrier"].is_time_dimension is False
+        assert st.get_dimensions()["carrier"].smallest_time_grain is None
+        assert st.get_dimensions()["distance"].is_time_dimension is False
+        assert st.get_dimensions()["distance"].smallest_time_grain is None
 
         # After filter, metadata should be preserved (access via source)
         filtered = st.filter(lambda t: t.carrier == "AA")
-        assert filtered.source._dims_dict()["carrier"].is_time_dimension is False
-        assert filtered.source._dims_dict()["distance"].is_time_dimension is False
+        assert filtered.source.get_dimensions()["carrier"].is_time_dimension is False
+        assert filtered.source.get_dimensions()["distance"].is_time_dimension is False
 
 
 if __name__ == "__main__":

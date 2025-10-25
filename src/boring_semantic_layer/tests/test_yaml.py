@@ -139,8 +139,8 @@ carriers:
         model = models["carriers"]
 
         # Verify dimensions with descriptions
-        assert model.dimensions["code"].description == "Airline code"
-        assert model.dimensions["name"].description == "Full airline name"
+        assert model.get_dimensions()["code"].description == "Airline code"
+        assert model.get_dimensions()["name"].description == "Full airline name"
 
         # Verify measures with descriptions (use _base_measures to get Measure objects)
         assert model._base_measures["carrier_count"].description == "Number of carriers"
@@ -176,7 +176,7 @@ flights:
         model = models["flights"]
 
         # Verify time dimension metadata
-        arr_time_dim = model.dimensions["arr_time"]
+        arr_time_dim = model.get_dimensions()["arr_time"]
         assert arr_time_dim.is_time_dimension is True
         assert arr_time_dim.smallest_time_grain == "TIME_GRAIN_DAY"
 
@@ -354,10 +354,10 @@ flights:
         model = models["flights"]
 
         # Simple format dimension has no description
-        assert model.dimensions["origin"].description is None
+        assert model.get_dimensions()["origin"].description is None
 
         # Extended format dimension has description
-        assert model.dimensions["destination"].description == "Destination airport"
+        assert model.get_dimensions()["destination"].description == "Destination airport"
 
         # Simple format measure has no description (use _base_measures to get Measure objects)
         assert model._base_measures["flight_count"].description is None

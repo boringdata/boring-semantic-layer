@@ -23,7 +23,7 @@ def _semantic_table(*args, **kwargs):
 
 
 def _unwrap_semantic_table(other: Any) -> Any:
-    """Unwrap SemanticTable Expression to SemanticTableRelation Operation."""
+    """Unwrap SemanticTable Expression to SemanticTableOp Operation."""
     # Use methodcaller to get .op() if it exists, otherwise return as-is
     return methodcaller('op')(other) if hasattr(other, 'op') and callable(getattr(other, 'op')) else other
 
@@ -39,14 +39,14 @@ def _resolve_expr(expr: Any, scope: Any) -> Any:
 
 
 def _get_field_dict(root: Any, field_type: str) -> dict:
+    """Get field dict from SemanticOp using public methods."""
     method_map = {
-        'dimensions': ('_dims_dict', 'dimensions'),
-        'measures': ('_measures_dict', 'measures'),
-        'calc_measures': ('_calc_measures_dict', 'calc_measures')
+        'dimensions': 'get_dimensions',
+        'measures': 'get_measures',
+        'calc_measures': 'get_calculated_measures'
     }
-    methods = method_map.get(field_type, ('', ''))
-    return (getattr(root, methods[0])() if hasattr(root, methods[0])
-            else getattr(root, methods[1], {}))
+    method_name = method_map[field_type]
+    return dict(getattr(root, method_name)())
 
 
 def _get_merged_fields(all_roots: list, field_type: str) -> dict:
@@ -164,7 +164,7 @@ class Measure:
         return hash(self.description)
 
 
-class SemanticTableRelation(Relation):
+class SemanticTableOp(Relation):
     """Relation with semantic metadata (dimensions and measures).
 
     Stores ir.Table expression directly to avoid .op() → .to_expr() conversions.
@@ -179,8 +179,8 @@ class SemanticTableRelation(Relation):
     def values(self) -> FrozenOrderedDict[str, Any]:
         return FrozenOrderedDict({
             **{col: self.table[col].op() for col in self.table.columns},
-            **{name: fn(self.table).op() for name, fn in self._dims_dict().items()},
-            **{name: fn(self.table).op() for name, fn in self._measures_dict().items()},
+            **{name: fn(self.table).op() for name, fn in self.get_dimensions().items()},
+            **{name: fn(self.table).op() for name, fn in self.get_measures().items()},
         })
 
     @property
@@ -189,34 +189,36 @@ class SemanticTableRelation(Relation):
 
     @property
     def json_definition(self) -> Mapping[str, Any]:
-        return _build_json_definition(self._dims_dict(), self._measures_dict(), self.name)
-
-    @property
-    def dims(self) -> tuple[str, ...]:
-        return tuple(self._dims_dict().keys())
+        return _build_json_definition(self.get_dimensions(), self.get_measures(), self.name)
 
     @property
     def _dims(self) -> dict[str, Dimension]:
-        return dict(self._dims_dict())
+        return dict(self.get_dimensions())
 
     @property
     def _base_measures(self) -> dict[str, Measure]:
-        return dict(object.__getattribute__(self, "measures"))
+        return dict(self.get_measures())
 
     @property
     def _calc_measures(self) -> dict[str, Any]:
-        return dict(object.__getattribute__(self, "calc_measures"))
+        return dict(self.get_calculated_measures())
 
-    def _measures_dict(self) -> Mapping[str, Measure]:
+    def get_measures(self) -> Mapping[str, Measure]:
+        """Get dictionary of base measures with metadata."""
         return object.__getattribute__(self, "measures")
 
-    def _dims_dict(self) -> Mapping[str, Dimension]:
+    def get_dimensions(self) -> Mapping[str, Dimension]:
+        """Get dictionary of dimensions with metadata."""
         return object.__getattribute__(self, "dimensions")
 
-    def _calc_measures_dict(self) -> Mapping[str, Any]:
+    def get_calculated_measures(self) -> Mapping[str, Any]:
+        """Get dictionary of calculated measures with metadata."""
         return object.__getattribute__(self, "calc_measures")
 
     def __getattribute__(self, name: str):
+        if name == "dimensions":
+            dims = object.__getattribute__(self, "dimensions")
+            return tuple(dims.keys())
         if name == "measures":
             base_meas = object.__getattribute__(self, "measures")
             calc_meas = object.__getattribute__(self, "calc_measures")
@@ -226,11 +228,8 @@ class SemanticTableRelation(Relation):
     def to_ibis(self):
         return self.table
 
-    def op(self):
-        return self
 
-
-class SemanticFilterRelation(Relation):
+class SemanticFilterOp(Relation):
     source: Any
     predicate: Callable
 
@@ -246,22 +245,19 @@ class SemanticFilterRelation(Relation):
         return self.source.schema
 
     def to_ibis(self):
-        from .lower import _Resolver
+        from .convert import _Resolver
 
         all_roots = _find_all_root_models(self.source)
         base_tbl = _to_ibis(self.source)
-        dim_map = {} if isinstance(self.source, SemanticAggregateRelation) else _get_merged_fields(all_roots, 'dimensions')
+        dim_map = {} if isinstance(self.source, SemanticAggregateOp) else _get_merged_fields(all_roots, 'dimensions')
 
         pred_fn = _unwrap(self.predicate)
         resolver = _Resolver(base_tbl, dim_map)
         pred = _resolve_expr(pred_fn, resolver)
         return base_tbl.filter(pred)
 
-    def op(self):
-        return self
 
-
-class SemanticProjectRelation(Relation):
+class SemanticProjectOp(Relation):
     source: Any
     fields: tuple[str, ...]
 
@@ -302,11 +298,8 @@ class SemanticProjectRelation(Relation):
                 else tbl.select(dim_exprs + raw_exprs) if dim_exprs or raw_exprs
                 else tbl)
 
-    def op(self):
-        return self
 
-
-class SemanticGroupByRelation(Relation):
+class SemanticGroupByOp(Relation):
     source: Any
     keys: tuple[str, ...]
 
@@ -324,11 +317,8 @@ class SemanticGroupByRelation(Relation):
     def to_ibis(self):
         return _to_ibis(self.source)
 
-    def op(self):
-        return self
 
-
-class SemanticAggregateRelation(Relation):
+class SemanticAggregateOp(Relation):
     source: Any
     keys: tuple[str, ...]
     aggs: dict[str, Callable]  # Transformed to FrozenDict[str, _CallableWrapper] in __init__
@@ -431,19 +421,16 @@ class SemanticAggregateRelation(Relation):
                 if calc_specs or by_cols
                 else tbl.aggregate({name: agg_fn(tbl) for name, agg_fn in agg_specs.items()}))
 
-    def op(self):
-        return self
-
     def __repr__(self) -> str:
         keys_str = ", ".join(repr(k) for k in self.keys)
         aggs = list(self.aggs.keys())
         aggs_str = ", ".join(aggs[:5])
         if len(aggs) > 5:
             aggs_str += f", ... ({len(aggs)} total)"
-        return f"SemanticAggregateRelation(by=[{keys_str}], aggs=[{aggs_str}])"
+        return f"SemanticAggregateOp(by=[{keys_str}], aggs=[{aggs_str}])"
 
 
-class SemanticMutateRelation(Relation):
+class SemanticMutateOp(Relation):
     source: Any
     post: dict[str, Callable]  # Transformed to FrozenDict[str, _CallableWrapper] in __init__
 
@@ -470,9 +457,6 @@ class SemanticMutateRelation(Relation):
 
         return agg_tbl.mutate(new_cols) if new_cols else agg_tbl
 
-    def op(self):
-        return self
-
     def __repr__(self) -> str:
         cols = list(self.post.keys())
         cols_str = ", ".join(cols[:5])
@@ -481,7 +465,7 @@ class SemanticMutateRelation(Relation):
         return f"SemanticMutate(cols=[{cols_str}])"
 
 
-class SemanticJoin(Relation):
+class SemanticJoinOp(Relation):
     left: Any
     right: Any
     how: str
@@ -512,52 +496,52 @@ class SemanticJoin(Relation):
     def schema(self) -> Schema:
         return Schema({name: v.dtype for name, v in self.values.items()})
 
-    def _dims_dict(self) -> Mapping[str, Dimension]:
+    def get_dimensions(self) -> Mapping[str, Dimension]:
+        """Get dictionary of dimensions with metadata."""
         all_roots = _find_all_root_models(self)
         return _merge_fields_with_prefixing(all_roots, lambda r: _get_field_dict(r, 'dimensions'))
 
-    def _measures_dict(self) -> Mapping[str, Measure]:
+    def get_measures(self) -> Mapping[str, Measure]:
+        """Get dictionary of base measures with metadata."""
         all_roots = _find_all_root_models(self)
         return _merge_fields_with_prefixing(all_roots, lambda r: _get_field_dict(r, 'measures'))
 
-    def _calc_measures_dict(self) -> Mapping[str, Any]:
+    def get_calculated_measures(self) -> Mapping[str, Any]:
+        """Get dictionary of calculated measures with metadata."""
         all_roots = _find_all_root_models(self)
         return _merge_fields_with_prefixing(all_roots, lambda r: _get_field_dict(r, 'calc_measures'))
 
     @property
-    def dimensions(self) -> Mapping[str, Dimension]:
-        return self._dims_dict()
-
-    @property
-    def dims(self) -> tuple[str, ...]:
-        return tuple(self._dims_dict().keys())
+    def dimensions(self) -> tuple[str, ...]:
+        """Get tuple of dimension names."""
+        return tuple(self.get_dimensions().keys())
 
     @property
     def _dims(self) -> dict[str, Dimension]:
-        return dict(self._dims_dict())
+        return dict(self.get_dimensions())
 
     @property
     def _base_measures(self) -> dict[str, Measure]:
-        return dict(self._measures_dict())
+        return dict(self.get_measures())
 
     @property
     def _calc_measures(self) -> dict[str, Any]:
-        return dict(self._calc_measures_dict())
+        return dict(self.get_calculated_measures())
 
     @property
     def measures(self) -> tuple[str, ...]:
-        return tuple(self._measures_dict().keys()) + tuple(self._calc_measures_dict().keys())
+        return tuple(self.get_measures().keys()) + tuple(self.get_calculated_measures().keys())
 
     @property
     def json_definition(self) -> Mapping[str, Any]:
-        return _build_json_definition(self._dims_dict(), self._measures_dict(), None)
+        return _build_json_definition(self.get_dimensions(), self.get_measures(), None)
 
     def with_dimensions(self, **dims) -> "SemanticTable":
         return _semantic_table(
             table=self.to_ibis(),
-            dimensions={**self._dims_dict(), **dims},
-            measures=self._measures_dict(),
-            calc_measures=self._calc_measures_dict(),
+            dimensions={**self.get_dimensions(), **dims},
+            measures=self.get_measures(),
+            calc_measures=self.get_calculated_measures(),
             name=None
         )
 
@@ -565,17 +549,17 @@ class SemanticJoin(Relation):
         from .measure_scope import MeasureScope
 
         joined_tbl = self.to_ibis()
-        all_known = list(self._measures_dict().keys()) + list(self._calc_measures_dict().keys()) + list(meas.keys())
+        all_known = list(self.get_measures().keys()) + list(self.get_calculated_measures().keys()) + list(meas.keys())
         scope = MeasureScope(_tbl=joined_tbl, _known=all_known)
 
-        new_base, new_calc = dict(self._measures_dict()), dict(self._calc_measures_dict())
+        new_base, new_calc = dict(self.get_measures()), dict(self.get_calculated_measures())
         for name, fn_or_expr in meas.items():
             kind, value = _classify_measure(fn_or_expr, scope)
             (new_calc if kind == 'calc' else new_base)[name] = value
 
         return _semantic_table(
             table=joined_tbl,
-            dimensions=self._dims_dict(),
+            dimensions=self.get_dimensions(),
             measures=new_base,
             calc_measures=new_calc,
             name=None
@@ -589,30 +573,30 @@ class SemanticJoin(Relation):
         from .expr import SemanticFilter
         return SemanticFilter(source=self, predicate=predicate)
 
-    def join(self, other: "SemanticTable", on: Callable[[Any, Any], Any] | None = None, how: str = "inner") -> "SemanticJoin":
-        return SemanticJoin(left=self, right=_unwrap_semantic_table(other), on=on, how=how)
+    def join(self, other: "SemanticTable", on: Callable[[Any, Any], Any] | None = None, how: str = "inner") -> "SemanticJoinOp":
+        return SemanticJoinOp(left=self, right=_unwrap_semantic_table(other), on=on, how=how)
 
-    def join_one(self, other: "SemanticTable", left_on: str, right_on: str) -> "SemanticJoin":
-        return SemanticJoin(
+    def join_one(self, other: "SemanticTable", left_on: str, right_on: str) -> "SemanticJoinOp":
+        return SemanticJoinOp(
             left=self,
             right=_unwrap_semantic_table(other),
             on=lambda l, r: getattr(l, left_on) == getattr(r, right_on),
             how="inner"
         )
 
-    def join_many(self, other: "SemanticTable", left_on: str, right_on: str) -> "SemanticJoin":
-        return SemanticJoin(
+    def join_many(self, other: "SemanticTable", left_on: str, right_on: str) -> "SemanticJoinOp":
+        return SemanticJoinOp(
             left=self,
             right=_unwrap_semantic_table(other),
             on=lambda l, r: getattr(l, left_on) == getattr(r, right_on),
             how="left"
         )
 
-    def index(self, selector: Any = None, by: Optional[str] = None, sample: Optional[int] = None) -> "SemanticIndex":
-        return SemanticIndex(source=self, selector=selector, by=by, sample=sample)
+    def index(self, selector: Any = None, by: Optional[str] = None, sample: Optional[int] = None) -> "SemanticIndexOp":
+        return SemanticIndexOp(source=self, selector=selector, by=by, sample=sample)
 
     def to_ibis(self):
-        from .lower import _Resolver
+        from .convert import _Resolver
 
         left_tbl = _to_ibis(self.left)
         right_tbl = _to_ibis(self.right)
@@ -624,9 +608,6 @@ class SemanticJoin(Relation):
     def execute(self):
         return self.to_ibis().execute()
 
-    def op(self):
-        return self
-
     def compile(self, **kwargs):
         return self.to_ibis().compile(**kwargs)
 
@@ -635,15 +616,15 @@ class SemanticJoin(Relation):
         return ibis.to_sql(self.to_ibis(), **kwargs)
 
     def __getitem__(self, key):
-        dims_dict = self._dims_dict()
+        dims_dict = self.get_dimensions()
         if key in dims_dict:
             return dims_dict[key]
 
-        meas_dict = self._measures_dict()
+        meas_dict = self.get_measures()
         if key in meas_dict:
             return meas_dict[key]
 
-        calc_meas_dict = self._calc_measures_dict()
+        calc_meas_dict = self.get_calculated_measures()
         if key in calc_meas_dict:
             return calc_meas_dict[key]
 
@@ -656,19 +637,19 @@ class SemanticJoin(Relation):
         """Convert to SemanticTable, preserving merged metadata from both sides."""
         return _semantic_table(
             table=self.to_ibis(),
-            dimensions=self._dims_dict(),
-            measures=self._measures_dict(),
-            calc_measures=self._calc_measures_dict()
+            dimensions=self.get_dimensions(),
+            measures=self.get_measures(),
+            calc_measures=self.get_calculated_measures()
         )
 
     def __repr__(self) -> str:
         left_name = getattr(self.left, "name", None) or "<expr>"
         right_name = getattr(self.right, "name", None) or "<expr>"
         on_str = "<function>" if self.on else "cross"
-        return f"SemanticJoin(left={left_name!r}, right={right_name!r}, how={self.how!r}, on={on_str})"
+        return f"SemanticJoinOp(left={left_name!r}, right={right_name!r}, how={self.how!r}, on={on_str})"
 
 
-class SemanticOrderByRelation(Relation):
+class SemanticOrderByOp(Relation):
     source: Any
     keys: tuple[Any, ...]  # Transformed to tuple[str | _CallableWrapper, ...] in __init__
 
@@ -700,9 +681,6 @@ class SemanticOrderByRelation(Relation):
 
         return tbl.order_by([resolve_order_key(key) for key in self.keys])
 
-    def op(self):
-        return self
-
     def __repr__(self) -> str:
         keys_list = []
         for k in list(self.keys)[:3]:
@@ -715,7 +693,7 @@ class SemanticOrderByRelation(Relation):
         return f"SemanticOrderBy(keys=[{', '.join(keys_list)}])"
 
 
-class SemanticLimitRelation(Relation):
+class SemanticLimitOp(Relation):
     source: Any
     n: int
     offset: int
@@ -738,9 +716,6 @@ class SemanticLimitRelation(Relation):
     def to_ibis(self):
         tbl = _to_ibis(self.source)
         return tbl.limit(self.n) if self.offset == 0 else tbl.limit(self.n, offset=self.offset)
-
-    def op(self):
-        return self
 
 
 def _get_field_type_str(field_type: Any) -> str:
@@ -826,7 +801,7 @@ def _get_fields_to_index(selector: Any, merged_dimensions: dict, base_tbl: Any) 
     return result
 
 
-class SemanticIndex(Relation):
+class SemanticIndexOp(Relation):
     source: Any
     selector: Any
     by: Optional[str] = None
@@ -934,9 +909,6 @@ class SemanticIndex(Relation):
         """Return self as expression."""
         return self
 
-    def op(self):
-        return self
-
     def compile(self, **kwargs):
         return self.to_ibis().compile(**kwargs)
 
@@ -970,23 +942,23 @@ class SemanticIndex(Relation):
         if self.sample:
             parts.append(f"sample={self.sample}")
 
-        return f"SemanticIndex({', '.join(parts)})"
+        return f"SemanticIndexOp({', '.join(parts)})"
 
 
-def _find_root_model(node: Any) -> "SemanticTableRelation | None":
-    """Find root SemanticTableRelation in the operation tree."""
+def _find_root_model(node: Any) -> "SemanticTableOp | None":
+    """Find root SemanticTableOp in the operation tree."""
     cur = node
     while cur is not None:
-        if isinstance(cur, SemanticTableRelation):
+        if isinstance(cur, SemanticTableOp):
             return cur
         parent = getattr(cur, "source", None)
         cur = parent
     return None
 
 
-def _find_all_root_models(node: Any) -> tuple["SemanticTableRelation", ...]:
-    """Find all root SemanticTableRelations in the operation tree (handles joins with multiple roots)."""
-    if isinstance(node, SemanticTableRelation):
+def _find_all_root_models(node: Any) -> tuple["SemanticTableOp", ...]:
+    """Find all root SemanticTableOps in the operation tree (handles joins with multiple roots)."""
+    if isinstance(node, SemanticTableOp):
         return [node]
 
     roots = []
@@ -1067,8 +1039,8 @@ def _merge_fields_with_prefixing(
         fields_dict = field_accessor(root)
 
         if is_calc_measures and root_name:
-            base_map = {k: f"{root_name}.{k}" for k in root._measures_dict().keys()} if hasattr(root, '_measures_dict') else {}
-            calc_map = {k: f"{root_name}.{k}" for k in root._calc_measures_dict().keys()} if hasattr(root, '_calc_measures_dict') else {}
+            base_map = {k: f"{root_name}.{k}" for k in root.get_measures().keys()} if hasattr(root, 'get_measures') else {}
+            calc_map = {k: f"{root_name}.{k}" for k in root.get_calculated_measures().keys()} if hasattr(root, 'get_calculated_measures') else {}
             prefix_map = {**base_map, **calc_map}
 
         for field_name, field_value in fields_dict.items():

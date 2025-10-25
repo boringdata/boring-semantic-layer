@@ -43,7 +43,7 @@ class MCPSemanticModel(FastMCP):
 
             # Build dimension info with metadata
             dimensions = {}
-            for name, dim in model._dims_dict().items():
+            for name, dim in model.get_dimensions().items():
                 dimensions[name] = {
                     "description": dim.description,
                     "is_time_dimension": dim.is_time_dimension,
@@ -52,14 +52,14 @@ class MCPSemanticModel(FastMCP):
 
             # Build measure info with metadata
             measures = {}
-            for name, meas in model._measures_dict().items():
+            for name, meas in model.get_measures().items():
                 measures[name] = {"description": meas.description}
 
             return {
                 "name": model.name or "unnamed",
                 "dimensions": dimensions,
                 "measures": measures,
-                "calculated_measures": list(model._calc_measures_dict().keys()),
+                "calculated_measures": list(model.get_calculated_measures().keys()),
             }
 
         @self.tool()
@@ -71,14 +71,14 @@ class MCPSemanticModel(FastMCP):
             model = self.models[model_name]
 
             # Find first time dimension
-            all_dims = list(model._dims_dict().keys())
+            all_dims = list(model.dimensions)  # dimensions is now a tuple
             time_dim_name = _find_time_dimension(model, all_dims)
 
             if not time_dim_name:
                 raise ValueError(f"Model {model_name} has no time dimension")
 
             # Get the dimension expression
-            time_dim = model._dims_dict()[time_dim_name]
+            time_dim = model.get_dimensions()[time_dim_name]
 
             # Get min/max from base table
             tbl = model.table  # Already an expression
