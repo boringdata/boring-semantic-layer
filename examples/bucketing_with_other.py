@@ -1,20 +1,15 @@
 #!/usr/bin/env python3
 """Bucketing with 'Other' - Top N with Rollup Pattern."""
-import sys
-from pathlib import Path
-
 import ibis
 from ibis import _
-
 from boring_semantic_layer import to_semantic_table
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-from boring_semantic_layer.tests.fixtures.datasets import get_dataset_url
+BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
 
 
 def main():
     con = ibis.duckdb.connect(":memory:")
-    airports_tbl = con.read_parquet(get_dataset_url("airports"))
+    airports_tbl = con.read_parquet(f"{BASE_URL}/airports.parquet")
 
     airports = to_semantic_table(airports_tbl, name="airports").with_measures(
         avg_elevation=lambda t: t.elevation.mean()

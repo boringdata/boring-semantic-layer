@@ -1,16 +1,6 @@
 #!/usr/bin/env python3
 """
-Example 4: Joining Semantic Tables (Foreign Sums and Averages)
-
-This example demonstrates how to join semantic tables and correctly compute
-aggregations across the join tree. This is similar to Malloy's "Foreign Sums"
-pattern where joins handle fan-outs correctly.
-
-Key Concepts:
-- Join semantic tables with proper relationships (one-to-one, one-to-many)
-- Automatic prefixing of dimensions and measures with table names
-- Compute aggregations at different levels of the join tree
-- Cross-team composability and reusability
+Joining Semantic Tables (Foreign Sums and Averages)
 
 Example: Flights → Aircraft → Aircraft Models
 - Flights table: individual flight records (many)
@@ -125,15 +115,15 @@ def main():
     )
 
     print("✓ Joined flights with aircraft (many-to-one relationship)")
-    print(f"  Available dimensions: {list(flights_with_aircraft.dimensions.keys())[:5]}...")
+    print(f"  Available dimensions: {list(flights_with_aircraft.dimensions)[:5]}...")
     print(f"  Available measures: {flights_with_aircraft.measures[:5]}...")
 
     # Query joined table
     result = (
         flights_with_aircraft
-        .group_by("flights__carrier")
-        .aggregate("flights__flight_count", "aircraft__aircraft_count")
-        .order_by(_.flights__flight_count.desc())
+        .group_by("flights.carrier")
+        .aggregate("flights.flight_count", "aircraft.aircraft_count")
+        .order_by(_["flights.flight_count"].desc())
         .execute()
     )
 
@@ -170,13 +160,13 @@ def main():
 
     result = (
         flights_full
-        .group_by("flights__carrier")
+        .group_by("flights.carrier")
         .aggregate(
-            "flights__flight_count",           # Count flights
-            "aircraft__aircraft_count",         # Count unique aircraft
-            "models__model_count",              # Count unique models
+            "flights.flight_count",           # Count flights
+            "aircraft.aircraft_count",         # Count unique aircraft
+            "models.model_count",              # Count unique models
         )
-        .order_by(_.flights__flight_count.desc())
+        .order_by(_["flights.flight_count"].desc())
         .execute()
     )
 
@@ -189,21 +179,21 @@ def main():
 
     flights_full_with_measures = flights_full.with_measures(
         # Calculate total seats across all flights (seats × flights)
-        total_seats_for_sale=lambda t: t.models__total_seats,
+        total_seats_for_sale=lambda t: t.total_seats,
         # Average seats per model
-        avg_seats_per_model=lambda t: t.models__avg_seats,
+        avg_seats_per_model=lambda t: t.avg_seats,
     )
 
     result = (
         flights_full_with_measures
-        .group_by("flights__carrier")
+        .group_by("flights.carrier")
         .aggregate(
-            "flights__flight_count",
-            "aircraft__aircraft_count",
+            "flights.flight_count",
+            "aircraft.aircraft_count",
             "total_seats_for_sale",
             "avg_seats_per_model",
         )
-        .order_by(_.flights__flight_count.desc())
+        .order_by(_["flights.flight_count"].desc())
         .execute()
     )
 
@@ -265,16 +255,16 @@ def main():
 
     result = (
         customer_support
-        .group_by("customers__segment")
+        .group_by("customers.segment")
         .aggregate(
-            "customers__customer_count",
-            "support__case_count",
-            "customers__avg_revenue_per_customer",
+            "customers.customer_count",
+            "support.case_count",
+            "customers.avg_revenue_per_customer",
         )
         .mutate(
-            cases_per_customer=lambda t: t["support__case_count"] / t["customers__customer_count"],
+            cases_per_customer=lambda t: t["support.case_count"] / t["customers.customer_count"],
             cases_per_1k_revenue=lambda t: (
-                t["support__case_count"] / t["customers__avg_revenue_per_customer"] * 1000
+                t["support.case_count"] / t["customers.avg_revenue_per_customer"] * 1000
             ),
         )
         .order_by(_.cases_per_customer.desc())

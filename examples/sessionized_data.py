@@ -25,7 +25,7 @@ and flight legs.
 import pandas as pd
 import ibis
 from datetime import datetime, timedelta
-from boring_semantic_layer import to_semantic_table
+from boring_semantic_layer import to_semantic_table, to_ibis
 
 
 def main():
@@ -162,7 +162,7 @@ def main():
 
     # Get the detailed flight legs with session info
     flight_legs = (
-        filtered_flights.to_ibis()
+        to_ibis(filtered_flights)
         .mutate(
             flight_date=lambda t: t.dep_time.date(),
         )

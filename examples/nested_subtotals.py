@@ -139,7 +139,6 @@ def main():
                 )
             )
         )
-        .to_ibis()
         .filter(lambda t: t.rank_in_quarter <= 5)
         .order_by("year", "quarter", "rank_in_quarter")
         .execute()

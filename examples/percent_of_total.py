@@ -84,7 +84,7 @@ def main():
     )
 
     print("\n✓ Semantic table created with:")
-    print(f"  Dimensions: {list(flights.dimensions.keys())}")
+    print(f"  Dimensions: {list(flights.dimensions)}")
     print(f"  Measures: {flights.measures}")
     print("\n🎯 Percentage measures are now part of the semantic layer!")
 

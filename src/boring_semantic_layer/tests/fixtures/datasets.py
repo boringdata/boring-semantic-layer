@@ -11,8 +11,7 @@ import urllib.request
 import urllib.error
 from functools import lru_cache
 
-# Malloy samples data hosted on GitHub
-MALLOY_SAMPLES_BASE_URL = "https://raw.githubusercontent.com/malloydata/malloy-samples/main/data"
+MALLOY_SAMPLES_BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
 
 # Available datasets in malloy-samples
 AVAILABLE_DATASETS = {

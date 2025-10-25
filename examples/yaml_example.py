@@ -90,7 +90,7 @@ def main():
     flights = models["flights"]
 
     print("\n✓ Flights model has:")
-    print(f"  Dimensions: {list(flights.dimensions.keys())}")
+    print(f"  Dimensions: {list(flights.dimensions)}")
     print(f"  Measures: {flights.measures}")
 
     # ============================================================================
