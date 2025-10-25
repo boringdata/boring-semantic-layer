@@ -3,12 +3,14 @@ import ibis
 from typing import Dict, Iterable
 from .measure_scope import MeasureRef, AllOf, BinOp, MeasureExpr
 
+
 def _collect_all_refs(expr: MeasureExpr, out: set[str]) -> None:
     if isinstance(expr, AllOf):
         out.add(expr.ref.name)
     elif isinstance(expr, BinOp):
         _collect_all_refs(expr.left, out)
         _collect_all_refs(expr.right, out)
+
 
 def _compile_formula(expr: MeasureExpr, by_tbl, all_tbl):
     if isinstance(expr, (int, float)):
@@ -18,13 +20,21 @@ def _compile_formula(expr: MeasureExpr, by_tbl, all_tbl):
     if isinstance(expr, AllOf):
         return all_tbl[expr.ref.name]
     if isinstance(expr, BinOp):
-        l = _compile_formula(expr.left, by_tbl, all_tbl)
-        r = _compile_formula(expr.right, by_tbl, all_tbl)
-        return (l + r if expr.op == "add" else l - r if expr.op == "sub"
-                else l * r if expr.op == "mul"
-                else l.cast("float64") / r.cast("float64") if expr.op == "div"
-                else (_ for _ in ()).throw(ValueError(f"unknown op {expr.op}")))
+        left = _compile_formula(expr.left, by_tbl, all_tbl)
+        right = _compile_formula(expr.right, by_tbl, all_tbl)
+        return (
+            left + right
+            if expr.op == "add"
+            else left - right
+            if expr.op == "sub"
+            else left * right
+            if expr.op == "mul"
+            else left.cast("float64") / right.cast("float64")
+            if expr.op == "div"
+            else (_ for _ in ()).throw(ValueError(f"unknown op {expr.op}"))
+        )
     return expr
+
 
 def compile_grouped_with_all(
     base_tbl,
@@ -48,11 +58,17 @@ def compile_grouped_with_all(
         all_tbl = None
         out = by_tbl
 
-    calc_cols = {name: _compile_formula(ast, by_tbl, all_tbl) for name, ast in calc_specs.items()}
+    calc_cols = {
+        name: _compile_formula(ast, by_tbl, all_tbl) for name, ast in calc_specs.items()
+    }
     out = out.mutate(**calc_cols)
 
     if requested_measures is not None:
-        select_cols = list(dict.fromkeys(list(by_cols) + list(requested_measures) + list(calc_specs.keys())))
+        select_cols = list(
+            dict.fromkeys(
+                list(by_cols) + list(requested_measures) + list(calc_specs.keys())
+            )
+        )
         out = out.select([out[c] for c in select_cols])
 
     return out

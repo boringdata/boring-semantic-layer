@@ -12,6 +12,7 @@ from contextlib import contextmanager
 try:
     import malloy
     from malloy.data.duckdb import DuckDbConnection as MalloyDuckDbConnection
+
     MALLOY_AVAILABLE = True
 except ImportError:
     MALLOY_AVAILABLE = False

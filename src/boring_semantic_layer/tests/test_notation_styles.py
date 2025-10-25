@@ -25,14 +25,18 @@ def con():
 @pytest.fixture(scope="module")
 def flights_data(con):
     """Sample flights data for testing."""
-    flights_df = pd.DataFrame({
-        "carrier": ["AA", "AA", "UA", "DL", "DL", "DL"],
-        "distance": [100, 200, 150, 300, 250, 400],
-    })
-    carriers_df = pd.DataFrame({
-        "code": ["AA", "UA", "DL"],
-        "nickname": ["American", "United", "Delta"],
-    })
+    flights_df = pd.DataFrame(
+        {
+            "carrier": ["AA", "AA", "UA", "DL", "DL", "DL"],
+            "distance": [100, 200, 150, 300, 250, 400],
+        }
+    )
+    carriers_df = pd.DataFrame(
+        {
+            "code": ["AA", "UA", "DL"],
+            "nickname": ["American", "United", "Delta"],
+        }
+    )
     return {
         "flights": con.create_table("flights", flights_df),
         "carriers": con.create_table("carriers", carriers_df),
@@ -70,8 +74,8 @@ class TestDimensionNotation:
         """Test mixing both notations in with_dimensions."""
         tbl = flights_data["flights"]
         st = to_semantic_table(tbl, "flights").with_dimensions(
-            carrier=lambda t: t.carrier,      # dot
-            distance=lambda t: t["distance"], # bracket
+            carrier=lambda t: t.carrier,  # dot
+            distance=lambda t: t["distance"],  # bracket
         )
 
         result = st._dims
@@ -152,8 +156,7 @@ class TestMeasureNotationPostAggregation:
         )
 
         result = (
-            st
-            .group_by("carrier")
+            st.group_by("carrier")
             .aggregate("flight_count", "total_distance")
             .mutate(
                 avg_distance=lambda t: t.total_distance / t.flight_count  # dot notation
@@ -177,11 +180,11 @@ class TestMeasureNotationPostAggregation:
         )
 
         result = (
-            st
-            .group_by("carrier")
+            st.group_by("carrier")
             .aggregate("flight_count", "total_distance")
             .mutate(
-                avg_distance=lambda t: t["total_distance"] / t["flight_count"]  # bracket
+                avg_distance=lambda t: t["total_distance"]
+                / t["flight_count"]  # bracket
             )
             .execute()
         )
@@ -199,8 +202,7 @@ class TestMeasureNotationPostAggregation:
         )
 
         result = (
-            st
-            .group_by("carrier")
+            st.group_by("carrier")
             .aggregate("flight_count")
             .mutate(
                 pct=lambda t: t["flight_count"] / t.all(t["flight_count"])  # bracket
@@ -221,8 +223,7 @@ class TestMeasureNotationPostAggregation:
         )
 
         result = (
-            st
-            .group_by("carrier")
+            st.group_by("carrier")
             .aggregate("flight_count")
             .mutate(
                 pct=lambda t: t.flight_count / t.all(t.flight_count)  # dot
@@ -257,15 +258,16 @@ class TestEndToEndNotationConsistency:
         )
 
         result_dot = (
-            flights_st_dot
-            .group_by("nickname")
+            flights_st_dot.group_by("nickname")
             .aggregate("pct")
             .order_by("nickname")
             .execute()
         )
 
         # Version 2: Using bracket notation
-        carriers_st_bracket = to_semantic_table(carriers_tbl, "carriers").with_dimensions(
+        carriers_st_bracket = to_semantic_table(
+            carriers_tbl, "carriers"
+        ).with_dimensions(
             code=lambda t: t["code"],
             nickname=lambda t: t["nickname"],
         )
@@ -279,8 +281,7 @@ class TestEndToEndNotationConsistency:
         )
 
         result_bracket = (
-            flights_st_bracket
-            .group_by("nickname")
+            flights_st_bracket.group_by("nickname")
             .aggregate("pct")
             .order_by("nickname")
             .execute()

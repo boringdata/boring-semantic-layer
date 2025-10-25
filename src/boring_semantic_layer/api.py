@@ -1,17 +1,22 @@
 from typing import Any, Callable, Optional
-from .expr import SemanticModel, SemanticTable
+from .expr import SemanticModel
 
 
 def to_semantic_table(ibis_table, name: Optional[str] = None) -> SemanticModel:
-    return SemanticModel(table=ibis_table, dimensions=None, measures=None,
-                        calc_measures=None, name=name)
+    return SemanticModel(
+        table=ibis_table, dimensions=None, measures=None, calc_measures=None, name=name
+    )
 
 
-def join_one(left: SemanticModel, other: SemanticModel, left_on: str, right_on: str) -> SemanticModel:
+def join_one(
+    left: SemanticModel, other: SemanticModel, left_on: str, right_on: str
+) -> SemanticModel:
     return left.join_one(other, left_on, right_on)
 
 
-def join_many(left: SemanticModel, other: SemanticModel, left_on: str, right_on: str) -> SemanticModel:
+def join_many(
+    left: SemanticModel, other: SemanticModel, left_on: str, right_on: str
+) -> SemanticModel:
     return left.join_many(other, left_on, right_on)
 
 

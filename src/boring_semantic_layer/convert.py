@@ -3,6 +3,7 @@
 This module contains all the converters that register with ibis.expr.sql.convert
 to transform semantic layer operations into executable Ibis expressions.
 """
+
 from __future__ import annotations
 
 from typing import Any, Callable
@@ -36,14 +37,23 @@ class _Resolver:
     Provides attribute access to dimensions and raw table columns,
     resolving dimension functions to named expressions.
     """
+
     _t: Any
     _dims: dict[str, Any] = field(factory=dict)
 
     def __getattr__(self, name: str):
-        return (self._dims[name](self._t).name(name) if name in self._dims
-                else next((dim_func(self._t).name(dim_name)
-                         for dim_name, dim_func in self._dims.items()
-                         if dim_name.endswith(f".{name}")), getattr(self._t, name)))
+        return (
+            self._dims[name](self._t).name(name)
+            if name in self._dims
+            else next(
+                (
+                    dim_func(self._t).name(dim_name)
+                    for dim_name, dim_func in self._dims.items()
+                    if dim_name.endswith(f".{name}")
+                ),
+                getattr(self._t, name),
+            )
+        )
 
     def __getitem__(self, name: str):
         return getattr(self._t, name)
@@ -56,18 +66,35 @@ class _AggResolver:
     Provides attribute access to both dimensions and measures,
     handling prefixed names from joins (e.g., "table__column").
     """
+
     _t: Any
     _dims: dict[str, Callable]
     _meas: dict[str, Callable]
 
     def __getattr__(self, key: str):
-        return (self._dims[key](self._t) if key in self._dims
-                else self._meas[key](self._t) if key in self._meas
-                else next((dim_func(self._t) for dim_name, dim_func in self._dims.items()
-                         if dim_name.endswith(f".{key}")), None) or
-                     next((meas_func(self._t) for meas_name, meas_func in self._meas.items()
-                          if meas_name.endswith(f".{key}")), None) or
-                     getattr(self._t, key))
+        return (
+            self._dims[key](self._t)
+            if key in self._dims
+            else self._meas[key](self._t)
+            if key in self._meas
+            else next(
+                (
+                    dim_func(self._t)
+                    for dim_name, dim_func in self._dims.items()
+                    if dim_name.endswith(f".{key}")
+                ),
+                None,
+            )
+            or next(
+                (
+                    meas_func(self._t)
+                    for meas_name, meas_func in self._meas.items()
+                    if meas_name.endswith(f".{key}")
+                ),
+                None,
+            )
+            or getattr(self._t, key)
+        )
 
     def __getitem__(self, key: str):
         return getattr(self._t, key)
@@ -79,6 +106,7 @@ class _AggProxy:
 
     Provides simple attribute/item access to aggregated columns.
     """
+
     _t: Any
 
     def __getattr__(self, key: str):
@@ -91,6 +119,7 @@ class _AggProxy:
 # ============================================================================
 # Ibis converters (passthrough for standard Ibis operations)
 # ============================================================================
+
 
 @convert.register(IbisTableExpr)
 def _convert_ibis_table(expr, catalog, *args):
@@ -110,6 +139,7 @@ def _convert_ibis_project(op: IbisProject, catalog, *args):
 # Semantic layer converters
 # ============================================================================
 
+
 @convert.register(SemanticTableOp)
 def _convert_semantic_table(node: SemanticTableOp, catalog, *args):
     """Convert SemanticTableOp to base Ibis table."""
@@ -128,7 +158,11 @@ def _convert_semantic_filter(node: SemanticFilterOp, catalog, *args):
     all_roots = _find_all_root_models(node.source)
     base_tbl = convert(node.source, catalog=catalog)
 
-    dim_map = {} if isinstance(node.source, SemanticAggregate) else _get_merged_fields(all_roots, 'dimensions')
+    dim_map = (
+        {}
+        if isinstance(node.source, SemanticAggregate)
+        else _get_merged_fields(all_roots, "dimensions")
+    )
     pred = node.predicate(_Resolver(base_tbl, dim_map))
     return base_tbl.filter(pred)
 
@@ -150,21 +184,30 @@ def _convert_semantic_project(node: SemanticProjectOp, catalog, *args):
     if not all_roots:
         return tbl.select([getattr(tbl, f) for f in node.fields])
 
-    merged_dimensions = _get_merged_fields(all_roots, 'dimensions')
-    merged_measures = _get_merged_fields(all_roots, 'measures')
+    merged_dimensions = _get_merged_fields(all_roots, "dimensions")
+    merged_measures = _get_merged_fields(all_roots, "measures")
 
     dims = [f for f in node.fields if f in merged_dimensions]
     meas = [f for f in node.fields if f in merged_measures]
-    raw_fields = [f for f in node.fields if f not in merged_dimensions and f not in merged_measures]
+    raw_fields = [
+        f
+        for f in node.fields
+        if f not in merged_dimensions and f not in merged_measures
+    ]
 
     dim_exprs = [merged_dimensions[name](tbl).name(name) for name in dims]
     meas_exprs = [merged_measures[name](tbl).name(name) for name in meas]
     raw_exprs = [getattr(tbl, name) for name in raw_fields if hasattr(tbl, name)]
 
-    return (tbl.group_by(dim_exprs).aggregate(meas_exprs) if meas_exprs and dim_exprs
-            else tbl.aggregate(meas_exprs) if meas_exprs
-            else tbl.select(dim_exprs + raw_exprs) if dim_exprs or raw_exprs
-            else tbl)
+    return (
+        tbl.group_by(dim_exprs).aggregate(meas_exprs)
+        if meas_exprs and dim_exprs
+        else tbl.aggregate(meas_exprs)
+        if meas_exprs
+        else tbl.select(dim_exprs + raw_exprs)
+        if dim_exprs or raw_exprs
+        else tbl
+    )
 
 
 @convert.register(SemanticGroupByOp)
@@ -181,9 +224,13 @@ def _convert_semantic_join(node: SemanticJoinOp, catalog, *args):
     """
     left_tbl = convert(node.left, catalog=catalog)
     right_tbl = convert(node.right, catalog=catalog)
-    return (left_tbl.join(right_tbl, node.on(_Resolver(left_tbl), _Resolver(right_tbl)), how=node.how)
-            if node.on is not None
-            else left_tbl.join(right_tbl, how=node.how))
+    return (
+        left_tbl.join(
+            right_tbl, node.on(_Resolver(left_tbl), _Resolver(right_tbl)), how=node.how
+        )
+        if node.on is not None
+        else left_tbl.join(right_tbl, how=node.how)
+    )
 
 
 @convert.register(SemanticAggregateOp)
@@ -201,17 +248,27 @@ def _convert_semantic_aggregate(node: SemanticAggregateOp, catalog, *args):
     all_roots = _find_all_root_models(node.source)
     tbl = convert(node.source, catalog=catalog)
 
-    merged_dimensions = _get_merged_fields(all_roots, 'dimensions')
-    merged_measures = _get_merged_fields(all_roots, 'measures')
+    merged_dimensions = _get_merged_fields(all_roots, "dimensions")
+    merged_measures = _get_merged_fields(all_roots, "measures")
 
-    group_exprs = [(merged_dimensions[k](tbl).name(k) if k in merged_dimensions
-                    else getattr(tbl, k).name(k)) for k in node.keys]
+    group_exprs = [
+        (
+            merged_dimensions[k](tbl).name(k)
+            if k in merged_dimensions
+            else getattr(tbl, k).name(k)
+        )
+        for k in node.keys
+    ]
 
     proxy = _AggResolver(tbl, merged_dimensions, merged_measures)
     meas_exprs = [fn(proxy).name(name) for name, fn in node.aggs.items()]
     metrics = FrozenOrderedDict({expr.get_name(): expr for expr in meas_exprs})
 
-    return tbl.group_by(group_exprs).aggregate(metrics) if group_exprs else tbl.aggregate(metrics)
+    return (
+        tbl.group_by(group_exprs).aggregate(metrics)
+        if group_exprs
+        else tbl.aggregate(metrics)
+    )
 
 
 @convert.register(SemanticMutateOp)
@@ -238,10 +295,15 @@ def _convert_semantic_orderby(node: SemanticOrderByOp, catalog, *args):
     tbl = convert(node.source, catalog=catalog)
 
     def resolve_key(key):
-        return (getattr(tbl, key) if hasattr(tbl, key)
-                else tbl[key] if isinstance(key, str) and key in tbl.columns
-                else key[1](tbl) if isinstance(key, tuple) and len(key) == 2 and key[0] == "__deferred__"
-                else key)
+        return (
+            getattr(tbl, key)
+            if hasattr(tbl, key)
+            else tbl[key]
+            if isinstance(key, str) and key in tbl.columns
+            else key[1](tbl)
+            if isinstance(key, tuple) and len(key) == 2 and key[0] == "__deferred__"
+            else key
+        )
 
     return tbl.order_by([resolve_key(key) for key in node.keys])
 
@@ -253,4 +315,6 @@ def _convert_semantic_limit(node: SemanticLimitOp, catalog, *args):
     Applies row limit with optional offset.
     """
     tbl = convert(node.source, catalog=catalog)
-    return tbl.limit(node.n) if node.offset == 0 else tbl.limit(node.n, offset=node.offset)
+    return (
+        tbl.limit(node.n) if node.offset == 0 else tbl.limit(node.n, offset=node.offset)
+    )

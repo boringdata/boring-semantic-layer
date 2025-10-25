@@ -15,14 +15,16 @@ def con():
 @pytest.fixture(scope="module")
 def flights_model(con):
     """Create a sample flights semantic table for testing."""
-    flights_df = pd.DataFrame({
-        "origin": ["JFK", "LAX", "ORD", "JFK", "LAX", "ORD"] * 5,
-        "destination": ["LAX", "JFK", "DEN", "ORD", "DEN", "LAX"] * 5,
-        "carrier": ["AA", "UA", "DL"] * 10,
-        "flight_date": pd.date_range("2024-01-01", periods=30, freq="D"),
-        "distance": [2475, 2475, 920, 740, 862, 987] * 5,
-        "dep_delay": [5.2, 8.1, 3.5, 2.0, 6.3, 1.8] * 5,
-    })
+    flights_df = pd.DataFrame(
+        {
+            "origin": ["JFK", "LAX", "ORD", "JFK", "LAX", "ORD"] * 5,
+            "destination": ["LAX", "JFK", "DEN", "ORD", "DEN", "LAX"] * 5,
+            "carrier": ["AA", "UA", "DL"] * 10,
+            "flight_date": pd.date_range("2024-01-01", periods=30, freq="D"),
+            "distance": [2475, 2475, 920, 740, 862, 987] * 5,
+            "dep_delay": [5.2, 8.1, 3.5, 2.0, 6.3, 1.8] * 5,
+        }
+    )
 
     flights_tbl = con.create_table("flights", flights_df, overwrite=True)
 
@@ -58,15 +60,19 @@ class TestAltairChart:
 
         assert chart is not None
         import altair as alt
+
         assert isinstance(chart, alt.Chart)
 
     def test_chart_with_multiple_measures(self, flights_model):
         """Test chart with multiple measures."""
-        result = flights_model.group_by("carrier").aggregate("flight_count", "avg_distance")
+        result = flights_model.group_by("carrier").aggregate(
+            "flight_count", "avg_distance"
+        )
         chart = result.chart(backend="altair")
 
         assert chart is not None
         import altair as alt
+
         assert isinstance(chart, alt.Chart)
 
     def test_time_series_chart(self, flights_model):
@@ -76,6 +82,7 @@ class TestAltairChart:
 
         assert chart is not None
         import altair as alt
+
         assert isinstance(chart, alt.Chart)
 
     def test_manual_chart_type(self, flights_model):
@@ -85,15 +92,19 @@ class TestAltairChart:
 
         assert chart is not None
         import altair as alt
+
         assert isinstance(chart, alt.Chart)
 
     def test_heatmap_chart(self, flights_model):
         """Test heatmap with two dimensions."""
-        result = flights_model.group_by("origin", "destination").aggregate("flight_count")
+        result = flights_model.group_by("origin", "destination").aggregate(
+            "flight_count"
+        )
         chart = result.chart(backend="altair")
 
         assert chart is not None
         import altair as alt
+
         assert isinstance(chart, alt.Chart)
 
 
@@ -107,6 +118,7 @@ class TestPlotlyChart:
 
         assert chart is not None
         import plotly.graph_objects as go
+
         assert isinstance(chart, go.Figure)
 
     def test_line_chart(self, flights_model):
@@ -116,6 +128,7 @@ class TestPlotlyChart:
 
         assert chart is not None
         import plotly.graph_objects as go
+
         assert isinstance(chart, go.Figure)
 
     def test_heatmap_chart(self, flights_model):
@@ -125,15 +138,19 @@ class TestPlotlyChart:
 
         assert chart is not None
         import plotly.graph_objects as go
+
         assert isinstance(chart, go.Figure)
 
     def test_multiple_measures(self, flights_model):
         """Test Plotly chart with multiple measures."""
-        result = flights_model.group_by("carrier").aggregate("flight_count", "avg_delay")
+        result = flights_model.group_by("carrier").aggregate(
+            "flight_count", "avg_delay"
+        )
         chart = result.chart(backend="plotly")
 
         assert chart is not None
         import plotly.graph_objects as go
+
         assert isinstance(chart, go.Figure)
 
     def test_manual_chart_type(self, flights_model):
@@ -143,6 +160,7 @@ class TestPlotlyChart:
 
         assert chart is not None
         import plotly.graph_objects as go
+
         assert isinstance(chart, go.Figure)
 
 
@@ -169,8 +187,7 @@ class TestChartWithFilters:
     def test_chart_with_filter(self, flights_model):
         """Test chart generation on filtered data."""
         result = (
-            flights_model
-            .filter(lambda t: t.carrier == "AA")
+            flights_model.filter(lambda t: t.carrier == "AA")
             .group_by("origin")
             .aggregate("flight_count")
         )
@@ -178,13 +195,13 @@ class TestChartWithFilters:
 
         assert chart is not None
         import altair as alt
+
         assert isinstance(chart, alt.Chart)
 
     def test_chart_with_order_by(self, flights_model):
         """Test chart generation with ordered data."""
         result = (
-            flights_model
-            .group_by("carrier")
+            flights_model.group_by("carrier")
             .aggregate("flight_count")
             .order_by(ibis.desc("flight_count"))
         )
@@ -192,18 +209,15 @@ class TestChartWithFilters:
 
         assert chart is not None
         import plotly.graph_objects as go
+
         assert isinstance(chart, go.Figure)
 
     def test_chart_with_limit(self, flights_model):
         """Test chart generation with limited results."""
-        result = (
-            flights_model
-            .group_by("carrier")
-            .aggregate("flight_count")
-            .limit(2)
-        )
+        result = flights_model.group_by("carrier").aggregate("flight_count").limit(2)
         chart = result.chart(backend="altair")
 
         assert chart is not None
         import altair as alt
+
         assert isinstance(chart, alt.Chart)

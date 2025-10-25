@@ -2,7 +2,7 @@
 YAML loader for Boring Semantic Layer models using the semantic API.
 """
 
-from typing import Any, Dict, Optional, Mapping, Sequence
+from typing import Any, Dict, Optional, Mapping
 import yaml
 from ibis import _
 
@@ -133,7 +133,9 @@ def _parse_joins(
                 )
         else:
             available_models = list(yaml_configs.keys()) + [
-                k for k in tables.keys() if isinstance(tables.get(k), (SemanticModel, SemanticTable))
+                k
+                for k in tables.keys()
+                if isinstance(tables.get(k), (SemanticModel, SemanticTable))
             ]
             if join_model_name in yaml_configs:
                 raise ValueError(
@@ -156,9 +158,7 @@ def _parse_joins(
                     f"Join '{alias}' of type 'one' must specify 'left_on' and 'right_on' fields"
                 )
             result_model = result_model.join_one(
-                join_model,
-                left_on=left_on,
-                right_on=right_on
+                join_model, left_on=left_on, right_on=right_on
             )
         elif join_type == "many":
             left_on = join_config.get("left_on")
@@ -168,9 +168,7 @@ def _parse_joins(
                     f"Join '{alias}' of type 'many' must specify 'left_on' and 'right_on' fields"
                 )
             result_model = result_model.join_many(
-                join_model,
-                left_on=left_on,
-                right_on=right_on
+                join_model, left_on=left_on, right_on=right_on
             )
         elif join_type == "cross":
             result_model = result_model.join_cross(join_model)
@@ -272,11 +270,7 @@ def from_yaml(
 
         if "joins" in config and config["joins"]:
             models[name] = _parse_joins(
-                config["joins"],
-                tables,
-                yaml_configs,
-                name,
-                models
+                config["joins"], tables, yaml_configs, name, models
             )
 
     return models

@@ -187,7 +187,9 @@ def _detect_altair_spec(
 
 
 def _detect_plotly_chart_type(
-    dimensions: Sequence[str], measures: Sequence[str], time_dimension: Optional[str] = None
+    dimensions: Sequence[str],
+    measures: Sequence[str],
+    time_dimension: Optional[str] = None,
 ) -> str:
     """
     Auto-detect appropriate chart type based on query structure for Plotly backend.
@@ -328,9 +330,7 @@ def _prepare_plotly_data_and_params(query_expr, chart_type: str) -> tuple:
 
 
 def chart(
-    semantic_aggregate: Any,
-    backend: str = "altair",
-    chart_type: Optional[str] = None
+    semantic_aggregate: Any, backend: str = "altair", chart_type: Optional[str] = None
 ):
     """
     Generate a chart visualization for semantic aggregate query results.
@@ -367,11 +367,11 @@ def chart(
     time_grain = None
     all_roots = _find_all_root_models(semantic_aggregate.source)
     if all_roots:
-        dims_dict = _get_merged_fields(all_roots, 'dimensions')
+        dims_dict = _get_merged_fields(all_roots, "dimensions")
         for dim_name in dimensions:
             if dim_name in dims_dict:
                 dim_obj = dims_dict[dim_name]
-                if hasattr(dim_obj, 'is_time_dimension') and dim_obj.is_time_dimension:
+                if hasattr(dim_obj, "is_time_dimension") and dim_obj.is_time_dimension:
                     time_dimension = dim_name
                     break
 
@@ -402,7 +402,9 @@ def chart(
             chart_obj = getattr(chart_obj, f"mark_{mark}")()
         elif isinstance(mark, dict):
             mark_type = mark.get("type", "bar")
-            chart_obj = getattr(chart_obj, f"mark_{mark_type}")(**{k: v for k, v in mark.items() if k != "type"})
+            chart_obj = getattr(chart_obj, f"mark_{mark_type}")(
+                **{k: v for k, v in mark.items() if k != "type"}
+            )
 
         # Apply encoding
         encoding = spec.get("encoding", {})
@@ -414,8 +416,7 @@ def chart(
             for transform in spec["transform"]:
                 if "fold" in transform:
                     chart_obj = chart_obj.transform_fold(
-                        transform["fold"],
-                        as_=transform.get("as", ["key", "value"])
+                        transform["fold"], as_=transform.get("as", ["key", "value"])
                     )
 
         return chart_obj
@@ -440,6 +441,7 @@ def chart(
 
                 class Model:
                     pass
+
                 self.model = Model()
                 self.model.time_dimension = time_dimension
                 self.order_by = None
@@ -464,9 +466,13 @@ def chart(
             return go.Figure(go.Indicator(mode="number", value=value))
         else:
             # Default to table
-            return go.Figure(data=[go.Table(
-                header=dict(values=list(df.columns)),
-                cells=dict(values=[df[col] for col in df.columns])
-            )])
+            return go.Figure(
+                data=[
+                    go.Table(
+                        header=dict(values=list(df.columns)),
+                        cells=dict(values=[df[col] for col in df.columns]),
+                    )
+                ]
+            )
     else:
         raise ValueError(f"Unsupported backend: {backend}. Use 'altair' or 'plotly'")

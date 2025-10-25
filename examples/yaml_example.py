@@ -78,7 +78,7 @@ def main():
         tables={
             "carriers_tbl": carriers_tbl,
             "flights_tbl": flights_tbl,
-        }
+        },
     )
 
     print(f"\n✓ Loaded {len(models)} models from YAML:")

@@ -16,8 +16,8 @@ _fixtures_path = Path(__file__).parent / "fixtures"
 if str(_fixtures_path) not in sys.path:
     sys.path.insert(0, str(_fixtures_path))
 
-from datasets import DatasetManager, get_dataset
-from connections import ConnectionManager, reset_connection_manager
+from datasets import DatasetManager, get_dataset  # noqa: E402
+from connections import ConnectionManager, reset_connection_manager  # noqa: E402
 
 
 @pytest.fixture(scope="session")

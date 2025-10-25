@@ -4,9 +4,9 @@ Test introspection capabilities of SemanticTable.
 Tests the .dimensions and .measures properties that allow inspecting
 what dimensions and measures are available on a semantic table.
 """
+
 import pandas as pd
 import ibis
-import pytest
 
 from boring_semantic_layer import to_semantic_table
 
@@ -32,7 +32,7 @@ def test_dims_property():
     st = to_semantic_table(tbl, "flights").with_dimensions(
         carrier=lambda t: t.carrier,
         year=lambda t: t.date[:4],
-        month=lambda t: t.date[5:7]
+        month=lambda t: t.date[5:7],
     )
 
     assert set(st.dimensions) == {"carrier", "year", "month"}
@@ -47,7 +47,7 @@ def test_measures_property_base_only():
     st = to_semantic_table(tbl, "flights").with_measures(
         flight_count=lambda t: t.count(),
         total_distance=lambda t: t.distance.sum(),
-        avg_distance=lambda t: t.distance.mean()
+        avg_distance=lambda t: t.distance.mean(),
     )
 
     assert set(st.measures) == {"flight_count", "total_distance", "avg_distance"}
@@ -65,7 +65,7 @@ def test_measures_property_calculated_only():
         .with_measures(
             # These reference existing measures, so they're calculated measures
             doubled=lambda t: t.flight_count * 2,
-            pct=lambda t: t.flight_count / t.all(t.flight_count)
+            pct=lambda t: t.flight_count / t.all(t.flight_count),
         )
     )
 
@@ -82,12 +82,11 @@ def test_measures_property_mixed():
     st = (
         to_semantic_table(tbl, "flights")
         .with_measures(
-            flight_count=lambda t: t.count(),
-            total_distance=lambda t: t.distance.sum()
+            flight_count=lambda t: t.count(), total_distance=lambda t: t.distance.sum()
         )
         .with_measures(
             avg_distance_per_flight=lambda t: t.total_distance / t.flight_count,
-            pct=lambda t: t.flight_count / t.all(t.flight_count)
+            pct=lambda t: t.flight_count / t.all(t.flight_count),
         )
     )
 
@@ -95,25 +94,21 @@ def test_measures_property_mixed():
         "flight_count",
         "total_distance",
         "avg_distance_per_flight",
-        "pct"
+        "pct",
     }
 
 
 def test_dims_and_measures_together():
     """Test that both dimensions and measures can be inspected together."""
     con = ibis.duckdb.connect(":memory:")
-    df = pd.DataFrame({
-        "carrier": ["AA", "UA"],
-        "distance": [100, 200]
-    })
+    df = pd.DataFrame({"carrier": ["AA", "UA"], "distance": [100, 200]})
     tbl = con.create_table("flights", df)
 
     st = (
         to_semantic_table(tbl, "flights")
         .with_dimensions(carrier=lambda t: t.carrier)
         .with_measures(
-            flight_count=lambda t: t.count(),
-            total_distance=lambda t: t.distance.sum()
+            flight_count=lambda t: t.count(), total_distance=lambda t: t.distance.sum()
         )
     )
 
@@ -134,14 +129,17 @@ def test_dims_after_join():
         carrier=lambda t: t.carrier
     )
     carriers_st = to_semantic_table(c_tbl, "carriers").with_dimensions(
-        code=lambda t: t.code,
-        name=lambda t: t.name
+        code=lambda t: t.code, name=lambda t: t.name
     )
 
     joined = flights_st.join(carriers_st, on=lambda f, c: f.carrier == c.code)
 
     # After join, dimensions should be prefixed
-    assert set(joined.dimensions) == {"flights.carrier", "carriers.code", "carriers.name"}
+    assert set(joined.dimensions) == {
+        "flights.carrier",
+        "carriers.code",
+        "carriers.name",
+    }
 
 
 def test_measures_after_join():
@@ -213,9 +211,8 @@ def test_introspection_with_inline_measures():
     df = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
     tbl = con.create_table("flights", df)
 
-    st = (
-        to_semantic_table(tbl, "flights")
-        .with_measures(flight_count=lambda t: t.count())
+    st = to_semantic_table(tbl, "flights").with_measures(
+        flight_count=lambda t: t.count()
     )
 
     # Initially only flight_count
@@ -226,7 +223,7 @@ def test_introspection_with_inline_measures():
     # because aggregate() is terminal (returns ibis expression after materialization)
     st = st.with_measures(
         total_distance=lambda t: t.distance.sum(),
-        pct=lambda t: t.flight_count / t.all(t.flight_count)
+        pct=lambda t: t.flight_count / t.all(t.flight_count),
     )
 
     assert set(st.measures) == {"flight_count", "total_distance", "pct"}
@@ -239,9 +236,7 @@ def test_introspection_preserves_definition_order():
     tbl = con.create_table("test", df)
 
     st = to_semantic_table(tbl, "test").with_dimensions(
-        dim_a=lambda t: t.a,
-        dim_b=lambda t: t.b,
-        dim_c=lambda t: t.c
+        dim_a=lambda t: t.a, dim_b=lambda t: t.b, dim_c=lambda t: t.c
     )
 
     # Dict keys preserve insertion order in Python 3.7+

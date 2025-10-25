@@ -27,43 +27,90 @@ class TestEcommerceAnalytics:
     def ecommerce_data(self, con):
         """Setup e-commerce test data."""
         # Users table
-        users_df = pd.DataFrame({
-            "user_id": [1, 2, 3, 4, 5],
-            "signup_date": pd.to_datetime([
-                "2023-01-15", "2023-01-20", "2023-02-10", "2023-02-15", "2023-03-01"
-            ]),
-            "country": ["US", "UK", "US", "CA", "UK"],
-            "segment": ["premium", "free", "premium", "free", "premium"],
-        })
+        users_df = pd.DataFrame(
+            {
+                "user_id": [1, 2, 3, 4, 5],
+                "signup_date": pd.to_datetime(
+                    [
+                        "2023-01-15",
+                        "2023-01-20",
+                        "2023-02-10",
+                        "2023-02-15",
+                        "2023-03-01",
+                    ]
+                ),
+                "country": ["US", "UK", "US", "CA", "UK"],
+                "segment": ["premium", "free", "premium", "free", "premium"],
+            }
+        )
 
         # Orders table
-        orders_df = pd.DataFrame({
-            "order_id": [101, 102, 103, 104, 105, 106, 107, 108],
-            "user_id": [1, 2, 1, 3, 4, 1, 5, 3],
-            "order_date": pd.to_datetime([
-                "2023-01-20", "2023-02-01", "2023-02-15", "2023-03-01",
-                "2023-03-10", "2023-03-15", "2023-04-01", "2023-04-05"
-            ]),
-            "total_amount": [100.0, 50.0, 150.0, 200.0, 75.0, 120.0, 300.0, 180.0],
-            "status": ["completed", "completed", "completed", "completed",
-                      "completed", "cancelled", "completed", "completed"],
-        })
+        orders_df = pd.DataFrame(
+            {
+                "order_id": [101, 102, 103, 104, 105, 106, 107, 108],
+                "user_id": [1, 2, 1, 3, 4, 1, 5, 3],
+                "order_date": pd.to_datetime(
+                    [
+                        "2023-01-20",
+                        "2023-02-01",
+                        "2023-02-15",
+                        "2023-03-01",
+                        "2023-03-10",
+                        "2023-03-15",
+                        "2023-04-01",
+                        "2023-04-05",
+                    ]
+                ),
+                "total_amount": [100.0, 50.0, 150.0, 200.0, 75.0, 120.0, 300.0, 180.0],
+                "status": [
+                    "completed",
+                    "completed",
+                    "completed",
+                    "completed",
+                    "completed",
+                    "cancelled",
+                    "completed",
+                    "completed",
+                ],
+            }
+        )
 
         # Products table
-        products_df = pd.DataFrame({
-            "product_id": [1, 2, 3, 4, 5],
-            "category": ["electronics", "clothing", "electronics", "home", "clothing"],
-            "price": [50.0, 30.0, 80.0, 45.0, 25.0],
-        })
+        products_df = pd.DataFrame(
+            {
+                "product_id": [1, 2, 3, 4, 5],
+                "category": [
+                    "electronics",
+                    "clothing",
+                    "electronics",
+                    "home",
+                    "clothing",
+                ],
+                "price": [50.0, 30.0, 80.0, 45.0, 25.0],
+            }
+        )
 
         # Order items table
-        order_items_df = pd.DataFrame({
-            "order_item_id": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-            "order_id": [101, 101, 102, 103, 103, 104, 105, 107, 108, 108],
-            "product_id": [1, 2, 2, 1, 3, 4, 2, 5, 1, 4],
-            "quantity": [1, 2, 1, 1, 1, 1, 1, 2, 1, 1],
-            "item_price": [50.0, 30.0, 50.0, 50.0, 80.0, 200.0, 75.0, 25.0, 50.0, 45.0],
-        })
+        order_items_df = pd.DataFrame(
+            {
+                "order_item_id": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                "order_id": [101, 101, 102, 103, 103, 104, 105, 107, 108, 108],
+                "product_id": [1, 2, 2, 1, 3, 4, 2, 5, 1, 4],
+                "quantity": [1, 2, 1, 1, 1, 1, 1, 2, 1, 1],
+                "item_price": [
+                    50.0,
+                    30.0,
+                    50.0,
+                    50.0,
+                    80.0,
+                    200.0,
+                    75.0,
+                    25.0,
+                    50.0,
+                    45.0,
+                ],
+            }
+        )
 
         return {
             "users": con.create_table("users", users_df),
@@ -97,12 +144,9 @@ class TestEcommerceAnalytics:
 
         # Calculate average CLV by segment
         result = (
-            users_st
-            .group_by("segment")
+            users_st.group_by("segment")
             .aggregate("total_revenue", "customer_count")
-            .mutate(
-                avg_clv=lambda t: t["total_revenue"] / t["customer_count"]
-            )
+            .mutate(avg_clv=lambda t: t["total_revenue"] / t["customer_count"])
             .execute()
         )
 
@@ -131,8 +175,7 @@ class TestEcommerceAnalytics:
         )
 
         result = (
-            cohort_st
-            .group_by("signup_month", "order_month")
+            cohort_st.group_by("signup_month", "order_month")
             .aggregate("active_users")
             .order_by("signup_month", "order_month")
             .execute()
@@ -149,7 +192,7 @@ class TestEcommerceAnalytics:
         joined = order_items_tbl.join(
             products_tbl,
             order_items_tbl.product_id == products_tbl.product_id,
-            how="inner"
+            how="inner",
         )
 
         category_st = (
@@ -164,11 +207,11 @@ class TestEcommerceAnalytics:
         )
 
         result = (
-            category_st
-            .group_by("category")
+            category_st.group_by("category")
             .aggregate("total_sales", "items_sold")
             .mutate(
-                percent_of_total_sales=lambda t: t["total_sales"] / t.all(t["total_sales"]),
+                percent_of_total_sales=lambda t: t["total_sales"]
+                / t.all(t["total_sales"]),
             )
             .order_by(ibis.desc("total_sales"))
             .execute()
@@ -194,8 +237,7 @@ class TestEcommerceAnalytics:
         )
 
         result = (
-            orders_st
-            .group_by("status")
+            orders_st.group_by("status")
             .aggregate("order_count")
             .mutate(
                 percent_of_orders=lambda t: t["order_count"] / t.all(t["order_count"]),
@@ -214,36 +256,110 @@ class TestSaaSMetrics:
     def saas_data(self, con):
         """Setup SaaS test data."""
         # Subscriptions table
-        subscriptions_df = pd.DataFrame({
-            "subscription_id": [1, 2, 3, 4, 5, 6],
-            "user_id": [101, 102, 103, 104, 105, 106],
-            "plan": ["basic", "pro", "basic", "enterprise", "pro", "basic"],
-            "mrr": [10.0, 50.0, 10.0, 200.0, 50.0, 10.0],
-            "start_date": pd.to_datetime([
-                "2023-01-01", "2023-01-15", "2023-02-01", "2023-02-10", "2023-03-01", "2023-03-15"
-            ]),
-            "end_date": pd.to_datetime([
-                None, "2023-04-15", None, None, None, "2023-05-15"
-            ]),
-            "status": ["active", "churned", "active", "active", "active", "churned"],
-        })
+        subscriptions_df = pd.DataFrame(
+            {
+                "subscription_id": [1, 2, 3, 4, 5, 6],
+                "user_id": [101, 102, 103, 104, 105, 106],
+                "plan": ["basic", "pro", "basic", "enterprise", "pro", "basic"],
+                "mrr": [10.0, 50.0, 10.0, 200.0, 50.0, 10.0],
+                "start_date": pd.to_datetime(
+                    [
+                        "2023-01-01",
+                        "2023-01-15",
+                        "2023-02-01",
+                        "2023-02-10",
+                        "2023-03-01",
+                        "2023-03-15",
+                    ]
+                ),
+                "end_date": pd.to_datetime(
+                    [None, "2023-04-15", None, None, None, "2023-05-15"]
+                ),
+                "status": [
+                    "active",
+                    "churned",
+                    "active",
+                    "active",
+                    "active",
+                    "churned",
+                ],
+            }
+        )
 
         # Usage events table
-        usage_df = pd.DataFrame({
-            "event_id": list(range(1, 21)),
-            "user_id": [101, 101, 102, 103, 103, 103, 104, 104, 105, 105,
-                       101, 102, 103, 104, 105, 106, 101, 103, 104, 105],
-            "event_date": pd.to_datetime([
-                "2023-01-05", "2023-01-10", "2023-01-20", "2023-02-05", "2023-02-06",
-                "2023-02-07", "2023-02-15", "2023-02-16", "2023-03-05", "2023-03-06",
-                "2023-03-10", "2023-03-11", "2023-03-12", "2023-03-13", "2023-03-14",
-                "2023-03-15", "2023-04-01", "2023-04-02", "2023-04-03", "2023-04-04"
-            ]),
-            "event_type": ["login", "api_call", "login", "login", "api_call",
-                          "api_call", "login", "api_call", "login", "api_call",
-                          "login", "login", "api_call", "api_call", "login",
-                          "login", "api_call", "login", "api_call", "api_call"],
-        })
+        usage_df = pd.DataFrame(
+            {
+                "event_id": list(range(1, 21)),
+                "user_id": [
+                    101,
+                    101,
+                    102,
+                    103,
+                    103,
+                    103,
+                    104,
+                    104,
+                    105,
+                    105,
+                    101,
+                    102,
+                    103,
+                    104,
+                    105,
+                    106,
+                    101,
+                    103,
+                    104,
+                    105,
+                ],
+                "event_date": pd.to_datetime(
+                    [
+                        "2023-01-05",
+                        "2023-01-10",
+                        "2023-01-20",
+                        "2023-02-05",
+                        "2023-02-06",
+                        "2023-02-07",
+                        "2023-02-15",
+                        "2023-02-16",
+                        "2023-03-05",
+                        "2023-03-06",
+                        "2023-03-10",
+                        "2023-03-11",
+                        "2023-03-12",
+                        "2023-03-13",
+                        "2023-03-14",
+                        "2023-03-15",
+                        "2023-04-01",
+                        "2023-04-02",
+                        "2023-04-03",
+                        "2023-04-04",
+                    ]
+                ),
+                "event_type": [
+                    "login",
+                    "api_call",
+                    "login",
+                    "login",
+                    "api_call",
+                    "api_call",
+                    "login",
+                    "api_call",
+                    "login",
+                    "api_call",
+                    "login",
+                    "login",
+                    "api_call",
+                    "api_call",
+                    "login",
+                    "login",
+                    "api_call",
+                    "login",
+                    "api_call",
+                    "api_call",
+                ],
+            }
+        )
 
         return {
             "subscriptions": con.create_table("subscriptions", subscriptions_df),
@@ -267,8 +383,7 @@ class TestSaaSMetrics:
         )
 
         result = (
-            subs_st
-            .filter(lambda t: t.status == "active")
+            subs_st.filter(lambda t: t.status == "active")
             .group_by("plan")
             .aggregate("total_mrr", "subscriber_count")
             .mutate(
@@ -301,8 +416,7 @@ class TestSaaSMetrics:
         )
 
         result = (
-            subs_st
-            .group_by("plan")
+            subs_st.group_by("plan")
             .aggregate("total_subs", "churned_subs")
             .mutate(
                 churn_rate=lambda t: t["churned_subs"] / t["total_subs"],
@@ -332,8 +446,7 @@ class TestSaaSMetrics:
         )
 
         result = (
-            usage_st
-            .group_by("event_month", "event_type")
+            usage_st.group_by("event_month", "event_type")
             .aggregate("daily_active_users", "event_count")
             .mutate(
                 events_per_user=lambda t: t["event_count"] / t["daily_active_users"],
@@ -354,27 +467,51 @@ class TestSupplyChainAnalytics:
     def supply_chain_data(self, con):
         """Setup supply chain test data."""
         # Inventory table
-        inventory_df = pd.DataFrame({
-            "item_id": [1, 2, 3, 4, 5],
-            "warehouse": ["A", "A", "B", "B", "C"],
-            "category": ["electronics", "clothing", "electronics", "food", "clothing"],
-            "quantity": [100, 200, 150, 300, 250],
-            "reorder_point": [20, 50, 30, 100, 60],
-            "unit_cost": [50.0, 20.0, 80.0, 5.0, 15.0],
-        })
+        inventory_df = pd.DataFrame(
+            {
+                "item_id": [1, 2, 3, 4, 5],
+                "warehouse": ["A", "A", "B", "B", "C"],
+                "category": [
+                    "electronics",
+                    "clothing",
+                    "electronics",
+                    "food",
+                    "clothing",
+                ],
+                "quantity": [100, 200, 150, 300, 250],
+                "reorder_point": [20, 50, 30, 100, 60],
+                "unit_cost": [50.0, 20.0, 80.0, 5.0, 15.0],
+            }
+        )
 
         # Shipments table
-        shipments_df = pd.DataFrame({
-            "shipment_id": [1, 2, 3, 4, 5, 6],
-            "item_id": [1, 2, 3, 1, 4, 5],
-            "quantity_shipped": [50, 100, 75, 30, 150, 120],
-            "ship_date": pd.to_datetime([
-                "2023-01-10", "2023-01-15", "2023-02-01", "2023-02-10", "2023-03-01", "2023-03-05"
-            ]),
-            "delivery_date": pd.to_datetime([
-                "2023-01-15", "2023-01-20", "2023-02-08", "2023-02-17", "2023-03-08", "2023-03-12"
-            ]),
-        })
+        shipments_df = pd.DataFrame(
+            {
+                "shipment_id": [1, 2, 3, 4, 5, 6],
+                "item_id": [1, 2, 3, 1, 4, 5],
+                "quantity_shipped": [50, 100, 75, 30, 150, 120],
+                "ship_date": pd.to_datetime(
+                    [
+                        "2023-01-10",
+                        "2023-01-15",
+                        "2023-02-01",
+                        "2023-02-10",
+                        "2023-03-01",
+                        "2023-03-05",
+                    ]
+                ),
+                "delivery_date": pd.to_datetime(
+                    [
+                        "2023-01-15",
+                        "2023-01-20",
+                        "2023-02-08",
+                        "2023-02-17",
+                        "2023-03-08",
+                        "2023-03-12",
+                    ]
+                ),
+            }
+        )
 
         return {
             "inventory": con.create_table("inventory", inventory_df),
@@ -387,9 +524,7 @@ class TestSupplyChainAnalytics:
         shipments_tbl = supply_chain_data["shipments"]
 
         joined = inventory_tbl.join(
-            shipments_tbl,
-            inventory_tbl.item_id == shipments_tbl.item_id,
-            how="left"
+            shipments_tbl, inventory_tbl.item_id == shipments_tbl.item_id, how="left"
         )
 
         inventory_st = (
@@ -405,8 +540,7 @@ class TestSupplyChainAnalytics:
         )
 
         result = (
-            inventory_st
-            .group_by("category")
+            inventory_st.group_by("category")
             .aggregate("avg_inventory", "total_shipped")
             .mutate(
                 turnover_ratio=lambda t: t["total_shipped"] / t["avg_inventory"],
@@ -434,12 +568,12 @@ class TestSupplyChainAnalytics:
         )
 
         result = (
-            inventory_st
-            .group_by("warehouse")
+            inventory_st.group_by("warehouse")
             .aggregate("total_units", "inventory_value")
             .mutate(
                 percent_of_units=lambda t: t["total_units"] / t.all(t["total_units"]),
-                percent_of_value=lambda t: t["inventory_value"] / t.all(t["inventory_value"]),
+                percent_of_value=lambda t: t["inventory_value"]
+                / t.all(t["inventory_value"]),
             )
             .execute()
         )
@@ -465,12 +599,13 @@ class TestSupplyChainAnalytics:
         )
 
         result = (
-            shipments_st
-            .group_by("ship_month")
+            shipments_st.group_by("ship_month")
             .aggregate("shipment_count")
             .mutate(
                 # Calculate lead time in aggregate result
-                avg_lead_time_days=lambda t: ibis.literal(5.5),  # Placeholder - would use date diff
+                avg_lead_time_days=lambda t: ibis.literal(
+                    5.5
+                ),  # Placeholder - would use date diff
             )
             .execute()
         )
@@ -486,27 +621,83 @@ class TestMarketingAttribution:
     def marketing_data(self, con):
         """Setup marketing test data."""
         # Campaigns table
-        campaigns_df = pd.DataFrame({
-            "campaign_id": [1, 2, 3, 4],
-            "campaign_name": ["Summer Sale", "Holiday Promo", "Spring Launch", "Black Friday"],
-            "channel": ["email", "social", "email", "social"],
-            "budget": [5000.0, 10000.0, 3000.0, 15000.0],
-            "start_date": pd.to_datetime(["2023-06-01", "2023-11-01", "2023-03-01", "2023-11-24"]),
-        })
+        campaigns_df = pd.DataFrame(
+            {
+                "campaign_id": [1, 2, 3, 4],
+                "campaign_name": [
+                    "Summer Sale",
+                    "Holiday Promo",
+                    "Spring Launch",
+                    "Black Friday",
+                ],
+                "channel": ["email", "social", "email", "social"],
+                "budget": [5000.0, 10000.0, 3000.0, 15000.0],
+                "start_date": pd.to_datetime(
+                    ["2023-06-01", "2023-11-01", "2023-03-01", "2023-11-24"]
+                ),
+            }
+        )
 
         # Campaign conversions table
-        conversions_df = pd.DataFrame({
-            "conversion_id": list(range(1, 16)),
-            "campaign_id": [1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 4, 4, 4, 4],
-            "user_id": [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115],
-            "conversion_date": pd.to_datetime([
-                "2023-06-05", "2023-06-07", "2023-06-10", "2023-11-05", "2023-11-06",
-                "2023-11-08", "2023-11-10", "2023-03-05", "2023-03-07", "2023-11-25",
-                "2023-11-26", "2023-11-27", "2023-11-28", "2023-11-29", "2023-11-30"
-            ]),
-            "revenue": [100.0, 150.0, 200.0, 300.0, 250.0, 180.0, 220.0, 90.0, 110.0,
-                       400.0, 350.0, 380.0, 420.0, 390.0, 410.0],
-        })
+        conversions_df = pd.DataFrame(
+            {
+                "conversion_id": list(range(1, 16)),
+                "campaign_id": [1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 4, 4, 4, 4],
+                "user_id": [
+                    101,
+                    102,
+                    103,
+                    104,
+                    105,
+                    106,
+                    107,
+                    108,
+                    109,
+                    110,
+                    111,
+                    112,
+                    113,
+                    114,
+                    115,
+                ],
+                "conversion_date": pd.to_datetime(
+                    [
+                        "2023-06-05",
+                        "2023-06-07",
+                        "2023-06-10",
+                        "2023-11-05",
+                        "2023-11-06",
+                        "2023-11-08",
+                        "2023-11-10",
+                        "2023-03-05",
+                        "2023-03-07",
+                        "2023-11-25",
+                        "2023-11-26",
+                        "2023-11-27",
+                        "2023-11-28",
+                        "2023-11-29",
+                        "2023-11-30",
+                    ]
+                ),
+                "revenue": [
+                    100.0,
+                    150.0,
+                    200.0,
+                    300.0,
+                    250.0,
+                    180.0,
+                    220.0,
+                    90.0,
+                    110.0,
+                    400.0,
+                    350.0,
+                    380.0,
+                    420.0,
+                    390.0,
+                    410.0,
+                ],
+            }
+        )
 
         return {
             "campaigns": con.create_table("campaigns", campaigns_df),
@@ -521,7 +712,7 @@ class TestMarketingAttribution:
         joined = campaigns_tbl.join(
             conversions_tbl,
             campaigns_tbl.campaign_id == conversions_tbl.campaign_id,
-            how="left"
+            how="left",
         )
 
         campaigns_st = (
@@ -538,11 +729,11 @@ class TestMarketingAttribution:
         )
 
         result = (
-            campaigns_st
-            .group_by("campaign_name", "channel")
+            campaigns_st.group_by("campaign_name", "channel")
             .aggregate("total_budget", "total_revenue", "conversion_count")
             .mutate(
-                roi=lambda t: (t["total_revenue"] - t["total_budget"]) / t["total_budget"],
+                roi=lambda t: (t["total_revenue"] - t["total_budget"])
+                / t["total_budget"],
                 cpa=lambda t: t["total_budget"] / t["conversion_count"],
             )
             .order_by(ibis.desc("roi"))
@@ -561,7 +752,7 @@ class TestMarketingAttribution:
         joined = campaigns_tbl.join(
             conversions_tbl,
             campaigns_tbl.campaign_id == conversions_tbl.campaign_id,
-            how="left"
+            how="left",
         )
 
         channels_st = (
@@ -577,12 +768,13 @@ class TestMarketingAttribution:
         )
 
         result = (
-            channels_st
-            .group_by("channel")
+            channels_st.group_by("channel")
             .aggregate("total_budget", "total_revenue", "campaign_count")
             .mutate(
-                percent_of_budget=lambda t: t["total_budget"] / t.all(t["total_budget"]),
-                percent_of_revenue=lambda t: t["total_revenue"] / t.all(t["total_revenue"]),
+                percent_of_budget=lambda t: t["total_budget"]
+                / t.all(t["total_budget"]),
+                percent_of_revenue=lambda t: t["total_revenue"]
+                / t.all(t["total_revenue"]),
                 efficiency=lambda t: t["total_revenue"] / t["total_budget"],
             )
             .execute()
@@ -601,11 +793,39 @@ class TestAdvancedAnalytics:
     def time_series_data(self, con):
         """Setup time series test data."""
         dates = pd.date_range("2023-01-01", periods=12, freq="ME")
-        ts_df = pd.DataFrame({
-            "date": dates,
-            "metric_value": [100, 120, 115, 130, 140, 135, 150, 160, 155, 170, 180, 175],
-            "category": ["A", "B", "A", "B", "A", "B", "A", "B", "A", "B", "A", "B"],
-        })
+        ts_df = pd.DataFrame(
+            {
+                "date": dates,
+                "metric_value": [
+                    100,
+                    120,
+                    115,
+                    130,
+                    140,
+                    135,
+                    150,
+                    160,
+                    155,
+                    170,
+                    180,
+                    175,
+                ],
+                "category": [
+                    "A",
+                    "B",
+                    "A",
+                    "B",
+                    "A",
+                    "B",
+                    "A",
+                    "B",
+                    "A",
+                    "B",
+                    "A",
+                    "B",
+                ],
+            }
+        )
 
         return {"timeseries": con.create_table("timeseries", ts_df)}
 
@@ -624,16 +844,15 @@ class TestAdvancedAnalytics:
         )
 
         result = (
-            ts_st
-            .group_by("date")
+            ts_st.group_by("date")
             .aggregate("total_value")
             .mutate(
-                ma_3=lambda t: t["total_value"].mean().over(
-                    ibis.window(order_by="date", preceding=2, following=0)
-                ),
-                ma_6=lambda t: t["total_value"].mean().over(
-                    ibis.window(order_by="date", preceding=5, following=0)
-                ),
+                ma_3=lambda t: t["total_value"]
+                .mean()
+                .over(ibis.window(order_by="date", preceding=2, following=0)),
+                ma_6=lambda t: t["total_value"]
+                .mean()
+                .over(ibis.window(order_by="date", preceding=5, following=0)),
             )
             .order_by("date")
             .execute()
@@ -658,8 +877,7 @@ class TestAdvancedAnalytics:
         )
 
         result = (
-            ts_st
-            .group_by("category")
+            ts_st.group_by("category")
             .aggregate("total_value")
             .mutate(
                 value_rank=lambda t: t["total_value"].rank(),
@@ -690,8 +908,7 @@ class TestAdvancedAnalytics:
         )
 
         result = (
-            ts_st
-            .group_by("category")
+            ts_st.group_by("category")
             .aggregate("total_value", "avg_value", "max_value", "min_value")
             .mutate(
                 value_range=lambda t: t["max_value"] - t["min_value"],
@@ -700,8 +917,16 @@ class TestAdvancedAnalytics:
         )
 
         assert len(result) == 2
-        assert all(col in result.columns for col in
-                  ["total_value", "avg_value", "max_value", "min_value", "value_range"])
+        assert all(
+            col in result.columns
+            for col in [
+                "total_value",
+                "avg_value",
+                "max_value",
+                "min_value",
+                "value_range",
+            ]
+        )
 
     def test_conditional_aggregations(self, time_series_data):
         """Test filtered/conditional aggregations."""
@@ -719,8 +944,7 @@ class TestAdvancedAnalytics:
         )
 
         result = (
-            ts_st
-            .group_by("category")
+            ts_st.group_by("category")
             .aggregate("high_value_count", "total_count")
             .mutate(
                 high_value_pct=lambda t: t["high_value_count"] / t["total_count"],

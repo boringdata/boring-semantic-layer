@@ -118,7 +118,7 @@ def main():
         .execute()
     )
     print(sampled_index)
-    print(f"\nNote: Sampling is useful for very large datasets to get quick insights")
+    print("\nNote: Sampling is useful for very large datasets to get quick insights")
 
     print("\n" + "=" * 80)
     print("7. Autocomplete Use Case - City Search")
@@ -159,9 +159,11 @@ def main():
 
         print(f"\n{field_name} ({field_type})")
         print(f"  Unique values: {total_values}")
-        print(f"  Top 5 values:")
+        print("  Top 5 values:")
         for _, row in top_5.iterrows():
-            value_str = str(row['fieldValue']) if row['fieldValue'] is not None else "None"
+            value_str = (
+                str(row["fieldValue"]) if row["fieldValue"] is not None else "None"
+            )
             print(f"    {value_str:20s} (weight: {row['weight']})")
 
     print("\n" + "=" * 80)
@@ -206,11 +208,7 @@ def main():
         )
     )
 
-    flights_with_origin = flights.join_one(
-        airports,
-        left_on="origin",
-        right_on="code"
-    )
+    flights_with_origin = flights.join_one(airports, left_on="origin", right_on="code")
 
     joined_index = (
         flights_with_origin.index(s.cols("carrier", "airports__state"))

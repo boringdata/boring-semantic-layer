@@ -2,8 +2,8 @@
 """Window Functions - Rolling Averages, Rankings, Running Totals.
 https://docs.malloydata.dev/documentation/patterns/moving_avg
 """
+
 import ibis
-from ibis import _
 from boring_semantic_layer import to_semantic_table, to_ibis
 
 BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
@@ -47,7 +47,9 @@ def main():
     )
 
     print("\nDaily WN flights with window functions:")
-    print(result[["flight_date", "flight_count", "rolling_avg", "rank", "running_total"]])
+    print(
+        result[["flight_date", "flight_count", "rolling_avg", "rank", "running_total"]]
+    )
 
 
 if __name__ == "__main__":

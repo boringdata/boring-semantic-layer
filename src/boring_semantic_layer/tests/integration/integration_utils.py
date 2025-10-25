@@ -4,9 +4,8 @@ Utility functions for DataFrame comparison and dtype normalization in Malloy ben
 
 import pandas as pd
 from typing import Dict, Any, Tuple, Optional
-from toolz import curry, pipe, compose
-from operator import itemgetter, methodcaller
-from attrs import frozen, field
+from toolz import curry
+from attrs import frozen
 from functools import reduce
 
 
@@ -34,7 +33,9 @@ class NormalizationLog:
 
 
 @curry
-def make_convert_column(reference_dtype: Any, col: str, df: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[DtypeConversion]]:
+def make_convert_column(
+    reference_dtype: Any, col: str, df: pd.DataFrame
+) -> Tuple[pd.DataFrame, Optional[DtypeConversion]]:
     if col not in df.columns:
         return df, None
 
@@ -49,7 +50,7 @@ def make_convert_column(reference_dtype: Any, col: str, df: pd.DataFrame) -> Tup
             column=col,
             source_dtype=str(source_dtype),
             target_dtype=str(reference_dtype),
-            success=True
+            success=True,
         )
     except Exception as e:
         return df, DtypeConversion(
@@ -57,12 +58,16 @@ def make_convert_column(reference_dtype: Any, col: str, df: pd.DataFrame) -> Tup
             source_dtype=str(source_dtype),
             target_dtype=str(reference_dtype),
             success=False,
-            error=str(e)
+            error=str(e),
         )
 
 
 @curry
-def make_normalize_column(dtype_map: Dict[str, Any], col: str, state: Tuple[pd.DataFrame, Tuple[DtypeConversion, ...]]) -> Tuple[pd.DataFrame, Tuple[DtypeConversion, ...]]:
+def make_normalize_column(
+    dtype_map: Dict[str, Any],
+    col: str,
+    state: Tuple[pd.DataFrame, Tuple[DtypeConversion, ...]],
+) -> Tuple[pd.DataFrame, Tuple[DtypeConversion, ...]]:
     df, conversions = state
     if col not in dtype_map:
         return state
@@ -79,14 +84,16 @@ def do_print_conversions(conversions: Tuple[DtypeConversion, ...]) -> None:
 
 
 @curry
-def make_normalize_dataframe_dtypes(reference_df: pd.DataFrame, target_df: pd.DataFrame) -> pd.DataFrame:
+def make_normalize_dataframe_dtypes(
+    reference_df: pd.DataFrame, target_df: pd.DataFrame
+) -> pd.DataFrame:
     dtype_map = {col: reference_df[col].dtype for col in reference_df.columns}
 
     initial_state = (target_df.copy(), ())
     final_df, conversions = reduce(
         lambda state, col: make_normalize_column(dtype_map, col, state),
         dtype_map.keys(),
-        initial_state
+        initial_state,
     )
 
     do_print_conversions(conversions)
@@ -104,7 +111,9 @@ def make_check_date_like(sample: Any) -> bool:
 
 
 @curry
-def make_normalize_date_column(col: str, df1: pd.DataFrame, df2: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, Optional[NormalizationLog]]:
+def make_normalize_date_column(
+    col: str, df1: pd.DataFrame, df2: pd.DataFrame
+) -> Tuple[pd.DataFrame, pd.DataFrame, Optional[NormalizationLog]]:
     if df1[col].dtype != "object" or df2[col].dtype != "object":
         return df1, df2, None
 
@@ -126,8 +135,7 @@ def make_normalize_date_column(col: str, df1: pd.DataFrame, df2: pd.DataFrame) -
         df2_modified[col] = df2_modified[col].astype(str)
 
         log = NormalizationLog(
-            column=col,
-            message="converted both to string for date comparison"
+            column=col, message="converted both to string for date comparison"
         )
         return df1_modified, df2_modified, log
 
@@ -139,7 +147,9 @@ def make_normalize_for_comparison(
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     common_cols = tuple(set(df1.columns) & set(df2.columns))
 
-    def process_column(state: Tuple[pd.DataFrame, pd.DataFrame, Tuple[NormalizationLog, ...]], col: str) -> Tuple[pd.DataFrame, pd.DataFrame, Tuple[NormalizationLog, ...]]:
+    def process_column(
+        state: Tuple[pd.DataFrame, pd.DataFrame, Tuple[NormalizationLog, ...]], col: str
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, Tuple[NormalizationLog, ...]]:
         df1_curr, df2_curr, logs = state
         df1_new, df2_new, log = make_normalize_date_column(col, df1_curr, df2_curr)
         new_logs = logs + (log,) if log else logs
@@ -286,7 +296,9 @@ def make_analyze_dtypes(df1: pd.DataFrame, df2: pd.DataFrame) -> DtypeAnalysis:
     common_cols = set(df1.columns) & set(df2.columns)
 
     differences = tuple(
-        DtypeDifference(column=col, df1_dtype=str(df1[col].dtype), df2_dtype=str(df2[col].dtype))
+        DtypeDifference(
+            column=col, df1_dtype=str(df1[col].dtype), df2_dtype=str(df2[col].dtype)
+        )
         for col in common_cols
         if df1[col].dtype != df2[col].dtype
     )
@@ -295,14 +307,16 @@ def make_analyze_dtypes(df1: pd.DataFrame, df2: pd.DataFrame) -> DtypeAnalysis:
 
 
 @curry
-def make_analyze_missing_rows(df1: pd.DataFrame, df2: pd.DataFrame) -> MissingRowsAnalysis:
+def make_analyze_missing_rows(
+    df1: pd.DataFrame, df2: pd.DataFrame
+) -> MissingRowsAnalysis:
     common_cols = list(set(df1.columns) & set(df2.columns))
 
     if not common_cols:
         return MissingRowsAnalysis(
             df1_only=pd.DataFrame(),
             df2_only=pd.DataFrame(),
-            error="No common columns for row comparison"
+            error="No common columns for row comparison",
         )
 
     try:
@@ -329,12 +343,14 @@ def make_analyze_missing_rows(df1: pd.DataFrame, df2: pd.DataFrame) -> MissingRo
         return MissingRowsAnalysis(
             df1_only=pd.DataFrame(),
             df2_only=pd.DataFrame(),
-            error=f"Could not compare rows: {str(e)}"
+            error=f"Could not compare rows: {str(e)}",
         )
 
 
 @curry
-def make_find_row_differences(common_cols: Tuple[str, ...], df1: pd.DataFrame, df2: pd.DataFrame, idx: int) -> Optional[ValueDifference]:
+def make_find_row_differences(
+    common_cols: Tuple[str, ...], df1: pd.DataFrame, df2: pd.DataFrame, idx: int
+) -> Optional[ValueDifference]:
     row_diffs = {}
     for col in common_cols:
         val1 = df1.loc[idx, col]
@@ -357,7 +373,7 @@ def make_analyze_values(df1: pd.DataFrame, df2: pd.DataFrame) -> ValueAnalysis:
     if not common_cols or len(df1) != len(df2):
         return ValueAnalysis(
             differences=(),
-            error="Cannot compare values - different shapes or no common columns"
+            error="Cannot compare values - different shapes or no common columns",
         )
 
     try:
@@ -367,13 +383,19 @@ def make_analyze_values(df1: pd.DataFrame, df2: pd.DataFrame) -> ValueAnalysis:
         differences = tuple(
             diff
             for idx in range(len(df1_common))
-            if (diff := make_find_row_differences(common_cols, df1_common, df2_common, idx))
+            if (
+                diff := make_find_row_differences(
+                    common_cols, df1_common, df2_common, idx
+                )
+            )
         )
 
         return ValueAnalysis(differences=differences[:10])
 
     except Exception as e:
-        return ValueAnalysis(differences=(), error=f"Could not compare values: {str(e)}")
+        return ValueAnalysis(
+            differences=(), error=f"Could not compare values: {str(e)}"
+        )
 
 
 @curry
@@ -413,7 +435,9 @@ def make_generate_summary(
 
 
 @curry
-def make_full_analysis(df1_name: str, df2_name: str, df1: pd.DataFrame, df2: pd.DataFrame) -> DataFrameAnalysis:
+def make_full_analysis(
+    df1_name: str, df2_name: str, df1: pd.DataFrame, df2: pd.DataFrame
+) -> DataFrameAnalysis:
     shape_analysis = make_analyze_shapes(df1, df2)
     column_analysis = make_analyze_columns(df1, df2)
     dtype_analysis = make_analyze_dtypes(df1, df2)
@@ -427,7 +451,7 @@ def make_full_analysis(df1_name: str, df2_name: str, df1: pd.DataFrame, df2: pd.
         column_analysis,
         dtype_analysis,
         missing_analysis,
-        value_analysis
+        value_analysis,
     )
 
     return DataFrameAnalysis(
@@ -457,9 +481,13 @@ def do_print_analysis(analysis: DataFrameAnalysis) -> None:
         print(f"  Columns only in {analysis.df2_name}: {analysis.columns.df2_only}")
 
     if analysis.missing_rows.df1_only_count > 0:
-        print(f"  Rows only in {analysis.df1_name}: {analysis.missing_rows.df1_only_count}")
+        print(
+            f"  Rows only in {analysis.df1_name}: {analysis.missing_rows.df1_only_count}"
+        )
     if analysis.missing_rows.df2_only_count > 0:
-        print(f"  Rows only in {analysis.df2_name}: {analysis.missing_rows.df2_only_count}")
+        print(
+            f"  Rows only in {analysis.df2_name}: {analysis.missing_rows.df2_only_count}"
+        )
 
     if analysis.values.has_differences:
         print(f"  Rows with value differences: {analysis.values.total_differing_rows}")
@@ -490,11 +518,15 @@ def make_execute_query(query: Any) -> pd.DataFrame:
     return query.execute()
 
 
-def normalize_dataframe_dtypes(target_df: pd.DataFrame, reference_df: pd.DataFrame) -> pd.DataFrame:
+def normalize_dataframe_dtypes(
+    target_df: pd.DataFrame, reference_df: pd.DataFrame
+) -> pd.DataFrame:
     return make_normalize_dataframe_dtypes(reference_df, target_df)
 
 
-def normalize_for_comparison(df1: pd.DataFrame, df2: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def normalize_for_comparison(
+    df1: pd.DataFrame, df2: pd.DataFrame
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     return make_normalize_for_comparison(df1, df2)
 
 

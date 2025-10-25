@@ -26,12 +26,15 @@ order_items_st = (
     )
 )
 
-DATE_FILTER = lambda t: (
-    (t.created_at >= pd.Timestamp("2022-01-01"))
-    & (t.created_at < pd.Timestamp("2022-07-01"))
-    & (t.created_at_right >= pd.Timestamp("2022-01-01"))
-    & (t.created_at_right < pd.Timestamp("2022-07-01"))
-)
+
+def DATE_FILTER(t):
+    return (
+        (t.created_at >= pd.Timestamp("2022-01-01"))
+        & (t.created_at < pd.Timestamp("2022-07-01"))
+        & (t.created_at_right >= pd.Timestamp("2022-01-01"))
+        & (t.created_at_right < pd.Timestamp("2022-07-01"))
+    )
+
 
 query_1 = (
     order_items_st.filter(DATE_FILTER)
@@ -39,12 +42,14 @@ query_1 = (
     .aggregate(**{"Users in Cohort that Ordered": lambda t: t.user_id.nunique()})
     .mutate(
         **{
-            "Users that Ordered Count": lambda t: t["Users in Cohort that Ordered"].sum().over(
-                ibis.window(group_by="Order Month")
-            ),
+            "Users that Ordered Count": lambda t: t["Users in Cohort that Ordered"]
+            .sum()
+            .over(ibis.window(group_by="Order Month")),
             "Percent of cohort that ordered": lambda t: (
                 t["Users in Cohort that Ordered"]
-                / t["Users in Cohort that Ordered"].sum().over(ibis.window(group_by="Order Month"))
+                / t["Users in Cohort that Ordered"]
+                .sum()
+                .over(ibis.window(group_by="Order Month"))
             ),
             "User Signup Cohort": lambda t: t["User Signup Cohort"].date().cast(str),
         }
@@ -58,7 +63,9 @@ query_2 = (
     .aggregate(**{"cohort_sales": lambda t: t.sale_price.sum()})
     .mutate(
         **{
-            "Total Sales": lambda t: t.cohort_sales.sum().over(ibis.window(group_by="Order Month")),
+            "Total Sales": lambda t: t.cohort_sales.sum().over(
+                ibis.window(group_by="Order Month")
+            ),
             "Cohort as Percent of Sales": lambda t: t.cohort_sales
             / t.cohort_sales.sum().over(ibis.window(group_by="Order Month")),
             "User Signup Cohort": lambda t: t["User Signup Cohort"].date().cast(str),

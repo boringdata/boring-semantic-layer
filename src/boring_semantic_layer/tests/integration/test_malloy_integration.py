@@ -1,8 +1,8 @@
 """Integration tests comparing Malloy queries with BSL equivalents."""
+
 import pytest
 import asyncio
 from toolz import pipe
-from operator import itemgetter, methodcaller
 from typing import Tuple
 from .conftest import TEST_CASES
 from .integration_utils import (
@@ -44,8 +44,12 @@ def test_malloy_bsl_integration(
         make_extract_columns(tuple(df_malloy.columns)),
     )
 
-    df_malloy_normalized, df_bsl_normalized = make_normalize_for_comparison(df_malloy, df_bsl)
-    df_bsl_final = make_normalize_dataframe_dtypes(df_malloy_normalized, df_bsl_normalized)
+    df_malloy_normalized, df_bsl_normalized = make_normalize_for_comparison(
+        df_malloy, df_bsl
+    )
+    df_bsl_final = make_normalize_dataframe_dtypes(
+        df_malloy_normalized, df_bsl_normalized
+    )
 
     diff_analysis = make_compare_dataframes(
         df1=df_malloy_normalized,

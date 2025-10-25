@@ -9,8 +9,7 @@ flights_tbl = con.read_parquet(f"{BASE_URL}/flights.parquet")
 flights_st = (
     to_semantic_table(flights_tbl)
     .with_measures(
-        flight_count=lambda t: t.count(),
-        avg_delay=lambda t: t.arr_delay.mean()
+        flight_count=lambda t: t.count(), avg_delay=lambda t: t.arr_delay.mean()
     )
     .with_dimensions(
         dep_month=lambda t: t.dep_time.truncate("M"),
@@ -18,8 +17,10 @@ flights_st = (
     )
 )
 
+
 def moving_avg_window(order_by, preceding):
     return ibis.window(order_by=order_by, preceding=preceding, following=0)
+
 
 query_1 = (
     flights_st.group_by("dep_month")
@@ -45,10 +46,7 @@ query_2 = (
 
 query_3 = (
     flights_st.group_by("dep_year", "dep_month")
-    .aggregate(
-        flight_count=lambda t: t.count(),
-        avg_delay=lambda t: t.arr_delay.mean()
-    )
+    .aggregate(flight_count=lambda t: t.count(), avg_delay=lambda t: t.arr_delay.mean())
     .mutate(
         moving_avg_flight_count=lambda t: t.flight_count.mean().over(
             moving_avg_window(["dep_year", "dep_month"], 6)

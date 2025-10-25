@@ -3,8 +3,6 @@
 Test bracket-style filtering for joined and aggregated semantic tables.
 """
 
-import pytest
-
 import pandas as pd
 import ibis
 from boring_semantic_layer import to_semantic_table

@@ -21,15 +21,16 @@ def test_deferred_in_with_measures():
     f_tbl = con.create_table("flights", flights)
 
     # Define measures using deferred API
-    flights_st = (
-        to_semantic_table(f_tbl, "flights")
-        .with_measures(
-            flight_count=_.count(),  # No lambda!
-            total_distance=_.distance.sum(),
-        )
+    flights_st = to_semantic_table(f_tbl, "flights").with_measures(
+        flight_count=_.count(),  # No lambda!
+        total_distance=_.distance.sum(),
     )
 
-    df = flights_st.group_by("carrier").aggregate("flight_count", "total_distance").execute()
+    df = (
+        flights_st.group_by("carrier")
+        .aggregate("flight_count", "total_distance")
+        .execute()
+    )
     assert df.flight_count.sum() == 3
     assert df.total_distance.sum() == 600
 
@@ -38,7 +39,10 @@ def test_deferred_in_with_dimensions():
     """Test using deferred expressions in with_dimensions()."""
     con = ibis.duckdb.connect(":memory:")
     flights = pd.DataFrame(
-        {"carrier": ["AA", "AA", "UA"], "dep_time": pd.date_range("2024-01-01", periods=3)}
+        {
+            "carrier": ["AA", "AA", "UA"],
+            "dep_time": pd.date_range("2024-01-01", periods=3),
+        }
     )
     f_tbl = con.create_table("flights", flights)
 
@@ -141,16 +145,17 @@ def test_deferred_with_complex_expression():
     """Test deferred API with complex expressions."""
     con = ibis.duckdb.connect(":memory:")
     flights = pd.DataFrame(
-        {"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300], "delay": [10, 20, 30]}
+        {
+            "carrier": ["AA", "AA", "UA"],
+            "distance": [100, 200, 300],
+            "delay": [10, 20, 30],
+        }
     )
     f_tbl = con.create_table("flights", flights)
 
-    flights_st = (
-        to_semantic_table(f_tbl, "flights")
-        .with_measures(
-            # Complex deferred expression
-            total_delay_distance=_.distance.sum() + _.delay.sum(),
-        )
+    flights_st = to_semantic_table(f_tbl, "flights").with_measures(
+        # Complex deferred expression
+        total_delay_distance=_.distance.sum() + _.delay.sum(),
     )
 
     df = flights_st.group_by("carrier").aggregate("total_delay_distance").execute()
@@ -163,12 +168,9 @@ def test_deferred_with_conditional():
     flights = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
     f_tbl = con.create_table("flights", flights)
 
-    flights_st = (
-        to_semantic_table(f_tbl, "flights")
-        .with_measures(
-            # Conditional with deferred
-            long_flight_count=(_.distance > 150).sum(),
-        )
+    flights_st = to_semantic_table(f_tbl, "flights").with_measures(
+        # Conditional with deferred
+        long_flight_count=(_.distance > 150).sum(),
     )
 
     df = flights_st.group_by("carrier").aggregate("long_flight_count").execute()
@@ -197,7 +199,11 @@ def test_deferred_reference_to_measure_now_supported():
         )
     )
 
-    df = flights_st.group_by("carrier").aggregate("flight_count", "double_count").execute()
+    df = (
+        flights_st.group_by("carrier")
+        .aggregate("flight_count", "double_count")
+        .execute()
+    )
     assert all(df.double_count == df.flight_count * 2)
 
 
@@ -222,8 +228,12 @@ def test_deferred_with_measure_references_and_operations():
     df = flights_st.group_by("carrier").aggregate("avg_distance_per_flight").execute()
     # AA carrier: (100 + 200) / 2 = 150
     # UA carrier: 300 / 1 = 300
-    assert pytest.approx(df[df.carrier == "AA"]["avg_distance_per_flight"].iloc[0]) == 150
-    assert pytest.approx(df[df.carrier == "UA"]["avg_distance_per_flight"].iloc[0]) == 300
+    assert (
+        pytest.approx(df[df.carrier == "AA"]["avg_distance_per_flight"].iloc[0]) == 150
+    )
+    assert (
+        pytest.approx(df[df.carrier == "UA"]["avg_distance_per_flight"].iloc[0]) == 300
+    )
 
 
 def test_deferred_documentation_example():
@@ -249,7 +259,11 @@ def test_deferred_documentation_example():
         )
     )
 
-    df = flights_st.group_by("carrier").aggregate("pct_of_flights", "distance_per_flight").execute()
+    df = (
+        flights_st.group_by("carrier")
+        .aggregate("pct_of_flights", "distance_per_flight")
+        .execute()
+    )
     assert pytest.approx(df.pct_of_flights.sum()) == 1.0
     assert len(df) == 2  # 2 carriers
 
@@ -289,12 +303,14 @@ def test_deferred_comprehensive_workflow():
     Note: mutate() with deferred is tested separately in test_deferred_in_mutate()
     """
     con = ibis.duckdb.connect(":memory:")
-    flights = pd.DataFrame({
-        "carrier": ["AA", "AA", "UA", "UA", "DL"],
-        "distance": [100, 200, 300, 400, 150],
-        "delay": [10, 20, 30, 40, 5],
-        "dep_time": pd.date_range("2024-01-01", periods=5),
-    })
+    flights = pd.DataFrame(
+        {
+            "carrier": ["AA", "AA", "UA", "UA", "DL"],
+            "distance": [100, 200, 300, 400, 150],
+            "delay": [10, 20, 30, 40, 5],
+            "dep_time": pd.date_range("2024-01-01", periods=5),
+        }
+    )
     f_tbl = con.create_table("flights", flights)
 
     # Use deferred in with_dimensions()
@@ -302,17 +318,18 @@ def test_deferred_comprehensive_workflow():
         to_semantic_table(f_tbl, "flights")
         .with_dimensions(
             dep_month=_.dep_time.truncate("M"),  # Deferred!
-            dep_year=_.dep_time.truncate("Y"),   # Deferred!
+            dep_year=_.dep_time.truncate("Y"),  # Deferred!
         )
         # Use deferred in with_measures()
         .with_measures(
-            flight_count=_.count(),                    # Deferred!
-            total_distance=_.distance.sum(),           # Deferred!
-            avg_delay=_.delay.mean(),                  # Deferred!
+            flight_count=_.count(),  # Deferred!
+            total_distance=_.distance.sum(),  # Deferred!
+            avg_delay=_.delay.mean(),  # Deferred!
         )
         # Use deferred to define calculated measures
         .with_measures(
-            avg_distance_per_flight=_.total_distance / _.flight_count,  # Deferred measure refs!
+            avg_distance_per_flight=_.total_distance
+            / _.flight_count,  # Deferred measure refs!
         )
         # Use deferred in filter()
         .filter(_.distance > 100)  # Deferred! (filters out the 100 distance flight)
@@ -320,8 +337,7 @@ def test_deferred_comprehensive_workflow():
 
     # Use deferred in aggregate() inline
     df = (
-        flights_st
-        .group_by("carrier")
+        flights_st.group_by("carrier")
         .aggregate(
             "flight_count",
             "total_distance",

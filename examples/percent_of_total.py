@@ -3,6 +3,7 @@
 
 Malloy: https://docs.malloydata.dev/documentation/patterns/percent_of_total
 """
+
 import ibis
 from ibis import _
 from boring_semantic_layer import to_semantic_table

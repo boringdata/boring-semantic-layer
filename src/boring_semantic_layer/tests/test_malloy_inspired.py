@@ -33,21 +33,34 @@ class TestSessionization:
         con = ibis.duckdb.connect(":memory:")
 
         # Raw event data
-        events_df = pd.DataFrame({
-            "user_id": [1, 1, 1, 2, 2, 1, 3, 3],
-            "event_time": pd.to_datetime([
-                "2023-01-01 10:00",
-                "2023-01-01 10:05",
-                "2023-01-01 10:30",  # New session (gap > 20 min)
-                "2023-01-01 11:00",
-                "2023-01-01 11:10",
-                "2023-01-01 12:00",
-                "2023-01-01 14:00",
-                "2023-01-01 14:05",
-            ]),
-            "event_type": ["view", "click", "view", "view", "click", "purchase", "view", "view"],
-            "value": [0, 0, 0, 0, 0, 100, 0, 0],
-        })
+        events_df = pd.DataFrame(
+            {
+                "user_id": [1, 1, 1, 2, 2, 1, 3, 3],
+                "event_time": pd.to_datetime(
+                    [
+                        "2023-01-01 10:00",
+                        "2023-01-01 10:05",
+                        "2023-01-01 10:30",  # New session (gap > 20 min)
+                        "2023-01-01 11:00",
+                        "2023-01-01 11:10",
+                        "2023-01-01 12:00",
+                        "2023-01-01 14:00",
+                        "2023-01-01 14:05",
+                    ]
+                ),
+                "event_type": [
+                    "view",
+                    "click",
+                    "view",
+                    "view",
+                    "click",
+                    "purchase",
+                    "view",
+                    "view",
+                ],
+                "value": [0, 0, 0, 0, 0, 100, 0, 0],
+            }
+        )
 
         events_tbl = con.create_table("events", events_df)
 
@@ -56,30 +69,30 @@ class TestSessionization:
         from ibis import _
 
         # Add session identifiers using lag to detect gaps
-        session_window = ibis.window(
-            group_by="user_id",
-            order_by="event_time"
-        )
+        session_window = ibis.window(group_by="user_id", order_by="event_time")
 
         events_with_lag = events_tbl.mutate(
             prev_time=_.event_time.lag().over(session_window),
-            time_diff=_.event_time.epoch_seconds() - _.event_time.lag().over(session_window).epoch_seconds()
+            time_diff=_.event_time.epoch_seconds()
+            - _.event_time.lag().over(session_window).epoch_seconds(),
         )
 
         # Create session boundaries where gap > 1200 seconds (20 min)
         events_with_boundaries = events_with_lag.mutate(
             is_new_session=ibis.cases(
-                (_.prev_time.isnull(), 1),
-                (_.time_diff > 1200, 1),
-                else_=0
+                (_.prev_time.isnull(), 1), (_.time_diff > 1200, 1), else_=0
             )
         )
 
         # Cumulative sum to create session IDs
         events_with_sessions = events_with_boundaries.mutate(
-            session_id=(_.is_new_session.sum().over(
-                ibis.window(order_by=["user_id", "event_time"], preceding=None, following=0)
-            ))
+            session_id=(
+                _.is_new_session.sum().over(
+                    ibis.window(
+                        order_by=["user_id", "event_time"], preceding=None, following=0
+                    )
+                )
+            )
         )
 
         # Create semantic table for session analysis
@@ -98,8 +111,7 @@ class TestSessionization:
 
         # Aggregate by session
         result = (
-            sessions_st
-            .group_by("user_id", "session_id")
+            sessions_st.group_by("user_id", "session_id")
             .aggregate("event_count", "purchase_count", "total_value")
             .order_by("user_id", "session_id")
             .execute()
@@ -114,18 +126,22 @@ class TestSessionization:
         """Calculate session-level metrics including duration."""
         con = ibis.duckdb.connect(":memory:")
 
-        events_df = pd.DataFrame({
-            "session_id": [1, 1, 1, 2, 2, 3],
-            "event_time": pd.to_datetime([
-                "2023-01-01 10:00",
-                "2023-01-01 10:05",
-                "2023-01-01 10:10",
-                "2023-01-01 11:00",
-                "2023-01-01 11:15",
-                "2023-01-01 12:00",
-            ]),
-            "page_views": [1, 1, 1, 1, 1, 1],
-        })
+        events_df = pd.DataFrame(
+            {
+                "session_id": [1, 1, 1, 2, 2, 3],
+                "event_time": pd.to_datetime(
+                    [
+                        "2023-01-01 10:00",
+                        "2023-01-01 10:05",
+                        "2023-01-01 10:10",
+                        "2023-01-01 11:00",
+                        "2023-01-01 11:15",
+                        "2023-01-01 12:00",
+                    ]
+                ),
+                "page_views": [1, 1, 1, 1, 1, 1],
+            }
+        )
 
         events_tbl = con.create_table("events", events_df)
 
@@ -140,14 +156,15 @@ class TestSessionization:
 
         # Calculate session duration (max - min event time)
         result = (
-            sessions_st
-            .group_by("session_id")
+            sessions_st.group_by("session_id")
             .aggregate(
                 "event_count",
                 "total_page_views",
                 duration_minutes=lambda t: (
-                    t.event_time.max().epoch_seconds() - t.event_time.min().epoch_seconds()
-                ) / 60,
+                    t.event_time.max().epoch_seconds()
+                    - t.event_time.min().epoch_seconds()
+                )
+                / 60,
             )
             .execute()
         )
@@ -168,10 +185,12 @@ class TestNestedSubtotals:
         """Test year → month → day hierarchical aggregation."""
         con = ibis.duckdb.connect(":memory:")
 
-        sales_df = pd.DataFrame({
-            "date": pd.date_range("2023-01-01", periods=100, freq="D"),
-            "sales": range(100, 200),
-        })
+        sales_df = pd.DataFrame(
+            {
+                "date": pd.date_range("2023-01-01", periods=100, freq="D"),
+                "sales": range(100, 200),
+            }
+        )
 
         sales_tbl = con.create_table("sales", sales_df)
 
@@ -189,26 +208,19 @@ class TestNestedSubtotals:
         )
 
         # Level 1: Year totals
-        year_totals = (
-            sales_st
-            .group_by("year")
-            .aggregate("total_sales")
-            .execute()
-        )
+        year_totals = sales_st.group_by("year").aggregate("total_sales").execute()
 
         # Level 2: Month totals within year
         month_totals = (
-            sales_st
-            .group_by("year", "month")
+            sales_st.group_by("year", "month")
             .aggregate("total_sales")
             .order_by("year", "month")
             .execute()
         )
 
         # Level 3: Day totals within month
-        day_totals = (
-            sales_st
-            .group_by("year", "month", "day")
+        _day_totals = (
+            sales_st.group_by("year", "month", "day")
             .aggregate("total_sales")
             .order_by("year", "month", "day")
             .limit(10)
@@ -224,13 +236,21 @@ class TestNestedSubtotals:
         """Test category → subcategory → product hierarchy."""
         con = ibis.duckdb.connect(":memory:")
 
-        products_df = pd.DataFrame({
-            "category": ["Electronics", "Electronics", "Electronics", "Clothing", "Clothing"],
-            "subcategory": ["Phones", "Phones", "Laptops", "Shirts", "Pants"],
-            "product": ["iPhone", "Samsung", "MacBook", "T-Shirt", "Jeans"],
-            "units_sold": [100, 80, 50, 200, 150],
-            "revenue": [100000, 64000, 75000, 4000, 9000],
-        })
+        products_df = pd.DataFrame(
+            {
+                "category": [
+                    "Electronics",
+                    "Electronics",
+                    "Electronics",
+                    "Clothing",
+                    "Clothing",
+                ],
+                "subcategory": ["Phones", "Phones", "Laptops", "Shirts", "Pants"],
+                "product": ["iPhone", "Samsung", "MacBook", "T-Shirt", "Jeans"],
+                "units_sold": [100, 80, 50, 200, 150],
+                "revenue": [100000, 64000, 75000, 4000, 9000],
+            }
+        )
 
         products_tbl = con.create_table("products", products_df)
 
@@ -249,8 +269,7 @@ class TestNestedSubtotals:
 
         # Category level
         category_result = (
-            products_st
-            .group_by("category")
+            products_st.group_by("category")
             .aggregate("total_revenue", "total_units")
             .mutate(
                 pct_of_total=lambda t: t["total_revenue"] / t.all(t["total_revenue"])
@@ -260,14 +279,12 @@ class TestNestedSubtotals:
 
         # Subcategory level (within category)
         subcategory_result = (
-            products_st
-            .group_by("category", "subcategory")
+            products_st.group_by("category", "subcategory")
             .aggregate("total_revenue")
             .mutate(
                 # Percent of category (not grand total)
-                pct_of_category=lambda t: t["total_revenue"] / t["total_revenue"].sum().over(
-                    ibis.window(group_by="category")
-                )
+                pct_of_category=lambda t: t["total_revenue"]
+                / t["total_revenue"].sum().over(ibis.window(group_by="category"))
             )
             .execute()
         )
@@ -288,12 +305,36 @@ class TestCooccurrenceAnalysis:
         con = ibis.duckdb.connect(":memory:")
 
         # Order items data
-        order_items_df = pd.DataFrame({
-            "order_id": [1, 1, 1, 2, 2, 3, 3, 4, 4, 5],
-            "product_brand": ["Nike", "Adidas", "Puma", "Nike", "Adidas", "Nike", "Puma", "Adidas", "Puma", "Nike"],
-            "product_name": ["Shoes", "Shirt", "Shorts", "Shoes", "Shirt", "Shoes", "Shorts", "Shirt", "Shorts", "Shoes"],
-            "price": [100, 50, 40, 100, 50, 100, 40, 50, 40, 100],
-        })
+        order_items_df = pd.DataFrame(
+            {
+                "order_id": [1, 1, 1, 2, 2, 3, 3, 4, 4, 5],
+                "product_brand": [
+                    "Nike",
+                    "Adidas",
+                    "Puma",
+                    "Nike",
+                    "Adidas",
+                    "Nike",
+                    "Puma",
+                    "Adidas",
+                    "Puma",
+                    "Nike",
+                ],
+                "product_name": [
+                    "Shoes",
+                    "Shirt",
+                    "Shorts",
+                    "Shoes",
+                    "Shirt",
+                    "Shoes",
+                    "Shorts",
+                    "Shirt",
+                    "Shorts",
+                    "Shoes",
+                ],
+                "price": [100, 50, 40, 100, 50, 100, 40, 50, 40, 100],
+            }
+        )
 
         order_items_tbl = con.create_table("order_items", order_items_df)
 
@@ -309,8 +350,7 @@ class TestCooccurrenceAnalysis:
         )
 
         result = (
-            orders_st
-            .group_by("order_id")
+            orders_st.group_by("order_id")
             .aggregate("brand_count", "total_items")
             .execute()
         )
@@ -324,10 +364,12 @@ class TestCooccurrenceAnalysis:
         """Calculate lift metric for product affinity."""
         con = ibis.duckdb.connect(":memory:")
 
-        transactions_df = pd.DataFrame({
-            "transaction_id": [1, 1, 2, 2, 3, 4, 4, 5, 5, 6, 6, 7],
-            "product": ["A", "B", "A", "B", "A", "B", "C", "A", "C", "B", "C", "A"],
-        })
+        transactions_df = pd.DataFrame(
+            {
+                "transaction_id": [1, 1, 2, 2, 3, 4, 4, 5, 5, 6, 6, 7],
+                "product": ["A", "B", "A", "B", "A", "B", "C", "A", "C", "B", "C", "A"],
+            }
+        )
 
         transactions_tbl = con.create_table("transactions", transactions_df)
 
@@ -340,18 +382,22 @@ class TestCooccurrenceAnalysis:
             .with_measures(transaction_count=lambda t: t.transaction_id.nunique())
             .group_by("product")
             .aggregate("transaction_count")
-            .mutate(
-                support=lambda t: t["transaction_count"] / total_transactions
-            )
+            .mutate(support=lambda t: t["transaction_count"] / total_transactions)
             .execute()
         )
 
         # A appears in: 1, 2, 3, 5, 7 = 5 transactions
         # B appears in: 1, 2, 4, 6 = 4 transactions
         # C appears in: 4, 5, 6 = 3 transactions
-        assert product_support.loc[product_support["product"] == "A", "support"].values[0] == pytest.approx(5/7)
-        assert product_support.loc[product_support["product"] == "B", "support"].values[0] == pytest.approx(4/7)
-        assert product_support.loc[product_support["product"] == "C", "support"].values[0] == pytest.approx(3/7)
+        assert product_support.loc[product_support["product"] == "A", "support"].values[
+            0
+        ] == pytest.approx(5 / 7)
+        assert product_support.loc[product_support["product"] == "B", "support"].values[
+            0
+        ] == pytest.approx(4 / 7)
+        assert product_support.loc[product_support["product"] == "C", "support"].values[
+            0
+        ] == pytest.approx(3 / 7)
 
 
 class TestAutoBinningHistograms:
@@ -364,9 +410,11 @@ class TestAutoBinningHistograms:
         """Create histogram with fixed number of bins."""
         con = ibis.duckdb.connect(":memory:")
 
-        data_df = pd.DataFrame({
-            "value": list(range(0, 100, 5)),  # 0, 5, 10, ..., 95
-        })
+        data_df = pd.DataFrame(
+            {
+                "value": list(range(0, 100, 5)),  # 0, 5, 10, ..., 95
+            }
+        )
 
         data_tbl = con.create_table("data", data_df)
 
@@ -392,8 +440,7 @@ class TestAutoBinningHistograms:
         )
 
         result = (
-            bins_st
-            .group_by("bin_id")
+            bins_st.group_by("bin_id")
             .aggregate("bin_count", "min_value", "max_value")
             .order_by("bin_id")
             .execute()
@@ -408,10 +455,12 @@ class TestAutoBinningHistograms:
         """Test different bin widths per category (nested binning)."""
         con = ibis.duckdb.connect(":memory:")
 
-        data_df = pd.DataFrame({
-            "category": ["A"] * 50 + ["B"] * 50,
-            "value": list(range(0, 50)) + list(range(100, 150)),  # Different ranges
-        })
+        data_df = pd.DataFrame(
+            {
+                "category": ["A"] * 50 + ["B"] * 50,
+                "value": list(range(0, 50)) + list(range(100, 150)),  # Different ranges
+            }
+        )
 
         data_tbl = con.create_table("data", data_df)
 
@@ -430,10 +479,22 @@ class TestAutoBinningHistograms:
 
         # Category A: 0-49 (range 49)
         # Category B: 100-149 (range 49)
-        assert category_stats.loc[category_stats["category"] == "A", "min_val"].values[0] == 0
-        assert category_stats.loc[category_stats["category"] == "A", "max_val"].values[0] == 49
-        assert category_stats.loc[category_stats["category"] == "B", "min_val"].values[0] == 100
-        assert category_stats.loc[category_stats["category"] == "B", "max_val"].values[0] == 149
+        assert (
+            category_stats.loc[category_stats["category"] == "A", "min_val"].values[0]
+            == 0
+        )
+        assert (
+            category_stats.loc[category_stats["category"] == "A", "max_val"].values[0]
+            == 49
+        )
+        assert (
+            category_stats.loc[category_stats["category"] == "B", "min_val"].values[0]
+            == 100
+        )
+        assert (
+            category_stats.loc[category_stats["category"] == "B", "max_val"].values[0]
+            == 149
+        )
 
 
 class TestFilteredAggregates:
@@ -446,11 +507,13 @@ class TestFilteredAggregates:
         """Calculate multiple time-period metrics in one query."""
         con = ibis.duckdb.connect(":memory:")
 
-        sales_df = pd.DataFrame({
-            "date": pd.date_range("2022-01-01", periods=730, freq="D"),  # 2 years
-            "sales": range(730),
-            "category": ["Electronics", "Clothing"] * 365,
-        })
+        sales_df = pd.DataFrame(
+            {
+                "date": pd.date_range("2022-01-01", periods=730, freq="D"),  # 2 years
+                "sales": range(730),
+                "category": ["Electronics", "Clothing"] * 365,
+            }
+        )
 
         sales_tbl = con.create_table("sales", sales_df)
 
@@ -464,14 +527,18 @@ class TestFilteredAggregates:
 
         # Calculate sales for 2022 and 2023 separately using filtered aggregates
         result = (
-            sales_st
-            .group_by("category")
+            sales_st.group_by("category")
             .aggregate(
-                sales_2022=lambda t: (t.sales * (t.date.year() == 2022).cast("int")).sum(),
-                sales_2023=lambda t: (t.sales * (t.date.year() == 2023).cast("int")).sum(),
+                sales_2022=lambda t: (
+                    t.sales * (t.date.year() == 2022).cast("int")
+                ).sum(),
+                sales_2023=lambda t: (
+                    t.sales * (t.date.year() == 2023).cast("int")
+                ).sum(),
             )
             .mutate(
-                yoy_growth=lambda t: (t["sales_2023"] - t["sales_2022"]) / t["sales_2022"]
+                yoy_growth=lambda t: (t["sales_2023"] - t["sales_2022"])
+                / t["sales_2022"]
             )
             .execute()
         )
@@ -483,12 +550,14 @@ class TestFilteredAggregates:
         """Test conditional sum/count patterns."""
         con = ibis.duckdb.connect(":memory:")
 
-        orders_df = pd.DataFrame({
-            "order_id": range(1, 21),
-            "status": ["completed"] * 15 + ["cancelled"] * 5,
-            "amount": [100] * 20,
-            "customer_type": ["new", "returning"] * 10,
-        })
+        orders_df = pd.DataFrame(
+            {
+                "order_id": range(1, 21),
+                "status": ["completed"] * 15 + ["cancelled"] * 5,
+                "amount": [100] * 20,
+                "customer_type": ["new", "returning"] * 10,
+            }
+        )
 
         orders_tbl = con.create_table("orders", orders_df)
 
@@ -501,17 +570,16 @@ class TestFilteredAggregates:
         )
 
         result = (
-            orders_st
-            .group_by("customer_type")
+            orders_st.group_by("customer_type")
             .aggregate(
                 total_orders=lambda t: t.count(),
                 completed_orders=lambda t: (t.status == "completed").sum(),
                 cancelled_orders=lambda t: (t.status == "cancelled").sum(),
-                completed_revenue=lambda t: (t.amount * (t.status == "completed").cast("int")).sum(),
+                completed_revenue=lambda t: (
+                    t.amount * (t.status == "completed").cast("int")
+                ).sum(),
             )
-            .mutate(
-                completion_rate=lambda t: t["completed_orders"] / t["total_orders"]
-            )
+            .mutate(completion_rate=lambda t: t["completed_orders"] / t["total_orders"])
             .execute()
         )
 
@@ -530,11 +598,14 @@ class TestTopNWithNesting:
         """Get top 3 products per category by revenue."""
         con = ibis.duckdb.connect(":memory:")
 
-        products_df = pd.DataFrame({
-            "category": ["Electronics"] * 10 + ["Clothing"] * 10,
-            "product": [f"E-Product-{i}" for i in range(10)] + [f"C-Product-{i}" for i in range(10)],
-            "revenue": list(range(100, 110)) + list(range(200, 210)),
-        })
+        products_df = pd.DataFrame(
+            {
+                "category": ["Electronics"] * 10 + ["Clothing"] * 10,
+                "product": [f"E-Product-{i}" for i in range(10)]
+                + [f"C-Product-{i}" for i in range(10)],
+                "revenue": list(range(100, 110)) + list(range(200, 210)),
+            }
+        )
 
         products_tbl = con.create_table("products", products_df)
 
@@ -542,7 +613,9 @@ class TestTopNWithNesting:
         # Use row_number for 0-indexed ranking
         products_with_rank = products_tbl.mutate(
             rank=ibis.row_number().over(
-                ibis.window(group_by="category", order_by=ibis.desc(products_tbl.revenue))
+                ibis.window(
+                    group_by="category", order_by=ibis.desc(products_tbl.revenue)
+                )
             )
         )
 
@@ -560,8 +633,7 @@ class TestTopNWithNesting:
 
         # Get top 3 per category (rank is 0-indexed in ibis)
         result = (
-            top_products_st
-            .filter(lambda t: t.rank < 3)
+            top_products_st.filter(lambda t: t.rank < 3)
             .group_by("category", "product", "rank")
             .aggregate("total_revenue")
             .order_by("category", "rank")
@@ -578,10 +650,12 @@ class TestTopNWithNesting:
         """Identify top customers by percentile."""
         con = ibis.duckdb.connect(":memory:")
 
-        customers_df = pd.DataFrame({
-            "customer_id": range(1, 101),
-            "lifetime_value": range(100, 200),
-        })
+        customers_df = pd.DataFrame(
+            {
+                "customer_id": range(1, 101),
+                "lifetime_value": range(100, 200),
+            }
+        )
 
         customers_tbl = con.create_table("customers", customers_df)
 
@@ -608,8 +682,9 @@ class TestTopNWithNesting:
         # But since there's no decile 10 in results, likely ntile gives 1-10 but we need >= a threshold
         # Simpler: just verify we can filter and get some top customers
         result = (
-            top_customers_st
-            .filter(lambda t: t.decile >= 9)  # Top 20% (deciles 9 and 10)
+            top_customers_st.filter(
+                lambda t: t.decile >= 9
+            )  # Top 20% (deciles 9 and 10)
             .group_by("customer_id")
             .aggregate("total_ltv")
             .order_by(ibis.desc("total_ltv"))
@@ -634,27 +709,29 @@ class TestCrossJoinAggregation:
         con = ibis.duckdb.connect(":memory:")
 
         # Orders table (1 order = 1 row)
-        orders_df = pd.DataFrame({
-            "order_id": [1, 2, 3],
-            "customer_id": [1, 1, 2],
-            "order_total": [100, 150, 200],
-        })
+        orders_df = pd.DataFrame(
+            {
+                "order_id": [1, 2, 3],
+                "customer_id": [1, 1, 2],
+                "order_total": [100, 150, 200],
+            }
+        )
 
         # Order items table (multiple items per order)
-        order_items_df = pd.DataFrame({
-            "item_id": [1, 2, 3, 4, 5],
-            "order_id": [1, 1, 2, 2, 3],
-            "item_price": [50, 50, 75, 75, 200],
-        })
+        order_items_df = pd.DataFrame(
+            {
+                "item_id": [1, 2, 3, 4, 5],
+                "order_id": [1, 1, 2, 2, 3],
+                "item_price": [50, 50, 75, 75, 200],
+            }
+        )
 
         orders_tbl = con.create_table("orders", orders_df)
         items_tbl = con.create_table("order_items", order_items_df)
 
         # Join orders with items
         joined = orders_tbl.join(
-            items_tbl,
-            orders_tbl.order_id == items_tbl.order_id,
-            how="inner"
+            items_tbl, orders_tbl.order_id == items_tbl.order_id, how="inner"
         )
 
         # INCORRECT: Naive sum of order_total will have fan-out
@@ -678,8 +755,7 @@ class TestCrossJoinAggregation:
         )
 
         result = (
-            orders_st
-            .group_by("customer_id")
+            orders_st.group_by("customer_id")
             .aggregate("order_count", "total_order_value")
             .execute()
         )
@@ -691,22 +767,28 @@ class TestCrossJoinAggregation:
         con = ibis.duckdb.connect(":memory:")
 
         # Aircraft model → Aircraft → Flights (3 levels)
-        models_df = pd.DataFrame({
-            "model_id": [1, 2],
-            "model_name": ["Boeing 737", "Airbus A320"],
-        })
+        models_df = pd.DataFrame(
+            {
+                "model_id": [1, 2],
+                "model_name": ["Boeing 737", "Airbus A320"],
+            }
+        )
 
-        aircraft_df = pd.DataFrame({
-            "aircraft_id": [101, 102, 103],
-            "model_id": [1, 1, 2],
-            "aircraft_name": ["N737AA", "N737AB", "N320BA"],
-        })
+        aircraft_df = pd.DataFrame(
+            {
+                "aircraft_id": [101, 102, 103],
+                "model_id": [1, 1, 2],
+                "aircraft_name": ["N737AA", "N737AB", "N320BA"],
+            }
+        )
 
-        flights_df = pd.DataFrame({
-            "flight_id": range(1, 11),
-            "aircraft_id": [101, 101, 101, 102, 102, 103, 103, 103, 103, 103],
-            "passengers": [150, 140, 160, 155, 145, 170, 165, 175, 180, 160],
-        })
+        flights_df = pd.DataFrame(
+            {
+                "flight_id": range(1, 11),
+                "aircraft_id": [101, 101, 101, 102, 102, 103, 103, 103, 103, 103],
+                "passengers": [150, 140, 160, 155, 145, 170, 165, 175, 180, 160],
+            }
+        )
 
         models_tbl = con.create_table("models", models_df)
         aircraft_tbl = con.create_table("aircraft", aircraft_df)
@@ -714,36 +796,35 @@ class TestCrossJoinAggregation:
 
         # Aggregate at each level
         # Level 1: Flights
-        flight_st = (
-            to_semantic_table(flights_tbl, name="flights")
-            .with_measures(
-                total_flights=lambda t: t.count(),
-                total_passengers=lambda t: t.passengers.sum(),
-            )
+        _flight_st = to_semantic_table(flights_tbl, name="flights").with_measures(
+            total_flights=lambda t: t.count(),
+            total_passengers=lambda t: t.passengers.sum(),
         )
 
         # Can't use .group_by() without dimensions - need to aggregate directly on ibis table
-        flight_result = flights_tbl.aggregate([
-            flights_tbl.count().name("total_flights"),
-            flights_tbl.passengers.sum().name("total_passengers")
-        ]).execute()
+        flight_result = flights_tbl.aggregate(
+            [
+                flights_tbl.count().name("total_flights"),
+                flights_tbl.passengers.sum().name("total_passengers"),
+            ]
+        ).execute()
         assert flight_result["total_flights"].values[0] == 10
 
         # Level 2: Aircraft (should count distinct aircraft)
-        joined = aircraft_tbl.join(flights_tbl, aircraft_tbl.aircraft_id == flights_tbl.aircraft_id)
+        joined = aircraft_tbl.join(
+            flights_tbl, aircraft_tbl.aircraft_id == flights_tbl.aircraft_id
+        )
 
         # Can't use .group_by() without dimensions - aggregate directly
-        aircraft_result = joined.aggregate([
-            joined.aircraft_id.nunique().name("aircraft_count")
-        ]).execute()
+        aircraft_result = joined.aggregate(
+            [joined.aircraft_id.nunique().name("aircraft_count")]
+        ).execute()
         assert aircraft_result["aircraft_count"].values[0] == 3
 
         # Level 3: Models (via aircraft)
         full_join = models_tbl.join(
             aircraft_tbl, models_tbl.model_id == aircraft_tbl.model_id
-        ).join(
-            flights_tbl, aircraft_tbl.aircraft_id == flights_tbl.aircraft_id
-        )
+        ).join(flights_tbl, aircraft_tbl.aircraft_id == flights_tbl.aircraft_id)
 
         model_st = (
             to_semantic_table(full_join, name="model_flights")
@@ -755,8 +836,7 @@ class TestCrossJoinAggregation:
         )
 
         model_result = (
-            model_st
-            .group_by("model_name")
+            model_st.group_by("model_name")
             .aggregate("flight_count", "aircraft_count")
             .execute()
         )
@@ -777,12 +857,14 @@ class TestDimensionalIndexing:
         """Create index of all distinct values with occurrence counts."""
         con = ibis.duckdb.connect(":memory:")
 
-        events_df = pd.DataFrame({
-            "event_id": range(1, 101),
-            "category": ["A", "B", "C"] * 33 + ["A"],  # Uneven distribution
-            "subcategory": ["X", "Y"] * 50,
-            "value": range(100, 200),
-        })
+        events_df = pd.DataFrame(
+            {
+                "event_id": range(1, 101),
+                "category": ["A", "B", "C"] * 33 + ["A"],  # Uneven distribution
+                "subcategory": ["X", "Y"] * 50,
+                "value": range(100, 200),
+            }
+        )
 
         events_tbl = con.create_table("events", events_df)
 
@@ -812,12 +894,14 @@ class TestDimensionalIndexing:
         """Find all unique combinations of dimensions."""
         con = ibis.duckdb.connect(":memory:")
 
-        data_df = pd.DataFrame({
-            "dim1": ["A", "A", "B", "B", "C"],
-            "dim2": ["X", "Y", "X", "Y", "X"],
-            "dim3": ["P", "P", "Q", "Q", "P"],
-            "metric": [1, 2, 3, 4, 5],
-        })
+        data_df = pd.DataFrame(
+            {
+                "dim1": ["A", "A", "B", "B", "C"],
+                "dim2": ["X", "Y", "X", "Y", "X"],
+                "dim3": ["P", "P", "Q", "Q", "P"],
+                "metric": [1, 2, 3, 4, 5],
+            }
+        )
 
         data_tbl = con.create_table("data", data_df)
 

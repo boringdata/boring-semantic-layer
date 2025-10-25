@@ -6,6 +6,7 @@ Test different styles of referencing measures in lambdas:
 4. MeasureRef object: t.all(t.flight_count)
 5. Ibis column: t.all(t.distance)
 """
+
 import pandas as pd
 import ibis
 import pytest
@@ -187,7 +188,8 @@ def test_prefixed_measures_with_string():
         .with_dimensions(name=lambda t: t.name)
         .with_measures(
             # Reference prefixed measure with bracket notation (dots not allowed in Python identifiers)
-            pct_full=lambda t: t["flights.flight_count"] / t.all("flights.flight_count"),
+            pct_full=lambda t: t["flights.flight_count"]
+            / t.all("flights.flight_count"),
             # Reference with short name (should resolve to flights.flight_count)
             pct_short=lambda t: t.flight_count / t.all("flight_count"),
         )
@@ -224,9 +226,5 @@ def test_inline_measure_with_different_reference_styles():
     assert pytest.approx(df.pct_attr.sum()) == 1.0
     assert pytest.approx(df.pct_string.sum()) == 1.0
     assert pytest.approx(df.pct_bracket.sum()) == 1.0
-    assert all(
-        pytest.approx(p1) == p2 for p1, p2 in zip(df.pct_attr, df.pct_string)
-    )
-    assert all(
-        pytest.approx(p1) == p2 for p1, p2 in zip(df.pct_attr, df.pct_bracket)
-    )
+    assert all(pytest.approx(p1) == p2 for p1, p2 in zip(df.pct_attr, df.pct_string))
+    assert all(pytest.approx(p1) == p2 for p1, p2 in zip(df.pct_attr, df.pct_bracket))

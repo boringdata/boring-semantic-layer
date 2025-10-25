@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Basic Semantic Table Usage with Flights."""
+
 import ibis
 from ibis import _
 from boring_semantic_layer import to_semantic_table

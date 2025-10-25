@@ -52,9 +52,7 @@ def download_dataset(dataset_name: str, force_redownload: bool = False) -> Path:
     """
     if dataset_name not in AVAILABLE_DATASETS:
         available = ", ".join(AVAILABLE_DATASETS.keys())
-        raise ValueError(
-            f"Unknown dataset '{dataset_name}'. Available: {available}"
-        )
+        raise ValueError(f"Unknown dataset '{dataset_name}'. Available: {available}")
 
     filename = AVAILABLE_DATASETS[dataset_name]
     data_dir = get_data_dir()
@@ -129,9 +127,7 @@ def get_dataset_url(dataset_name: str) -> str:
     """
     if dataset_name not in AVAILABLE_DATASETS:
         available = ", ".join(AVAILABLE_DATASETS.keys())
-        raise ValueError(
-            f"Unknown dataset '{dataset_name}'. Available: {available}"
-        )
+        raise ValueError(f"Unknown dataset '{dataset_name}'. Available: {available}")
 
     filename = AVAILABLE_DATASETS[dataset_name]
     return f"{MALLOY_SAMPLES_BASE_URL}/{filename}"

@@ -3,6 +3,7 @@
 
 Malloy: https://malloydata.github.io/malloy/documentation/patterns/other.html
 """
+
 import ibis
 from ibis import _
 from boring_semantic_layer import to_semantic_table

@@ -76,7 +76,9 @@ query_4 = (
             ),
             "carriers as a percentage of route": lambda t: (
                 t.flight_count
-                / t.flight_count.sum().over(ibis.window(group_by=["destination", "origin"]))
+                / t.flight_count.sum().over(
+                    ibis.window(group_by=["destination", "origin"])
+                )
             ),
         }
     )

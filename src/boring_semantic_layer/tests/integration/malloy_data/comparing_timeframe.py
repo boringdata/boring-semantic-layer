@@ -32,14 +32,17 @@ query_2 = (
     .order_by("carrier")
 )
 
-flight_st_with_year = flight_st.with_dimensions(dep_year=lambda t: t.dep_time.truncate("year"))
+flight_st_with_year = flight_st.with_dimensions(
+    dep_year=lambda t: t.dep_time.truncate("year")
+)
 
 query_3 = (
     flight_st_with_year.group_by("dep_year")
     .aggregate(flight_count=lambda t: t.count())
     .mutate(
         last_year=lambda t: t.flight_count.lag(1),
-        growth=lambda t: (t.flight_count.lag(1) - t.flight_count) / t.flight_count.lag(1),
+        growth=lambda t: (t.flight_count.lag(1) - t.flight_count)
+        / t.flight_count.lag(1),
     )
     .order_by("dep_year")
 )

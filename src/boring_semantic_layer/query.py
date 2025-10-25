@@ -5,9 +5,20 @@ Provides parameter-based querying as an alternative to method chaining.
 """
 
 from __future__ import annotations
-from typing import Any, Callable, ClassVar, Literal, Optional, Sequence, Union
-from operator import eq, ne, gt, ge, lt, le, and_, or_
-from functools import partial
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Dict,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
+from operator import eq, ne, gt, ge, lt, le
 
 from attrs import frozen
 from toolz import curry
@@ -50,17 +61,47 @@ TIME_GRAIN_ORDER: Tuple[str, ...] = (
     "TIME_GRAIN_YEAR",
 )
 
+
 # Helper functions using operator module instead of lambdas
-def _ibis_isin(x, y): return x.isin(y)
-def _ibis_not_isin(x, y): return ~x.isin(y)
-def _ibis_like(x, y): return x.like(y)
-def _ibis_not_like(x, y): return ~x.like(y)
-def _ibis_ilike(x, y): return x.ilike(y)
-def _ibis_not_ilike(x, y): return ~x.ilike(y)
-def _ibis_isnull(x, _): return x.isnull()
-def _ibis_notnull(x, _): return x.notnull()
-def _ibis_and(x, y): return x & y
-def _ibis_or(x, y): return x | y
+def _ibis_isin(x, y):
+    return x.isin(y)
+
+
+def _ibis_not_isin(x, y):
+    return ~x.isin(y)
+
+
+def _ibis_like(x, y):
+    return x.like(y)
+
+
+def _ibis_not_like(x, y):
+    return ~x.like(y)
+
+
+def _ibis_ilike(x, y):
+    return x.ilike(y)
+
+
+def _ibis_not_ilike(x, y):
+    return ~x.ilike(y)
+
+
+def _ibis_isnull(x, _):
+    return x.isnull()
+
+
+def _ibis_notnull(x, _):
+    return x.notnull()
+
+
+def _ibis_and(x, y):
+    return x & y
+
+
+def _ibis_or(x, y):
+    return x | y
+
 
 # Operator mapping using operator module functions where possible
 OPERATOR_MAPPING: FrozenDict = {
@@ -339,7 +380,9 @@ def query(
         time_dim_name = _find_time_dimension(result, dimensions)
         if time_dim_name:
             filters.append(
-                _make_time_range_filter(time_dim_name, time_range["start"], time_range["end"])
+                _make_time_range_filter(
+                    time_dim_name, time_range["start"], time_range["end"]
+                )
             )
 
     # Step 1: Handle time grain transformations
@@ -365,7 +408,9 @@ def query(
                     truncate_unit = TIME_GRAIN_TRANSFORMATIONS[time_grain]
                     orig_expr = dim_obj.expr
                     time_dims_to_transform[dim_name] = Dimension(
-                        expr=lambda t, orig=orig_expr, unit=truncate_unit: orig(t).truncate(unit),
+                        expr=lambda t, orig=orig_expr, unit=truncate_unit: orig(
+                            t
+                        ).truncate(unit),
                         description=dim_obj.description,
                         is_time_dimension=dim_obj.is_time_dimension,
                         smallest_time_grain=dim_obj.smallest_time_grain,
@@ -391,7 +436,9 @@ def query(
 
     # Step 4: Apply ordering using functional composition
     if order_by:
-        order_keys = [_make_order_key(field, direction) for field, direction in order_by]
+        order_keys = [
+            _make_order_key(field, direction) for field, direction in order_by
+        ]
         result = result.order_by(*order_keys)
 
     # Step 5: Apply limit

@@ -4,7 +4,7 @@ import pytest
 import ibis
 import tempfile
 import os
-from boring_semantic_layer import from_yaml, SemanticModel, SemanticTable
+from boring_semantic_layer import from_yaml, SemanticTable
 
 
 @pytest.fixture
@@ -268,10 +268,14 @@ flights:
         assert "flights" in models
 
         # Test both models work
-        carriers_result = models["carriers"].group_by("name").aggregate("carrier_count").execute()
+        carriers_result = (
+            models["carriers"].group_by("name").aggregate("carrier_count").execute()
+        )
         assert len(carriers_result) == 4
 
-        flights_result = models["flights"].group_by("origin").aggregate("flight_count").execute()
+        flights_result = (
+            models["flights"].group_by("origin").aggregate("flight_count").execute()
+        )
         assert len(flights_result) > 0
 
     finally:
@@ -357,13 +361,18 @@ flights:
         assert model.get_dimensions()["origin"].description is None
 
         # Extended format dimension has description
-        assert model.get_dimensions()["destination"].description == "Destination airport"
+        assert (
+            model.get_dimensions()["destination"].description == "Destination airport"
+        )
 
         # Simple format measure has no description (use _base_measures to get Measure objects)
         assert model._base_measures["flight_count"].description is None
 
         # Extended format measure has description
-        assert model._base_measures["avg_distance"].description == "Average flight distance"
+        assert (
+            model._base_measures["avg_distance"].description
+            == "Average flight distance"
+        )
 
     finally:
         os.unlink(yaml_path)
@@ -426,7 +435,11 @@ flights:
         model = models["flights"]
 
         # Test complex measures
-        result = model.group_by("carrier").aggregate("on_time_rate", "delay_per_mile").execute()
+        result = (
+            model.group_by("carrier")
+            .aggregate("on_time_rate", "delay_per_mile")
+            .execute()
+        )
 
         assert "on_time_rate" in result.columns
         assert "delay_per_mile" in result.columns

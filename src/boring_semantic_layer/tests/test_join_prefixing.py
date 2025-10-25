@@ -22,35 +22,45 @@ def con():
 def ecommerce_tables(con):
     """Create a realistic e-commerce schema with multiple tables."""
     # Orders table
-    orders_df = pd.DataFrame({
-        "order_id": [1, 2, 3, 4],
-        "customer_id": [101, 102, 101, 103],
-        "order_date": pd.to_datetime(["2023-01-01", "2023-01-02", "2023-01-03", "2023-01-04"]),
-        "total_amount": [100.0, 200.0, 150.0, 300.0],
-    })
+    orders_df = pd.DataFrame(
+        {
+            "order_id": [1, 2, 3, 4],
+            "customer_id": [101, 102, 101, 103],
+            "order_date": pd.to_datetime(
+                ["2023-01-01", "2023-01-02", "2023-01-03", "2023-01-04"]
+            ),
+            "total_amount": [100.0, 200.0, 150.0, 300.0],
+        }
+    )
 
     # Customers table
-    customers_df = pd.DataFrame({
-        "customer_id": [101, 102, 103],
-        "name": ["Alice", "Bob", "Charlie"],
-        "country": ["US", "UK", "US"],
-    })
+    customers_df = pd.DataFrame(
+        {
+            "customer_id": [101, 102, 103],
+            "name": ["Alice", "Bob", "Charlie"],
+            "country": ["US", "UK", "US"],
+        }
+    )
 
     # Order items table
-    order_items_df = pd.DataFrame({
-        "item_id": [1, 2, 3, 4, 5],
-        "order_id": [1, 1, 2, 3, 4],
-        "product_id": [501, 502, 501, 503, 502],
-        "quantity": [2, 1, 3, 1, 2],
-        "price": [25.0, 50.0, 25.0, 150.0, 50.0],
-    })
+    order_items_df = pd.DataFrame(
+        {
+            "item_id": [1, 2, 3, 4, 5],
+            "order_id": [1, 1, 2, 3, 4],
+            "product_id": [501, 502, 501, 503, 502],
+            "quantity": [2, 1, 3, 1, 2],
+            "price": [25.0, 50.0, 25.0, 150.0, 50.0],
+        }
+    )
 
     # Products table
-    products_df = pd.DataFrame({
-        "product_id": [501, 502, 503],
-        "product_name": ["Widget A", "Widget B", "Widget C"],
-        "category": ["electronics", "electronics", "home"],
-    })
+    products_df = pd.DataFrame(
+        {
+            "product_id": [501, 502, 503],
+            "product_name": ["Widget A", "Widget B", "Widget C"],
+            "category": ["electronics", "electronics", "home"],
+        }
+    )
 
     return {
         "orders": con.create_table("orders", orders_df),
@@ -75,16 +85,14 @@ class TestBasicPrefixing:
             .with_measures(record_count=lambda t: t.count())
         )
 
-        items_st = (
-            to_semantic_table(order_items_tbl, "items")
-            .with_measures(record_count=lambda t: t.count())
+        items_st = to_semantic_table(order_items_tbl, "items").with_measures(
+            record_count=lambda t: t.count()
         )
 
         joined = orders_st.join(items_st, on=lambda o, i: o.order_id == i.order_id)
 
         result = (
-            joined
-            .group_by("orders.customer_id")
+            joined.group_by("orders.customer_id")
             .aggregate("orders.record_count", "items.record_count")
             .execute()
         )
@@ -121,8 +129,7 @@ class TestBasicPrefixing:
 
         # Short name should resolve to orders.total (first match)
         result = (
-            joined
-            .group_by("orders.customer_id")
+            joined.group_by("orders.customer_id")
             .aggregate("total")  # Should be orders.total
             .execute()
         )
@@ -155,8 +162,7 @@ class TestBasicPrefixing:
 
         # Both explicit prefixed names should work
         result = (
-            joined
-            .group_by("orders.customer_id")
+            joined.group_by("orders.customer_id")
             .aggregate("orders.item_count", "customers.item_count")
             .execute()
         )
@@ -193,9 +199,9 @@ class TestDotAndBracketNotation:
 
         # Use bracket notation for accessing prefixed measures (dots not allowed in Python identifiers)
         result = (
-            joined
-            .with_measures(
-                combined=lambda t: t["orders.order_count"] + t["customers.customer_count"]
+            joined.with_measures(
+                combined=lambda t: t["orders.order_count"]
+                + t["customers.customer_count"]
             )
             .group_by("orders.customer_id")
             .aggregate("combined")
@@ -228,9 +234,9 @@ class TestDotAndBracketNotation:
 
         # Use bracket notation in with_measures
         result = (
-            joined
-            .with_measures(
-                combined=lambda t: t["orders.order_count"] + t["customers.customer_count"]
+            joined.with_measures(
+                combined=lambda t: t["orders.order_count"]
+                + t["customers.customer_count"]
             )
             .group_by("orders.customer_id")
             .aggregate("combined")
@@ -262,8 +268,7 @@ class TestDotAndBracketNotation:
 
         # Use bracket notation for accessing prefixed measures
         result = (
-            joined
-            .with_measures(
+            joined.with_measures(
                 mixed=lambda t: t["orders.order_count"] + t["customers.customer_count"]
             )
             .group_by("orders.customer_id")
@@ -305,22 +310,21 @@ class TestMultipleJoins:
         )
 
         # Join all three tables - use raw column access in join predicates
-        joined = (
-            orders_st
-            .join(customers_st, on=lambda o, c: o.customer_id == c.customer_id)
-            .join(items_st, on=lambda oc, i: oc.order_id == i.order_id)
-        )
+        joined = orders_st.join(
+            customers_st, on=lambda o, c: o.customer_id == c.customer_id
+        ).join(items_st, on=lambda oc, i: oc.order_id == i.order_id)
 
         # All three measures should be accessible with prefixes
         # After multiple joins, dimension names also get nested prefixes
         # Use the customer_id dimension from the original orders table
         all_dims = list(joined._dims.keys())
-        customer_dim = [d for d in all_dims if 'customer_id' in d][0]
+        customer_dim = [d for d in all_dims if "customer_id" in d][0]
 
         result = (
-            joined
-            .group_by(customer_dim)
-            .aggregate("orders.order_count", "customers.customer_count", "items.item_count")
+            joined.group_by(customer_dim)
+            .aggregate(
+                "orders.order_count", "customers.customer_count", "items.item_count"
+            )
             .execute()
         )
 
@@ -359,18 +363,17 @@ class TestMultipleJoins:
         )
 
         # Chain joins - use raw column access in join predicates
-        joined = (
-            orders_st
-            .join(items_st, on=lambda o, i: o.order_id == i.order_id)
-            .join(products_st, on=lambda oi, p: oi.product_id == p.product_id)
-        )
+        joined = orders_st.join(
+            items_st, on=lambda o, i: o.order_id == i.order_id
+        ).join(products_st, on=lambda oi, p: oi.product_id == p.product_id)
 
         # Access measures from all three tables using bracket notation
         result = (
-            joined
-            .with_measures(
+            joined.with_measures(
                 combined_metric=lambda t: (
-                    t["orders.revenue"] + t["items.quantity_sold"] + t["products.product_count"]
+                    t["orders.revenue"]
+                    + t["items.quantity_sold"]
+                    + t["products.product_count"]
                 )
             )
             .group_by("products.category")
@@ -396,9 +399,7 @@ class TestCalculatedMeasuresWithPrefixes:
                 order_count=lambda t: t.count(),
                 total_revenue=lambda t: t.total_amount.sum(),
             )
-            .with_measures(
-                avg_order_value=lambda t: t.total_revenue / t.order_count
-            )
+            .with_measures(avg_order_value=lambda t: t.total_revenue / t.order_count)
         )
 
         items_st = (
@@ -416,8 +417,7 @@ class TestCalculatedMeasuresWithPrefixes:
         assert "orders.avg_order_value" in joined._calc_measures
 
         result = (
-            joined
-            .group_by("orders.order_id")
+            joined.group_by("orders.order_id")
             .aggregate("orders.avg_order_value")
             .execute()
         )
@@ -450,9 +450,9 @@ class TestCalculatedMeasuresWithPrefixes:
 
         # Create new calculated measure using prefixed measures from both tables (use bracket notation)
         result = (
-            joined
-            .with_measures(
-                orders_per_customer=lambda t: t["orders.order_count"] / t["customers.customer_count"]
+            joined.with_measures(
+                orders_per_customer=lambda t: t["orders.order_count"]
+                / t["customers.customer_count"]
             )
             .group_by("orders.customer_id")
             .aggregate("orders_per_customer")
@@ -525,10 +525,7 @@ class TestDimensionPrefixing:
 
         # Group by prefixed dimension from customers table
         result = (
-            joined
-            .group_by("customers.country")
-            .aggregate("orders.revenue")
-            .execute()
+            joined.group_by("customers.country").aggregate("orders.revenue").execute()
         )
 
         assert "customers.country" in result.columns
@@ -587,7 +584,9 @@ class TestEdgeCases:
         # Self-join on customer_id
         # Use bitwise & instead of 'and' for combining ibis expressions
         joined = orders1.join(
-            orders2, on=lambda l, r: (l.order_id != r.order_id) & (l.customer_id == r.customer_id)
+            orders2,
+            on=lambda left, right: (left.order_id != right.order_id)
+            & (left.customer_id == right.customer_id),
         )
 
         # Both measures should be accessible with their table aliases
@@ -596,8 +595,7 @@ class TestEdgeCases:
 
         # Verify we can aggregate them
         result = (
-            joined
-            .group_by("orders_left.customer_id")
+            joined.group_by("orders_left.customer_id")
             .aggregate("orders_left.count_left")
             .execute()
         )
@@ -617,7 +615,9 @@ class TestEdgeCases:
 
         customers_st = (
             to_semantic_table(customers_tbl, "customers")
-            .with_dimensions(customer_id=lambda t: t.customer_id, country=lambda t: t.country)
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id, country=lambda t: t.country
+            )
             .with_measures(customer_count=lambda t: t.count())
         )
 
@@ -627,8 +627,7 @@ class TestEdgeCases:
 
         # Calculate percent of total revenue using prefixed measure (use bracket notation)
         result = (
-            joined
-            .with_measures(
+            joined.with_measures(
                 revenue_pct=lambda t: t["orders.revenue"] / t.all(t["orders.revenue"])
             )
             .group_by("customers.country")

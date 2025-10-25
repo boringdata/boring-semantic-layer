@@ -5,10 +5,17 @@ from ibis.expr.operations.core import Node
 
 
 def to_node(maybe_expr: Any) -> Node:
-    return (maybe_expr if isinstance(maybe_expr, Node)
-            else maybe_expr.op() if isinstance(maybe_expr, Expr)
-            else maybe_expr.op() if hasattr(maybe_expr, 'op') and callable(maybe_expr.op)
-            else (_ for _ in ()).throw(ValueError(f"Cannot convert type {type(maybe_expr)} to Node")))
+    return (
+        maybe_expr
+        if isinstance(maybe_expr, Node)
+        else maybe_expr.op()
+        if isinstance(maybe_expr, Expr)
+        else maybe_expr.op()
+        if hasattr(maybe_expr, "op") and callable(maybe_expr.op)
+        else (_ for _ in ()).throw(
+            ValueError(f"Cannot convert type {type(maybe_expr)} to Node")
+        )
+    )
 
 
 def gen_children_of(node: Node) -> Tuple[Node, ...]:
@@ -17,7 +24,12 @@ def gen_children_of(node: Node) -> Tuple[Node, ...]:
             return to_node(child)
         except ValueError:
             return None
-    return tuple(n for n in (try_to_node(c) for c in getattr(node, "__children__", ())) if n is not None)
+
+    return tuple(
+        n
+        for n in (try_to_node(c) for c in getattr(node, "__children__", ()))
+        if n is not None
+    )
 
 
 def bfs(expr: Expr) -> Dict[Node, Tuple[Node, ...]]:
@@ -37,7 +49,9 @@ def bfs(expr: Expr) -> Dict[Node, Tuple[Node, ...]]:
     return graph
 
 
-def walk_nodes(node_types: Type[Any] | Tuple[Type[Any], ...], expr: Expr) -> Iterable[Node]:
+def walk_nodes(
+    node_types: Type[Any] | Tuple[Type[Any], ...], expr: Expr
+) -> Iterable[Node]:
     start = to_node(expr)
     visited = set()
     stack = [start]
@@ -57,7 +71,14 @@ def replace_nodes(replacer, expr: Expr) -> Expr:
 
 
 def find_dimensions_and_measures(expr: Expr) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    from .ops import _find_all_root_models, _merge_fields_with_prefixing, _get_field_dict
+    from .ops import (
+        _find_all_root_models,
+        _merge_fields_with_prefixing,
+        _get_field_dict,
+    )
+
     roots = _find_all_root_models(to_node(expr))
-    return (_merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, 'dimensions')),
-            _merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, 'measures')))
+    return (
+        _merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, "dimensions")),
+        _merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, "measures")),
+    )

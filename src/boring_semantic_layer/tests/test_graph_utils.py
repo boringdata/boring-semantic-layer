@@ -64,8 +64,16 @@ def test_find_dimensions_and_measures_no_semantic_table():
 def test_find_dimensions_and_measures_semantic_table():
     t = ibis.memtable({"x": [1, 2, 3]}, name="t")
     dims_defs = {"x": Dimension(expr=lambda tbl: tbl.x, description="dim x")}
-    meas_defs = {"sum_x": Measure(expr=lambda tbl: tbl.x.sum(), description="measure sum_x")}
-    semantic = SemanticModel(table=t, dimensions=dims_defs, measures=meas_defs, calc_measures=None, name="mytable")
+    meas_defs = {
+        "sum_x": Measure(expr=lambda tbl: tbl.x.sum(), description="measure sum_x")
+    }
+    semantic = SemanticModel(
+        table=t,
+        dimensions=dims_defs,
+        measures=meas_defs,
+        calc_measures=None,
+        name="mytable",
+    )
     # SemanticModel is the Expression - use it directly
     dims, meas = find_dimensions_and_measures(semantic)
     assert dims == {"mytable.x": dims_defs["x"]}

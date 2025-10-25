@@ -2,8 +2,8 @@
 """Joining Semantic Tables - Foreign Sums and Averages.
 https://docs.malloydata.dev/documentation/patterns/foreign_sums
 """
+
 import ibis
-from ibis import _
 from boring_semantic_layer import to_semantic_table
 
 # this is a public R2 bucket with sample data hosted by Malloy
@@ -23,7 +23,11 @@ def main():
 
     aircraft = (
         to_semantic_table(aircraft_tbl, name="aircraft")
-        .join(models, lambda a, m: a.aircraft_model_code == m.aircraft_model_code, how="left")
+        .join(
+            models,
+            lambda a, m: a.aircraft_model_code == m.aircraft_model_code,
+            how="left",
+        )
         .with_measures(
             aircraft_count=lambda t: t.count(),
         )
@@ -38,11 +42,18 @@ def main():
         )
     )
 
-    flights_by_origin = flights.group_by("origin").aggregate("flight_count").limit(10).execute()
+    flights_by_origin = (
+        flights.group_by("origin").aggregate("flight_count").limit(10).execute()
+    )
     print("\nFlights by origin:")
     print(flights_by_origin)
 
-    aircraft_by_type = aircraft.group_by("aircraft_type_id").aggregate("aircraft_count").limit(10).execute()
+    aircraft_by_type = (
+        aircraft.group_by("aircraft_type_id")
+        .aggregate("aircraft_count")
+        .limit(10)
+        .execute()
+    )
     print("\nAircraft by type:")
     print(aircraft_by_type)
 

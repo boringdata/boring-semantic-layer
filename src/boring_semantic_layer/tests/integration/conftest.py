@@ -1,4 +1,5 @@
 """Pytest configuration and fixtures for integration tests."""
+
 import pytest
 from pathlib import Path
 import sys
@@ -8,7 +9,7 @@ import gc
 import pandas as pd
 import numpy as np
 from functools import reduce
-from toolz import curry, pipe
+from toolz import curry
 from typing import Tuple, Any, Dict
 
 
@@ -51,7 +52,8 @@ def make_expand_row(col: str, row: Dict[str, Any]) -> Tuple[Dict[str, Any], ...]
 
     if isinstance(nested_data, (list, tuple)) and nested_data:
         return tuple(
-            {**base_data, **item} if isinstance(item, dict)
+            {**base_data, **item}
+            if isinstance(item, dict)
             else {**base_data, f"{col}_value": item}
             for item in nested_data
         )
@@ -64,18 +66,20 @@ def make_flatten_column(col: str, df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     rows = tuple(
-        expanded
-        for _, row in df.iterrows()
-        for expanded in make_expand_row(col, row)
+        expanded for _, row in df.iterrows() for expanded in make_expand_row(col, row)
     )
     return pd.DataFrame(rows) if rows else df.drop(columns=[col])
 
 
 @curry
-def make_flatten_dataframe(columns_to_flatten: Tuple[str, ...], df: pd.DataFrame) -> pd.DataFrame:
+def make_flatten_dataframe(
+    columns_to_flatten: Tuple[str, ...], df: pd.DataFrame
+) -> pd.DataFrame:
     if not columns_to_flatten:
         return df
-    return reduce(lambda acc, col: make_flatten_column(col, acc), columns_to_flatten, df)
+    return reduce(
+        lambda acc, col: make_flatten_column(col, acc), columns_to_flatten, df
+    )
 
 
 @pytest.fixture

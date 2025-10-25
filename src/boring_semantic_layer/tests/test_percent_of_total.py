@@ -4,10 +4,13 @@ import pytest
 
 from boring_semantic_layer import to_semantic_table
 
+
 def test_percent_of_total_grand_total():
     con = ibis.duckdb.connect(":memory:")
     flights = pd.DataFrame({"carrier": ["AA", "AA", "UA", "DL", "DL", "DL"]})
-    carriers = pd.DataFrame({"code": ["AA", "UA", "DL"], "nickname": ["American", "United", "Delta"]})
+    carriers = pd.DataFrame(
+        {"code": ["AA", "UA", "DL"], "nickname": ["American", "United", "Delta"]}
+    )
     f_tbl = con.create_table("flights", flights)
     c_tbl = con.create_table("carriers", carriers)
 
@@ -19,10 +22,11 @@ def test_percent_of_total_grand_total():
     )
 
     joined = (
-        flights_st
-        .join(carriers_st, on=lambda f, c: f.carrier == c.code)
+        flights_st.join(carriers_st, on=lambda f, c: f.carrier == c.code)
         .with_dimensions(nickname=lambda t: t.nickname)
-        .with_measures(percent_of_total=lambda t: t.flight_count / t.all(t.flight_count))
+        .with_measures(
+            percent_of_total=lambda t: t.flight_count / t.all(t.flight_count)
+        )
     )
 
     df = (
@@ -32,7 +36,7 @@ def test_percent_of_total_grand_total():
         .execute()
     )
 
-    expected = {"American": 2/6, "Delta": 3/6, "United": 1/6}
+    expected = {"American": 2 / 6, "Delta": 3 / 6, "United": 1 / 6}
     got = dict(zip(df.nickname, df.percent_of_total))
     for k, v in expected.items():
         assert pytest.approx(v) == got[k]
