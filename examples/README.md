@@ -83,12 +83,6 @@ Master the "bucketing with OTHER" pattern for clean reports and visualizations:
 
 ## Additional Resources
 
-### Malloy Recreations
-
-The `malloy_recreations/` directory contains implementations of complex Malloy patterns
-using the Boring Semantic Layer, demonstrating feature parity with Malloy's advanced
-capabilities.
-
 ### Tests
 
 For more advanced examples and patterns, see the test suite:
