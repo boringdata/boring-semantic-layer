@@ -322,16 +322,21 @@ class SemanticAggregateOp(Relation):
     source: Any
     keys: tuple[str, ...]
     aggs: dict[str, Callable]  # Transformed to FrozenDict[str, _CallableWrapper] in __init__
+    nested_columns: tuple[str, ...] = ()  # Track which columns are nested arrays
 
     def __init__(
         self,
         source: Any,
         keys: Iterable[str],
         aggs: dict[str, Callable] | None,
+        nested_columns: Iterable[str] | None = None,
     ) -> None:
         frozen_aggs = FrozenDict({name: _ensure_wrapped(fn) for name, fn in (aggs or {}).items()})
         super().__init__(
-            source=Relation.__coerce__(source), keys=tuple(keys), aggs=frozen_aggs
+            source=Relation.__coerce__(source),
+            keys=tuple(keys),
+            aggs=frozen_aggs,
+            nested_columns=tuple(nested_columns or [])
         )
 
     @property
@@ -341,7 +346,7 @@ class SemanticAggregateOp(Relation):
 
         # Use centralized prefixing logic
         merged_dimensions = _merge_fields_with_prefixing(
-            all_roots, lambda root: root.dimensions
+            all_roots, lambda root: root.get_dimensions()
         )
 
         # Use the actual source table (which could be a join) as base_tbl
@@ -373,6 +378,12 @@ class SemanticAggregateOp(Relation):
         all_roots = _find_all_root_models(self.source)
         tbl = _to_ibis(self.source)
 
+        # Check if we're aggregating after a mutate (post-aggregation context)
+        # Source can be SemanticMutateOp or SemanticGroupByOp wrapping a SemanticMutateOp
+        is_post_agg = (isinstance(self.source, SemanticMutateOp) or
+                      (isinstance(self.source, SemanticGroupByOp) and
+                       isinstance(self.source.source, SemanticMutateOp)))
+
         merged_dimensions = _get_merged_fields(all_roots, 'dimensions')
         merged_base_measures = _get_merged_fields(all_roots, 'measures')
         merged_calc_measures = _get_merged_fields(all_roots, 'calc_measures')
@@ -380,8 +391,12 @@ class SemanticAggregateOp(Relation):
         dim_mutations = {k: merged_dimensions[k](tbl) for k in self.keys if k in merged_dimensions}
         tbl = tbl.mutate(**dim_mutations) if dim_mutations else tbl
 
-        all_measure_names = list(merged_base_measures.keys()) + list(merged_calc_measures.keys())
-        scope = MeasureScope(_tbl=tbl, _known=all_measure_names)
+        # Use ColumnScope for post-aggregation, MeasureScope otherwise
+        if is_post_agg:
+            scope = ColumnScope(_tbl=tbl)
+        else:
+            all_measure_names = list(merged_base_measures.keys()) + list(merged_calc_measures.keys())
+            scope = MeasureScope(_tbl=tbl, _known=all_measure_names)
 
         agg_specs = {}
         calc_specs = {}
@@ -390,7 +405,11 @@ class SemanticAggregateOp(Relation):
             fn = _unwrap(fn_wrapped)
             val = _resolve_expr(fn, scope)
 
-            if isinstance(val, MeasureRef):
+            # In post-aggregation context, treat all expressions as regular aggregations
+            if is_post_agg:
+                agg_specs[name] = lambda t, f=fn: (f.resolve(ColumnScope(_tbl=t)) if isinstance(f, Deferred)
+                                                   else f(ColumnScope(_tbl=t)))
+            elif isinstance(val, MeasureRef):
                 ref_name = val.name
                 if ref_name in merged_calc_measures:
                     calc_specs[name] = merged_calc_measures[ref_name]
@@ -433,10 +452,17 @@ class SemanticAggregateOp(Relation):
 class SemanticMutateOp(Relation):
     source: Any
     post: dict[str, Callable]  # Transformed to FrozenDict[str, _CallableWrapper] in __init__
+    nested_columns: tuple[str, ...] = ()  # Inherited from source if it has nested columns
 
-    def __init__(self, source: Any, post: dict[str, Callable] | None) -> None:
+    def __init__(self, source: Any, post: dict[str, Callable] | None, nested_columns: tuple[str, ...] = ()) -> None:
         frozen_post = FrozenDict({name: _ensure_wrapped(fn) for name, fn in (post or {}).items()})
-        super().__init__(source=Relation.__coerce__(source), post=frozen_post)
+        source_nested = nested_columns if nested_columns else getattr(source, 'nested_columns', ())
+
+        super().__init__(
+            source=Relation.__coerce__(source),
+            post=frozen_post,
+            nested_columns=source_nested
+        )
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -450,12 +476,16 @@ class SemanticMutateOp(Relation):
         from .measure_scope import MeasureScope
 
         agg_tbl = _to_ibis(self.source)
-        proxy = MeasureScope(_tbl=agg_tbl, _known=[], _post_agg=True)
 
-        new_cols = [_resolve_expr(_unwrap(fn_wrapped), proxy).name(name)
-                    for name, fn_wrapped in self.post.items()]
+        # Process mutations incrementally so each can reference previous ones
+        # This allows: .mutate(rank=..., is_other=lambda t: t["rank"] > 5)
+        current_tbl = agg_tbl
+        for name, fn_wrapped in self.post.items():
+            proxy = MeasureScope(_tbl=current_tbl, _known=[], _post_agg=True)
+            new_col = _resolve_expr(_unwrap(fn_wrapped), proxy).name(name)
+            current_tbl = current_tbl.mutate([new_col])
 
-        return agg_tbl.mutate(new_cols) if new_cols else agg_tbl
+        return current_tbl
 
     def __repr__(self) -> str:
         cols = list(self.post.keys())
@@ -463,6 +493,61 @@ class SemanticMutateOp(Relation):
         if len(cols) > 5:
             cols_str += f", ... ({len(cols)} total)"
         return f"SemanticMutate(cols=[{cols_str}])"
+
+
+class SemanticUnnestOp(Relation):
+    """Unnest an array column, expanding rows (like Malloy's nested data pattern)."""
+    source: Any
+    column: str
+
+    @property
+    def schema(self) -> Schema:
+        # After unnesting, the schema changes - the array column is replaced by its element schema
+        # For now, delegate to source schema (ideally we'd update it)
+        return self.source.schema
+
+    @property
+    def values(self) -> FrozenDict:
+        return FrozenDict({})
+
+    def to_ibis(self):
+        """Convert to Ibis expression with functional struct unpacking.
+
+        Uses pure helper functions to extract struct fields when unnesting
+        produces struct columns that need to be expanded.
+        """
+        def build_struct_fields(col_expr, col_type):
+            """Pure function: build dict of struct field selections."""
+            return {name: col_expr[name] for name in col_type.names}
+
+        def unpack_struct_if_needed(unnested_tbl, column_name):
+            """Conditionally unpack struct fields into top-level columns."""
+            if column_name not in unnested_tbl.columns:
+                return unnested_tbl
+
+            col_expr = unnested_tbl[column_name]
+            col_type = col_expr.type()
+
+            if hasattr(col_type, 'fields') and col_type.fields:
+                struct_fields = build_struct_fields(col_expr, col_type)
+                return unnested_tbl.select(unnested_tbl, **struct_fields)
+
+            return unnested_tbl
+
+        tbl = _to_ibis(self.source)
+
+        if self.column not in tbl.columns:
+            raise ValueError(f"Column '{self.column}' not found in table")
+
+        try:
+            unnested = tbl.unnest(self.column)
+        except Exception as e:
+            raise ValueError(f"Failed to unnest column '{self.column}': {e}") from e
+
+        return unpack_struct_if_needed(unnested, self.column)
+
+    def __repr__(self) -> str:
+        return f"SemanticUnnest(column={self.column!r})"
 
 
 class SemanticJoinOp(Relation):

@@ -6,6 +6,8 @@ Expressions provide flexible APIs and handle type transformations.
 """
 from __future__ import annotations
 
+from functools import reduce
+from operator import attrgetter
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from ibis.common.collections import FrozenDict
@@ -419,8 +421,16 @@ class SemanticGroupBy(SemanticTable):
         return self.op().schema
 
 
-    def aggregate(self, *measure_names, **aliased):
-        """Aggregate measures over grouped dimensions."""
+    def aggregate(self, *measure_names, nest: dict[str, Callable] | None = None, **aliased):
+        """Aggregate measures over grouped dimensions.
+
+        Args:
+            *measure_names: Measure names to aggregate
+            nest: Dict mapping nest name to lambda that specifies columns to collect:
+                  - Lambda with group_by: nest={"data": lambda t: t.group_by(["code", "elevation"])}
+                  - Lambda with select: nest={"data": lambda t: t.select("code", "elevation")}
+            **aliased: Additional aggregations with custom names
+        """
         aggs = {}
         for item in measure_names:
             if isinstance(item, str):
@@ -430,15 +440,70 @@ class SemanticGroupBy(SemanticTable):
             else:
                 raise TypeError(f"measure_names must be strings or callables, got {type(item)}")
         aggs.update(aliased)
-        return SemanticAggregate(source=self.op(), keys=self.keys, aggs=aggs)
+
+        if nest:
+            import ibis
+            from ibis.expr.types.groupby import GroupedTable
+            from ibis.expr.types import Table
+
+            def make_nest_agg(fn):
+                """Create a nested aggregation that collects rows as structs.
+
+                Functional approach: Use pattern-based dispatch with early returns
+                to handle different result types from the nest lambda.
+                """
+                def build_struct_dict(columns, source_tbl):
+                    """Pure function: build struct dict from column names."""
+                    return {col: source_tbl[col] for col in columns}
+
+                def collect_struct(struct_dict):
+                    """Pure function: create and collect struct from dict."""
+                    return ibis.struct(struct_dict).collect()
+
+                def handle_grouped_table(result, ibis_tbl):
+                    """Handle GroupedTable: extract group columns and create struct."""
+                    group_cols = tuple(map(attrgetter('name'), result.groupings))
+                    return collect_struct(build_struct_dict(group_cols, ibis_tbl))
+
+                def handle_table(result, ibis_tbl):
+                    """Handle Table/Selection: extract all columns and create struct."""
+                    return collect_struct(build_struct_dict(result.columns, ibis_tbl))
+
+                def nest_agg(ibis_tbl):
+                    """Apply nest function and dispatch based on result type."""
+                    result = fn(ibis_tbl)
+
+                    if hasattr(result, 'to_ibis'):
+                        return to_ibis(result)
+
+                    if isinstance(result, GroupedTable):
+                        return handle_grouped_table(result, ibis_tbl)
+
+                    if isinstance(result, Table):
+                        return handle_table(result, ibis_tbl)
+
+                    raise TypeError(
+                        f"Nest lambda must return GroupedTable, Table, or SemanticExpression, "
+                        f"got {type(result).__module__}.{type(result).__name__}"
+                    )
+
+                return nest_agg
+
+            nest_aggs = {name: make_nest_agg(fn) for name, fn in nest.items()}
+            aggs = {**aggs, **nest_aggs}
+            nested_columns = tuple(nest.keys())
+        else:
+            nested_columns = ()
+
+        return SemanticAggregate(source=self.op(), keys=self.keys, aggs=aggs, nested_columns=nested_columns)
 
 
 class SemanticAggregate(SemanticTable):
     """User-facing aggregate expression wrapping SemanticAggregateOp Operation."""
 
-    def __init__(self, source: Any, keys: tuple[str, ...], aggs: dict[str, Any]) -> None:
+    def __init__(self, source: Any, keys: tuple[str, ...], aggs: dict[str, Any], nested_columns: list[str] | None = None) -> None:
         from .ops import SemanticAggregateOp
-        op = SemanticAggregateOp(source=source, keys=keys, aggs=aggs)
+        op = SemanticAggregateOp(source=source, keys=keys, aggs=aggs, nested_columns=nested_columns or [])
         super().__init__(op)
 
     @property
@@ -464,6 +529,10 @@ class SemanticAggregate(SemanticTable):
     @property
     def measures(self):
         return self.op().measures
+
+    @property
+    def nested_columns(self):
+        return self.op().nested_columns
 
     def mutate(self, **post) -> "SemanticMutate":
         """Add or update columns after aggregation."""
@@ -650,12 +719,30 @@ class SemanticMutate(SemanticTable):
     def schema(self):
         return self.op().schema
 
+    @property
+    def nested_columns(self):
+        return self.op().nested_columns
 
     def mutate(self, **post) -> "SemanticMutate":
-        """Add or update columns."""
-        from .ops import _ensure_wrapped
-        new_post = {**self.post, **{name: _ensure_wrapped(fn) for name, fn in post.items()}}
-        return SemanticMutate(source=self.source, post=new_post)
+        """Add or update columns (supports chaining)."""
+        return SemanticMutate(source=self.op(), post=post)
+
+    def group_by(self, *keys: str) -> "SemanticGroupBy":
+        """Group by dimensions after mutation (enables re-aggregation).
+
+        Automatically unnests any nested columns from prior aggregations.
+        Uses reduce to fold unnest operations for functional composition.
+        """
+        from .ops import SemanticUnnestOp
+
+        # Functional: fold over nested columns to build unnest operation chain
+        source_with_unnests = reduce(
+            lambda src, col: SemanticUnnestOp(source=src, column=col),
+            self.nested_columns,
+            self.op()
+        )
+
+        return SemanticGroupBy(source=source_with_unnests, keys=keys)
 
     def as_table(self) -> "SemanticModel":
         """Convert to SemanticModel with no semantic metadata (columns are materialized)."""
