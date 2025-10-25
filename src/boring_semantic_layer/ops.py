@@ -378,11 +378,21 @@ class SemanticAggregateOp(Relation):
         all_roots = _find_all_root_models(self.source)
         tbl = _to_ibis(self.source)
 
-        # Check if we're aggregating after a mutate (post-aggregation context)
-        # Source can be SemanticMutateOp or SemanticGroupByOp wrapping a SemanticMutateOp
-        is_post_agg = (isinstance(self.source, SemanticMutateOp) or
-                      (isinstance(self.source, SemanticGroupByOp) and
-                       isinstance(self.source.source, SemanticMutateOp)))
+        # Check if we're aggregating after a prior aggregation (post-aggregation context)
+        # This happens when SemanticMutateOp comes after a SemanticAggregateOp
+        def has_prior_aggregate(node):
+            """Recursively check if there's a SemanticAggregateOp before any mutate."""
+            if isinstance(node, SemanticAggregateOp):
+                return True
+            if isinstance(node, SemanticMutateOp):
+                return has_prior_aggregate(node.source)
+            if isinstance(node, SemanticGroupByOp):
+                return has_prior_aggregate(node.source)
+            if hasattr(node, 'source'):
+                return has_prior_aggregate(node.source)
+            return False
+
+        is_post_agg = has_prior_aggregate(self.source)
 
         merged_dimensions = _get_merged_fields(all_roots, 'dimensions')
         merged_base_measures = _get_merged_fields(all_roots, 'measures')

@@ -58,6 +58,10 @@ class SemanticTable(ir.Table):
         """Group by dimensions."""
         return SemanticGroupBy(source=self.op(), keys=keys)
 
+    def mutate(self, **post) -> "SemanticMutate":
+        """Add or update columns."""
+        return SemanticMutate(source=self.op(), post=post)
+
     def order_by(self, *keys: Any):
         """Order by fields."""
         return SemanticOrderBy(source=self.op(), keys=keys)
