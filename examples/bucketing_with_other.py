@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bucketing with 'Other' - Top N with Rollup Pattern.
 
-Malloy: https://malloydata.github.io/malloy/documentation/patterns/other.html
+Malloy: https://docs.malloydata.dev/documentation/patterns/other
 """
 
 import ibis

@@ -4,7 +4,7 @@ https://docs.malloydata.dev/documentation/patterns/moving_avg
 """
 
 import ibis
-from boring_semantic_layer import to_semantic_table, to_ibis
+from boring_semantic_layer import to_semantic_table
 
 BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
 
@@ -29,8 +29,7 @@ def main():
     )
 
     result = (
-        to_ibis(daily_stats)
-        .mutate(
+        daily_stats.mutate(
             rolling_avg=lambda t: t.flight_count.mean().over(
                 ibis.window(order_by=t.flight_date, preceding=6, following=0)
             ),

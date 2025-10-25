@@ -70,13 +70,15 @@ flights.group_by("origin").aggregate("flight_count").execute()
   - [Advanced Queries](#advanced-queries)
     - [Percent of Total](#percent-of-total)
     - [Window Functions](#window-functions)
-  - [Time-Based Dimensions](#time-based-dimensions)
+    - [Nested Data with nest()](#nested-data-with-nest)
   - [Joins Across Semantic Tables](#joins-across-semantic-tables)
     - [join_one (Many-to-One Relationships)](#join_one-many-to-one-relationships)
     - [join_many (One-to-Many Relationships)](#join_many-one-to-many-relationships)
     - [join_cross (Cross Product)](#join_cross-cross-product)
     - [YAML Configuration for Joins](#yaml-configuration-for-joins)
+  - [Dimensional Indexing](#dimensional-indexing)
   - [Backward Compatibility: query() Method](#backward-compatibility-query-method)
+  - [Backward Compatibility: Time-Based Dimensions](#backward-compatibility-time-based-dimensions)
 - [Model Context Protocol (MCP) Integration](#model-context-protocol-mcp-integration)
   - [Installation](#installation-1)
   - [Setting up an MCP Server](#setting-up-an-mcp-server)
@@ -417,19 +419,6 @@ This approach lets you:
 You can filter data using raw Ibis expressions for full flexibility:
 
 ```python
-filtered = flights.filter(lambda t: t.origin == 'JFK')
-result = filtered.group_by('origin').aggregate('total_flights').execute()
-```
-
-**Example output:**
-
-| origin | total_flights |
-| ------ | ------------- |
-| JFK    | 3689          |
-
-You can also combine filters with chaining:
-
-```python
 result = (
     flights
     .filter(lambda t: t.origin.isin(['JFK', 'LGA', 'PHL']))
@@ -503,6 +492,46 @@ flights = (
 result = flights.group_by("date").aggregate("flight_count", "rolling_avg").execute()
 ```
 
+#### Nested Data with nest()
+
+The `nest()` operator allows you to preserve row-level detail within aggregated results by creating nested data structures. This enables advanced patterns like multi-stage aggregations where you need to access granular data after an initial grouping.
+
+**How it works:**
+
+When you include `nest` in an aggregation, BSL creates a nested column containing the grouped data:
+
+```python
+result = (
+    table
+    .group_by("category")
+    .aggregate(
+        "total_amount",
+        nest={"detail": lambda t: t.group_by(["id", "value"])}
+    )
+)
+```
+
+**Example output:**
+
+| category | total_amount | detail                                    |
+| -------- | ------------ | ----------------------------------------- |
+| A        | 1500         | [{"id": 1, "value": 100}, {"id": 2, ...}] |
+| B        | 2300         | [{"id": 3, "value": 200}, {"id": 4, ...}] |
+
+The nested column (`detail` in this example) can then be used in subsequent operations:
+- Access nested data using dot notation (e.g., `_.detail.count()`, `_.detail.value.mean()`)
+- Combine with `mutate()` to add computed columns before re-aggregating
+- Enable "Top N with Other" bucketing patterns where you rank groups, then re-aggregate them
+
+**Use cases:**
+- **Top N with rollup**: Show top items individually, group the rest as "Other"
+- **Multi-stage aggregation**: Aggregate at one level, then re-aggregate based on computed rankings or categories
+- **Preserving detail**: Keep access to row-level data for downstream calculations after initial grouping
+
+This pattern is inspired by [Malloy's bucketing with "Other"](https://docs.malloydata.dev/documentation/patterns/other).
+
+For a complete working example showing the "Top N with Other" pattern, see [examples/bucketing_with_other.py](examples/bucketing_with_other.py).
+
 ### Joins Across Semantic Tables
 
 BSL allows you to join multiple semantic tables to enrich your data. Joins use a fluent API inspired by [Malloy](https://docs.malloydata.dev/documentation/language/join).
@@ -575,21 +604,20 @@ result = (
 
 **Handling Name Conflicts:**
 
-When there are naming conflicts between joined tables, you can use the prefixed format with double underscores:
+When there are naming conflicts between joined tables, you can use the prefixed format with '.':
 
 ```python
 # If both tables have a "name" column, use prefixes to disambiguate
 result = (
     flights_with_carriers
-    .group_by("carriers__name", "flights__origin")
-    .aggregate("flights__flight_count")
+    .group_by("carriers.name", "flights.origin")
+    .aggregate("flights.flight_count")
     .execute()
 )
 ```
 
 - Use simple column names (`name`, `flight_count`) when there's no conflict
-- Use prefixed names (`carriers__name`, `flights__flight_count`) only when needed to resolve ambiguity
-- Aggregations work correctly at each level of the join tree (similar to Malloy's "foreign sums")
+- Use prefixed names (`carriers.name`, `flights.flight_count`) only when needed to resolve ambiguity
 
 #### join_many (One-to-Many Relationships)
 
@@ -651,46 +679,6 @@ models = from_yaml("models.yml", tables={
 flights = models["flights"]  # Already has the join configured!
 ```
 
-### Time-Based Dimensions
-
-BSL supports marking dimensions as time dimensions with an optional `smallest_time_grain` to prevent incorrect time aggregations.
-
-**Python API (dict format):**
-```python
-from boring_semantic_layer.semantic_api import to_semantic_table
-
-flights = (
-    to_semantic_table(flights_tbl, name="flights")
-    .with_dimensions(
-        origin=lambda t: t.origin,
-        arr_time={
-            "expr": lambda t: t.arr_time,
-            "description": "Arrival timestamp",
-            "is_time_dimension": True,
-            "smallest_time_grain": "TIME_GRAIN_DAY"
-        }
-    )
-    .with_measures(total_flights=lambda t: t.count())
-)
-```
-
-**YAML format:**
-```yaml
-flights:
-  table: flights_tbl
-  dimensions:
-    origin: _.origin
-    arr_time:
-      expr: _.arr_time
-      description: "Arrival timestamp"
-      is_time_dimension: true
-      smallest_time_grain: "TIME_GRAIN_DAY"
-  measures:
-    flight_count: _.count()
-```
-
-Supported time grains: `TIME_GRAIN_SECOND`, `TIME_GRAIN_MINUTE`, `TIME_GRAIN_HOUR`, `TIME_GRAIN_DAY`, `TIME_GRAIN_WEEK`, `TIME_GRAIN_MONTH`, `TIME_GRAIN_QUARTER`, `TIME_GRAIN_YEAR`
-
 ### Backward Compatibility: query() Method
 
 For backward compatibility with existing code, BSL supports the legacy `.query()` API:
@@ -721,6 +709,87 @@ result = (
 ```
 
 **Note:** The fluent API (`.group_by().aggregate()`) is recommended for new projects.
+
+### Dimensional Indexing
+
+Dimensional indexing creates a searchable catalog of all unique values across your dimensions. This is useful for data exploration, building autocomplete features, and understanding data distributions. Inspired by [Malloy's index pattern](https://docs.malloydata.dev/documentation/patterns/dim_index).
+
+**Basic Usage:**
+
+```python
+import ibis.selectors as s
+
+# Index all dimensions
+index_all = airports.index(s.all()).execute()
+
+# Index specific fields with custom weight
+high_elevation_cities = (
+    airports.index(s.cols("city", "state"), by="avg_elevation")
+    .order_by(lambda t: t.weight.desc())
+    .limit(5)
+    .execute()
+)
+```
+
+**Example output:**
+
+| fieldName | fieldValue    | fieldType | weight  |
+| --------- | ------------- | --------- | ------- |
+| city      | Leadville     | string    | 9927.0  |
+| city      | Telluride     | string    | 9078.0  |
+| state     | CO            | string    | 8500.5  |
+| city      | Eagle         | string    | 6548.0  |
+| state     | WY            | string    | 6234.2  |
+
+**Autocomplete Use Case:**
+
+```python
+# Get city suggestions starting with "SAN"
+suggestions = (
+    airports.index(s.cols("city"))
+    .filter(lambda t: t.fieldValue.like("SAN%"))
+    .order_by(lambda t: t.weight.desc())
+    .limit(10)
+    .execute()
+)
+```
+
+For more examples including data profiling, search patterns, and indexing across joins, see [examples/dimensional_indexing.py](examples/dimensional_indexing.py).
+
+### Backward Compatibility: Time-Based Dimensions
+
+BSL supports marking dimensions as time dimensions with an optional `smallest_time_grain`. This is mostly supported to keep time aggregation possible with the legacy query() method.
+
+**Python API (dict format):**
+```python
+from boring_semantic_layer.semantic_api import to_semantic_table
+
+flights = (
+    to_semantic_table(flights_tbl, name="flights")
+    .with_dimensions(
+        origin=lambda t: t.origin,
+        arr_time={
+            "expr": lambda t: t.arr_time,
+            "description": "Arrival timestamp",
+            "is_time_dimension": True,
+            "smallest_time_grain": "TIME_GRAIN_DAY"
+        }
+    )
+    .with_measures(total_flights=lambda t: t.count())
+)
+```
+Supported time grains: `TIME_GRAIN_SECOND`, `TIME_GRAIN_MINUTE`, `TIME_GRAIN_HOUR`, `TIME_GRAIN_DAY`, `TIME_GRAIN_WEEK`, `TIME_GRAIN_MONTH`, `TIME_GRAIN_QUARTER`, `TIME_GRAIN_YEAR`
+
+Note: The 'v2' way to do time aggregation is via dimension transformation:
+
+```python
+result = (
+    flights
+    .group_by(flight_year=lambda t: t.arr_time.year())
+    .aggregate("total_flights")
+    .execute()
+)
+```
 
 ## Model Context Protocol (MCP) Integration
 
