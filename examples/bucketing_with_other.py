@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Bucketing with 'Other' - Top N with Rollup Pattern."""
+"""Bucketing with 'Other' - Top N with Rollup Pattern.
+
+Malloy: https://malloydata.github.io/malloy/documentation/patterns/other.html
+"""
 import ibis
 from ibis import _
 from boring_semantic_layer import to_semantic_table

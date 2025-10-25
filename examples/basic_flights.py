@@ -1,22 +1,15 @@
 #!/usr/bin/env python3
 """Basic Semantic Table Usage with Flights."""
-import pandas as pd
 import ibis
 from ibis import _
 from boring_semantic_layer import to_semantic_table
 
+BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
+
 
 def main():
     con = ibis.duckdb.connect(":memory:")
-
-    flights_df = pd.DataFrame({
-        "origin": ["JFK", "LAX", "JFK", "ORD", "LAX", "JFK", "ORD", "LAX"],
-        "destination": ["LAX", "JFK", "ORD", "JFK", "ORD", "LAX", "LAX", "ORD"],
-        "distance": [2475, 2475, 740, 740, 1744, 2475, 987, 1744],
-        "carrier": ["AA", "UA", "AA", "UA", "AA", "UA", "AA", "UA"],
-    })
-
-    flights_tbl = con.create_table("flights", flights_df)
+    flights_tbl = con.read_parquet(f"{BASE_URL}/flights.parquet")
 
     flights = to_semantic_table(flights_tbl, name="flights").with_measures(
         flight_count=lambda t: t.count(),
@@ -26,7 +19,7 @@ def main():
         min_distance=lambda t: t.distance.min(),
     )
 
-    result = flights.group_by("origin").aggregate("flight_count").execute()
+    result = flights.group_by("origin").aggregate("flight_count").limit(10).execute()
     print("\nFlight counts by origin:")
     print(result)
 
@@ -34,6 +27,7 @@ def main():
         flights.group_by("origin", "carrier")
         .aggregate("flight_count", "avg_distance")
         .order_by(_.flight_count.desc())
+        .limit(10)
         .execute()
     )
     print("\nFlights by origin and carrier:")
@@ -47,6 +41,7 @@ def main():
         flights_enhanced.group_by("carrier")
         .aggregate("flight_count", "total_distance", "distance_per_flight")
         .order_by(_.distance_per_flight.desc())
+        .limit(10)
         .execute()
     )
     print("\nDistance per flight by carrier:")
@@ -56,6 +51,7 @@ def main():
     result = (
         long_haul_flights.group_by("carrier")
         .aggregate("flight_count", "avg_distance")
+        .limit(10)
         .execute()
     )
     print("\nLong-haul flights (>1000 miles):")
