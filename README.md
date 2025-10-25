@@ -14,6 +14,10 @@ We welcome feedback and contributions!
 
 # Quick Example
 
+```
+pip install 'boring-semantic-layer[examples]'
+```
+
 **1. Define your ibis input table**
 
 ```python
@@ -112,7 +116,7 @@ pip install boring-semantic-layer
 pip install 'boring-semantic-layer[examples]'
 
 # For MCP integration
-pip install 'boring-semantic-layer[mcp]'
+pip install 'boring-semantic-layer[fastmcp]'
 
 # For visualization with Altair
 pip install 'boring-semantic-layer[viz-altair]'
@@ -802,7 +806,7 @@ BSL includes built-in support for the [Model Context Protocol (MCP)](https://git
 To use MCP functionality, install with the `mcp` extra:
 
 ```bash
-pip install 'boring-semantic-layer[mcp]'
+pip install 'boring-semantic-layer[fastmcp]'
 ```
 
 ### Setting up an MCP Server

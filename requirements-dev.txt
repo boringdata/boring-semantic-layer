@@ -6,7 +6,7 @@ altair==5.5.0
     # via boring-semantic-layer
 annotated-types==0.7.0
     # via pydantic
-anyio==4.9.0
+anyio==4.11.0
     # via
     #   httpx
     #   mcp
@@ -60,7 +60,7 @@ charset-normalizer==3.4.2
     #   snowflake-connector-python
 choreographer==1.0.10
     # via kaleido
-cityhash==0.4.8 ; python_full_version < '4.0'
+cityhash==0.4.8 ; python_full_version < '4'
     # via xorq
 click==8.2.1
     # via
@@ -83,7 +83,7 @@ cryptography==45.0.7
     #   snowflake-connector-python
 cyclopts==4.0.0
     # via fastmcp
-dask==2025.1.0 ; python_full_version < '4.0'
+dask==2025.1.0 ; python_full_version < '4'
     # via xorq
 decorator==5.2.1
     # via ipython
@@ -126,7 +126,7 @@ gast==0.6.0 ; sys_platform == 'darwin'
     # via
     #   beniget
     #   pythran
-geoarrow-types==0.3.0 ; python_full_version < '4.0'
+geoarrow-types==0.3.0 ; python_full_version < '4'
     # via xorq
 google-api-core==2.25.1
     # via
@@ -170,7 +170,7 @@ httpx==0.28.1
     # via
     #   fastmcp
     #   mcp
-httpx-sse==0.4.1
+httpx-sse==0.4.2
     # via mcp
 ibis-framework==10.6.0
     # via boring-semantic-layer
@@ -222,7 +222,7 @@ kaleido==1.0.0
     # via boring-semantic-layer
 lazy-object-proxy==1.12.0
     # via openapi-spec-validator
-locket==1.0.0 ; python_full_version < '4.0'
+locket==1.0.0 ; python_full_version < '4'
     # via partd
 logistro==1.1.0
     # via
@@ -326,7 +326,7 @@ parsy==2.1
     # via
     #   ibis-framework
     #   xorq
-partd==1.4.2 ; python_full_version < '4.0'
+partd==1.4.2 ; python_full_version < '4'
     # via dask
 pathable==0.4.4
     # via jsonschema-path
@@ -387,7 +387,7 @@ pydantic==2.11.7
     #   pyiceberg
 pydantic-core==2.33.2
     # via pydantic
-pydantic-settings==2.10.1
+pydantic-settings==2.11.0
     # via mcp
 pygments==2.19.2
     # via
@@ -412,7 +412,7 @@ pytest==8.4.1
     #   pytest-mock
 pytest-asyncio==1.0.0
     # via boring-semantic-layer
-pytest-mock==3.14.1 ; python_full_version < '4.0'
+pytest-mock==3.14.1 ; python_full_version < '4'
     # via xorq
 python-dateutil==2.9.0.post0
     # via
@@ -439,7 +439,6 @@ pywin32==311 ; sys_platform == 'win32'
     # via mcp
 pyyaml==6.0.2
     # via
-    #   boring-semantic-layer
     #   dask
     #   envyaml
     #   jsonschema-path
@@ -501,15 +500,15 @@ sqlglot==25.20.2
     # via
     #   ibis-framework
     #   xorq
-sse-starlette==2.3.6
+sse-starlette==3.0.2
     # via mcp
 stack-data==0.6.3
     # via ipython
-starlette==0.47.1
+starlette==0.48.0
     # via mcp
 strictyaml==1.7.3
     # via pyiceberg
-structlog==25.4.0 ; python_full_version < '4.0'
+structlog==25.4.0 ; python_full_version < '4'
     # via xorq
 tenacity==9.1.2
     # via pyiceberg
@@ -568,7 +567,7 @@ urllib3==2.5.0
     #   boring-semantic-layer
     #   botocore
     #   requests
-uvicorn==0.35.0 ; sys_platform != 'emscripten'
+uvicorn==0.37.0 ; sys_platform != 'emscripten'
     # via mcp
 virtualenv==20.31.2
     # via pre-commit
