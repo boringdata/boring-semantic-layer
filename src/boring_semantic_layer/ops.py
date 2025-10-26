@@ -167,12 +167,12 @@ def _build_json_definition(
 
 @frozen(kw_only=True, slots=True)
 class Dimension:
-    expr: Callable[[Any], Any] | Deferred
+    expr: Callable[[ir.Table], ir.Value] | Deferred
     description: str | None = None
     is_time_dimension: bool = False
     smallest_time_grain: str | None = None
 
-    def __call__(self, table: Any) -> Any:
+    def __call__(self, table: ir.Table) -> ir.Value:
         return self.expr.resolve(table) if isinstance(self.expr, Deferred) else self.expr(table)
 
     def to_json(self) -> Mapping[str, Any]:
@@ -191,10 +191,10 @@ class Dimension:
 
 @frozen(kw_only=True, slots=True)
 class Measure:
-    expr: Callable[[Any], Any] | Deferred
+    expr: Callable[[ir.Table], ir.Value] | Deferred
     description: str | None = None
 
-    def __call__(self, table: Any) -> Any:
+    def __call__(self, table: ir.Table) -> ir.Value:
         return self.expr.resolve(table) if isinstance(self.expr, Deferred) else self.expr(table)
 
     def to_json(self) -> Mapping[str, Any]:

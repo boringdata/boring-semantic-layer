@@ -33,7 +33,7 @@ IbisProject = ibis.expr.operations.relations.Project
 
 
 @runtime_checkable
-class TableLike(Protocol):
+class AnyTable(Protocol):
     """Protocol for table-like objects supporting column access.
 
     This protocol describes objects that provide table column access
