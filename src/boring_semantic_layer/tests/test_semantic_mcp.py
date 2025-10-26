@@ -1,5 +1,7 @@
 """Tests for MCPSemanticModel using FastMCP client-server pattern with SemanticTable."""
 
+import json
+
 import ibis
 import pandas as pd
 import pytest

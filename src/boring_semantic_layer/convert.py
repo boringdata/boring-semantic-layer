@@ -7,11 +7,12 @@ to transform semantic layer operations into executable Ibis expressions.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Protocol, runtime_checkable
 
 import ibis
 from attrs import field, frozen
 from ibis.common.collections import FrozenOrderedDict
+from ibis.expr import types as ir
 from ibis.expr.sql import convert
 
 from boring_semantic_layer.ops import (
@@ -31,6 +32,23 @@ IbisTableExpr = ibis.expr.api.Table
 IbisProject = ibis.expr.operations.relations.Project
 
 
+@runtime_checkable
+class TableLike(Protocol):
+    """Protocol for table-like objects supporting column access.
+
+    This protocol describes objects that provide table column access
+    through attribute and item notation, returning Ibis column expressions.
+
+    Satisfied by:
+    - ir.Table: Direct Ibis tables
+    - _Resolver: Proxy with dimension resolution
+    - _AggResolver: Proxy for aggregation contexts
+    """
+
+    def __getattr__(self, name: str) -> ir.Value: ...
+    def __getitem__(self, name: str) -> ir.Value: ...
+
+
 @frozen
 class _Resolver:
     """Resolver for dimensions in filter/join predicates.
@@ -39,8 +57,8 @@ class _Resolver:
     resolving dimension functions to named expressions.
     """
 
-    _t: Any
-    _dims: dict[str, Any] = field(factory=dict)
+    _t: ir.Table
+    _dims: dict[str, Callable] = field(factory=dict)
 
     def __getattr__(self, name: str):
         return (
@@ -68,7 +86,7 @@ class _AggResolver:
     handling prefixed names from joins (e.g., "table__column").
     """
 
-    _t: Any
+    _t: ir.Table
     _dims: dict[str, Callable]
     _meas: dict[str, Callable]
 
@@ -108,7 +126,7 @@ class _AggProxy:
     Provides simple attribute/item access to aggregated columns.
     """
 
-    _t: Any
+    _t: ir.Table
 
     def __getattr__(self, key: str):
         return self._t[key]
