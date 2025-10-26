@@ -1,16 +1,17 @@
 """Integration tests comparing Malloy queries with BSL equivalents."""
 
-import pytest
 import asyncio
+
+import pytest
 from toolz import pipe
-from typing import Tuple
+
 from .conftest import TEST_CASES
 from .integration_utils import (
-    make_normalize_dataframe_dtypes,
     make_compare_dataframes,
-    make_normalize_for_comparison,
-    make_extract_columns,
     make_execute_query,
+    make_extract_columns,
+    make_normalize_dataframe_dtypes,
+    make_normalize_for_comparison,
 )
 
 
@@ -27,7 +28,7 @@ def pytest_generate_tests(metafunc):
 def test_malloy_bsl_integration(
     query_file: str,
     query_name: str,
-    flatten_columns: Tuple[str, ...],
+    flatten_columns: tuple[str, ...],
     malloy_query_runner,
     flatten_nested_malloy_result,
     bsl_query_loader,
@@ -45,10 +46,12 @@ def test_malloy_bsl_integration(
     )
 
     df_malloy_normalized, df_bsl_normalized = make_normalize_for_comparison(
-        df_malloy, df_bsl
+        df_malloy,
+        df_bsl,
     )
     df_bsl_final = make_normalize_dataframe_dtypes(
-        df_malloy_normalized, df_bsl_normalized
+        df_malloy_normalized,
+        df_bsl_normalized,
     )
 
     diff_analysis = make_compare_dataframes(
@@ -59,6 +62,4 @@ def test_malloy_bsl_integration(
         should_print=not df_malloy_normalized.equals(df_bsl_final),
     )
 
-    assert diff_analysis.is_identical, (
-        f"DataFrames do not match for {query_file}.{query_name}"
-    )
+    assert diff_analysis.is_identical, f"DataFrames do not match for {query_file}.{query_name}"

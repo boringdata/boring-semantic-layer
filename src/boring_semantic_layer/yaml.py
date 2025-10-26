@@ -2,7 +2,9 @@
 YAML loader for Boring Semantic Layer models using the semantic API.
 """
 
-from typing import Any, Dict, Optional, Mapping
+from collections.abc import Mapping
+from typing import Any
+
 import yaml
 from ibis import _
 
@@ -11,7 +13,7 @@ from .expr import SemanticModel, SemanticTable
 from .ops import Dimension, Measure
 
 
-def _parse_dimensions(dimensions: Mapping[str, Any]) -> Dict[str, Dimension]:
+def _parse_dimensions(dimensions: Mapping[str, Any]) -> dict[str, Dimension]:
     """Parse dimension expressions from YAML configurations.
 
     Supports two formats:
@@ -23,7 +25,7 @@ def _parse_dimensions(dimensions: Mapping[str, Any]) -> Dict[str, Dimension]:
           is_time_dimension: true/false
           smallest_time_grain: "TIME_GRAIN_DAY"
     """
-    result: Dict[str, Dimension] = {}
+    result: dict[str, Dimension] = {}
 
     for name, config in dimensions.items():
         if isinstance(config, str):
@@ -36,7 +38,7 @@ def _parse_dimensions(dimensions: Mapping[str, Any]) -> Dict[str, Dimension]:
         elif isinstance(config, dict):
             if "expr" not in config:
                 raise ValueError(
-                    f"Dimension '{name}' must specify 'expr' field when using dict format"
+                    f"Dimension '{name}' must specify 'expr' field when using dict format",
                 )
 
             expr_str = config["expr"]
@@ -53,13 +55,13 @@ def _parse_dimensions(dimensions: Mapping[str, Any]) -> Dict[str, Dimension]:
             )
         else:
             raise ValueError(
-                f"Invalid dimension format for '{name}'. Must be a string or dict"
+                f"Invalid dimension format for '{name}'. Must be a string or dict",
             )
 
     return result
 
 
-def _parse_measures(measures: Mapping[str, Any]) -> Dict[str, Measure]:
+def _parse_measures(measures: Mapping[str, Any]) -> dict[str, Measure]:
     """Parse measure expressions from YAML configurations.
 
     Supports two formats:
@@ -69,7 +71,7 @@ def _parse_measures(measures: Mapping[str, Any]) -> Dict[str, Measure]:
           expr: expression_string
           description: "description text"
     """
-    result: Dict[str, Measure] = {}
+    result: dict[str, Measure] = {}
 
     for name, config in measures.items():
         if isinstance(config, str):
@@ -82,7 +84,7 @@ def _parse_measures(measures: Mapping[str, Any]) -> Dict[str, Measure]:
         elif isinstance(config, dict):
             if "expr" not in config:
                 raise ValueError(
-                    f"Measure '{name}' must specify 'expr' field when using dict format"
+                    f"Measure '{name}' must specify 'expr' field when using dict format",
                 )
 
             expr_str = config["expr"]
@@ -95,18 +97,18 @@ def _parse_measures(measures: Mapping[str, Any]) -> Dict[str, Measure]:
             )
         else:
             raise ValueError(
-                f"Invalid measure format for '{name}'. Must be a string or dict"
+                f"Invalid measure format for '{name}'. Must be a string or dict",
             )
 
     return result
 
 
 def _parse_joins(
-    joins_config: Dict[str, Mapping[str, Any]],
+    joins_config: dict[str, Mapping[str, Any]],
     tables: Mapping[str, Any],
     yaml_configs: Mapping[str, Any],
     current_model_name: str,
-    models: Dict[str, SemanticModel],
+    models: dict[str, SemanticModel],
 ) -> SemanticModel:
     """Parse join configurations for a model.
 
@@ -125,27 +127,25 @@ def _parse_joins(
             join_model = models[join_model_name]
         elif join_model_name in tables:
             table = tables[join_model_name]
-            if isinstance(table, (SemanticModel, SemanticTable)):
+            if isinstance(table, SemanticModel | SemanticTable):
                 join_model = table
             else:
                 raise TypeError(
-                    f"Join '{alias}' references '{join_model_name}' which is not a SemanticModel or SemanticTable"
+                    f"Join '{alias}' references '{join_model_name}' which is not a SemanticModel or SemanticTable",
                 )
         else:
             available_models = list(yaml_configs.keys()) + [
-                k
-                for k in tables.keys()
-                if isinstance(tables.get(k), (SemanticModel, SemanticTable))
+                k for k in tables if isinstance(tables.get(k), SemanticModel | SemanticTable)
             ]
             if join_model_name in yaml_configs:
                 raise ValueError(
                     f"Model '{join_model_name}' referenced in join '{alias}' is defined in the same YAML file "
-                    f"but not yet loaded. Ensure models are loaded in the correct order."
+                    f"but not yet loaded. Ensure models are loaded in the correct order.",
                 )
             else:
                 raise KeyError(
                     f"Model '{join_model_name}' referenced in join '{alias}' not found.\n"
-                    f"Available models: {', '.join(sorted(available_models))}"
+                    f"Available models: {', '.join(sorted(available_models))}",
                 )
 
         join_type = join_config.get("type", "one")
@@ -155,26 +155,30 @@ def _parse_joins(
             right_on = join_config.get("right_on")
             if not left_on or not right_on:
                 raise ValueError(
-                    f"Join '{alias}' of type 'one' must specify 'left_on' and 'right_on' fields"
+                    f"Join '{alias}' of type 'one' must specify 'left_on' and 'right_on' fields",
                 )
             result_model = result_model.join_one(
-                join_model, left_on=left_on, right_on=right_on
+                join_model,
+                left_on=left_on,
+                right_on=right_on,
             )
         elif join_type == "many":
             left_on = join_config.get("left_on")
             right_on = join_config.get("right_on")
             if not left_on or not right_on:
                 raise ValueError(
-                    f"Join '{alias}' of type 'many' must specify 'left_on' and 'right_on' fields"
+                    f"Join '{alias}' of type 'many' must specify 'left_on' and 'right_on' fields",
                 )
             result_model = result_model.join_many(
-                join_model, left_on=left_on, right_on=right_on
+                join_model,
+                left_on=left_on,
+                right_on=right_on,
             )
         elif join_type == "cross":
             result_model = result_model.join_cross(join_model)
         else:
             raise ValueError(
-                f"Invalid join type '{join_type}'. Must be 'one', 'many', or 'cross'"
+                f"Invalid join type '{join_type}'. Must be 'one', 'many', or 'cross'",
             )
 
     return result_model
@@ -182,8 +186,8 @@ def _parse_joins(
 
 def from_yaml(
     yaml_path: str,
-    tables: Optional[Mapping[str, Any]] = None,
-) -> Dict[str, SemanticModel]:
+    tables: Mapping[str, Any] | None = None,
+) -> dict[str, SemanticModel]:
     """
     Load semantic tables from a YAML file.
 
@@ -223,10 +227,10 @@ def from_yaml(
     if tables is None:
         tables = {}
 
-    with open(yaml_path, "r") as f:
+    with open(yaml_path) as f:
         yaml_configs = yaml.safe_load(f)
 
-    models: Dict[str, SemanticModel] = {}
+    models: dict[str, SemanticModel] = {}
 
     # First pass: create models without joins
     for name, config in yaml_configs.items():
@@ -239,11 +243,10 @@ def from_yaml(
 
         if table_name not in tables:
             available = ", ".join(
-                sorted(k for k in tables.keys() if hasattr(tables[k], "execute"))
+                sorted(k for k in tables if hasattr(tables[k], "execute")),
             )
             raise KeyError(
-                f"Table '{table_name}' not found in tables.\n"
-                f"Available tables: {available}"
+                f"Table '{table_name}' not found in tables.\nAvailable tables: {available}",
             )
 
         table = tables[table_name]
@@ -270,7 +273,11 @@ def from_yaml(
 
         if "joins" in config and config["joins"]:
             models[name] = _parse_joins(
-                config["joins"], tables, yaml_configs, name, models
+                config["joins"],
+                tables,
+                yaml_configs,
+                name,
+                models,
             )
 
     return models

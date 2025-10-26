@@ -1,11 +1,14 @@
 from __future__ import annotations
-from typing import Any, Iterable, Union
-from attrs import frozen, field
+
+from collections.abc import Iterable
+from typing import Any
+
+from attrs import field, frozen
 from toolz import curry
 
 
 class _Node:
-    def _bin(self, op: str, other: Any) -> "BinOp":
+    def _bin(self, op: str, other: Any) -> BinOp:
         return BinOp(op, self, other)
 
     def __add__(self, o: Any):
@@ -50,18 +53,16 @@ class BinOp(_Node):
     right: Any
 
 
-MeasureExpr = Union[MeasureRef, AllOf, BinOp, float, int]
+MeasureExpr = MeasureRef | AllOf | BinOp | float | int
 
 
 @curry
 def _resolve_measure_name(
-    name: str, known: tuple[str, ...], known_set: frozenset[str]
+    name: str,
+    known: tuple[str, ...],
+    known_set: frozenset[str],
 ) -> str | None:
-    return (
-        name
-        if name in known_set
-        else next((k for k in known if k.endswith(f".{name}")), None)
-    )
+    return name if name in known_set else next((k for k in known if k.endswith(f".{name}")), None)
 
 
 def _make_known_measures(
@@ -84,7 +85,7 @@ class MeasureScope:
     def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(
-                f"'{type(self).__name__}' object has no attribute '{name}'"
+                f"'{type(self).__name__}' object has no attribute '{name}'",
             )
 
         if self.post_agg:
@@ -123,8 +124,8 @@ class MeasureScope:
                 TypeError(
                     "t.all(...) expects either a measure reference (e.g., t.flight_count), "
                     "a string measure name (e.g., 'flight_count'), "
-                    "or an ibis column expression (e.g., t['aggregated_column'])"
-                )
+                    "or an ibis column expression (e.g., t['aggregated_column'])",
+                ),
             )
         )
 
@@ -136,7 +137,7 @@ class ColumnScope:
     def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(
-                f"'{type(self).__name__}' object has no attribute '{name}'"
+                f"'{type(self).__name__}' object has no attribute '{name}'",
             )
         return getattr(self.tbl, name)
 

@@ -1,4 +1,5 @@
 import ibis
+
 from boring_semantic_layer import to_semantic_table
 
 con = ibis.duckdb.connect()
@@ -8,11 +9,13 @@ flights_tbl = con.read_parquet(f"{BASE_URL}/flights.parquet")
 carriers_tbl = con.read_parquet(f"{BASE_URL}/carriers.parquet")
 
 flights_with_carriers = flights_tbl.join(
-    carriers_tbl, flights_tbl.carrier == carriers_tbl.code, how="inner"
+    carriers_tbl,
+    flights_tbl.carrier == carriers_tbl.code,
+    how="inner",
 )
 
 flights_st = to_semantic_table(flights_with_carriers).with_measures(
-    flight_count=lambda t: t.count()
+    flight_count=lambda t: t.count(),
 )
 
 FLIGHT_COUNT_DESC = ibis.desc("flight_count")
@@ -39,18 +42,18 @@ query_3 = (
     .aggregate(flight_count=lambda t: t.count())
     .mutate(
         flights_by_this_carrier=lambda t: t.flight_count.sum().over(
-            ibis.window(group_by="nickname")
+            ibis.window(group_by="nickname"),
         ),
         flights_to_this_destination=lambda t: t.flight_count.sum().over(
-            ibis.window(group_by="destination")
+            ibis.window(group_by="destination"),
         ),
         flights_by_this_origin=lambda t: t.flight_count.sum().over(
-            ibis.window(group_by="origin")
+            ibis.window(group_by="origin"),
         ),
     )
     .mutate(
         flights_on_this_route=lambda t: t.flight_count.sum().over(
-            ibis.window(group_by=["destination", "origin"])
+            ibis.window(group_by=["destination", "origin"]),
         ),
     )
     .order_by(*BASE_GROUP_BY)
@@ -77,10 +80,10 @@ query_4 = (
             "carriers as a percentage of route": lambda t: (
                 t.flight_count
                 / t.flight_count.sum().over(
-                    ibis.window(group_by=["destination", "origin"])
+                    ibis.window(group_by=["destination", "origin"]),
                 )
             ),
-        }
+        },
     )
     .order_by(*BASE_GROUP_BY)
 )

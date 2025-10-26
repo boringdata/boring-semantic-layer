@@ -2,8 +2,8 @@
 Tests for the query interface with filters and time dimensions.
 """
 
-import pandas as pd
 import ibis
+import pandas as pd
 import pytest
 
 from boring_semantic_layer import to_semantic_table
@@ -24,7 +24,7 @@ def flights_data(con):
             "origin": ["JFK", "SFO", "LAX", "ORD", "DEN", "ATL"] * 5,
             "distance": [100, 200, 300, 150, 250, 350] * 5,
             "passengers": [50, 75, 100, 60, 80, 110] * 5,
-        }
+        },
     )
     return con.create_table("flights", df)
 
@@ -37,7 +37,7 @@ def sales_data(con):
             "order_date": pd.date_range("2024-01-01", periods=100, freq="D"),
             "amount": [100 + i * 10 for i in range(100)],
             "quantity": [1 + i % 5 for i in range(100)],
-        }
+        },
     )
     return con.create_table("sales", df)
 
@@ -54,7 +54,8 @@ class TestBasicQuery:
         )
 
         result = st.query(
-            dimensions=["carrier"], measures=["total_passengers"]
+            dimensions=["carrier"],
+            measures=["total_passengers"],
         ).execute()
 
         assert len(result) == 3
@@ -64,7 +65,7 @@ class TestBasicQuery:
     def test_query_without_dimensions(self, flights_data):
         """Test query with only measures (grand total)."""
         st = to_semantic_table(flights_data, "flights").with_measures(
-            total_passengers=lambda t: t.passengers.sum()
+            total_passengers=lambda t: t.passengers.sum(),
         )
 
         result = st.query(measures=["total_passengers"]).execute()
@@ -97,7 +98,9 @@ class TestBasicQuery:
         )
 
         result = st.query(
-            dimensions=["carrier"], measures=["total_passengers"], limit=2
+            dimensions=["carrier"],
+            measures=["total_passengers"],
+            limit=2,
         ).execute()
 
         assert len(result) == 2
@@ -173,7 +176,7 @@ class TestFilters:
                         {"field": "distance", "operator": ">", "value": 150},
                         {"field": "passengers", "operator": ">=", "value": 75},
                     ],
-                }
+                },
             ],
         ).execute()
 
@@ -210,7 +213,7 @@ class TestTimeDimensions:
                 "description": "Date of order",
                 "is_time_dimension": True,
                 "smallest_time_grain": "day",
-            }
+            },
         )
 
         dims_dict = st.get_dimensions()
@@ -226,7 +229,7 @@ class TestTimeDimensions:
                     "expr": lambda t: t.order_date,
                     "is_time_dimension": True,
                     "smallest_time_grain": "day",
-                }
+                },
             )
             .with_measures(total_amount=lambda t: t.amount.sum())
         )
@@ -250,7 +253,7 @@ class TestTimeDimensions:
                     "expr": lambda t: t.order_date,
                     "is_time_dimension": True,
                     "smallest_time_grain": "day",
-                }
+                },
             )
             .with_measures(total_amount=lambda t: t.amount.sum())
         )
@@ -272,7 +275,7 @@ class TestTimeDimensions:
                     "expr": lambda t: t.order_date,
                     "is_time_dimension": True,
                     "smallest_time_grain": "month",
-                }
+                },
             )
             .with_measures(total_amount=lambda t: t.amount.sum())
         )

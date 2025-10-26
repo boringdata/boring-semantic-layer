@@ -1,4 +1,5 @@
 import ibis
+
 from boring_semantic_layer import to_semantic_table
 
 con = ibis.duckdb.connect()
@@ -27,13 +28,13 @@ query_2 = (
     .mutate(
         percent_change=lambda t: (
             (t.flights_in_2003 - t.flights_in_2002) / t.flights_in_2003.nullif(0)
-        )
+        ),
     )
     .order_by("carrier")
 )
 
 flight_st_with_year = flight_st.with_dimensions(
-    dep_year=lambda t: t.dep_time.truncate("year")
+    dep_year=lambda t: t.dep_time.truncate("year"),
 )
 
 query_3 = (
@@ -41,8 +42,7 @@ query_3 = (
     .aggregate(flight_count=lambda t: t.count())
     .mutate(
         last_year=lambda t: t.flight_count.lag(1),
-        growth=lambda t: (t.flight_count.lag(1) - t.flight_count)
-        / t.flight_count.lag(1),
+        growth=lambda t: (t.flight_count.lag(1) - t.flight_count) / t.flight_count.lag(1),
     )
     .order_by("dep_year")
 )

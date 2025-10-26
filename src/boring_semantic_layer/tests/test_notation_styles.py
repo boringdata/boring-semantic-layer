@@ -9,8 +9,8 @@ consistently across all contexts:
 - With t.all() for percent calculations
 """
 
-import pandas as pd
 import ibis
+import pandas as pd
 import pytest
 
 from boring_semantic_layer.api import to_semantic_table
@@ -29,13 +29,13 @@ def flights_data(con):
         {
             "carrier": ["AA", "AA", "UA", "DL", "DL", "DL"],
             "distance": [100, 200, 150, 300, 250, 400],
-        }
+        },
     )
     carriers_df = pd.DataFrame(
         {
             "code": ["AA", "UA", "DL"],
             "nickname": ["American", "United", "Delta"],
-        }
+        },
     )
     return {
         "flights": con.create_table("flights", flights_df),
@@ -97,7 +97,7 @@ class TestMeasureNotationPreAggregation:
             )
             .with_measures(
                 # Reference existing measure with dot notation
-                pct=lambda t: t.flight_count / t.all(t.flight_count)
+                pct=lambda t: t.flight_count / t.all(t.flight_count),
             )
         )
 
@@ -115,7 +115,7 @@ class TestMeasureNotationPreAggregation:
             )
             .with_measures(
                 # Reference existing measure with bracket notation
-                pct=lambda t: t["flight_count"] / t.all(t["flight_count"])
+                pct=lambda t: t["flight_count"] / t.all(t["flight_count"]),
             )
         )
 
@@ -133,7 +133,7 @@ class TestMeasureNotationPreAggregation:
             )
             .with_measures(
                 # Mix dot and bracket notation in same expression
-                mixed=lambda t: t.flight_count / t["total_distance"]
+                mixed=lambda t: t.flight_count / t["total_distance"],
             )
         )
 
@@ -159,7 +159,7 @@ class TestMeasureNotationPostAggregation:
             st.group_by("carrier")
             .aggregate("flight_count", "total_distance")
             .mutate(
-                avg_distance=lambda t: t.total_distance / t.flight_count  # dot notation
+                avg_distance=lambda t: t.total_distance / t.flight_count,  # dot notation
             )
             .execute()
         )
@@ -183,8 +183,7 @@ class TestMeasureNotationPostAggregation:
             st.group_by("carrier")
             .aggregate("flight_count", "total_distance")
             .mutate(
-                avg_distance=lambda t: t["total_distance"]
-                / t["flight_count"]  # bracket
+                avg_distance=lambda t: t["total_distance"] / t["flight_count"],  # bracket
             )
             .execute()
         )
@@ -205,7 +204,7 @@ class TestMeasureNotationPostAggregation:
             st.group_by("carrier")
             .aggregate("flight_count")
             .mutate(
-                pct=lambda t: t["flight_count"] / t.all(t["flight_count"])  # bracket
+                pct=lambda t: t["flight_count"] / t.all(t["flight_count"]),  # bracket
             )
             .execute()
         )
@@ -226,7 +225,7 @@ class TestMeasureNotationPostAggregation:
             st.group_by("carrier")
             .aggregate("flight_count")
             .mutate(
-                pct=lambda t: t.flight_count / t.all(t.flight_count)  # dot
+                pct=lambda t: t.flight_count / t.all(t.flight_count),  # dot
             )
             .execute()
         )
@@ -258,15 +257,13 @@ class TestEndToEndNotationConsistency:
         )
 
         result_dot = (
-            flights_st_dot.group_by("nickname")
-            .aggregate("pct")
-            .order_by("nickname")
-            .execute()
+            flights_st_dot.group_by("nickname").aggregate("pct").order_by("nickname").execute()
         )
 
         # Version 2: Using bracket notation
         carriers_st_bracket = to_semantic_table(
-            carriers_tbl, "carriers"
+            carriers_tbl,
+            "carriers",
         ).with_dimensions(
             code=lambda t: t["code"],
             nickname=lambda t: t["nickname"],
@@ -281,10 +278,7 @@ class TestEndToEndNotationConsistency:
         )
 
         result_bracket = (
-            flights_st_bracket.group_by("nickname")
-            .aggregate("pct")
-            .order_by("nickname")
-            .execute()
+            flights_st_bracket.group_by("nickname").aggregate("pct").order_by("nickname").execute()
         )
 
         # Results should be identical
@@ -355,9 +349,7 @@ class TestDictBasedMetadata:
         assert st.get_dimensions()["distance"].is_time_dimension is False
 
         # Verify it still works in queries
-        result = (
-            st.group_by("carrier").aggregate(flight_count=lambda t: t.count()).execute()
-        )
+        result = st.group_by("carrier").aggregate(flight_count=lambda t: t.count()).execute()
         assert len(result) > 0
 
     def test_measure_with_metadata(self, flights_data):
@@ -375,13 +367,8 @@ class TestDictBasedMetadata:
         )
 
         # Verify metadata is stored
-        assert (
-            st.get_measures()["flight_count"].description == "Total number of flights"
-        )
-        assert (
-            st.get_measures()["total_distance"].description
-            == "Sum of all flight distances"
-        )
+        assert st.get_measures()["flight_count"].description == "Total number of flights"
+        assert st.get_measures()["total_distance"].description == "Sum of all flight distances"
 
         # Verify it still works in queries
         result = (
@@ -420,14 +407,10 @@ class TestDictBasedMetadata:
 
         # Same for measures
         assert st.get_measures()["flight_count"].description is None
-        assert (
-            st.get_measures()["avg_distance"].description == "Average flight distance"
-        )
+        assert st.get_measures()["avg_distance"].description == "Average flight distance"
 
         # Both should work in queries
-        result = (
-            st.group_by("carrier").aggregate("flight_count", "avg_distance").execute()
-        )
+        result = st.group_by("carrier").aggregate("flight_count", "avg_distance").execute()
         assert len(result) > 0
 
     def test_descriptions_preserved_through_filter(self, flights_data):
@@ -441,7 +424,7 @@ class TestDictBasedMetadata:
                 carrier={
                     "expr": lambda t: t.carrier,
                     "description": "Airline carrier code",
-                }
+                },
             )
             .with_measures(
                 flight_count={
@@ -458,13 +441,9 @@ class TestDictBasedMetadata:
         # Filter and verify descriptions are preserved (access via source)
         filtered = flights_st.filter(lambda t: t.carrier == "AA")
         # SemanticFilter delegates to its source for dimensions and measures
+        assert filtered.source.get_dimensions()["carrier"].description == "Airline carrier code"
         assert (
-            filtered.source.get_dimensions()["carrier"].description
-            == "Airline carrier code"
-        )
-        assert (
-            filtered.source.get_measures()["flight_count"].description
-            == "Total number of flights"
+            filtered.source.get_measures()["flight_count"].description == "Total number of flights"
         )
 
     def test_descriptions_preserved_through_aggregate(self, flights_data):
@@ -477,7 +456,7 @@ class TestDictBasedMetadata:
                 carrier={
                     "expr": lambda t: t.carrier,
                     "description": "Airline carrier code",
-                }
+                },
             )
             .with_measures(
                 flight_count={
@@ -493,7 +472,8 @@ class TestDictBasedMetadata:
 
         # After aggregation, dimensions should be preserved in source
         aggregated = flights_st.group_by("carrier").aggregate(
-            "flight_count", "total_distance"
+            "flight_count",
+            "total_distance",
         )
         # SemanticAggregate -> SemanticGroupBy -> SemanticTable chain
         # Access the root table through the chain
@@ -513,33 +493,26 @@ class TestDictBasedMetadata:
                 carrier={
                     "expr": lambda t: t.carrier,
                     "description": "Airline carrier code",
-                }
+                },
             )
             .with_measures(
                 flight_count={
                     "expr": lambda t: t.count(),
                     "description": "Total number of flights",
-                }
+                },
             )
         )
 
         carriers_st = to_semantic_table(carriers_tbl, "carriers").with_dimensions(
-            code={"expr": lambda t: t.code, "description": "Carrier code for joining"}
+            code={"expr": lambda t: t.code, "description": "Carrier code for joining"},
         )
 
         # Join and verify descriptions are preserved with prefixes
         joined = flights_st.join_one(carriers_st, "carrier", "code")
+        assert joined.get_dimensions()["flights.carrier"].description == "Airline carrier code"
+        assert joined.get_dimensions()["carriers.code"].description == "Carrier code for joining"
         assert (
-            joined.get_dimensions()["flights.carrier"].description
-            == "Airline carrier code"
-        )
-        assert (
-            joined.get_dimensions()["carriers.code"].description
-            == "Carrier code for joining"
-        )
-        assert (
-            joined.get_measures()["flights.flight_count"].description
-            == "Total number of flights"
+            joined.get_measures()["flights.flight_count"].description == "Total number of flights"
         )
 
     def test_time_dimension_metadata(self, flights_data):

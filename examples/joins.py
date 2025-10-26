@@ -8,6 +8,7 @@ This example demonstrates:
 """
 
 import ibis
+
 from boring_semantic_layer import to_semantic_table
 
 # this is a public R2 bucket with sample data hosted by Malloy
@@ -55,17 +56,12 @@ def main():
         )
     )
 
-    flights_by_origin = (
-        flights.group_by("origin").aggregate("flight_count").limit(10).execute()
-    )
+    flights_by_origin = flights.group_by("origin").aggregate("flight_count").limit(10).execute()
     print("\nFlights by origin:")
     print(flights_by_origin)
 
     aircraft_by_type = (
-        aircraft.group_by("aircraft_type_id")
-        .aggregate("aircraft_count")
-        .limit(10)
-        .execute()
+        aircraft.group_by("aircraft_type_id").aggregate("aircraft_count").limit(10).execute()
     )
     print("\nAircraft by type:")
     print(aircraft_by_type)

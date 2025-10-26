@@ -5,6 +5,7 @@ Malloy: https://docs.malloydata.dev/documentation/patterns/nested_subtotals
 """
 
 import ibis
+
 from boring_semantic_layer import to_semantic_table
 
 BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
@@ -20,7 +21,8 @@ def main():
     )
 
     order_items = to_semantic_table(
-        order_items_with_dates, name="order_items"
+        order_items_with_dates,
+        name="order_items",
     ).with_measures(
         order_count=lambda t: t.count(),
         total_sales=lambda t: t.sale_price.sum(),

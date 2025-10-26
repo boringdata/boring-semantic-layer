@@ -1,5 +1,6 @@
 import ibis
 import pandas as pd
+
 from boring_semantic_layer import to_semantic_table
 
 con = ibis.duckdb.connect()
@@ -9,7 +10,9 @@ order_items_tbl = con.read_parquet(f"{BASE_URL}/order_items.parquet")
 users_tbl = con.read_parquet(f"{BASE_URL}/users.parquet")
 
 order_items_with_users = order_items_tbl.join(
-    users_tbl, order_items_tbl.user_id == users_tbl.id, how="inner"
+    users_tbl,
+    order_items_tbl.user_id == users_tbl.id,
+    how="inner",
 )
 
 order_items_st = (
@@ -22,7 +25,7 @@ order_items_st = (
         **{
             "Order Month": lambda t: t.created_at.truncate("month"),
             "User Signup Cohort": lambda t: t.created_at_right.truncate("month"),
-        }
+        },
     )
 )
 
@@ -47,12 +50,10 @@ query_1 = (
             .over(ibis.window(group_by="Order Month")),
             "Percent of cohort that ordered": lambda t: (
                 t["Users in Cohort that Ordered"]
-                / t["Users in Cohort that Ordered"]
-                .sum()
-                .over(ibis.window(group_by="Order Month"))
+                / t["Users in Cohort that Ordered"].sum().over(ibis.window(group_by="Order Month"))
             ),
             "User Signup Cohort": lambda t: t["User Signup Cohort"].date().cast(str),
-        }
+        },
     )
     .order_by(ibis.desc("Order Month"), "User Signup Cohort")
 )
@@ -64,12 +65,12 @@ query_2 = (
     .mutate(
         **{
             "Total Sales": lambda t: t.cohort_sales.sum().over(
-                ibis.window(group_by="Order Month")
+                ibis.window(group_by="Order Month"),
             ),
             "Cohort as Percent of Sales": lambda t: t.cohort_sales
             / t.cohort_sales.sum().over(ibis.window(group_by="Order Month")),
             "User Signup Cohort": lambda t: t["User Signup Cohort"].date().cast(str),
-        }
+        },
     )
     .order_by(ibis.desc("Order Month"), "User Signup Cohort")
 )
@@ -81,7 +82,7 @@ query_3 = (
         **{
             "Users in Cohort that Ordered": lambda t: t.user_id.nunique(),
             "Total Sales by Cohort": lambda t: t.sale_price.sum(),
-        }
+        },
     )
     .order_by("Order Month", "User Signup Cohort")
 )

@@ -1,7 +1,10 @@
 from __future__ import annotations
+
+from collections.abc import Iterable
+
 import ibis
-from typing import Dict, Iterable
-from .measure_scope import MeasureRef, AllOf, BinOp, MeasureExpr
+
+from .measure_scope import AllOf, BinOp, MeasureExpr, MeasureRef
 
 
 def _collect_all_refs(expr: MeasureExpr, out: set[str]) -> None:
@@ -13,7 +16,7 @@ def _collect_all_refs(expr: MeasureExpr, out: set[str]) -> None:
 
 
 def _compile_formula(expr: MeasureExpr, by_tbl, all_tbl):
-    if isinstance(expr, (int, float)):
+    if isinstance(expr, int | float):
         return ibis.literal(expr)
     if isinstance(expr, MeasureRef):
         return by_tbl[expr.name]
@@ -39,8 +42,8 @@ def _compile_formula(expr: MeasureExpr, by_tbl, all_tbl):
 def compile_grouped_with_all(
     base_tbl,
     by_cols: Iterable[str],
-    agg_specs: Dict[str, callable],
-    calc_specs: Dict[str, MeasureExpr],
+    agg_specs: dict[str, callable],
+    calc_specs: dict[str, MeasureExpr],
     requested_measures: Iterable[str] = None,
 ):
     grouped_aggs = {name: agg_fn(base_tbl) for name, agg_fn in agg_specs.items()}
@@ -58,16 +61,14 @@ def compile_grouped_with_all(
         all_tbl = None
         out = by_tbl
 
-    calc_cols = {
-        name: _compile_formula(ast, by_tbl, all_tbl) for name, ast in calc_specs.items()
-    }
+    calc_cols = {name: _compile_formula(ast, by_tbl, all_tbl) for name, ast in calc_specs.items()}
     out = out.mutate(**calc_cols)
 
     if requested_measures is not None:
         select_cols = list(
             dict.fromkeys(
-                list(by_cols) + list(requested_measures) + list(calc_specs.keys())
-            )
+                list(by_cols) + list(requested_measures) + list(calc_specs.keys()),
+            ),
         )
         out = out.select([out[c] for c in select_cols])
 

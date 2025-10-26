@@ -5,15 +5,17 @@ Auto-detect Altair chart specifications based on query dimensions and measures.
 Provides chart() method for SemanticAggregate results.
 """
 
-from typing import Any, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
+
 from ibis.common.collections import FrozenDict
 
 
 def _detect_altair_spec(
     dimensions: Sequence[str],
     measures: Sequence[str],
-    time_dimension: Optional[str] = None,
-    time_grain: Optional[str] = None,
+    time_dimension: str | None = None,
+    time_grain: str | None = None,
 ) -> FrozenDict:
     """
     Detect an appropriate chart type and return an Altair specification.
@@ -178,7 +180,7 @@ def _detect_altair_spec(
     return {
         "mark": "text",
         "encoding": {
-            "text": {"value": "Complex query - consider custom visualization"}
+            "text": {"value": "Complex query - consider custom visualization"},
         },
     }
 
@@ -189,7 +191,7 @@ def _detect_altair_spec(
 def _detect_plotly_chart_type(
     dimensions: Sequence[str],
     measures: Sequence[str],
-    time_dimension: Optional[str] = None,
+    time_dimension: str | None = None,
 ) -> str:
     """
     Auto-detect appropriate chart type based on query structure for Plotly backend.
@@ -313,7 +315,9 @@ def _prepare_plotly_data_and_params(query_expr, chart_type: str) -> tuple:
             # Use pivot table to create proper heatmap matrix with NaN for missing values
 
             pivot_df = df.pivot(
-                index=dimensions[1], columns=dimensions[0], values=measures[0]
+                index=dimensions[1],
+                columns=dimensions[0],
+                values=measures[0],
             )
 
             # For go.Heatmap, we need to pass the matrix directly, not through px parameters
@@ -330,7 +334,9 @@ def _prepare_plotly_data_and_params(query_expr, chart_type: str) -> tuple:
 
 
 def chart(
-    semantic_aggregate: Any, backend: str = "altair", chart_type: Optional[str] = None
+    semantic_aggregate: Any,
+    backend: str = "altair",
+    chart_type: str | None = None,
 ):
     """
     Generate a chart visualization for semantic aggregate query results.
@@ -403,7 +409,7 @@ def chart(
         elif isinstance(mark, dict):
             mark_type = mark.get("type", "bar")
             chart_obj = getattr(chart_obj, f"mark_{mark_type}")(
-                **{k: v for k, v in mark.items() if k != "type"}
+                **{k: v for k, v in mark.items() if k != "type"},
             )
 
         # Apply encoding
@@ -416,7 +422,8 @@ def chart(
             for transform in spec["transform"]:
                 if "fold" in transform:
                     chart_obj = chart_obj.transform_fold(
-                        transform["fold"], as_=transform.get("as", ["key", "value"])
+                        transform["fold"],
+                        as_=transform.get("as", ["key", "value"]),
                     )
 
         return chart_obj
@@ -471,8 +478,8 @@ def chart(
                     go.Table(
                         header=dict(values=list(df.columns)),
                         cells=dict(values=[df[col] for col in df.columns]),
-                    )
-                ]
+                    ),
+                ],
             )
     else:
         raise ValueError(f"Unsupported backend: {backend}. Use 'altair' or 'plotly'")

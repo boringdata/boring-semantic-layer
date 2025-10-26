@@ -12,8 +12,11 @@ Benefits of YAML configuration:
 - Clean separation of model definition from query logic
 """
 
-import ibis
 from pathlib import Path
+
+import ibis
+import pandas as pd
+
 from boring_semantic_layer import from_yaml
 
 BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
@@ -33,13 +36,37 @@ def main():
 
     con = ibis.duckdb.connect(":memory:")
 
-    # Load tables from remote datasets
-    carriers_tbl = con.read_parquet(f"{BASE_URL}/carriers.parquet")
-    flights_tbl = con.read_parquet(f"{BASE_URL}/flights.parquet")
+    # Create carriers table
+    carriers_df = pd.DataFrame(
+        {
+            "code": ["AA", "UA", "DL", "SW"],
+            "name": [
+                "American Airlines",
+                "United Airlines",
+                "Delta Airlines",
+                "Southwest Airlines",
+            ],
+            "nickname": ["American", "United", "Delta", "Southwest"],
+        },
+    )
+    carriers_tbl = con.create_table("carriers", carriers_df)
 
-    print("\n✓ Loaded 2 tables:")
-    print(f"  - carriers_tbl: {carriers_tbl.count().execute()} rows")
-    print(f"  - flights_tbl: {flights_tbl.count().execute()} rows")
+    # Create flights table
+    flights_df = pd.DataFrame(
+        {
+            "carrier": ["AA", "UA", "DL", "AA", "SW", "UA"],
+            "origin": ["JFK", "LAX", "ATL", "JFK", "DAL", "ORD"],
+            "destination": ["LAX", "JFK", "ORD", "ATL", "HOU", "LAX"],
+            "dep_delay": [10, -5, 20, 0, 15, 30],
+            "distance": [2475, 2475, 606, 760, 239, 1744],
+            "arr_time": pd.date_range("2024-01-01", periods=6, freq="h"),
+        },
+    )
+    flights_tbl = con.create_table("flights", flights_df)
+
+    print("\n✓ Created 2 tables:")
+    print(f"  - carriers_tbl: {len(carriers_df)} rows")
+    print(f"  - flights_tbl: {len(flights_df)} rows")
 
     # ============================================================================
     # STEP 2: Load semantic models from YAML

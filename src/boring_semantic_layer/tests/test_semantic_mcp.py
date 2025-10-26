@@ -1,13 +1,12 @@
 """Tests for MCPSemanticModel using FastMCP client-server pattern with SemanticTable."""
 
-import pytest
-import pandas as pd
 import ibis
-import json
-
-from boring_semantic_layer import MCPSemanticModel, to_semantic_table
+import pandas as pd
+import pytest
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
+
+from boring_semantic_layer import MCPSemanticModel, to_semantic_table
 
 
 @pytest.fixture(scope="module")
@@ -27,14 +26,14 @@ def sample_models(con):
             "carrier": ["AA", "UA", "DL"] * 10,
             "flight_date": pd.date_range("2024-01-01", periods=30, freq="D"),
             "dep_delay": [5.2, 8.1, 3.5] * 10,
-        }
+        },
     )
 
     carriers_df = pd.DataFrame(
         {
             "code": ["AA", "UA", "DL"],
             "name": ["American", "United", "Delta"],
-        }
+        },
     )
 
     flights_tbl = con.create_table("flights", flights_df, overwrite=True)
@@ -145,15 +144,12 @@ class TestGetModel:
             assert "carrier" in model_info["dimensions"]
             assert "flight_date" in model_info["dimensions"]
             assert model_info["dimensions"]["flight_date"]["is_time_dimension"] is True
-            assert (
-                model_info["dimensions"]["flight_date"]["smallest_time_grain"] == "day"
-            )
+            assert model_info["dimensions"]["flight_date"]["smallest_time_grain"] == "day"
 
             assert "flight_count" in model_info["measures"]
             assert "avg_delay" in model_info["measures"]
             assert (
-                model_info["measures"]["flight_count"]["description"]
-                == "Total number of flights"
+                model_info["measures"]["flight_count"]["description"] == "Total number of flights"
             )
 
     @pytest.mark.asyncio

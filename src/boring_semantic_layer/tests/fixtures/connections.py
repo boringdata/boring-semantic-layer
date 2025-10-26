@@ -4,10 +4,10 @@ Database connection management for Malloy correctness testing.
 Provides shared connection fixtures for both BSL (Ibis) and Malloy (malloy-py).
 """
 
-from pathlib import Path
-from typing import Optional
-import ibis
 from contextlib import contextmanager
+from pathlib import Path
+
+import ibis
 
 try:
     import malloy
@@ -68,7 +68,7 @@ class ConnectionManager:
         """
         if not MALLOY_AVAILABLE:
             raise ImportError(
-                "malloy package is not available. Install with: pip install malloy"
+                "malloy package is not available. Install with: pip install malloy",
             )
 
         with malloy.Runtime() as runtime:
@@ -78,7 +78,9 @@ class ConnectionManager:
             yield runtime
 
     def load_parquet_ibis(
-        self, dataset_path: Path, table_name: Optional[str] = None
+        self,
+        dataset_path: Path,
+        table_name: str | None = None,
     ) -> ibis.expr.types.relations.Table:
         """
         Load a parquet file into Ibis for BSL queries.
@@ -94,7 +96,9 @@ class ConnectionManager:
         return con.read_parquet(str(dataset_path))
 
     def load_parquet_url_ibis(
-        self, url: str, table_name: Optional[str] = None
+        self,
+        url: str,
+        table_name: str | None = None,
     ) -> ibis.expr.types.relations.Table:
         """
         Load a parquet file from URL into Ibis for BSL queries.

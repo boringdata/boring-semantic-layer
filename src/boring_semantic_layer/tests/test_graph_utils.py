@@ -1,18 +1,17 @@
 import ibis
-
 import pytest
-
-from boring_semantic_layer.graph_utils import (
-    to_node,
-    gen_children_of,
-    bfs,
-    walk_nodes,
-    replace_nodes,
-    find_dimensions_and_measures,
-)
-from boring_semantic_layer.expr import SemanticModel
-from boring_semantic_layer.ops import Dimension, Measure
 from ibis.expr.operations.relations import Aggregate
+
+from boring_semantic_layer.expr import SemanticModel
+from boring_semantic_layer.graph_utils import (
+    bfs,
+    find_dimensions_and_measures,
+    gen_children_of,
+    replace_nodes,
+    to_node,
+    walk_nodes,
+)
+from boring_semantic_layer.ops import Dimension, Measure
 
 
 def test_bfs_and_gen_children_of_simple_expr():
@@ -65,7 +64,7 @@ def test_find_dimensions_and_measures_semantic_table():
     t = ibis.memtable({"x": [1, 2, 3]}, name="t")
     dims_defs = {"x": Dimension(expr=lambda tbl: tbl.x, description="dim x")}
     meas_defs = {
-        "sum_x": Measure(expr=lambda tbl: tbl.x.sum(), description="measure sum_x")
+        "sum_x": Measure(expr=lambda tbl: tbl.x.sum(), description="measure sum_x"),
     }
     semantic = SemanticModel(
         table=t,

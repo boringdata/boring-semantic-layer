@@ -11,6 +11,7 @@ These tests demonstrate practical business intelligence scenarios:
 import ibis
 import pandas as pd
 import pytest
+
 from boring_semantic_layer import to_semantic_table
 
 
@@ -37,11 +38,11 @@ class TestEcommerceAnalytics:
                         "2023-02-10",
                         "2023-02-15",
                         "2023-03-01",
-                    ]
+                    ],
                 ),
                 "country": ["US", "UK", "US", "CA", "UK"],
                 "segment": ["premium", "free", "premium", "free", "premium"],
-            }
+            },
         )
 
         # Orders table
@@ -59,7 +60,7 @@ class TestEcommerceAnalytics:
                         "2023-03-15",
                         "2023-04-01",
                         "2023-04-05",
-                    ]
+                    ],
                 ),
                 "total_amount": [100.0, 50.0, 150.0, 200.0, 75.0, 120.0, 300.0, 180.0],
                 "status": [
@@ -72,7 +73,7 @@ class TestEcommerceAnalytics:
                     "completed",
                     "completed",
                 ],
-            }
+            },
         )
 
         # Products table
@@ -87,7 +88,7 @@ class TestEcommerceAnalytics:
                     "clothing",
                 ],
                 "price": [50.0, 30.0, 80.0, 45.0, 25.0],
-            }
+            },
         )
 
         # Order items table
@@ -109,7 +110,7 @@ class TestEcommerceAnalytics:
                     50.0,
                     45.0,
                 ],
-            }
+            },
         )
 
         return {
@@ -126,7 +127,9 @@ class TestEcommerceAnalytics:
 
         # Join users and orders
         joined = users_tbl.join(
-            orders_tbl, users_tbl.user_id == orders_tbl.user_id, how="left"
+            orders_tbl,
+            users_tbl.user_id == orders_tbl.user_id,
+            how="left",
         )
 
         users_st = (
@@ -160,7 +163,9 @@ class TestEcommerceAnalytics:
         orders_tbl = ecommerce_data["orders"]
 
         joined = users_tbl.join(
-            orders_tbl, users_tbl.user_id == orders_tbl.user_id, how="inner"
+            orders_tbl,
+            users_tbl.user_id == orders_tbl.user_id,
+            how="inner",
         )
 
         cohort_st = (
@@ -210,8 +215,7 @@ class TestEcommerceAnalytics:
             category_st.group_by("category")
             .aggregate("total_sales", "items_sold")
             .mutate(
-                percent_of_total_sales=lambda t: t["total_sales"]
-                / t.all(t["total_sales"]),
+                percent_of_total_sales=lambda t: t["total_sales"] / t.all(t["total_sales"]),
             )
             .order_by(ibis.desc("total_sales"))
             .execute()
@@ -270,10 +274,10 @@ class TestSaaSMetrics:
                         "2023-02-10",
                         "2023-03-01",
                         "2023-03-15",
-                    ]
+                    ],
                 ),
                 "end_date": pd.to_datetime(
-                    [None, "2023-04-15", None, None, None, "2023-05-15"]
+                    [None, "2023-04-15", None, None, None, "2023-05-15"],
                 ),
                 "status": [
                     "active",
@@ -283,7 +287,7 @@ class TestSaaSMetrics:
                     "active",
                     "churned",
                 ],
-            }
+            },
         )
 
         # Usage events table
@@ -334,7 +338,7 @@ class TestSaaSMetrics:
                         "2023-04-02",
                         "2023-04-03",
                         "2023-04-04",
-                    ]
+                    ],
                 ),
                 "event_type": [
                     "login",
@@ -358,7 +362,7 @@ class TestSaaSMetrics:
                     "api_call",
                     "api_call",
                 ],
-            }
+            },
         )
 
         return {
@@ -481,7 +485,7 @@ class TestSupplyChainAnalytics:
                 "quantity": [100, 200, 150, 300, 250],
                 "reorder_point": [20, 50, 30, 100, 60],
                 "unit_cost": [50.0, 20.0, 80.0, 5.0, 15.0],
-            }
+            },
         )
 
         # Shipments table
@@ -498,7 +502,7 @@ class TestSupplyChainAnalytics:
                         "2023-02-10",
                         "2023-03-01",
                         "2023-03-05",
-                    ]
+                    ],
                 ),
                 "delivery_date": pd.to_datetime(
                     [
@@ -508,9 +512,9 @@ class TestSupplyChainAnalytics:
                         "2023-02-17",
                         "2023-03-08",
                         "2023-03-12",
-                    ]
+                    ],
                 ),
-            }
+            },
         )
 
         return {
@@ -524,7 +528,9 @@ class TestSupplyChainAnalytics:
         shipments_tbl = supply_chain_data["shipments"]
 
         joined = inventory_tbl.join(
-            shipments_tbl, inventory_tbl.item_id == shipments_tbl.item_id, how="left"
+            shipments_tbl,
+            inventory_tbl.item_id == shipments_tbl.item_id,
+            how="left",
         )
 
         inventory_st = (
@@ -572,8 +578,7 @@ class TestSupplyChainAnalytics:
             .aggregate("total_units", "inventory_value")
             .mutate(
                 percent_of_units=lambda t: t["total_units"] / t.all(t["total_units"]),
-                percent_of_value=lambda t: t["inventory_value"]
-                / t.all(t["inventory_value"]),
+                percent_of_value=lambda t: t["inventory_value"] / t.all(t["inventory_value"]),
             )
             .execute()
         )
@@ -604,7 +609,7 @@ class TestSupplyChainAnalytics:
             .mutate(
                 # Calculate lead time in aggregate result
                 avg_lead_time_days=lambda t: ibis.literal(
-                    5.5
+                    5.5,
                 ),  # Placeholder - would use date diff
             )
             .execute()
@@ -633,9 +638,9 @@ class TestMarketingAttribution:
                 "channel": ["email", "social", "email", "social"],
                 "budget": [5000.0, 10000.0, 3000.0, 15000.0],
                 "start_date": pd.to_datetime(
-                    ["2023-06-01", "2023-11-01", "2023-03-01", "2023-11-24"]
+                    ["2023-06-01", "2023-11-01", "2023-03-01", "2023-11-24"],
                 ),
-            }
+            },
         )
 
         # Campaign conversions table
@@ -677,7 +682,7 @@ class TestMarketingAttribution:
                         "2023-11-28",
                         "2023-11-29",
                         "2023-11-30",
-                    ]
+                    ],
                 ),
                 "revenue": [
                     100.0,
@@ -696,7 +701,7 @@ class TestMarketingAttribution:
                     390.0,
                     410.0,
                 ],
-            }
+            },
         )
 
         return {
@@ -732,8 +737,7 @@ class TestMarketingAttribution:
             campaigns_st.group_by("campaign_name", "channel")
             .aggregate("total_budget", "total_revenue", "conversion_count")
             .mutate(
-                roi=lambda t: (t["total_revenue"] - t["total_budget"])
-                / t["total_budget"],
+                roi=lambda t: (t["total_revenue"] - t["total_budget"]) / t["total_budget"],
                 cpa=lambda t: t["total_budget"] / t["conversion_count"],
             )
             .order_by(ibis.desc("roi"))
@@ -771,10 +775,8 @@ class TestMarketingAttribution:
             channels_st.group_by("channel")
             .aggregate("total_budget", "total_revenue", "campaign_count")
             .mutate(
-                percent_of_budget=lambda t: t["total_budget"]
-                / t.all(t["total_budget"]),
-                percent_of_revenue=lambda t: t["total_revenue"]
-                / t.all(t["total_revenue"]),
+                percent_of_budget=lambda t: t["total_budget"] / t.all(t["total_budget"]),
+                percent_of_revenue=lambda t: t["total_revenue"] / t.all(t["total_revenue"]),
                 efficiency=lambda t: t["total_revenue"] / t["total_budget"],
             )
             .execute()
@@ -824,7 +826,7 @@ class TestAdvancedAnalytics:
                     "A",
                     "B",
                 ],
-            }
+            },
         )
 
         return {"timeseries": con.create_table("timeseries", ts_df)}

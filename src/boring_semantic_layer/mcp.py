@@ -1,7 +1,10 @@
 """MCP functionality for semantic models."""
 
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 from fastmcp import FastMCP
-from typing import Any, Optional, Tuple, Mapping, Sequence
+
 from .query import _find_time_dimension
 
 
@@ -31,7 +34,7 @@ class MCPSemanticModel(FastMCP):
         @self.tool()
         def list_models() -> Mapping[str, str]:
             """List all available semantic model names."""
-            return {name: f"Semantic model: {name}" for name in self.models.keys()}
+            return {name: f"Semantic model: {name}" for name in self.models}
 
         @self.tool()
         def get_model(model_name: str) -> Mapping[str, Any]:
@@ -93,13 +96,13 @@ class MCPSemanticModel(FastMCP):
         @self.tool()
         def query_model(
             model_name: str,
-            dimensions: Optional[Sequence[str]] = None,
-            measures: Optional[Sequence[str]] = None,
-            filters: Optional[Sequence[Mapping[str, Any]]] = None,
-            order_by: Optional[Sequence[Tuple[str, str]]] = None,
-            limit: Optional[int] = None,
-            time_grain: Optional[str] = None,
-            time_range: Optional[Mapping[str, str]] = None,
+            dimensions: Sequence[str] | None = None,
+            measures: Sequence[str] | None = None,
+            filters: Sequence[Mapping[str, Any]] | None = None,
+            order_by: Sequence[tuple[str, str]] | None = None,
+            limit: int | None = None,
+            time_grain: str | None = None,
+            time_range: Mapping[str, str] | None = None,
         ) -> str:
             """
             Query a semantic model with support for filters and time dimensions.
@@ -138,7 +141,8 @@ class MCPSemanticModel(FastMCP):
 
 
 def create_mcp_server(
-    models: Mapping[str, Any], name: str = "Semantic Layer MCP Server"
+    models: Mapping[str, Any],
+    name: str = "Semantic Layer MCP Server",
 ) -> MCPSemanticModel:
     """
     Create an MCP server for semantic models.

@@ -5,8 +5,8 @@ Tests the .dimensions and .measures properties that allow inspecting
 what dimensions and measures are available on a semantic table.
 """
 
-import pandas as pd
 import ibis
+import pandas as pd
 
 from boring_semantic_layer import to_semantic_table
 
@@ -82,7 +82,8 @@ def test_measures_property_mixed():
     st = (
         to_semantic_table(tbl, "flights")
         .with_measures(
-            flight_count=lambda t: t.count(), total_distance=lambda t: t.distance.sum()
+            flight_count=lambda t: t.count(),
+            total_distance=lambda t: t.distance.sum(),
         )
         .with_measures(
             avg_distance_per_flight=lambda t: t.total_distance / t.flight_count,
@@ -108,7 +109,8 @@ def test_dims_and_measures_together():
         to_semantic_table(tbl, "flights")
         .with_dimensions(carrier=lambda t: t.carrier)
         .with_measures(
-            flight_count=lambda t: t.count(), total_distance=lambda t: t.distance.sum()
+            flight_count=lambda t: t.count(),
+            total_distance=lambda t: t.distance.sum(),
         )
     )
 
@@ -126,10 +128,11 @@ def test_dims_after_join():
     c_tbl = con.create_table("carriers", carriers_df)
 
     flights_st = to_semantic_table(f_tbl, "flights").with_dimensions(
-        carrier=lambda t: t.carrier
+        carrier=lambda t: t.carrier,
     )
     carriers_st = to_semantic_table(c_tbl, "carriers").with_dimensions(
-        code=lambda t: t.code, name=lambda t: t.name
+        code=lambda t: t.code,
+        name=lambda t: t.name,
     )
 
     joined = flights_st.join(carriers_st, on=lambda f, c: f.carrier == c.code)
@@ -152,10 +155,10 @@ def test_measures_after_join():
     c_tbl = con.create_table("carriers", carriers_df)
 
     flights_st = to_semantic_table(f_tbl, "flights").with_measures(
-        flight_count=lambda t: t.count()
+        flight_count=lambda t: t.count(),
     )
     carriers_st = to_semantic_table(c_tbl, "carriers").with_measures(
-        carrier_count=lambda t: t.count()
+        carrier_count=lambda t: t.count(),
     )
 
     joined = flights_st.join(carriers_st, on=lambda f, c: f.carrier == c.code)
@@ -171,7 +174,7 @@ def test_measures_after_aggregate():
     tbl = con.create_table("flights", df)
 
     st = to_semantic_table(tbl, "flights").with_measures(
-        flight_count=lambda t: t.count()
+        flight_count=lambda t: t.count(),
     )
 
     # Before aggregation, we have measures
@@ -212,7 +215,7 @@ def test_introspection_with_inline_measures():
     tbl = con.create_table("flights", df)
 
     st = to_semantic_table(tbl, "flights").with_measures(
-        flight_count=lambda t: t.count()
+        flight_count=lambda t: t.count(),
     )
 
     # Initially only flight_count
@@ -236,7 +239,9 @@ def test_introspection_preserves_definition_order():
     tbl = con.create_table("test", df)
 
     st = to_semantic_table(tbl, "test").with_dimensions(
-        dim_a=lambda t: t.a, dim_b=lambda t: t.b, dim_c=lambda t: t.c
+        dim_a=lambda t: t.a,
+        dim_b=lambda t: t.b,
+        dim_c=lambda t: t.c,
     )
 
     # Dict keys preserve insertion order in Python 3.7+

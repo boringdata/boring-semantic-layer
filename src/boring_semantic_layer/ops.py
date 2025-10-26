@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from operator import methodcaller
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any
 
 from attrs import frozen
 from ibis.common.collections import FrozenDict, FrozenOrderedDict
@@ -20,11 +21,12 @@ if TYPE_CHECKING:
     )
 
 
-def _to_ibis(source: Any) -> Any:
+def _to_ibis(source: Any) -> ir.Table:
+    """Convert semantic or Ibis object to Ibis table expression."""
     return source.to_ibis() if hasattr(source, "to_ibis") else source.to_expr()
 
 
-def _semantic_table(*args, **kwargs):
+def _semantic_table(*args, **kwargs) -> SemanticTable:
     """Late-binding import to avoid circular dependency."""
     from .expr import SemanticModel
 
@@ -34,11 +36,7 @@ def _semantic_table(*args, **kwargs):
 def _unwrap_semantic_table(other: Any) -> Any:
     """Unwrap SemanticTable Expression to SemanticTableOp Operation."""
     # Use methodcaller to get .op() if it exists, otherwise return as-is
-    return (
-        methodcaller("op")(other)
-        if hasattr(other, "op") and callable(getattr(other, "op"))
-        else other
-    )
+    return methodcaller("op")(other) if hasattr(other, "op") and callable(other.op) else other
 
 
 def _unwrap(wrapped: Any) -> Any:
@@ -46,7 +44,8 @@ def _unwrap(wrapped: Any) -> Any:
     return wrapped.unwrap if isinstance(wrapped, _CallableWrapper) else wrapped
 
 
-def _resolve_expr(expr: Any, scope: Any) -> Any:
+def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
+    """Resolve deferred expressions or callables to Ibis values."""
     return (
         expr.resolve(scope)
         if isinstance(expr, Deferred)
@@ -70,7 +69,8 @@ def _get_field_dict(root: Any, field_type: str) -> dict:
 def _get_merged_fields(all_roots: list, field_type: str) -> dict:
     return (
         _merge_fields_with_prefixing(
-            all_roots, lambda r: _get_field_dict(r, field_type)
+            all_roots,
+            lambda r: _get_field_dict(r, field_type),
         )
         if len(all_roots) > 1
         else _get_field_dict(all_roots[0], field_type)
@@ -80,7 +80,7 @@ def _get_merged_fields(all_roots: list, field_type: str) -> dict:
 
 
 def _collect_measure_refs(expr, refs_out: set):
-    from .measure_scope import MeasureRef, AllOf, BinOp
+    from .measure_scope import AllOf, BinOp, MeasureRef
 
     if isinstance(expr, MeasureRef):
         refs_out.add(expr.name)
@@ -119,8 +119,7 @@ def _ensure_wrapped(fn: Any) -> _CallableWrapper:
 
 
 def _classify_measure(fn_or_expr: Any, scope: Any):
-    from .measure_scope import MeasureRef, AllOf, BinOp
-    from .measure_scope import ColumnScope
+    from .measure_scope import AllOf, BinOp, ColumnScope, MeasureRef
 
     # Handle dict inputs by extracting expr and description
     if isinstance(fn_or_expr, dict):
@@ -133,7 +132,7 @@ def _classify_measure(fn_or_expr: Any, scope: Any):
         description = None
 
     val = _resolve_expr(fn_or_expr, scope)
-    is_calc = isinstance(val, (MeasureRef, AllOf, BinOp, int, float))
+    is_calc = isinstance(val, MeasureRef | AllOf | BinOp | int | float)
 
     if is_calc:
         return ("calc", val)
@@ -152,7 +151,9 @@ def _classify_measure(fn_or_expr: Any, scope: Any):
 
 
 def _build_json_definition(
-    dims_dict: dict, meas_dict: dict, name: Optional[str] = None
+    dims_dict: dict,
+    meas_dict: dict,
+    name: str | None = None,
 ) -> dict:
     return {
         "dimensions": {n: spec.to_json() for n, spec in dims_dict.items()},
@@ -167,16 +168,12 @@ def _build_json_definition(
 @frozen(kw_only=True, slots=True)
 class Dimension:
     expr: Callable[[Any], Any] | Deferred
-    description: Optional[str] = None
+    description: str | None = None
     is_time_dimension: bool = False
-    smallest_time_grain: Optional[str] = None
+    smallest_time_grain: str | None = None
 
     def __call__(self, table: Any) -> Any:
-        return (
-            self.expr.resolve(table)
-            if isinstance(self.expr, Deferred)
-            else self.expr(table)
-        )
+        return self.expr.resolve(table) if isinstance(self.expr, Deferred) else self.expr(table)
 
     def to_json(self) -> Mapping[str, Any]:
         base = {"description": self.description}
@@ -188,21 +185,17 @@ class Dimension:
 
     def __hash__(self) -> int:
         return hash(
-            (self.description, self.is_time_dimension, self.smallest_time_grain)
+            (self.description, self.is_time_dimension, self.smallest_time_grain),
         )
 
 
 @frozen(kw_only=True, slots=True)
 class Measure:
     expr: Callable[[Any], Any] | Deferred
-    description: Optional[str] = None
+    description: str | None = None
 
     def __call__(self, table: Any) -> Any:
-        return (
-            self.expr.resolve(table)
-            if isinstance(self.expr, Deferred)
-            else self.expr(table)
-        )
+        return self.expr.resolve(table) if isinstance(self.expr, Deferred) else self.expr(table)
 
     def to_json(self) -> Mapping[str, Any]:
         return {"description": self.description}
@@ -221,22 +214,16 @@ class SemanticTableOp(Relation):
     dimensions: FrozenDict[str, Dimension]
     measures: FrozenDict[str, Measure]
     calc_measures: FrozenDict[str, Any]
-    name: Optional[str] = None
+    name: str | None = None
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         return FrozenOrderedDict(
             {
                 **{col: self.table[col].op() for col in self.table.columns},
-                **{
-                    name: fn(self.table).op()
-                    for name, fn in self.get_dimensions().items()
-                },
-                **{
-                    name: fn(self.table).op()
-                    for name, fn in self.get_measures().items()
-                },
-            }
+                **{name: fn(self.table).op() for name, fn in self.get_dimensions().items()},
+                **{name: fn(self.table).op() for name, fn in self.get_measures().items()},
+            },
         )
 
     @property
@@ -246,7 +233,9 @@ class SemanticTableOp(Relation):
     @property
     def json_definition(self) -> Mapping[str, Any]:
         return _build_json_definition(
-            self.get_dimensions(), self.get_measures(), self.name
+            self.get_dimensions(),
+            self.get_measures(),
+            self.name,
         )
 
     @property
@@ -288,12 +277,13 @@ class SemanticTableOp(Relation):
 
 
 class SemanticFilterOp(Relation):
-    source: Any
+    source: Relation
     predicate: Callable
 
-    def __init__(self, source: Any, predicate: Callable) -> None:
+    def __init__(self, source: Relation, predicate: Callable) -> None:
         super().__init__(
-            source=Relation.__coerce__(source), predicate=_ensure_wrapped(predicate)
+            source=Relation.__coerce__(source),
+            predicate=_ensure_wrapped(predicate),
         )
 
     @property
@@ -322,17 +312,17 @@ class SemanticFilterOp(Relation):
 
 
 class SemanticProjectOp(Relation):
-    source: Any
+    source: Relation
     fields: tuple[str, ...]
 
-    def __init__(self, source: Any, fields: Iterable[str]) -> None:
+    def __init__(self, source: Relation, fields: Iterable[str]) -> None:
         super().__init__(source=Relation.__coerce__(source), fields=tuple(fields))
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         src_vals = self.source.values
         return FrozenOrderedDict(
-            {k: v for k, v in src_vals.items() if k in self.fields}
+            {k: v for k, v in src_vals.items() if k in self.fields},
         )
 
     @property
@@ -352,9 +342,7 @@ class SemanticProjectOp(Relation):
         dims = [f for f in self.fields if f in merged_dimensions]
         meas = [f for f in self.fields if f in merged_measures]
         raw_fields = [
-            f
-            for f in self.fields
-            if f not in merged_dimensions and f not in merged_measures
+            f for f in self.fields if f not in merged_dimensions and f not in merged_measures
         ]
 
         dim_exprs = [merged_dimensions[name](tbl).name(name) for name in dims]
@@ -373,10 +361,10 @@ class SemanticProjectOp(Relation):
 
 
 class SemanticGroupByOp(Relation):
-    source: Any
+    source: Relation
     keys: tuple[str, ...]
 
-    def __init__(self, source: Any, keys: Iterable[str]) -> None:
+    def __init__(self, source: Relation, keys: Iterable[str]) -> None:
         super().__init__(source=Relation.__coerce__(source), keys=tuple(keys))
 
     @property
@@ -392,22 +380,23 @@ class SemanticGroupByOp(Relation):
 
 
 class SemanticAggregateOp(Relation):
-    source: Any
+    source: Relation
     keys: tuple[str, ...]
     aggs: dict[
-        str, Callable
+        str,
+        Callable,
     ]  # Transformed to FrozenDict[str, _CallableWrapper] in __init__
     nested_columns: tuple[str, ...] = ()  # Track which columns are nested arrays
 
     def __init__(
         self,
-        source: Any,
+        source: Relation,
         keys: Iterable[str],
         aggs: dict[str, Callable] | None,
         nested_columns: Iterable[str] | None = None,
     ) -> None:
         frozen_aggs = FrozenDict(
-            {name: _ensure_wrapped(fn) for name, fn in (aggs or {}).items()}
+            {name: _ensure_wrapped(fn) for name, fn in (aggs or {}).items()},
         )
         super().__init__(
             source=Relation.__coerce__(source),
@@ -423,7 +412,8 @@ class SemanticAggregateOp(Relation):
 
         # Use centralized prefixing logic
         merged_dimensions = _merge_fields_with_prefixing(
-            all_roots, lambda root: root.get_dimensions()
+            all_roots,
+            lambda root: root.get_dimensions(),
         )
 
         # Use the actual source table (which could be a join) as base_tbl
@@ -448,9 +438,8 @@ class SemanticAggregateOp(Relation):
         return ()
 
     def to_ibis(self):
-        from .measure_scope import MeasureScope, ColumnScope
-        from .measure_scope import MeasureRef, AllOf, BinOp
         from .compile_all import compile_grouped_with_all
+        from .measure_scope import AllOf, BinOp, ColumnScope, MeasureRef, MeasureScope
 
         all_roots = _find_all_root_models(self.source)
         tbl = _to_ibis(self.source)
@@ -475,9 +464,7 @@ class SemanticAggregateOp(Relation):
         merged_base_measures = _get_merged_fields(all_roots, "measures")
         merged_calc_measures = _get_merged_fields(all_roots, "calc_measures")
 
-        dim_mutations = {
-            k: merged_dimensions[k](tbl) for k in self.keys if k in merged_dimensions
-        }
+        dim_mutations = {k: merged_dimensions[k](tbl) for k in self.keys if k in merged_dimensions}
         tbl = tbl.mutate(**dim_mutations) if dim_mutations else tbl
 
         # Use ColumnScope for post-aggregation, MeasureScope otherwise
@@ -485,7 +472,7 @@ class SemanticAggregateOp(Relation):
             scope = ColumnScope(_tbl=tbl)
         else:
             all_measure_names = list(merged_base_measures.keys()) + list(
-                merged_calc_measures.keys()
+                merged_calc_measures.keys(),
             )
             scope = MeasureScope(_tbl=tbl, _known=all_measure_names)
 
@@ -512,7 +499,7 @@ class SemanticAggregateOp(Relation):
                     agg_specs[name] = lambda t, m=measure_obj: m(t)
                 else:
                     calc_specs[name] = val
-            elif isinstance(val, (AllOf, BinOp, int, float)):
+            elif isinstance(val, AllOf | BinOp | int | float):
                 calc_specs[name] = val
             else:
                 agg_specs[name] = lambda t, f=fn: (
@@ -543,7 +530,7 @@ class SemanticAggregateOp(Relation):
             )
             if calc_specs or by_cols
             else tbl.aggregate(
-                {name: agg_fn(tbl) for name, agg_fn in agg_specs.items()}
+                {name: agg_fn(tbl) for name, agg_fn in agg_specs.items()},
             )
         )
 
@@ -557,26 +544,26 @@ class SemanticAggregateOp(Relation):
 
 
 class SemanticMutateOp(Relation):
-    source: Any
+    source: Relation
     post: dict[
-        str, Callable
+        str,
+        Callable,
     ]  # Transformed to FrozenDict[str, _CallableWrapper] in __init__
     nested_columns: tuple[
-        str, ...
+        str,
+        ...,
     ] = ()  # Inherited from source if it has nested columns
 
     def __init__(
         self,
-        source: Any,
+        source: Relation,
         post: dict[str, Callable] | None,
         nested_columns: tuple[str, ...] = (),
     ) -> None:
         frozen_post = FrozenDict(
-            {name: _ensure_wrapped(fn) for name, fn in (post or {}).items()}
+            {name: _ensure_wrapped(fn) for name, fn in (post or {}).items()},
         )
-        source_nested = (
-            nested_columns if nested_columns else getattr(source, "nested_columns", ())
-        )
+        source_nested = nested_columns if nested_columns else getattr(source, "nested_columns", ())
 
         super().__init__(
             source=Relation.__coerce__(source),
@@ -618,7 +605,7 @@ class SemanticMutateOp(Relation):
 class SemanticUnnestOp(Relation):
     """Unnest an array column, expanding rows (like Malloy's nested data pattern)."""
 
-    source: Any
+    source: Relation
     column: str
 
     @property
@@ -673,17 +660,17 @@ class SemanticUnnestOp(Relation):
 
 
 class SemanticJoinOp(Relation):
-    left: Any
-    right: Any
+    left: Relation
+    right: Relation
     how: str
-    on: Callable[[Any, Any], Any] | None
+    on: Callable[[Any, Any], ir.BooleanValue] | None
 
     def __init__(
         self,
-        left: Any,
-        right: Any,
+        left: Relation,
+        right: Relation,
         how: str = "inner",
-        on: Callable[[Any, Any], Any] | None = None,
+        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
     ) -> None:
         super().__init__(
             left=Relation.__coerce__(left),
@@ -707,21 +694,24 @@ class SemanticJoinOp(Relation):
         """Get dictionary of dimensions with metadata."""
         all_roots = _find_all_root_models(self)
         return _merge_fields_with_prefixing(
-            all_roots, lambda r: _get_field_dict(r, "dimensions")
+            all_roots,
+            lambda r: _get_field_dict(r, "dimensions"),
         )
 
     def get_measures(self) -> Mapping[str, Measure]:
         """Get dictionary of base measures with metadata."""
         all_roots = _find_all_root_models(self)
         return _merge_fields_with_prefixing(
-            all_roots, lambda r: _get_field_dict(r, "measures")
+            all_roots,
+            lambda r: _get_field_dict(r, "measures"),
         )
 
     def get_calculated_measures(self) -> Mapping[str, Any]:
         """Get dictionary of calculated measures with metadata."""
         all_roots = _find_all_root_models(self)
         return _merge_fields_with_prefixing(
-            all_roots, lambda r: _get_field_dict(r, "calc_measures")
+            all_roots,
+            lambda r: _get_field_dict(r, "calc_measures"),
         )
 
     @property
@@ -744,14 +734,14 @@ class SemanticJoinOp(Relation):
     @property
     def measures(self) -> tuple[str, ...]:
         return tuple(self.get_measures().keys()) + tuple(
-            self.get_calculated_measures().keys()
+            self.get_calculated_measures().keys(),
         )
 
     @property
     def json_definition(self) -> Mapping[str, Any]:
         return _build_json_definition(self.get_dimensions(), self.get_measures(), None)
 
-    def with_dimensions(self, **dims) -> "SemanticTable":
+    def with_dimensions(self, **dims) -> SemanticTable:
         return _semantic_table(
             table=self.to_ibis(),
             dimensions={**self.get_dimensions(), **dims},
@@ -760,7 +750,7 @@ class SemanticJoinOp(Relation):
             name=None,
         )
 
-    def with_measures(self, **meas) -> "SemanticTable":
+    def with_measures(self, **meas) -> SemanticTable:
         from .measure_scope import MeasureScope
 
         joined_tbl = self.to_ibis()
@@ -787,29 +777,35 @@ class SemanticJoinOp(Relation):
             name=None,
         )
 
-    def group_by(self, *keys: str) -> "SemanticGroupBy":
+    def group_by(self, *keys: str) -> SemanticGroupBy:
         from .expr import SemanticGroupBy
 
         return SemanticGroupBy(source=self, keys=keys)
 
-    def filter(self, predicate: Callable) -> "SemanticFilter":
+    def filter(self, predicate: Callable) -> SemanticFilter:
         from .expr import SemanticFilter
 
         return SemanticFilter(source=self, predicate=predicate)
 
     def join(
         self,
-        other: "SemanticTable",
-        on: Callable[[Any, Any], Any] | None = None,
+        other: SemanticTable,
+        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
         how: str = "inner",
-    ) -> "SemanticJoinOp":
+    ) -> SemanticJoinOp:
         return SemanticJoinOp(
-            left=self, right=_unwrap_semantic_table(other), on=on, how=how
+            left=self,
+            right=_unwrap_semantic_table(other),
+            on=on,
+            how=how,
         )
 
     def join_one(
-        self, other: "SemanticTable", left_on: str, right_on: str
-    ) -> "SemanticJoinOp":
+        self,
+        other: SemanticTable,
+        left_on: str,
+        right_on: str,
+    ) -> SemanticJoinOp:
         return SemanticJoinOp(
             left=self,
             right=_unwrap_semantic_table(other),
@@ -818,8 +814,11 @@ class SemanticJoinOp(Relation):
         )
 
     def join_many(
-        self, other: "SemanticTable", left_on: str, right_on: str
-    ) -> "SemanticJoinOp":
+        self,
+        other: SemanticTable,
+        left_on: str,
+        right_on: str,
+    ) -> SemanticJoinOp:
         return SemanticJoinOp(
             left=self,
             right=_unwrap_semantic_table(other),
@@ -829,10 +828,10 @@ class SemanticJoinOp(Relation):
 
     def index(
         self,
-        selector: Any = None,
-        by: Optional[str] = None,
-        sample: Optional[int] = None,
-    ) -> "SemanticIndexOp":
+        selector: str | list[str] | Callable | None = None,
+        by: str | None = None,
+        sample: int | None = None,
+    ) -> SemanticIndexOp:
         return SemanticIndexOp(source=self, selector=selector, by=by, sample=sample)
 
     def to_ibis(self):
@@ -876,13 +875,13 @@ class SemanticJoinOp(Relation):
             return calc_meas_dict[key]
 
         raise KeyError(
-            f"'{key}' not found in dimensions, measures, or calculated measures"
+            f"'{key}' not found in dimensions, measures, or calculated measures",
         )
 
     def pipe(self, func, *args, **kwargs):
         return func(self, *args, **kwargs)
 
-    def as_table(self) -> "SemanticTable":
+    def as_table(self) -> SemanticTable:
         """Convert to SemanticTable, preserving merged metadata from both sides."""
         return _semantic_table(
             table=self.to_ibis(),
@@ -899,17 +898,19 @@ class SemanticJoinOp(Relation):
 
 
 class SemanticOrderByOp(Relation):
-    source: Any
+    source: Relation
     keys: tuple[
-        Any, ...
+        str | ir.Value | Callable,
+        ...,
     ]  # Transformed to tuple[str | _CallableWrapper, ...] in __init__
 
-    def __init__(self, source: Any, keys: Iterable[Any]) -> None:
+    def __init__(self, source: Relation, keys: Iterable[str | ir.Value | Callable]) -> None:
         def wrap_key(k):
-            return k if isinstance(k, (str, _CallableWrapper)) else _ensure_wrapped(k)
+            return k if isinstance(k, str | _CallableWrapper) else _ensure_wrapped(k)
 
         super().__init__(
-            source=Relation.__coerce__(source), keys=tuple(wrap_key(k) for k in keys)
+            source=Relation.__coerce__(source),
+            keys=tuple(wrap_key(k) for k in keys),
         )
 
     @property
@@ -952,11 +953,11 @@ class SemanticOrderByOp(Relation):
 
 
 class SemanticLimitOp(Relation):
-    source: Any
+    source: Relation
     n: int
     offset: int
 
-    def __init__(self, source: Any, n: int, offset: int = 0) -> None:
+    def __init__(self, source: Relation, n: int, offset: int = 0) -> None:
         if n <= 0:
             raise ValueError(f"limit must be positive, got {n}")
         if offset < 0:
@@ -973,11 +974,7 @@ class SemanticLimitOp(Relation):
 
     def to_ibis(self):
         tbl = _to_ibis(self.source)
-        return (
-            tbl.limit(self.n)
-            if self.offset == 0
-            else tbl.limit(self.n, offset=self.offset)
-        )
+        return tbl.limit(self.n) if self.offset == 0 else tbl.limit(self.n, offset=self.offset)
 
 
 def _get_field_type_str(field_type: Any) -> str:
@@ -993,7 +990,10 @@ def _get_field_type_str(field_type: Any) -> str:
 
 
 def _get_weight_expr(
-    base_tbl: Any, by_measure: Optional[str], all_roots: list, is_string: bool
+    base_tbl: Any,
+    by_measure: str | None,
+    all_roots: list,
+    is_string: bool,
 ) -> Any:
     import ibis
 
@@ -1002,9 +1002,7 @@ def _get_weight_expr(
 
     merged_measures = _get_merged_fields(all_roots, "measures")
     return (
-        merged_measures[by_measure](base_tbl)
-        if by_measure in merged_measures
-        else ibis._.count()
+        merged_measures[by_measure](base_tbl) if by_measure in merged_measures else ibis._.count()
     )
 
 
@@ -1054,16 +1052,17 @@ def _build_numeric_index_fragment(
             fieldPath=ibis.literal(field_path),
             fieldType=ibis.literal(type_str),
             fieldValue=(
-                ibis._["min_val"].cast("string")
-                + " to "
-                + ibis._["max_val"].cast("string")
+                ibis._["min_val"].cast("string") + " to " + ibis._["max_val"].cast("string")
             ),
             weight=ibis._["weight"],
         )
     )
 
 
-def _resolve_selector(selector: Any, base_tbl: Any) -> tuple[str, ...]:
+def _resolve_selector(
+    selector: str | list[str] | Callable | None,
+    base_tbl: ir.Table,
+) -> tuple[str, ...]:
     if selector is None:
         return tuple(base_tbl.columns)
     try:
@@ -1074,7 +1073,9 @@ def _resolve_selector(selector: Any, base_tbl: Any) -> tuple[str, ...]:
 
 
 def _get_fields_to_index(
-    selector: Any, merged_dimensions: dict, base_tbl: Any
+    selector: str | list[str] | Callable | None,
+    merged_dimensions: dict,
+    base_tbl: ir.Table,
 ) -> tuple[str, ...]:
     import ibis.selectors as s
 
@@ -1090,27 +1091,23 @@ def _get_fields_to_index(
         result.extend(col for col in base_tbl.columns if col not in result)
     else:
         # Only include selected fields that exist in dimensions or base table
-        result = [
-            col
-            for col in raw_fields
-            if col in merged_dimensions or col in base_tbl.columns
-        ]
+        result = [col for col in raw_fields if col in merged_dimensions or col in base_tbl.columns]
 
     return result
 
 
 class SemanticIndexOp(Relation):
-    source: Any
-    selector: Any
-    by: Optional[str] = None
-    sample: Optional[int] = None
+    source: Relation
+    selector: str | list[str] | Callable | None
+    by: str | None = None
+    sample: int | None = None
 
     def __init__(
         self,
-        source: Any,
-        selector: Any = None,
-        by: Optional[str] = None,
-        sample: Optional[int] = None,
+        source: Relation,
+        selector: str | list[str] | Callable | None = None,
+        by: str | None = None,
+        sample: int | None = None,
     ) -> None:
         # Validate sample parameter
         if sample is not None and sample <= 0:
@@ -1125,7 +1122,7 @@ class SemanticIndexOp(Relation):
                     available = list(merged_measures.keys())
                     raise KeyError(
                         f"Unknown measure '{by}' for weight calculation. "
-                        f"Available measures: {', '.join(available) or 'none'}"
+                        f"Available measures: {', '.join(available) or 'none'}",
                     )
 
         super().__init__(
@@ -1146,7 +1143,7 @@ class SemanticIndexOp(Relation):
                 "fieldType": ibis.literal("").op(),
                 "fieldValue": ibis.literal("").op(),
                 "weight": ibis.literal(0).op(),
-            }
+            },
         )
 
     @property
@@ -1158,23 +1155,24 @@ class SemanticIndexOp(Relation):
                 "fieldType": "string",
                 "fieldValue": "string",
                 "weight": "int64",
-            }
+            },
         )
 
     def to_ibis(self):
-        import ibis
         from functools import reduce
+
+        import ibis
 
         all_roots = _find_all_root_models(self.source)
         base_tbl = (
-            _to_ibis(self.source).limit(self.sample)
-            if self.sample
-            else _to_ibis(self.source)
+            _to_ibis(self.source).limit(self.sample) if self.sample else _to_ibis(self.source)
         )
 
         merged_dimensions = _get_merged_fields(all_roots, "dimensions")
         fields_to_index = _get_fields_to_index(
-            self.selector, merged_dimensions, base_tbl
+            self.selector,
+            merged_dimensions,
+            base_tbl,
         )
 
         if not fields_to_index:
@@ -1185,7 +1183,7 @@ class SemanticIndexOp(Relation):
                     "fieldType": [],
                     "fieldValue": [],
                     "weight": [],
-                }
+                },
             )
 
         def build_fragment(field_name: str) -> Any:
@@ -1197,33 +1195,46 @@ class SemanticIndexOp(Relation):
             field_type = field_expr.type()
             type_str = _get_field_type_str(field_type)
             weight_expr = _get_weight_expr(
-                base_tbl, self.by, all_roots, field_type.is_string()
+                base_tbl,
+                self.by,
+                all_roots,
+                field_type.is_string(),
             )
 
             return (
                 _build_string_index_fragment(
-                    base_tbl, field_expr, field_name, field_name, type_str, weight_expr
+                    base_tbl,
+                    field_expr,
+                    field_name,
+                    field_name,
+                    type_str,
+                    weight_expr,
                 )
                 if field_type.is_string() or not field_type.is_numeric()
                 else _build_numeric_index_fragment(
-                    base_tbl, field_expr, field_name, field_name, type_str, weight_expr
+                    base_tbl,
+                    field_expr,
+                    field_name,
+                    field_name,
+                    type_str,
+                    weight_expr,
                 )
             )
 
         fragments = [build_fragment(f) for f in fields_to_index]
         return reduce(lambda acc, frag: acc.union(frag), fragments[1:], fragments[0])
 
-    def filter(self, predicate: Callable) -> "SemanticFilter":
+    def filter(self, predicate: Callable) -> SemanticFilter:
         from .expr import SemanticFilter
 
         return SemanticFilter(source=self, predicate=predicate)
 
-    def order_by(self, *keys: Any) -> "SemanticOrderBy":
+    def order_by(self, *keys: str | ir.Value | Callable) -> SemanticOrderBy:
         from .expr import SemanticOrderBy
 
         return SemanticOrderBy(source=self, keys=keys)
 
-    def limit(self, n: int, offset: int = 0) -> "SemanticLimit":
+    def limit(self, n: int, offset: int = 0) -> SemanticLimit:
         from .expr import SemanticLimit
 
         return SemanticLimit(source=self, n=n, offset=offset)
@@ -1272,7 +1283,7 @@ class SemanticIndexOp(Relation):
         return f"SemanticIndexOp({', '.join(parts)})"
 
 
-def _find_root_model(node: Any) -> "SemanticTableOp | None":
+def _find_root_model(node: Any) -> SemanticTableOp | None:
     """Find root SemanticTableOp in the operation tree."""
     cur = node
     while cur is not None:
@@ -1283,7 +1294,7 @@ def _find_root_model(node: Any) -> "SemanticTableOp | None":
     return None
 
 
-def _find_all_root_models(node: Any) -> tuple["SemanticTableOp", ...]:
+def _find_all_root_models(node: Any) -> tuple[SemanticTableOp, ...]:
     """Find all root SemanticTableOps in the operation tree (handles joins with multiple roots)."""
     if isinstance(node, SemanticTableOp):
         return [node]
@@ -1312,7 +1323,7 @@ def _update_measure_refs_in_calc(expr, prefix_map: dict[str, str]):
     Returns:
         Updated expression with prefixed MeasureRef names
     """
-    from .measure_scope import MeasureRef, AllOf, BinOp
+    from .measure_scope import AllOf, BinOp, MeasureRef
 
     if isinstance(expr, MeasureRef):
         # Update the measure reference name if it's in the map
@@ -1333,7 +1344,8 @@ def _update_measure_refs_in_calc(expr, prefix_map: dict[str, str]):
 
 
 def _merge_fields_with_prefixing(
-    all_roots: Sequence[SemanticTable], field_accessor: callable
+    all_roots: Sequence[SemanticTable],
+    field_accessor: callable,
 ) -> FrozenDict[str, Any]:
     """
     Generic function to merge any type of fields (dimensions, measures) with prefixing.
@@ -1356,11 +1368,12 @@ def _merge_fields_with_prefixing(
     if all_roots:
         sample_fields = field_accessor(all_roots[0])
         if sample_fields:
-            from .measure_scope import MeasureRef, AllOf, BinOp
+            from .measure_scope import AllOf, BinOp, MeasureRef
 
             first_val = next(iter(sample_fields.values()), None)
             is_calc_measures = isinstance(
-                first_val, (MeasureRef, AllOf, BinOp, int, float)
+                first_val,
+                MeasureRef | AllOf | BinOp | int | float,
             )
 
     # Always prefix fields with table name for consistency
@@ -1370,12 +1383,12 @@ def _merge_fields_with_prefixing(
 
         if is_calc_measures and root_name:
             base_map = (
-                {k: f"{root_name}.{k}" for k in root.get_measures().keys()}
+                {k: f"{root_name}.{k}" for k in root.get_measures()}
                 if hasattr(root, "get_measures")
                 else {}
             )
             calc_map = (
-                {k: f"{root_name}.{k}" for k in root.get_calculated_measures().keys()}
+                {k: f"{root_name}.{k}" for k in root.get_calculated_measures()}
                 if hasattr(root, "get_calculated_measures")
                 else {}
             )

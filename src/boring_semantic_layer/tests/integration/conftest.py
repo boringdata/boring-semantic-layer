@@ -1,19 +1,19 @@
 """Pytest configuration and fixtures for integration tests."""
 
-import pytest
-from pathlib import Path
-import sys
-import importlib
 import asyncio
 import gc
-import pandas as pd
-import numpy as np
+import importlib
+import sys
 from functools import reduce
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+import pytest
 from toolz import curry
-from typing import Tuple, Any, Dict
 
-
-TEST_CASES: Tuple[Tuple[str, str, Tuple[str, ...]], ...] = (
+TEST_CASES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("comparing_timeframe", "query_1", ()),
     ("comparing_timeframe", "query_2", ()),
     ("comparing_timeframe", "query_3", ()),
@@ -46,15 +46,13 @@ def make_normalize_nested_data(data: Any) -> Any:
 
 
 @curry
-def make_expand_row(col: str, row: Dict[str, Any]) -> Tuple[Dict[str, Any], ...]:
+def make_expand_row(col: str, row: dict[str, Any]) -> tuple[dict[str, Any], ...]:
     base_data = {k: v for k, v in row.items() if k != col}
     nested_data = make_normalize_nested_data(row[col])
 
-    if isinstance(nested_data, (list, tuple)) and nested_data:
+    if isinstance(nested_data, list | tuple) and nested_data:
         return tuple(
-            {**base_data, **item}
-            if isinstance(item, dict)
-            else {**base_data, f"{col}_value": item}
+            {**base_data, **item} if isinstance(item, dict) else {**base_data, f"{col}_value": item}
             for item in nested_data
         )
     return (base_data,)
@@ -65,20 +63,21 @@ def make_flatten_column(col: str, df: pd.DataFrame) -> pd.DataFrame:
     if col not in df.columns:
         return df
 
-    rows = tuple(
-        expanded for _, row in df.iterrows() for expanded in make_expand_row(col, row)
-    )
+    rows = tuple(expanded for _, row in df.iterrows() for expanded in make_expand_row(col, row))
     return pd.DataFrame(rows) if rows else df.drop(columns=[col])
 
 
 @curry
 def make_flatten_dataframe(
-    columns_to_flatten: Tuple[str, ...], df: pd.DataFrame
+    columns_to_flatten: tuple[str, ...],
+    df: pd.DataFrame,
 ) -> pd.DataFrame:
     if not columns_to_flatten:
         return df
     return reduce(
-        lambda acc, col: make_flatten_column(col, acc), columns_to_flatten, df
+        lambda acc, col: make_flatten_column(col, acc),
+        columns_to_flatten,
+        df,
     )
 
 
@@ -99,7 +98,7 @@ def malloy_query_runner(malloy_data_path):
             with malloy.Runtime() as runtime:
                 runtime.add_connection(DuckDbConnection(home_dir="."))
                 data = await runtime.load_file(malloy_data_path / query_file).run(
-                    named_query=query_name
+                    named_query=query_name,
                 )
                 df = data.to_dataframe()
 

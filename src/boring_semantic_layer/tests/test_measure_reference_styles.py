@@ -7,8 +7,8 @@ Test different styles of referencing measures in lambdas:
 5. Ibis column: t.all(t.distance)
 """
 
-import pandas as pd
 import ibis
+import pandas as pd
 import pytest
 
 from boring_semantic_layer import to_semantic_table
@@ -25,7 +25,7 @@ def test_measure_ref_via_attribute():
         .with_measures(flight_count=lambda t: t.count())
         .with_measures(
             # Reference measure via attribute access
-            pct=lambda t: t.flight_count / t.all(t.flight_count)
+            pct=lambda t: t.flight_count / t.all(t.flight_count),
         )
     )
 
@@ -44,7 +44,7 @@ def test_measure_ref_via_bracket_notation():
         .with_measures(flight_count=lambda t: t.count())
         .with_measures(
             # Reference measure via bracket notation
-            pct=lambda t: t["flight_count"] / t.all(t["flight_count"])
+            pct=lambda t: t["flight_count"] / t.all(t["flight_count"]),
         )
     )
 
@@ -63,7 +63,7 @@ def test_all_with_string_name():
         .with_measures(flight_count=lambda t: t.count())
         .with_measures(
             # Pass string name to t.all()
-            pct=lambda t: t.flight_count / t.all("flight_count")
+            pct=lambda t: t.flight_count / t.all("flight_count"),
         )
     )
 
@@ -82,7 +82,7 @@ def test_all_with_measure_ref_object():
         .with_measures(flight_count=lambda t: t.count())
         .with_measures(
             # Pass MeasureRef object to t.all()
-            pct=lambda t: t.flight_count / t.all(t.flight_count)
+            pct=lambda t: t.flight_count / t.all(t.flight_count),
         )
     )
 
@@ -97,7 +97,8 @@ def test_all_with_ibis_column_post_aggregation():
     f_tbl = con.create_table("flights", flights)
 
     flights_st = to_semantic_table(f_tbl, "flights").with_measures(
-        flight_count=lambda t: t.count(), total_distance=lambda t: t.distance.sum()
+        flight_count=lambda t: t.count(),
+        total_distance=lambda t: t.distance.sum(),
     )
 
     # Post-aggregation: use t.all() with ibis columns
@@ -106,7 +107,7 @@ def test_all_with_ibis_column_post_aggregation():
         .aggregate("flight_count", "total_distance")
         .mutate(
             # t.flight_count is now an ibis column (post-aggregation)
-            pct=lambda t: t.flight_count / t.all(t.flight_count)
+            pct=lambda t: t.flight_count / t.all(t.flight_count),
         )
     )
 
@@ -121,7 +122,7 @@ def test_all_with_string_in_post_aggregation():
     f_tbl = con.create_table("flights", flights)
 
     flights_st = to_semantic_table(f_tbl, "flights").with_measures(
-        flight_count=lambda t: t.count()
+        flight_count=lambda t: t.count(),
     )
 
     # Post-aggregation: use t.all() with string name
@@ -130,7 +131,7 @@ def test_all_with_string_in_post_aggregation():
         .aggregate("flight_count")
         .mutate(
             # Pass string name to t.all() in post-aggregation context
-            pct=lambda t: t.flight_count / t.all("flight_count")
+            pct=lambda t: t.flight_count / t.all("flight_count"),
         )
     )
 
@@ -147,7 +148,8 @@ def test_mixed_reference_styles():
     flights_st = (
         to_semantic_table(f_tbl, "flights")
         .with_measures(
-            flight_count=lambda t: t.count(), total_distance=lambda t: t.distance.sum()
+            flight_count=lambda t: t.count(),
+            total_distance=lambda t: t.distance.sum(),
         )
         .with_measures(
             # Mix attribute access and string name
@@ -165,7 +167,7 @@ def test_mixed_reference_styles():
     assert pytest.approx(df.pct1.sum()) == 1.0
     assert pytest.approx(df.pct2.sum()) == 1.0
     # pct1 and pct2 should be equal
-    assert all(pytest.approx(p1) == p2 for p1, p2 in zip(df.pct1, df.pct2))
+    assert all(pytest.approx(p1) == p2 for p1, p2 in zip(df.pct1, df.pct2, strict=False))
 
 
 def test_prefixed_measures_with_string():
@@ -177,10 +179,11 @@ def test_prefixed_measures_with_string():
     c_tbl = con.create_table("carriers", carriers)
 
     flights_st = to_semantic_table(f_tbl, "flights").with_measures(
-        flight_count=lambda t: t.count()
+        flight_count=lambda t: t.count(),
     )
     carriers_st = to_semantic_table(c_tbl, "carriers").with_dimensions(
-        code=lambda t: t.code, name=lambda t: t.name
+        code=lambda t: t.code,
+        name=lambda t: t.name,
     )
 
     joined = (
@@ -188,8 +191,7 @@ def test_prefixed_measures_with_string():
         .with_dimensions(name=lambda t: t.name)
         .with_measures(
             # Reference prefixed measure with bracket notation (dots not allowed in Python identifiers)
-            pct_full=lambda t: t["flights.flight_count"]
-            / t.all("flights.flight_count"),
+            pct_full=lambda t: t["flights.flight_count"] / t.all("flights.flight_count"),
             # Reference with short name (should resolve to flights.flight_count)
             pct_short=lambda t: t.flight_count / t.all("flight_count"),
         )
@@ -197,7 +199,7 @@ def test_prefixed_measures_with_string():
 
     df = joined.group_by("name").aggregate("pct_full", "pct_short").execute()
     # Both should give same results
-    assert all(pytest.approx(p1) == p2 for p1, p2 in zip(df.pct_full, df.pct_short))
+    assert all(pytest.approx(p1) == p2 for p1, p2 in zip(df.pct_full, df.pct_short, strict=False))
 
 
 def test_inline_measure_with_different_reference_styles():
@@ -207,7 +209,7 @@ def test_inline_measure_with_different_reference_styles():
     f_tbl = con.create_table("flights", flights)
 
     flights_st = to_semantic_table(f_tbl, "flights").with_measures(
-        flight_count=lambda t: t.count()
+        flight_count=lambda t: t.count(),
     )
 
     # Define measures inline with different reference styles
@@ -226,5 +228,5 @@ def test_inline_measure_with_different_reference_styles():
     assert pytest.approx(df.pct_attr.sum()) == 1.0
     assert pytest.approx(df.pct_string.sum()) == 1.0
     assert pytest.approx(df.pct_bracket.sum()) == 1.0
-    assert all(pytest.approx(p1) == p2 for p1, p2 in zip(df.pct_attr, df.pct_string))
-    assert all(pytest.approx(p1) == p2 for p1, p2 in zip(df.pct_attr, df.pct_bracket))
+    assert all(pytest.approx(p1) == p2 for p1, p2 in zip(df.pct_attr, df.pct_string, strict=False))
+    assert all(pytest.approx(p1) == p2 for p1, p2 in zip(df.pct_attr, df.pct_bracket, strict=False))

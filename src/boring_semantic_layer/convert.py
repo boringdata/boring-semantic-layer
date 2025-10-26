@@ -6,23 +6,24 @@ to transform semantic layer operations into executable Ibis expressions.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import ibis
-from attrs import frozen, field
-from ibis.expr.sql import convert
+from attrs import field, frozen
 from ibis.common.collections import FrozenOrderedDict
+from ibis.expr.sql import convert
 
 from boring_semantic_layer.ops import (
     SemanticAggregateOp,
     SemanticFilterOp,
     SemanticGroupByOp,
     SemanticJoinOp,
+    SemanticLimitOp,
     SemanticMutateOp,
     SemanticOrderByOp,
     SemanticProjectOp,
     SemanticTableOp,
-    SemanticLimitOp,
     _find_all_root_models,
 )
 
@@ -189,11 +190,7 @@ def _convert_semantic_project(node: SemanticProjectOp, catalog, *args):
 
     dims = [f for f in node.fields if f in merged_dimensions]
     meas = [f for f in node.fields if f in merged_measures]
-    raw_fields = [
-        f
-        for f in node.fields
-        if f not in merged_dimensions and f not in merged_measures
-    ]
+    raw_fields = [f for f in node.fields if f not in merged_dimensions and f not in merged_measures]
 
     dim_exprs = [merged_dimensions[name](tbl).name(name) for name in dims]
     meas_exprs = [merged_measures[name](tbl).name(name) for name in meas]
@@ -226,7 +223,9 @@ def _convert_semantic_join(node: SemanticJoinOp, catalog, *args):
     right_tbl = convert(node.right, catalog=catalog)
     return (
         left_tbl.join(
-            right_tbl, node.on(_Resolver(left_tbl), _Resolver(right_tbl)), how=node.how
+            right_tbl,
+            node.on(_Resolver(left_tbl), _Resolver(right_tbl)),
+            how=node.how,
         )
         if node.on is not None
         else left_tbl.join(right_tbl, how=node.how)
@@ -252,11 +251,7 @@ def _convert_semantic_aggregate(node: SemanticAggregateOp, catalog, *args):
     merged_measures = _get_merged_fields(all_roots, "measures")
 
     group_exprs = [
-        (
-            merged_dimensions[k](tbl).name(k)
-            if k in merged_dimensions
-            else getattr(tbl, k).name(k)
-        )
+        (merged_dimensions[k](tbl).name(k) if k in merged_dimensions else getattr(tbl, k).name(k))
         for k in node.keys
     ]
 
@@ -264,11 +259,7 @@ def _convert_semantic_aggregate(node: SemanticAggregateOp, catalog, *args):
     meas_exprs = [fn(proxy).name(name) for name, fn in node.aggs.items()]
     metrics = FrozenOrderedDict({expr.get_name(): expr for expr in meas_exprs})
 
-    return (
-        tbl.group_by(group_exprs).aggregate(metrics)
-        if group_exprs
-        else tbl.aggregate(metrics)
-    )
+    return tbl.group_by(group_exprs).aggregate(metrics) if group_exprs else tbl.aggregate(metrics)
 
 
 @convert.register(SemanticMutateOp)
@@ -315,6 +306,4 @@ def _convert_semantic_limit(node: SemanticLimitOp, catalog, *args):
     Applies row limit with optional offset.
     """
     tbl = convert(node.source, catalog=catalog)
-    return (
-        tbl.limit(node.n) if node.offset == 0 else tbl.limit(node.n, offset=node.offset)
-    )
+    return tbl.limit(node.n) if node.offset == 0 else tbl.limit(node.n, offset=node.offset)

@@ -1,4 +1,5 @@
 import ibis
+
 from boring_semantic_layer import to_semantic_table
 
 con = ibis.duckdb.connect()
@@ -9,7 +10,8 @@ flights_tbl = con.read_parquet(f"{BASE_URL}/flights.parquet")
 flights_st = (
     to_semantic_table(flights_tbl)
     .with_measures(
-        flight_count=lambda t: t.count(), avg_delay=lambda t: t.arr_delay.mean()
+        flight_count=lambda t: t.count(),
+        avg_delay=lambda t: t.arr_delay.mean(),
     )
     .with_dimensions(
         dep_month=lambda t: t.dep_time.truncate("M"),
@@ -27,8 +29,8 @@ query_1 = (
     .aggregate(flight_count=lambda t: t.count())
     .mutate(
         moving_avg_flight_count=lambda t: t.flight_count.mean().over(
-            moving_avg_window("dep_month", 3)
-        )
+            moving_avg_window("dep_month", 3),
+        ),
     )
     .order_by("dep_month")
 )
@@ -38,8 +40,8 @@ query_2 = (
     .aggregate(avg_delay=lambda t: t.arr_delay.mean())
     .mutate(
         moving_avg_delay=lambda t: t.avg_delay.mean().over(
-            moving_avg_window("dep_month", 3)
-        )
+            moving_avg_window("dep_month", 3),
+        ),
     )
     .order_by("dep_month")
 )
@@ -49,10 +51,10 @@ query_3 = (
     .aggregate(flight_count=lambda t: t.count(), avg_delay=lambda t: t.arr_delay.mean())
     .mutate(
         moving_avg_flight_count=lambda t: t.flight_count.mean().over(
-            moving_avg_window(["dep_year", "dep_month"], 6)
+            moving_avg_window(["dep_year", "dep_month"], 6),
         ),
         moving_avg_delay=lambda t: t.avg_delay.mean().over(
-            moving_avg_window(["dep_year", "dep_month"], 6)
+            moving_avg_window(["dep_year", "dep_month"], 6),
         ),
     )
     .order_by("dep_year", "dep_month")

@@ -1,8 +1,9 @@
 """Tests for chart functionality with SemanticAggregate."""
 
-import pytest
-import pandas as pd
 import ibis
+import pandas as pd
+import pytest
+
 from boring_semantic_layer import to_semantic_table
 
 
@@ -23,7 +24,7 @@ def flights_model(con):
             "flight_date": pd.date_range("2024-01-01", periods=30, freq="D"),
             "distance": [2475, 2475, 920, 740, 862, 987] * 5,
             "dep_delay": [5.2, 8.1, 3.5, 2.0, 6.3, 1.8] * 5,
-        }
+        },
     )
 
     flights_tbl = con.create_table("flights", flights_df, overwrite=True)
@@ -66,7 +67,8 @@ class TestAltairChart:
     def test_chart_with_multiple_measures(self, flights_model):
         """Test chart with multiple measures."""
         result = flights_model.group_by("carrier").aggregate(
-            "flight_count", "avg_distance"
+            "flight_count",
+            "avg_distance",
         )
         chart = result.chart(backend="altair")
 
@@ -98,7 +100,7 @@ class TestAltairChart:
     def test_heatmap_chart(self, flights_model):
         """Test heatmap with two dimensions."""
         result = flights_model.group_by("origin", "destination").aggregate(
-            "flight_count"
+            "flight_count",
         )
         chart = result.chart(backend="altair")
 
@@ -144,7 +146,8 @@ class TestPlotlyChart:
     def test_multiple_measures(self, flights_model):
         """Test Plotly chart with multiple measures."""
         result = flights_model.group_by("carrier").aggregate(
-            "flight_count", "avg_delay"
+            "flight_count",
+            "avg_delay",
         )
         chart = result.chart(backend="plotly")
 

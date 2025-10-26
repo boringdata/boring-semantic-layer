@@ -10,7 +10,8 @@ a nested list of flight_legs by the aircraft on that day. The flight legs are nu
 
 import ibis
 import pandas as pd
-from boring_semantic_layer import to_semantic_table, to_ibis
+
+from boring_semantic_layer import to_ibis, to_semantic_table
 
 # Show all columns in output
 pd.set_option("display.max_columns", None)
@@ -31,7 +32,7 @@ def main():
 
     # Filter for carrier WN on 2002-03-03 and add flight_date column
     filtered_flights = flights.filter(
-        lambda t: (t.carrier == "WN") & (t.dep_time.date() == ibis.date(2002, 3, 3))
+        lambda t: (t.carrier == "WN") & (t.dep_time.date() == ibis.date(2002, 3, 3)),
     ).mutate(flight_date=lambda t: t.dep_time.date())
 
     # Create sessions with nested flight legs
@@ -49,7 +50,7 @@ def main():
                     "destination",
                     "dep_delay",
                     "arr_delay",
-                )
+                ),
             },
         )
         .mutate(session_id=lambda t: ibis.row_number().over(ibis.window()))

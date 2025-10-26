@@ -5,25 +5,15 @@ Provides parameter-based querying as an alternative to method chaining.
 """
 
 from __future__ import annotations
-from typing import (
-    Any,
-    Callable,
-    ClassVar,
-    Dict,
-    List,
-    Literal,
-    Mapping,
-    Optional,
-    Sequence,
-    Tuple,
-    Union,
-)
-from operator import eq, ne, gt, ge, lt, le
 
-from attrs import frozen
-from toolz import curry
-from ibis.common.collections import FrozenDict
+from collections.abc import Callable, Mapping, Sequence
+from operator import eq, ge, gt, le, lt, ne
+from typing import Any, ClassVar, Literal
+
 import ibis
+from attrs import frozen
+from ibis.common.collections import FrozenDict
+from toolz import curry
 
 # Time grain type alias
 TimeGrain = Literal[
@@ -50,7 +40,7 @@ TIME_GRAIN_TRANSFORMATIONS: FrozenDict = {
 }
 
 # Order of grains from finest to coarsest (immutable)
-TIME_GRAIN_ORDER: Tuple[str, ...] = (
+TIME_GRAIN_ORDER: tuple[str, ...] = (
     "TIME_GRAIN_SECOND",
     "TIME_GRAIN_MINUTE",
     "TIME_GRAIN_HOUR",
@@ -127,12 +117,12 @@ OPERATOR_MAPPING: FrozenDict = {
 
 
 @curry
-def _is_time_dimension(dims_dict: Dict, dim_name: str) -> bool:
+def _is_time_dimension(dims_dict: dict[str, Any], dim_name: str) -> bool:
     """Check if a dimension is a time dimension (curried for partial application)."""
     return dim_name in dims_dict and dims_dict[dim_name].is_time_dimension
 
 
-def _find_time_dimension(semantic_table: Any, dimensions: List[str]) -> Optional[str]:
+def _find_time_dimension(semantic_table: Any, dimensions: list[str]) -> str | None:
     """
     Find the first time dimension in the query dimensions list.
 
@@ -150,7 +140,9 @@ def _make_grain_id(grain: str) -> str:
 
 
 def _validate_time_grain(
-    time_grain: TimeGrain, smallest_allowed_grain: Optional[str], dimension_name: str
+    time_grain: TimeGrain,
+    smallest_allowed_grain: str | None,
+    dimension_name: str,
 ) -> None:
     """
     Validate that requested time grain is not finer than smallest allowed grain.
@@ -171,7 +163,7 @@ def _validate_time_grain(
     if requested_idx < smallest_idx:
         raise ValueError(
             f"Requested time grain '{time_grain}' is finer than the smallest "
-            f"allowed grain '{smallest_allowed_grain}' for dimension '{dimension_name}'"
+            f"allowed grain '{smallest_allowed_grain}' for dimension '{dimension_name}'",
         )
 
 
@@ -200,13 +192,13 @@ class Filter:
         Filter(filter=lambda t: t.amount > 1000)
     """
 
-    filter: Union[FrozenDict, str, Callable]
+    filter: FrozenDict | str | Callable
 
     OPERATORS: ClassVar[set] = set(OPERATOR_MAPPING.keys())
     COMPOUND_OPERATORS: ClassVar[set] = {"AND", "OR"}
 
     def __attrs_post_init__(self) -> None:
-        if not isinstance(self.filter, (dict, str)) and not callable(self.filter):
+        if not isinstance(self.filter, dict | str) and not callable(self.filter):
             raise ValueError("Filter must be a dict, string, or callable")
 
     def _get_field_expr(self, field: str) -> Any:
@@ -234,7 +226,7 @@ class Filter:
         op = filter_obj.get("operator")
         if field is None or op is None:
             raise KeyError(
-                "Missing required keys in filter: 'field' and 'operator' are required"
+                "Missing required keys in filter: 'field' and 'operator' are required",
             )
 
         field_expr = self._get_field_expr(field)
@@ -253,7 +245,7 @@ class Filter:
         if op in ("is null", "is not null"):
             if any(k in filter_obj for k in ("value", "values")):
                 raise ValueError(
-                    f"Operator '{op}' should not have 'value' or 'values' fields"
+                    f"Operator '{op}' should not have 'value' or 'values' fields",
                 )
             return OPERATOR_MAPPING[op](field_expr, None)
 
@@ -269,8 +261,15 @@ class Filter:
             expr = self._parse_json_filter(self.filter)
             return lambda t: expr.resolve(t)
         elif isinstance(self.filter, str):
-            # Evaluate string as ibis expression
-            expr = eval(self.filter)
+            # Evaluate string as ibis expression with restricted namespace
+            # Only allow ibis._ and safe operators
+            allowed_globals = {"_": ibis._, "ibis": ibis}
+            allowed_builtins = {}
+            expr = eval(  # noqa: S307
+                self.filter,
+                {"__builtins__": allowed_builtins, **allowed_globals},
+                {},
+            )
             return lambda t: expr.resolve(t)
         elif callable(self.filter):
             return self.filter
@@ -278,7 +277,9 @@ class Filter:
 
 
 @curry
-def _normalize_filter(filter_spec: Union[Dict, str, Callable, Filter]) -> Callable:
+def _normalize_filter(
+    filter_spec: dict[str, Any] | str | Callable | Filter,
+) -> Callable:
     """
     Normalize filter specification to callable (curried for composition).
 
@@ -286,9 +287,7 @@ def _normalize_filter(filter_spec: Union[Dict, str, Callable, Filter]) -> Callab
     """
     if isinstance(filter_spec, Filter):
         return filter_spec.to_callable()
-    elif isinstance(filter_spec, dict):
-        return Filter(filter=filter_spec).to_callable()
-    elif isinstance(filter_spec, str):
+    elif isinstance(filter_spec, dict | str):
         return Filter(filter=filter_spec).to_callable()
     elif callable(filter_spec):
         return filter_spec
@@ -309,15 +308,15 @@ def _make_order_key(field: str, direction: str):
 
 
 def query(
-    semantic_table: Any,
-    dimensions: Optional[Sequence[str]] = None,
-    measures: Optional[Sequence[str]] = None,
-    filters: Optional[Sequence[Union[FrozenDict, str, Callable, Filter]]] = None,
-    order_by: Optional[Sequence[Tuple[str, str]]] = None,
-    limit: Optional[int] = None,
-    time_grain: Optional[TimeGrain] = None,
-    time_range: Optional[Mapping[str, str]] = None,
-) -> Any:
+    semantic_table: Any,  # SemanticModel, but avoiding circular import
+    dimensions: Sequence[str] | None = None,
+    measures: Sequence[str] | None = None,
+    filters: Sequence[dict[str, Any] | str | Callable | Filter] | None = None,
+    order_by: Sequence[tuple[str, str]] | None = None,
+    limit: int | None = None,
+    time_grain: TimeGrain | None = None,
+    time_range: Mapping[str, str] | None = None,
+) -> Any:  # Returns SemanticModel or SemanticAggregate
     """
     Query semantic table using parameter-based interface with time dimension support.
 
@@ -370,26 +369,24 @@ def query(
 
     # Step 0: Add time_range as a filter if specified
     if time_range:
-        if (
-            not isinstance(time_range, dict)
-            or "start" not in time_range
-            or "end" not in time_range
-        ):
+        if not isinstance(time_range, dict) or "start" not in time_range or "end" not in time_range:
             raise ValueError("time_range must be a dict with 'start' and 'end' keys")
 
         time_dim_name = _find_time_dimension(result, dimensions)
         if time_dim_name:
             filters.append(
                 _make_time_range_filter(
-                    time_dim_name, time_range["start"], time_range["end"]
-                )
+                    time_dim_name,
+                    time_range["start"],
+                    time_range["end"],
+                ),
             )
 
     # Step 1: Handle time grain transformations
     if time_grain:
         if time_grain not in TIME_GRAIN_TRANSFORMATIONS:
             raise ValueError(
-                f"Invalid time_grain: {time_grain}. Must be one of {list(TIME_GRAIN_TRANSFORMATIONS.keys())}"
+                f"Invalid time_grain: {time_grain}. Must be one of {list(TIME_GRAIN_TRANSFORMATIONS.keys())}",
             )
 
         # Find time dimensions and apply grain transformation
@@ -401,7 +398,9 @@ def query(
                 if dim_obj.is_time_dimension:
                     # Validate grain
                     _validate_time_grain(
-                        time_grain, dim_obj.smallest_time_grain, dim_name
+                        time_grain,
+                        dim_obj.smallest_time_grain,
+                        dim_name,
                     )
 
                     # Create transformed dimension
@@ -409,7 +408,7 @@ def query(
                     orig_expr = dim_obj.expr
                     time_dims_to_transform[dim_name] = Dimension(
                         expr=lambda t, orig=orig_expr, unit=truncate_unit: orig(
-                            t
+                            t,
                         ).truncate(unit),
                         description=dim_obj.description,
                         is_time_dimension=dim_obj.is_time_dimension,
@@ -436,9 +435,7 @@ def query(
 
     # Step 4: Apply ordering using functional composition
     if order_by:
-        order_keys = [
-            _make_order_key(field, direction) for field, direction in order_by
-        ]
+        order_keys = [_make_order_key(field, direction) for field, direction in order_by]
         result = result.order_by(*order_keys)
 
     # Step 5: Apply limit

@@ -6,6 +6,7 @@ https://docs.malloydata.dev/documentation/patterns/dim_index
 
 import ibis
 import ibis.selectors as s
+
 from boring_semantic_layer import to_semantic_table
 
 BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
@@ -161,9 +162,7 @@ def main():
         print(f"  Unique values: {total_values}")
         print("  Top 5 values:")
         for _, row in top_5.iterrows():
-            value_str = (
-                str(row["fieldValue"]) if row["fieldValue"] is not None else "None"
-            )
+            value_str = str(row["fieldValue"]) if row["fieldValue"] is not None else "None"
             print(f"    {value_str:20s} (weight: {row['weight']})")
 
     print("\n" + "=" * 80)

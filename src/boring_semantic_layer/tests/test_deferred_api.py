@@ -6,10 +6,10 @@ The deferred API allows writing expressions without explicitly using lambda:
 - You can use: _.distance.sum()
 """
 
-import pandas as pd
 import ibis
-from ibis import _
+import pandas as pd
 import pytest
+from ibis import _
 
 from boring_semantic_layer import to_semantic_table
 
@@ -26,11 +26,7 @@ def test_deferred_in_with_measures():
         total_distance=_.distance.sum(),
     )
 
-    df = (
-        flights_st.group_by("carrier")
-        .aggregate("flight_count", "total_distance")
-        .execute()
-    )
+    df = flights_st.group_by("carrier").aggregate("flight_count", "total_distance").execute()
     assert df.flight_count.sum() == 3
     assert df.total_distance.sum() == 600
 
@@ -42,7 +38,7 @@ def test_deferred_in_with_dimensions():
         {
             "carrier": ["AA", "AA", "UA"],
             "dep_time": pd.date_range("2024-01-01", periods=3),
-        }
+        },
     )
     f_tbl = con.create_table("flights", flights)
 
@@ -133,7 +129,7 @@ def test_mixed_deferred_and_lambda():
         )
         .with_measures(
             # Reference existing measures - must use lambda for t.all()
-            pct=lambda t: t.flight_count / t.all(t.flight_count)
+            pct=lambda t: t.flight_count / t.all(t.flight_count),
         )
     )
 
@@ -149,7 +145,7 @@ def test_deferred_with_complex_expression():
             "carrier": ["AA", "AA", "UA"],
             "distance": [100, 200, 300],
             "delay": [10, 20, 30],
-        }
+        },
     )
     f_tbl = con.create_table("flights", flights)
 
@@ -199,11 +195,7 @@ def test_deferred_reference_to_measure_now_supported():
         )
     )
 
-    df = (
-        flights_st.group_by("carrier")
-        .aggregate("flight_count", "double_count")
-        .execute()
-    )
+    df = flights_st.group_by("carrier").aggregate("flight_count", "double_count").execute()
     assert all(df.double_count == df.flight_count * 2)
 
 
@@ -228,12 +220,8 @@ def test_deferred_with_measure_references_and_operations():
     df = flights_st.group_by("carrier").aggregate("avg_distance_per_flight").execute()
     # AA carrier: (100 + 200) / 2 = 150
     # UA carrier: 300 / 1 = 300
-    assert (
-        pytest.approx(df[df.carrier == "AA"]["avg_distance_per_flight"].iloc[0]) == 150
-    )
-    assert (
-        pytest.approx(df[df.carrier == "UA"]["avg_distance_per_flight"].iloc[0]) == 300
-    )
+    assert pytest.approx(df[df.carrier == "AA"]["avg_distance_per_flight"].iloc[0]) == 150
+    assert pytest.approx(df[df.carrier == "UA"]["avg_distance_per_flight"].iloc[0]) == 300
 
 
 def test_deferred_documentation_example():
@@ -259,11 +247,7 @@ def test_deferred_documentation_example():
         )
     )
 
-    df = (
-        flights_st.group_by("carrier")
-        .aggregate("pct_of_flights", "distance_per_flight")
-        .execute()
-    )
+    df = flights_st.group_by("carrier").aggregate("pct_of_flights", "distance_per_flight").execute()
     assert pytest.approx(df.pct_of_flights.sum()) == 1.0
     assert len(df) == 2  # 2 carriers
 
@@ -309,7 +293,7 @@ def test_deferred_comprehensive_workflow():
             "distance": [100, 200, 300, 400, 150],
             "delay": [10, 20, 30, 40, 5],
             "dep_time": pd.date_range("2024-01-01", periods=5),
-        }
+        },
     )
     f_tbl = con.create_table("flights", flights)
 
@@ -328,8 +312,7 @@ def test_deferred_comprehensive_workflow():
         )
         # Use deferred to define calculated measures
         .with_measures(
-            avg_distance_per_flight=_.total_distance
-            / _.flight_count,  # Deferred measure refs!
+            avg_distance_per_flight=_.total_distance / _.flight_count,  # Deferred measure refs!
         )
         # Use deferred in filter()
         .filter(_.distance > 100)  # Deferred! (filters out the 100 distance flight)

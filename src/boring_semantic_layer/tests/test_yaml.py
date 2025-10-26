@@ -1,10 +1,12 @@
 """Tests for YAML loading functionality with semantic API."""
 
-import pytest
-import ibis
-import tempfile
 import os
-from boring_semantic_layer import from_yaml, SemanticTable
+import tempfile
+
+import ibis
+import pytest
+
+from boring_semantic_layer import SemanticTable, from_yaml
 
 
 @pytest.fixture

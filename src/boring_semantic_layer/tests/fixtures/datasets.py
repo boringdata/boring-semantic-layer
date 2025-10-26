@@ -5,11 +5,10 @@ Provides utilities to download, cache, and load datasets from malloy-samples.
 All datasets are cached locally to avoid repeated downloads.
 """
 
-from pathlib import Path
-from typing import Optional
-import urllib.request
 import urllib.error
-from functools import lru_cache
+import urllib.request
+from functools import cache
+from pathlib import Path
 
 MALLOY_SAMPLES_BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
 
@@ -72,11 +71,11 @@ def download_dataset(dataset_name: str, force_redownload: bool = False) -> Path:
         return local_path
     except urllib.error.URLError as e:
         raise urllib.error.URLError(
-            f"Failed to download {dataset_name} from {url}: {e}"
-        )
+            f"Failed to download {dataset_name} from {url}: {e}",
+        ) from e
 
 
-@lru_cache(maxsize=None)
+@cache
 def get_dataset_path(dataset_name: str) -> Path:
     """
     Get the path to a dataset, downloading it if necessary.
@@ -143,7 +142,7 @@ class DatasetManager:
         >>> orders_path = dm.get("order_items")
     """
 
-    def __init__(self, cache_dir: Optional[Path] = None):
+    def __init__(self, cache_dir: Path | None = None):
         """
         Initialize the dataset manager.
 

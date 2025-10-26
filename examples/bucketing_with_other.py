@@ -6,6 +6,7 @@ Malloy: https://docs.malloydata.dev/documentation/patterns/other
 
 import ibis
 from ibis import _
+
 from boring_semantic_layer import to_semantic_table
 
 BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
@@ -16,7 +17,7 @@ def main():
     airports_tbl = con.read_parquet(f"{BASE_URL}/airports.parquet")
 
     airports = to_semantic_table(airports_tbl, name="airports").with_measures(
-        avg_elevation=lambda t: t.elevation.mean()
+        avg_elevation=lambda t: t.elevation.mean(),
     )
 
     result = (
@@ -27,7 +28,7 @@ def main():
         )
         .mutate(
             rank=ibis.row_number().over(
-                ibis.window(order_by=ibis.desc("avg_elevation"))
+                ibis.window(order_by=ibis.desc("avg_elevation")),
             ),
             is_other=_.rank > 4,
             state_grouped=ibis.cases((_.is_other, "OTHER"), else_=_.state),

@@ -10,8 +10,8 @@ This script showcases:
   - Rolling-window calculations
 """
 
-import pandas as pd
 import ibis
+import pandas as pd
 
 from boring_semantic_layer import to_semantic_table
 
@@ -26,7 +26,7 @@ def main():
         {
             "origin": ["A", "B", "A", "C", "B", "A"],
             "distance": [100, 200, 150, 120, 180, 130],
-        }
+        },
     )
     flights_tbl = con.create_table("flights", flights_df)
 
@@ -34,7 +34,8 @@ def main():
         to_semantic_table(flights_tbl, name="flights")
         .with_dimensions(origin=lambda t: t.origin)
         .with_measures(
-            flight_count=lambda t: t.count(), total_distance=lambda t: t.distance.sum()
+            flight_count=lambda t: t.count(),
+            total_distance=lambda t: t.distance.sum(),
         )
     )
 
@@ -58,14 +59,14 @@ def main():
             "customer_id": [1, 2, 3],
             "segment": ["A", "B", "A"],
             "monthly_spend": [100, 200, 150],
-        }
+        },
     )
     support_df = pd.DataFrame(
         {
             "case_id": [10, 11, 12],
             "customer_id": [1, 2, 3],
             "priority": ["high", "low", "high"],
-        }
+        },
     )
     marketing_tbl = con.create_table("marketing", marketing_df)
     support_tbl = con.create_table("support", support_df)
@@ -73,7 +74,8 @@ def main():
     marketing_st = (
         to_semantic_table(marketing_tbl, name="marketing")
         .with_dimensions(
-            customer_id=lambda t: t.customer_id, segment=lambda t: t.segment
+            customer_id=lambda t: t.customer_id,
+            segment=lambda t: t.segment,
         )
         .with_measures(avg_spend=lambda t: t.monthly_spend.mean())
     )
@@ -88,7 +90,9 @@ def main():
     )
 
     cross_team = marketing_st.join_one(
-        support_st, "customer_id", "customer_id"
+        support_st,
+        "customer_id",
+        "customer_id",
     ).with_measures(cases_per_spend=lambda t: t.case_count / t.avg_spend)
     df3 = cross_team.group_by("segment").aggregate("cases_per_spend").execute()
     print("\nCases per spend by segment:\n", df3)
@@ -99,7 +103,7 @@ def main():
         {
             "date": pd.date_range("2023-01-01", periods=6, freq="D"),
             "value": [10, 20, 30, 40, 50, 60],
-        }
+        },
     )
     ts_tbl = con.create_table("ts", ts_df)
     ts_st = (

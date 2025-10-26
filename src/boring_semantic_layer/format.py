@@ -37,7 +37,7 @@ def _format_semantic_table(op: SemanticTableOp, **kwargs):
             lines.append(f"  {num_dims} dimensions: {dims_preview}, ...")
         else:
             lines.append(
-                f"  {num_dims} dimension{'s' if num_dims != 1 else ''}: {dims_preview}"
+                f"  {num_dims} dimension{'s' if num_dims != 1 else ''}: {dims_preview}",
             )
 
     if all_measures:
@@ -48,7 +48,7 @@ def _format_semantic_table(op: SemanticTableOp, **kwargs):
             lines.append(f"  {num_measures} measures: {meas_preview}, ...")
         else:
             lines.append(
-                f"  {num_measures} measure{'s' if num_measures != 1 else ''}: {meas_preview}"
+                f"  {num_measures} measure{'s' if num_measures != 1 else ''}: {meas_preview}",
             )
 
     return "\n".join(lines)

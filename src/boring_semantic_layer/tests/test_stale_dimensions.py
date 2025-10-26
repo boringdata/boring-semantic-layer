@@ -3,10 +3,11 @@
 Test bracket-style filtering for joined and aggregated semantic tables.
 """
 
-import pandas as pd
 import ibis
+import pandas as pd
+
 from boring_semantic_layer import to_semantic_table
-from boring_semantic_layer.api import join_one, group_by_, aggregate_
+from boring_semantic_layer.api import aggregate_, group_by_, join_one
 
 
 def test_bracket_filter_after_join_and_aggregate():
@@ -19,20 +20,20 @@ def test_bracket_filter_after_join_and_aggregate():
             "order_id": [1, 2, 3],
             "customer_id": [101, 102, 103],
             "region": ["North", "South", "North"],
-        }
+        },
     )
     products_df = pd.DataFrame(
         {
             "product_id": [1, 2, 3],
             "order_id": [1, 2, 3],
             "price": [100, 200, 150],
-        }
+        },
     )
     customers_df = pd.DataFrame(
         {
             "customer_id": [101, 102, 103],
             "country": ["US", "UK", "US"],
-        }
+        },
     )
 
     con = ibis.duckdb.connect(":memory:")
@@ -52,12 +53,14 @@ def test_bracket_filter_after_join_and_aggregate():
     model_b = (
         to_semantic_table(products_tbl, name="products")
         .with_dimensions(
-            product_id=lambda t: t.product_id, order_id=lambda t: t.order_id
+            product_id=lambda t: t.product_id,
+            order_id=lambda t: t.order_id,
         )
         .with_measures(avg_price=lambda t: t.price.mean())
     )
     model_c = to_semantic_table(customers_tbl, name="customers").with_dimensions(
-        customer_id=lambda t: t.customer_id, country=lambda t: t.country
+        customer_id=lambda t: t.customer_id,
+        country=lambda t: t.country,
     )
 
     step1 = join_one(model_a, model_b, "order_id", "order_id")
