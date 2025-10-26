@@ -75,6 +75,25 @@ class SemanticTable(ir.Table):
         """Limit results."""
         return SemanticLimit(source=self.op(), n=n, offset=offset)
 
+    def unnest(self, column: str) -> SemanticUnnest:
+        """Unnest an array column, expanding rows.
+
+        This is useful for working with nested data structures like Google Analytics
+        sessions with nested hits, where you want to expand the array into separate rows.
+
+        Args:
+            column: Name of the array column to unnest
+
+        Returns:
+            SemanticUnnest expression with the array expanded into rows
+
+        Example:
+            >>> ga_sessions = to_semantic_table(ga_raw, name="ga")
+            >>> ga_with_hits = ga_sessions.unnest("hits")
+            >>> # Now each hit becomes its own row
+        """
+        return SemanticUnnest(source=self.op(), column=column)
+
     def pipe(self, func, *args, **kwargs):
         """Apply a function to self."""
         return func(self, *args, **kwargs)
@@ -786,6 +805,98 @@ class SemanticLimit(SemanticTable):
         raise ValueError("Cannot create chart: no aggregate found in query chain")
 
 
+class SemanticUnnest(SemanticTable):
+    """User-facing unnest expression wrapping SemanticUnnestOp Operation."""
+
+    def __init__(self, source: SemanticTableOp, column: str) -> None:
+        from .ops import SemanticUnnestOp
+
+        op = SemanticUnnestOp(source=source, column=column)
+        super().__init__(op)
+
+    @property
+    def source(self):
+        return self.op().source
+
+    @property
+    def column(self):
+        return self.op().column
+
+    @property
+    def values(self):
+        return self.op().values
+
+    @property
+    def schema(self):
+        return self.op().schema
+
+    def as_table(self) -> SemanticModel:
+        """Convert to SemanticModel, preserving semantic metadata from source."""
+        from .ops import _find_all_root_models, _get_merged_fields
+
+        all_roots = _find_all_root_models(self.source)
+        if all_roots:
+            return SemanticModel(
+                table=self.op().to_ibis(),
+                dimensions=_get_merged_fields(all_roots, "dims"),
+                measures=_get_merged_fields(all_roots, "measures"),
+                calc_measures=_get_merged_fields(all_roots, "calc_measures"),
+            )
+        else:
+            return SemanticModel(
+                table=self.op().to_ibis(),
+                dimensions={},
+                measures={},
+                calc_measures={},
+            )
+
+    def with_dimensions(self, **dims) -> SemanticModel:
+        """Add or update dimensions on the unnested table."""
+        from .ops import _find_all_root_models, _get_merged_fields
+
+        all_roots = _find_all_root_models(self.source)
+        existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
+        existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
+        existing_calc = _get_merged_fields(all_roots, "calc_measures") if all_roots else {}
+
+        return SemanticModel(
+            table=self,
+            dimensions={**existing_dims, **dims},
+            measures=existing_meas,
+            calc_measures=existing_calc,
+        )
+
+    def with_measures(self, **meas) -> SemanticModel:
+        """Add or update measures on the unnested table."""
+        from .measure_scope import MeasureScope
+        from .ops import _classify_measure, _find_all_root_models, _get_merged_fields
+
+        all_roots = _find_all_root_models(self.source)
+        existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
+        existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
+        existing_calc = _get_merged_fields(all_roots, "calc_measures") if all_roots else {}
+
+        # Process new measures through _classify_measure to extract metadata
+        new_base_meas = dict(existing_meas)
+        new_calc_meas = dict(existing_calc)
+
+        all_measure_names = (
+            tuple(new_base_meas.keys()) + tuple(new_calc_meas.keys()) + tuple(meas.keys())
+        )
+        scope = MeasureScope(_tbl=self, _known=all_measure_names)
+
+        for name, fn_or_expr in meas.items():
+            kind, value = _classify_measure(fn_or_expr, scope)
+            (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
+
+        return SemanticModel(
+            table=self,
+            dimensions=existing_dims,
+            measures=new_base_meas,
+            calc_measures=new_calc_meas,
+        )
+
+
 class SemanticMutate(SemanticTable):
     """User-facing mutate expression wrapping SemanticMutateOp Operation."""
 
@@ -818,6 +929,52 @@ class SemanticMutate(SemanticTable):
     def mutate(self, **post) -> SemanticMutate:
         """Add or update columns (supports chaining)."""
         return SemanticMutate(source=self.op(), post=post)
+
+    def with_dimensions(self, **dims) -> SemanticModel:
+        """Add or update dimensions after mutation."""
+        from .ops import _find_all_root_models, _get_merged_fields
+
+        all_roots = _find_all_root_models(self.source)
+        existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
+        existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
+        existing_calc = _get_merged_fields(all_roots, "calc_measures") if all_roots else {}
+
+        return SemanticModel(
+            table=self,
+            dimensions={**existing_dims, **dims},
+            measures=existing_meas,
+            calc_measures=existing_calc,
+        )
+
+    def with_measures(self, **meas) -> SemanticModel:
+        """Add or update measures after mutation."""
+        from .measure_scope import MeasureScope
+        from .ops import _classify_measure, _find_all_root_models, _get_merged_fields
+
+        all_roots = _find_all_root_models(self.source)
+        existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
+        existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
+        existing_calc = _get_merged_fields(all_roots, "calc_measures") if all_roots else {}
+
+        # Process new measures through _classify_measure to extract metadata
+        new_base_meas = dict(existing_meas)
+        new_calc_meas = dict(existing_calc)
+
+        all_measure_names = (
+            tuple(new_base_meas.keys()) + tuple(new_calc_meas.keys()) + tuple(meas.keys())
+        )
+        scope = MeasureScope(_tbl=self, _known=all_measure_names)
+
+        for name, fn_or_expr in meas.items():
+            kind, value = _classify_measure(fn_or_expr, scope)
+            (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
+
+        return SemanticModel(
+            table=self,
+            dimensions=existing_dims,
+            measures=new_base_meas,
+            calc_measures=new_calc_meas,
+        )
 
     def group_by(self, *keys: str) -> SemanticGroupBy:
         """Group by dimensions after mutation (enables re-aggregation).

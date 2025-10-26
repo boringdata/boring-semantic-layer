@@ -25,6 +25,7 @@ from boring_semantic_layer.ops import (
     SemanticOrderByOp,
     SemanticProjectOp,
     SemanticTableOp,
+    SemanticUnnestOp,
     _find_all_root_models,
 )
 
@@ -155,6 +156,83 @@ def _convert_ibis_project(op: IbisProject, catalog, *args):
 
 
 # ============================================================================
+# Helper functions for experimental nested access
+# ============================================================================
+
+
+def _process_nested_access_marker(marker, table):
+    """Convert NestedAccessMarker to actual Ibis expression with unnesting.
+
+    Args:
+        marker: NestedAccessMarker indicating what unnesting is needed
+        table: Base Ibis table
+
+    Returns:
+        Tuple of (unnested_table, ibis_expression)
+    """
+    from boring_semantic_layer.nested_access import NestedAccessMarker
+
+    if not isinstance(marker, NestedAccessMarker):
+        return (table, marker)
+
+    # Unnest all array columns in the path
+    unnested_tbl = table
+    for array_col in marker.array_path:
+        if array_col in unnested_tbl.columns:
+            unnested_tbl = unnested_tbl.unnest(array_col)
+
+    # Build expression accessing nested fields
+    if marker.field_path:
+        # Access the unnested array column (which is now a struct)
+        expr = getattr(unnested_tbl, marker.array_path[0])
+        # Navigate through struct fields
+        for field in marker.field_path:
+            expr = getattr(expr, field)
+    else:
+        # No field path - operate on the whole unnested table
+        expr = unnested_tbl
+
+    # Apply the aggregation operation
+    if marker.operation == "count":
+        return (unnested_tbl, unnested_tbl.count())
+    elif marker.operation == "sum":
+        return (unnested_tbl, expr.sum())
+    elif marker.operation == "mean":
+        return (unnested_tbl, expr.mean())
+    elif marker.operation == "min":
+        return (unnested_tbl, expr.min())
+    elif marker.operation == "max":
+        return (unnested_tbl, expr.max())
+    elif marker.operation == "nunique":
+        return (unnested_tbl, expr.nunique())
+    else:
+        raise ValueError(f"Unknown nested access operation: {marker.operation}")
+
+
+def _evaluate_measure_with_nested_access(measure_fn, table):
+    """Evaluate a measure function, detecting and handling NestedAccessMarkers.
+
+    Args:
+        measure_fn: Measure function (callable)
+        table: Base Ibis table
+
+    Returns:
+        Tuple of (unnested_table_or_none, ibis_expression)
+        If unnested_table is not None, the measure required unnesting
+    """
+    from boring_semantic_layer.nested_access import NestedAccessMarker
+
+    # Call the measure function
+    result = measure_fn(table)
+
+    # Check if it returned a NestedAccessMarker
+    if isinstance(result, NestedAccessMarker):
+        return _process_nested_access_marker(result, table)
+    else:
+        return (None, result)
+
+
+# ============================================================================
 # Semantic layer converters
 # ============================================================================
 
@@ -194,6 +272,7 @@ def _convert_semantic_project(node: SemanticProjectOp, catalog, *args):
     - Dimensions (potentially with aggregation if measures are also selected)
     - Measures (triggers aggregation)
     - Raw table columns
+    - Experimental: Automatic unnesting for NestedAccessMarker results
     """
     from boring_semantic_layer.ops import _get_merged_fields
 
@@ -210,18 +289,39 @@ def _convert_semantic_project(node: SemanticProjectOp, catalog, *args):
     meas = [f for f in node.fields if f in merged_measures]
     raw_fields = [f for f in node.fields if f not in merged_dimensions and f not in merged_measures]
 
+    # Evaluate dimension expressions
     dim_exprs = [merged_dimensions[name](tbl).name(name) for name in dims]
-    meas_exprs = [merged_measures[name](tbl).name(name) for name in meas]
-    raw_exprs = [getattr(tbl, name) for name in raw_fields if hasattr(tbl, name)]
+
+    # Evaluate measure expressions, checking for NestedAccessMarkers
+    meas_exprs = []
+    unnested_tbl = tbl  # Track if we need to unnest the table
+    needs_unnesting = False
+
+    for name in meas:
+        unnested, expr = _evaluate_measure_with_nested_access(merged_measures[name], tbl)
+        if unnested is not None:
+            # This measure needs unnesting - use the unnested table
+            unnested_tbl = unnested
+            needs_unnesting = True
+        meas_exprs.append(expr.name(name))
+
+    # Use unnested table if any measure needed it
+    active_tbl = unnested_tbl if needs_unnesting else tbl
+
+    # Re-evaluate dimensions on unnested table if needed
+    if needs_unnesting and dim_exprs:
+        dim_exprs = [merged_dimensions[name](active_tbl).name(name) for name in dims]
+
+    raw_exprs = [getattr(active_tbl, name) for name in raw_fields if hasattr(active_tbl, name)]
 
     return (
-        tbl.group_by(dim_exprs).aggregate(meas_exprs)
+        active_tbl.group_by(dim_exprs).aggregate(meas_exprs)
         if meas_exprs and dim_exprs
-        else tbl.aggregate(meas_exprs)
+        else active_tbl.aggregate(meas_exprs)
         if meas_exprs
-        else tbl.select(dim_exprs + raw_exprs)
+        else active_tbl.select(dim_exprs + raw_exprs)
         if dim_exprs or raw_exprs
-        else tbl
+        else active_tbl
     )
 
 
@@ -325,3 +425,41 @@ def _convert_semantic_limit(node: SemanticLimitOp, catalog, *args):
     """
     tbl = convert(node.source, catalog=catalog)
     return tbl.limit(node.n) if node.offset == 0 else tbl.limit(node.n, offset=node.offset)
+
+
+@convert.register(SemanticUnnestOp)
+def _convert_semantic_unnest(node: SemanticUnnestOp, catalog, *args):
+    """Convert SemanticUnnestOp to Ibis unnest.
+
+    Expands array column into separate rows, optionally unpacking struct fields.
+    """
+
+    def build_struct_fields(col_expr, col_type):
+        """Pure function: build dict of struct field selections."""
+        return {name: col_expr[name] for name in col_type.names}
+
+    def unpack_struct_if_needed(unnested_tbl, column_name):
+        """Conditionally unpack struct fields into top-level columns."""
+        if column_name not in unnested_tbl.columns:
+            return unnested_tbl
+
+        col_expr = unnested_tbl[column_name]
+        col_type = col_expr.type()
+
+        if hasattr(col_type, "fields") and col_type.fields:
+            struct_fields = build_struct_fields(col_expr, col_type)
+            return unnested_tbl.select(unnested_tbl, **struct_fields)
+
+        return unnested_tbl
+
+    tbl = convert(node.source, catalog=catalog)
+
+    if node.column not in tbl.columns:
+        raise ValueError(f"Column '{node.column}' not found in table")
+
+    try:
+        unnested = tbl.unnest(node.column)
+    except Exception as e:
+        raise ValueError(f"Failed to unnest column '{node.column}': {e}") from e
+
+    return unpack_struct_if_needed(unnested, node.column)

@@ -118,25 +118,80 @@ def _ensure_wrapped(fn: Any) -> _CallableWrapper:
     return fn if isinstance(fn, _CallableWrapper) else _CallableWrapper(fn)
 
 
+def _infer_locality(fn: Callable, table: Any) -> tuple[str | None, tuple[str, ...]]:
+    """Infer locality from the table's unnest operations.
+
+    Checks if the table is a SemanticUnnest operation and uses the unnested
+    column name as the locality. This is more reliable than bytecode analysis
+    since it reflects the actual data transformations.
+
+    Examples:
+        to_semantic_table(tbl).with_measures(...) -> (None, ())  # Session level
+        to_semantic_table(tbl).unnest("hits").with_measures(...) -> ("hits", ("hits",))
+        unnested.unnest("product").with_measures(...) -> ("product", ("product",))
+    """
+    # Check if table is a SemanticUnnest (has an operation with unnesting)
+    from .expr import SemanticUnnest
+
+    if isinstance(table, SemanticUnnest):
+        # Get the unnest operation from the expression
+        op = table.op()
+        if hasattr(op, "column"):
+            locality = op.column  # e.g., "hits"
+            requires_unnest = (op.column,)
+            return (locality, requires_unnest)
+
+    # No unnest operation found - base/session level
+    return (None, ())
+
+
 def _classify_measure(fn_or_expr: Any, scope: Any):
     from .measure_scope import AllOf, BinOp, ColumnScope, MeasureRef
 
-    # Handle dict inputs by extracting expr and description
+    # Handle dict inputs: extract expr (must be lambda/Deferred) and description
     if isinstance(fn_or_expr, dict):
         description = fn_or_expr.get("description")
-        fn_or_expr = fn_or_expr["expr"]
+        # locality and requires_unnest are internal-only, not user-facing
+        locality = fn_or_expr.get("locality")
+        requires_unnest = tuple(fn_or_expr.get("requires_unnest", []))
+        fn_or_expr = fn_or_expr["expr"]  # Extract the lambda/Deferred
     elif isinstance(fn_or_expr, Measure):
+        # Handle Measure objects (when copying/preserving existing measures)
         description = fn_or_expr.description
+        locality = fn_or_expr.locality
+        requires_unnest = fn_or_expr.requires_unnest
         fn_or_expr = fn_or_expr.expr
     else:
         description = None
+        locality = None
+        requires_unnest = ()
 
-    val = _resolve_expr(fn_or_expr, scope)
-    is_calc = isinstance(val, MeasureRef | AllOf | BinOp | int | float)
+    # Try to resolve the expression to see if it's a calculated measure
+    # If it fails (e.g., accessing nested arrays that need proxies), treat as base measure
+    try:
+        val = _resolve_expr(fn_or_expr, scope)
+        is_calc = isinstance(val, MeasureRef | AllOf | BinOp | int | float)
+    except (AttributeError, TypeError):
+        # Failed to resolve - likely needs proxy for nested access
+        # Treat as base measure
+        is_calc = False
+        val = None
 
     if is_calc:
         return ("calc", val)
     else:
+        # Infer locality if not explicitly provided
+        if locality is None and callable(fn_or_expr):
+            table = getattr(scope, "tbl", None)
+            if table is None:
+                table = getattr(scope, "_tbl", None)
+            if table is not None:
+                inferred_locality, inferred_unnest = _infer_locality(fn_or_expr, table)
+                if locality is None:
+                    locality = inferred_locality
+                if not requires_unnest:
+                    requires_unnest = inferred_unnest
+
         return (
             "base",
             Measure(
@@ -146,6 +201,8 @@ def _classify_measure(fn_or_expr: Any, scope: Any):
                     else fn(ColumnScope(_tbl=t))
                 ),
                 description=description,
+                locality=locality,
+                requires_unnest=requires_unnest,
             ),
         )
 
@@ -193,15 +250,22 @@ class Dimension:
 class Measure:
     expr: Callable[[ir.Table], ir.Value] | Deferred
     description: str | None = None
+    locality: str | None = None  # Internal: "session", "hit", "product", etc.
+    requires_unnest: tuple[str, ...] = ()  # Internal: Arrays that must be unnested
 
     def __call__(self, table: ir.Table) -> ir.Value:
         return self.expr.resolve(table) if isinstance(self.expr, Deferred) else self.expr(table)
 
     def to_json(self) -> Mapping[str, Any]:
-        return {"description": self.description}
+        base = {"description": self.description}
+        if self.locality:
+            base["locality"] = self.locality
+        if self.requires_unnest:
+            base["requires_unnest"] = list(self.requires_unnest)
+        return base
 
     def __hash__(self) -> int:
-        return hash(self.description)
+        return hash((self.description, self.locality, self.requires_unnest))
 
 
 class SemanticTableOp(Relation):
@@ -330,6 +394,8 @@ class SemanticProjectOp(Relation):
         return Schema({k: v.dtype for k, v in self.values.items()})
 
     def to_ibis(self):
+        from .nested_access import NestedAccessMarker
+
         all_roots = _find_all_root_models(self.source)
         tbl = _to_ibis(self.source)
 
@@ -346,17 +412,57 @@ class SemanticProjectOp(Relation):
         ]
 
         dim_exprs = [merged_dimensions[name](tbl).name(name) for name in dims]
-        meas_exprs = [merged_measures[name](tbl).name(name) for name in meas]
-        raw_exprs = [getattr(tbl, name) for name in raw_fields if hasattr(tbl, name)]
+
+        # Evaluate measures, checking for NestedAccessMarkers (experimental feature)
+        meas_exprs = []
+        unnested_tbl = tbl
+        needs_unnesting = False
+
+        for name in meas:
+            result = merged_measures[name](tbl)
+            if isinstance(result, NestedAccessMarker):
+                # Apply automatic unnesting
+                for array_col in result.array_path:
+                    if array_col in unnested_tbl.columns:
+                        unnested_tbl = unnested_tbl.unnest(array_col)
+                        needs_unnesting = True
+
+                # Build expression accessing nested fields
+                if result.field_path:
+                    expr = getattr(unnested_tbl, result.array_path[0])
+                    for field in result.field_path:
+                        expr = getattr(expr, field)
+                else:
+                    expr = unnested_tbl
+
+                # Apply aggregation
+                if result.operation == "count":
+                    meas_exprs.append(unnested_tbl.count().name(name))
+                elif result.operation in ("sum", "mean", "min", "max", "nunique"):
+                    agg_fn = getattr(expr, result.operation)
+                    meas_exprs.append(agg_fn().name(name))
+                else:
+                    raise ValueError(f"Unknown operation: {result.operation}")
+            else:
+                meas_exprs.append(result.name(name))
+
+        # Use unnested table if needed
+        active_tbl = unnested_tbl if needs_unnesting else tbl
+
+        # Re-evaluate dimensions on unnested table if needed
+        if needs_unnesting and dim_exprs:
+            dim_exprs = [merged_dimensions[name](active_tbl).name(name) for name in dims]
+
+        raw_exprs = [getattr(active_tbl, name) for name in raw_fields if hasattr(active_tbl, name)]
 
         return (
-            tbl.group_by(dim_exprs).aggregate(meas_exprs)
+            active_tbl.group_by(dim_exprs).aggregate(meas_exprs)
             if meas_exprs and dim_exprs
-            else tbl.aggregate(meas_exprs)
+            else active_tbl.aggregate(meas_exprs)
             if meas_exprs
-            else tbl.select(dim_exprs + raw_exprs)
+            else active_tbl.select(dim_exprs + raw_exprs)
             if dim_exprs or raw_exprs
-            else tbl
+            else active_tbl
         )
 
 

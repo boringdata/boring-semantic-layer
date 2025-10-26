@@ -139,6 +139,15 @@ class ColumnScope:
             raise AttributeError(
                 f"'{type(self).__name__}' object has no attribute '{name}'",
             )
+
+        # Experimental: wrap with NestedTableProxy for automatic unnesting
+        # Check if this is an array column - if so, return a proxy that captures access
+        from .nested_access import create_table_proxy, is_array_column
+
+        if is_array_column(self.tbl, name):
+            proxy = create_table_proxy(self.tbl)
+            return getattr(proxy, name)
+
         return getattr(self.tbl, name)
 
     def __getitem__(self, name: str):

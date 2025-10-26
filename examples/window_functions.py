@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Window Functions - Rolling Averages, Rankings, Running Totals.
-https://docs.malloydata.dev/documentation/patterns/moving_avg
-"""
+"""Window Functions - Rolling Averages, Rankings, Running Totals, and t.all()."""
 
 import ibis
+from ibis import _
 
 from boring_semantic_layer import to_semantic_table
 
@@ -46,10 +45,36 @@ def main():
         .execute()
     )
 
-    print("\nDaily WN flights with window functions:")
-    print(
-        result[["flight_date", "flight_count", "rolling_avg", "rank", "running_total"]],
+    flights_with_share = flights.with_measures(
+        percent_of_total=lambda t: (t.flight_count / t.all(t.flight_count)) * 100,
     )
+
+    result = (
+        flights_with_share.group_by("carrier")
+        .aggregate("flight_count", "percent_of_total")
+        .order_by(_.percent_of_total.desc())
+        .limit(10)
+        .execute()
+    )
+
+    print("\n using t.all():")
+    print(result)
+
+    carrier_stats = flights.group_by("carrier").aggregate("flight_count")
+
+    result = (
+        carrier_stats.mutate(
+            total_flights=lambda t: t.flight_count.sum().over(ibis.window()),
+            percent_manual=lambda t: (t.flight_count / t.flight_count.sum().over(ibis.window()))
+            * 100,
+        )
+        .order_by(_.percent_manual.desc())
+        .limit(10)
+        .execute()
+    )
+
+    print("\n window functions:")
+    print(result)
 
 
 if __name__ == "__main__":

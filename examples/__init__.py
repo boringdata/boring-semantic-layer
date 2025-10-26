@@ -12,4 +12,5 @@ DATASETS = {
     "aircraft_models": f"{BASE_URL}/aircraft_models.parquet",
     "products": f"{BASE_URL}/products.parquet",
     "inventory_items": f"{BASE_URL}/inventory_items.parquet",
+    "ga_sample": f"{BASE_URL}/ga_sample.parquet",  # Google Analytics sample with nested data
 }
