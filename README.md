@@ -623,6 +623,64 @@ result = (
 - Use simple column names (`name`, `flight_count`) when there's no conflict
 - Use prefixed names (`carriers.name`, `flights.flight_count`) only when needed to resolve ambiguity
 
+**Automatic Ibis-Level Column Prefixing:**
+
+For use cases where you need to work directly with the underlying Ibis table (e.g., when exporting to SQL or integrating with other tools), BSL supports automatic column prefixing at the Ibis level. This is particularly useful when you have multiple joins with overlapping column names:
+
+```python
+# Enable Ibis-level column prefixing
+flights_with_carriers = flights.join_one(
+    carriers,
+    left_on="carrier",
+    right_on="code",
+    lname="",  # Left table columns unprefixed
+    # Right table columns automatically prefixed with table name (e.g., "carriers_name")
+)
+
+# Result Ibis columns: carrier, origin, destination, carriers_code, carriers_name, carriers_nickname
+ibis_result = flights_with_carriers.to_ibis()
+```
+
+**Custom prefixes:**
+```python
+# Use custom format strings for prefixes
+joined = orders.join_one(
+    customers,
+    left_on="customer_id",
+    right_on="customer_id",
+    lname="o_{name}",  # Prefix left columns with "o_"
+    rname="c_{name}",  # Prefix right columns with "c_"
+)
+
+# Result columns: o_order_id, o_customer_id, c_customer_id, c_name, c_country
+```
+
+**Multiple joins without collisions:**
+```python
+# Chain joins with automatic prefixing to avoid column name collisions
+result = (
+    orders.join_one(customers, ..., lname="")  # customers_* columns
+    .join_many(items, ..., lname="")           # items_* columns
+    .to_ibis()
+)
+
+# All columns uniquely named at the Ibis level
+```
+
+**When to use Ibis-level prefixing:**
+- ✅ Working directly with Ibis expressions (e.g., `.to_ibis()`)
+- ✅ Exporting to SQL or integrating with other tools
+- ✅ Multiple joins with overlapping column names
+- ✅ Need explicit control over column naming
+
+**When to use semantic-level prefixing:**
+- ✅ Using BSL's semantic layer features (dimensions, measures)
+- ✅ Working with aggregations and group_by operations
+- ✅ Leveraging BSL's metadata and descriptions
+- ✅ Standard analytical queries within BSL
+
+**Note:** Ibis-level prefixing is opt-in and only applies when you explicitly provide `lname` or `rname` parameters. By default, BSL uses semantic-level prefixing which works seamlessly with dimensions and measures.
+
 #### join_many (One-to-Many Relationships)
 
 Use `join_many()` for one-to-many relationships:
@@ -1297,18 +1355,52 @@ df = result.execute()
 
 **join_one (many-to-one):**
 ```python
-joined = table.join_one(other_table, left_on="carrier", right_on="code")
+joined = table.join_one(
+    other_table,
+    left_on="carrier",
+    right_on="code",
+    lname=None,  # Optional: format string for left columns (e.g., "", "left_{name}")
+    rname=None   # Optional: format string for right columns (auto-derives from table name if lname is set)
+)
 ```
 
 **join_many (one-to-many):**
 ```python
-joined = table.join_many(other_table, left_on="customer_id", right_on="customer_id")
+joined = table.join_many(
+    other_table,
+    left_on="customer_id",
+    right_on="customer_id",
+    lname=None,  # Optional: format string for left columns
+    rname=None   # Optional: format string for right columns
+)
+```
+
+**join (flexible):**
+```python
+joined = table.join(
+    other_table,
+    on=lambda left, right: left.column == right.column,
+    how="inner",  # "inner", "left", "right", "outer", "cross"
+    lname=None,   # Optional: format string for left columns
+    rname=None    # Optional: format string for right columns
+)
 ```
 
 **join_cross:**
 ```python
-joined = table.join_cross(other_table)
+joined = table.join_cross(
+    other_table,
+    lname=None,  # Optional: format string for left columns
+    rname=None   # Optional: format string for right columns
+)
 ```
+
+**Column prefixing parameters:**
+- `lname`: Optional format string for renaming left table columns (e.g., `""`, `"left_{name}"`)
+- `rname`: Optional format string for renaming right table columns (e.g., `"right_{name}"`)
+- If `lname` is provided but `rname` is not, `rname` auto-derives from the semantic table name
+- Prefixing only applies when explicitly requested (opt-in behavior)
+- Use `{name}` placeholder in the format string to reference the original column name
 
 ### YAML Configuration Reference
 
