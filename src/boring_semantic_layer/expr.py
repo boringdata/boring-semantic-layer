@@ -119,11 +119,12 @@ def _create_dimension(expr: Dimension | Callable | dict) -> Dimension:
 
 def _derive_name(table: Any) -> str | None:
     """Derive table name from table expression."""
-    try:
-        table_expr = table.to_expr() if hasattr(table, "to_expr") else table
-        return table_expr.get_name() if hasattr(table_expr, "get_name") else None
-    except Exception:
-        return None
+    from .utils import try_result
+
+    result = try_result(lambda: (table.to_expr() if hasattr(table, "to_expr") else table)).flatmap(
+        lambda t: try_result(lambda: t.get_name() if hasattr(t, "get_name") else None)
+    )
+    return result.unwrap_or(None)
 
 
 class SemanticModel(SemanticTable):
@@ -146,6 +147,7 @@ class SemanticModel(SemanticTable):
         measures: Mapping[str, Measure | Callable] | None = None,
         calc_measures: Mapping[str, Any] | None = None,
         name: str | None = None,
+        _source_join: Any | None = None,  # Internal: track source join for optimization
     ) -> None:
         """Create a semantic table with dimensions and measures.
 
@@ -155,6 +157,7 @@ class SemanticModel(SemanticTable):
             measures: Measure definitions (Measure or Callable)
             calc_measures: Calculated measure expressions
             name: Optional table name
+            _source_join: Internal parameter to track source join operation
         """
         # Transform flexible inputs to strict types
         dims = FrozenDict(
@@ -183,6 +186,7 @@ class SemanticModel(SemanticTable):
             measures=meas,
             calc_measures=calc_meas,
             name=derived_name,
+            _source_join=_source_join,  # Pass through for optimization
         )
 
         # Initialize parent Table class with our operation

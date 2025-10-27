@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from operator import methodcaller
 from typing import TYPE_CHECKING, Any
 
-from attrs import frozen
+from attrs import field, frozen
 from ibis.common.collections import FrozenDict, FrozenOrderedDict
 from ibis.common.deferred import Deferred
 from ibis.expr import types as ir
@@ -121,90 +121,92 @@ def _ensure_wrapped(fn: Any) -> _CallableWrapper:
 def _infer_locality(fn: Callable, table: Any) -> tuple[str | None, tuple[str, ...]]:
     """Infer locality from the table's unnest operations.
 
-    Checks if the table is a SemanticUnnest operation and uses the unnested
-    column name as the locality. This is more reliable than bytecode analysis
-    since it reflects the actual data transformations.
-
     Examples:
         to_semantic_table(tbl).with_measures(...) -> (None, ())  # Session level
         to_semantic_table(tbl).unnest("hits").with_measures(...) -> ("hits", ("hits",))
         unnested.unnest("product").with_measures(...) -> ("product", ("product",))
     """
-    # Check if table is a SemanticUnnest (has an operation with unnesting)
     from .expr import SemanticUnnest
 
     if isinstance(table, SemanticUnnest):
-        # Get the unnest operation from the expression
         op = table.op()
         if hasattr(op, "column"):
             locality = op.column  # e.g., "hits"
             requires_unnest = (op.column,)
             return (locality, requires_unnest)
 
-    # No unnest operation found - base/session level
     return (None, ())
 
 
-def _classify_measure(fn_or_expr: Any, scope: Any):
-    from .measure_scope import AllOf, BinOp, ColumnScope, MeasureRef
-
-    # Handle dict inputs: extract expr (must be lambda/Deferred) and description
+def _extract_measure_metadata(fn_or_expr: Any) -> tuple[Any, str | None, str | None, tuple]:
+    """Extract metadata from various measure representations."""
     if isinstance(fn_or_expr, dict):
-        description = fn_or_expr.get("description")
-        # locality and requires_unnest are internal-only, not user-facing
-        locality = fn_or_expr.get("locality")
-        requires_unnest = tuple(fn_or_expr.get("requires_unnest", []))
-        fn_or_expr = fn_or_expr["expr"]  # Extract the lambda/Deferred
-    elif isinstance(fn_or_expr, Measure):
-        # Handle Measure objects (when copying/preserving existing measures)
-        description = fn_or_expr.description
-        locality = fn_or_expr.locality
-        requires_unnest = fn_or_expr.requires_unnest
-        fn_or_expr = fn_or_expr.expr
-    else:
-        description = None
-        locality = None
-        requires_unnest = ()
-
-    # Try to resolve the expression to see if it's a calculated measure
-    # If it fails (e.g., accessing nested arrays that need proxies), treat as base measure
-    try:
-        val = _resolve_expr(fn_or_expr, scope)
-        is_calc = isinstance(val, MeasureRef | AllOf | BinOp | int | float)
-    except (AttributeError, TypeError):
-        # Failed to resolve - likely needs proxy for nested access
-        # Treat as base measure
-        is_calc = False
-        val = None
-
-    if is_calc:
-        return ("calc", val)
-    else:
-        # Infer locality if not explicitly provided
-        if locality is None and callable(fn_or_expr):
-            table = getattr(scope, "tbl", None)
-            if table is None:
-                table = getattr(scope, "_tbl", None)
-            if table is not None:
-                inferred_locality, inferred_unnest = _infer_locality(fn_or_expr, table)
-                if locality is None:
-                    locality = inferred_locality
-                if not requires_unnest:
-                    requires_unnest = inferred_unnest
-
         return (
-            "base",
-            Measure(
-                expr=lambda t, fn=fn_or_expr: (
-                    fn.resolve(ColumnScope(_tbl=t))
-                    if isinstance(fn, Deferred)
-                    else fn(ColumnScope(_tbl=t))
-                ),
-                description=description,
-                locality=locality,
-                requires_unnest=requires_unnest,
-            ),
+            fn_or_expr["expr"],
+            fn_or_expr.get("description"),
+            fn_or_expr.get("locality"),
+            tuple(fn_or_expr.get("requires_unnest", [])),
         )
+    elif isinstance(fn_or_expr, Measure):
+        return (
+            fn_or_expr.expr,
+            fn_or_expr.description,
+            fn_or_expr.locality,
+            fn_or_expr.requires_unnest,
+        )
+    else:
+        return (fn_or_expr, None, None, ())
+
+
+def _is_calculated_measure(val: Any) -> bool:
+    """Check if value represents a calculated measure."""
+    from .measure_scope import AllOf, BinOp, MeasureRef
+
+    return isinstance(val, MeasureRef | AllOf | BinOp | int | float)
+
+
+def _make_base_measure(
+    expr: Any,
+    description: str | None,
+    locality: str | None,
+    requires_unnest: tuple,
+) -> Measure:
+    """Create a base measure with proper callable wrapping."""
+    from .measure_scope import ColumnScope
+
+    return Measure(
+        expr=lambda t, fn=expr: (
+            fn.resolve(ColumnScope(_tbl=t)) if isinstance(fn, Deferred) else fn(ColumnScope(_tbl=t))
+        ),
+        description=description,
+        locality=locality,
+        requires_unnest=requires_unnest,
+    )
+
+
+def _classify_measure(fn_or_expr: Any, scope: Any) -> tuple[str, Any]:
+    """Classify measure as 'calc' or 'base' with appropriate handling."""
+    from .utils import try_result
+
+    expr, description, locality, requires_unnest = _extract_measure_metadata(fn_or_expr)
+
+    resolved = try_result(lambda: _resolve_expr(expr, scope)).map(
+        lambda val: ("calc", val) if _is_calculated_measure(val) else None
+    )
+
+    if resolved.is_success() and resolved.value is not None:
+        return resolved.value
+
+    if locality is None and callable(expr):
+        table = getattr(scope, "tbl", None)
+        if table is None:
+            table = getattr(scope, "_tbl", None)
+        if table is not None:
+            inferred_locality, inferred_unnest = _infer_locality(expr, table)
+            locality = locality or inferred_locality
+            requires_unnest = requires_unnest or inferred_unnest
+
+    return ("base", _make_base_measure(expr, description, locality, requires_unnest))
 
 
 def _build_json_definition(
@@ -279,6 +281,7 @@ class SemanticTableOp(Relation):
     measures: FrozenDict[str, Measure]
     calc_measures: FrozenDict[str, Any]
     name: str | None = None
+    _source_join: Any = None  # Track if this wraps a join (SemanticJoinOp) for optimization
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -543,12 +546,170 @@ class SemanticAggregateOp(Relation):
     def measures(self) -> tuple[str, ...]:
         return ()
 
+    def get_required_columns(self) -> dict[str, set[str]]:
+        """Compute columns required by this aggregation operation."""
+        from . import projection_utils
+
+        all_roots = _find_all_root_models(self.source)
+        merged_dimensions = _get_merged_fields(all_roots, "dimensions")
+
+        # Get base table for column extraction
+        base_tbl = (
+            self.source.to_expr() if hasattr(self.source, "to_expr") else _to_ibis(self.source)
+        )
+
+        # Get table names - handle case where root has _source_join (wrapper table from .with_measures())
+        # In this case, we need to look at the underlying join's tables
+        table_names = []
+        for root in all_roots:
+            if root.name:
+                table_names.append(root.name)
+            elif hasattr(root, "_source_join") and root._source_join is not None:
+                # This root is a wrapper table - get names from the underlying join
+                join_roots = _find_all_root_models(root._source_join)
+                table_names.extend([r.name for r in join_roots if r.name])
+
+        # Extract requirements from keys using projection_utils module
+        key_requirements = projection_utils.extract_requirements_from_keys(
+            keys=list(self.keys),
+            dimensions=merged_dimensions,
+            table=base_tbl,
+            table_names=table_names,
+        )
+
+        # Extract requirements from measures using projection_utils module
+        measure_requirements = projection_utils.extract_requirements_from_measures(
+            measures={name: _unwrap(fn) for name, fn in self.aggs.items()},
+            table=base_tbl,
+            table_names=table_names,
+        )
+
+        # Merge requirements (immutable operation)
+        combined = key_requirements.merge(measure_requirements)
+
+        # If the source has its own column requirements (e.g., SemanticMutateOp),
+        # merge those in as well
+        if hasattr(self.source, "get_required_columns"):
+            source_requirements = self.source.get_required_columns()
+            source_reqs = projection_utils.TableRequirements.from_dict(source_requirements)
+            combined = combined.merge(source_reqs)
+
+        # Convert to mutable dict for API compatibility
+        return combined.to_dict()
+
     def to_ibis(self):
         from .compile_all import compile_grouped_with_all
         from .measure_scope import AllOf, BinOp, ColumnScope, MeasureRef, MeasureScope
 
         all_roots = _find_all_root_models(self.source)
-        tbl = _to_ibis(self.source)
+
+        # Check if there's a join anywhere in the operation tree
+        def find_join_in_tree(node):
+            """Find a SemanticJoinOp in the operation tree."""
+            if isinstance(node, SemanticJoinOp):
+                return node
+            if hasattr(node, "source") and node.source is not None:
+                return find_join_in_tree(node.source)
+            return None
+
+        # Apply projection pushdown if there's a join in the tree
+        join_op = find_join_in_tree(self.source)
+
+        # Also check if a grouped table wraps a join
+        if join_op is None and isinstance(self.source, SemanticGroupByOp):
+            grouped_source = self.source.source
+            if isinstance(grouped_source, SemanticTableOp) and hasattr(
+                grouped_source, "_source_join"
+            ):
+                join_op = grouped_source._source_join
+
+        if join_op is not None:
+            # Apply projection pushdown optimization using projection_utils module
+            from . import projection_utils
+            from .config import options
+
+            # Check if projection pushdown optimization is enabled
+            if not options.rewrites.enable_projection_pushdown:
+                # Optimization disabled - convert join without projection pushdown
+                tbl = join_op.to_ibis(required_columns=None)
+            else:
+                # Compute initial required columns from query operations
+                required_cols_dict = self.get_required_columns()
+                required_cols = projection_utils.TableRequirements.from_dict(required_cols_dict)
+
+                # Collect ALL leaf tables from the join tree (handles nested joins)
+                def collect_leaf_tables(node):
+                    """Recursively collect all leaf (non-join) tables with their names and Ibis representations."""
+                    if isinstance(node, SemanticJoinOp):
+                        left_tables = collect_leaf_tables(node.left)
+                        right_tables = collect_leaf_tables(node.right)
+                        return left_tables + right_tables
+                    else:
+                        # Leaf table
+                        table_name = node.name if hasattr(node, "name") else None
+                        if table_name:
+                            return [(table_name, _to_ibis(node))]
+                        return []
+
+                leaf_tables = collect_leaf_tables(join_op)
+
+                # Group measures by table name
+                measures_by_table = {}
+                for root in all_roots:
+                    root_measures = _get_field_dict(root, "measures")
+
+                    if root.name:
+                        # Root has a name - group under that name
+                        measures_by_table[root.name] = root_measures
+                    else:
+                        # Root has no name (joined table) - parse prefixed measure names
+                        # E.g., "marketing.avg_monthly_spend" -> add to "marketing" measures
+                        for measure_name, measure_obj in root_measures.items():
+                            if "." in measure_name:
+                                table_name = measure_name.split(".", 1)[0]
+                                if table_name not in measures_by_table:
+                                    measures_by_table[table_name] = {}
+                                measures_by_table[table_name][measure_name] = measure_obj
+
+                # For each leaf table, extract specific columns needed by its measures
+                # Note: We include columns for ALL measures defined on a table, not just measures
+                # used in this specific query. This is a conservative approach that ensures correctness.
+                # Future optimization: track which measures are actually referenced and only include
+                # columns for those specific measures.
+                for table_name, table_ibis in leaf_tables:
+                    if table_name in measures_by_table:
+                        table_measures = measures_by_table[table_name]
+
+                        for _measure_name, measure_obj in table_measures.items():
+                            measure_fn = (
+                                measure_obj.expr if hasattr(measure_obj, "expr") else measure_obj
+                            )
+
+                            if not callable(measure_fn):
+                                continue
+
+                            try:
+                                # Extract the specific columns this measure uses
+                                measure_columns = (
+                                    projection_utils.extract_columns_from_callable_safe(
+                                        measure_fn, table_ibis
+                                    )
+                                )
+                                if measure_columns:
+                                    # Add these columns to the requirements for this table
+                                    required_cols = required_cols.add_columns(
+                                        table_name, measure_columns
+                                    )
+                            except Exception:
+                                # If extraction fails, be conservative and include all columns
+                                required_cols = projection_utils.include_all_columns_for_table(
+                                    required_cols, table_ibis, table_name
+                                )
+
+                # Convert join with optimization
+                tbl = join_op.to_ibis(required_columns=required_cols.to_dict())
+        else:
+            tbl = _to_ibis(self.source)
 
         # Check if we're aggregating after a prior aggregation (post-aggregation context)
         # This happens when SemanticMutateOp comes after a SemanticAggregateOp
@@ -684,6 +845,49 @@ class SemanticMutateOp(Relation):
     @property
     def schema(self) -> Schema:
         return self.source.schema
+
+    def get_required_columns(self) -> dict[str, set[str]]:
+        """Extract column requirements from mutate operations."""
+        from . import projection_utils
+
+        all_roots = _find_all_root_models(self.source)
+        table_names = [root.name for root in all_roots if root.name]
+
+        base_tbl = (
+            self.source.to_expr() if hasattr(self.source, "to_expr") else _to_ibis(self.source)
+        )
+
+        from .utils import try_result
+
+        def process_mutation(
+            reqs: projection_utils.TableRequirements, fn_wrapped: Any
+        ) -> projection_utils.TableRequirements:
+            """Process single mutation, extracting column requirements."""
+            return (
+                try_result(lambda: _unwrap(fn_wrapped))
+                .flatmap(lambda fn: projection_utils.extract_columns_from_callable(fn, base_tbl))
+                .map(
+                    lambda cols: projection_utils._apply_requirements_to_tables(
+                        reqs, table_names, cols
+                    )
+                    if cols
+                    else reqs
+                )
+                .unwrap_or_else(
+                    lambda: projection_utils.include_all_columns_for_table(
+                        reqs, base_tbl, table_names[0]
+                    )
+                    if table_names
+                    else reqs
+                )
+            )
+
+        from functools import reduce
+
+        requirements = reduce(
+            process_mutation, self.post.values(), projection_utils.TableRequirements.empty()
+        )
+        return requirements.to_dict()
 
     def to_ibis(self):
         from .measure_scope import MeasureScope
@@ -881,6 +1085,7 @@ class SemanticJoinOp(Relation):
             measures=new_base,
             calc_measures=new_calc,
             name=None,
+            _source_join=self,  # Pass join reference for projection pushdown
         )
 
     def group_by(self, *keys: str) -> SemanticGroupBy:
@@ -940,11 +1145,240 @@ class SemanticJoinOp(Relation):
     ) -> SemanticIndexOp:
         return SemanticIndexOp(source=self, selector=selector, by=by, sample=sample)
 
-    def to_ibis(self):
+    def _collect_leaf_table_names(self) -> set[str]:
+        """Collect names of all leaf (base) tables in this join tree."""
+        tables = set()
+
+        if isinstance(self.left, SemanticJoinOp):
+            tables |= self.left._collect_leaf_table_names()
+        else:
+            left_name = self.left.name if hasattr(self.left, "name") else None
+            if left_name:
+                tables.add(left_name)
+
+        if isinstance(self.right, SemanticJoinOp):
+            tables |= self.right._collect_leaf_table_names()
+        else:
+            right_name = self.right.name if hasattr(self.right, "name") else None
+            if right_name:
+                tables.add(right_name)
+
+        return tables
+
+    def _get_leaf_table_by_name(self, join_op: SemanticJoinOp, target_name: str):
+        """Find a leaf table by name in a join tree."""
+        if isinstance(join_op.left, SemanticJoinOp):
+            result = self._get_leaf_table_by_name(join_op.left, target_name)
+            if result is not None:
+                return result
+        else:
+            left_name = join_op.left.name if hasattr(join_op.left, "name") else None
+            if left_name == target_name:
+                return join_op.left
+
+        if isinstance(join_op.right, SemanticJoinOp):
+            result = self._get_leaf_table_by_name(join_op.right, target_name)
+            if result is not None:
+                return result
+        else:
+            right_name = join_op.right.name if hasattr(join_op.right, "name") else None
+            if right_name == target_name:
+                return join_op.right
+
+        return None
+
+    def _collect_join_keys_for_leaves(self) -> dict[str, set[str]]:
+        """Collect join keys needed by each leaf table.
+
+        For nested joins, we trace join keys back to their source leaf tables.
+        Returns dict mapping leaf table names to sets of columns needed for joins.
+        """
+        join_columns: dict[str, set[str]] = {}
+
+        # Recursively collect from nested joins
+        if isinstance(self.left, SemanticJoinOp):
+            nested_keys = self.left._collect_join_keys_for_leaves()
+            for table_name, cols in nested_keys.items():
+                existing = join_columns.get(table_name, set())
+                join_columns[table_name] = existing | cols
+
+        if isinstance(self.right, SemanticJoinOp):
+            nested_keys = self.right._collect_join_keys_for_leaves()
+            for table_name, cols in nested_keys.items():
+                existing = join_columns.get(table_name, set())
+                join_columns[table_name] = existing | cols
+
+        # Add join keys for THIS level
+        if self.on is not None:
+            # Convert without projection to get full schema
+            temp_left = (
+                self.left.to_ibis(required_columns=None)
+                if isinstance(self.left, SemanticJoinOp)
+                else _to_ibis(self.left)
+            )
+            temp_right = (
+                self.right.to_ibis(required_columns=None)
+                if isinstance(self.right, SemanticJoinOp)
+                else _to_ibis(self.right)
+            )
+
+            join_keys = _extract_join_key_columns(self.on, temp_left, temp_right)
+
+            if join_keys.is_success():
+                # Add join keys to the appropriate leaf tables
+                if not isinstance(self.left, SemanticJoinOp):
+                    # Left is a leaf table
+                    left_name = self.left.name if hasattr(self.left, "name") else None
+                    if left_name:
+                        existing = join_columns.get(left_name, set())
+                        join_columns[left_name] = existing | join_keys.left_columns
+                else:
+                    # Left is a nested join - need to map columns back to source tables
+                    # Get all leaf tables from the nested join and their schemas
+                    left_leaves = self.left._collect_leaf_table_names()
+                    for col in join_keys.left_columns:
+                        # Add column to each leaf table that actually has this column
+                        for table_name in left_leaves:
+                            if table_name:
+                                # Check if this table actually has this column
+                                # We do this by converting the table and checking its schema
+                                leaf_table = self._get_leaf_table_by_name(self.left, table_name)
+                                if leaf_table is not None:
+                                    leaf_ibis = _to_ibis(leaf_table)
+                                    if col in leaf_ibis.columns:
+                                        existing = join_columns.get(table_name, set())
+                                        join_columns[table_name] = existing | {col}
+
+                if not isinstance(self.right, SemanticJoinOp):
+                    # Right is a leaf table
+                    right_name = self.right.name if hasattr(self.right, "name") else None
+                    if right_name:
+                        existing = join_columns.get(right_name, set())
+                        join_columns[right_name] = existing | join_keys.right_columns
+                else:
+                    # Right is a nested join
+                    right_leaves = self.right._collect_leaf_table_names()
+                    for col in join_keys.right_columns:
+                        for table_name in right_leaves:
+                            if table_name:
+                                leaf_table = self._get_leaf_table_by_name(self.right, table_name)
+                                if leaf_table is not None:
+                                    leaf_ibis = _to_ibis(leaf_table)
+                                    if col in leaf_ibis.columns:
+                                        existing = join_columns.get(table_name, set())
+                                        join_columns[table_name] = existing | {col}
+
+        return join_columns
+
+    def to_ibis(self, required_columns: dict[str, set[str]] | None = None):
+        """Convert join to Ibis expression with optional projection pushdown.
+
+        Uses top-down requirement propagation for n-way joins:
+        1. At each join level, extract join keys needed for THIS join
+        2. Add join keys to requirements for respective subtrees
+        3. Recursively propagate augmented requirements down
+        4. Apply projections only at leaf tables
+
+        Args:
+            required_columns: Optional dict mapping table names to required column sets.
+                If provided, only these columns will be selected before joining.
+
+        Returns:
+            Ibis join expression
+        """
         from .convert import _Resolver
 
-        left_tbl = _to_ibis(self.left)
-        right_tbl = _to_ibis(self.right)
+        # If column requirements are specified, use top-down propagation
+        if required_columns is not None and self.on is not None:
+            # Step 1: Extract join keys for THIS level by temporarily converting without projection
+            temp_left = (
+                self.left.to_ibis(required_columns=None)
+                if isinstance(self.left, SemanticJoinOp)
+                else _to_ibis(self.left)
+            )
+            temp_right = (
+                self.right.to_ibis(required_columns=None)
+                if isinstance(self.right, SemanticJoinOp)
+                else _to_ibis(self.right)
+            )
+
+            join_keys_result = _extract_join_key_columns(self.on, temp_left, temp_right)
+
+            if join_keys_result.is_success():
+                # Step 2: Augment requirements with join keys for subtrees
+                augmented_requirements = dict(required_columns)
+
+                # Add join keys to appropriate tables/subtrees
+                # For nested joins, we need to trace which leaf tables these columns belong to
+                if isinstance(self.left, SemanticJoinOp):
+                    # Left is nested - distribute join keys to relevant leaf tables
+                    for col in join_keys_result.left_columns:
+                        # Find which leaf table(s) have this column
+                        for leaf_name in self.left._collect_leaf_table_names():
+                            leaf_table = self._get_leaf_table_by_name(self.left, leaf_name)
+                            if leaf_table is not None:
+                                leaf_ibis = _to_ibis(leaf_table)
+                                if col in leaf_ibis.columns:
+                                    existing = augmented_requirements.get(leaf_name, set())
+                                    augmented_requirements[leaf_name] = existing | {col}
+                else:
+                    # Left is a leaf table
+                    left_name = self.left.name if hasattr(self.left, "name") else None
+                    if left_name:
+                        existing = augmented_requirements.get(left_name, set())
+                        augmented_requirements[left_name] = existing | join_keys_result.left_columns
+
+                if isinstance(self.right, SemanticJoinOp):
+                    # Right is nested - distribute join keys to relevant leaf tables
+                    for col in join_keys_result.right_columns:
+                        for leaf_name in self.right._collect_leaf_table_names():
+                            leaf_table = self._get_leaf_table_by_name(self.right, leaf_name)
+                            if leaf_table is not None:
+                                leaf_ibis = _to_ibis(leaf_table)
+                                if col in leaf_ibis.columns:
+                                    existing = augmented_requirements.get(leaf_name, set())
+                                    augmented_requirements[leaf_name] = existing | {col}
+                else:
+                    # Right is a leaf table
+                    right_name = self.right.name if hasattr(self.right, "name") else None
+                    if right_name:
+                        existing = augmented_requirements.get(right_name, set())
+                        augmented_requirements[right_name] = (
+                            existing | join_keys_result.right_columns
+                        )
+
+                # Step 3: Recursively convert subtrees with augmented requirements
+                if isinstance(self.left, SemanticJoinOp):
+                    left_tbl = self.left.to_ibis(required_columns=augmented_requirements)
+                else:
+                    left_tbl = _to_ibis(self.left)
+                    left_name = self.left.name if hasattr(self.left, "name") else None
+                    if left_name and left_name in augmented_requirements:
+                        left_cols = augmented_requirements[left_name]
+                        if left_cols and left_cols != set(left_tbl.columns):
+                            left_tbl = left_tbl.select(
+                                [left_tbl[c] for c in left_cols if c in left_tbl.columns]
+                            )
+
+                if isinstance(self.right, SemanticJoinOp):
+                    right_tbl = self.right.to_ibis(required_columns=augmented_requirements)
+                else:
+                    right_tbl = _to_ibis(self.right)
+                    right_name = self.right.name if hasattr(self.right, "name") else None
+                    if right_name and right_name in augmented_requirements:
+                        right_cols = augmented_requirements[right_name]
+                        if right_cols and right_cols != set(right_tbl.columns):
+                            right_tbl = right_tbl.select(
+                                [right_tbl[c] for c in right_cols if c in right_tbl.columns]
+                            )
+            else:
+                # Couldn't extract join keys - fallback to no projection
+                left_tbl = _to_ibis(self.left)
+                right_tbl = _to_ibis(self.right)
+        else:
+            # No required_columns specified, just convert normally
+            left_tbl = _to_ibis(self.left)
+            right_tbl = _to_ibis(self.right)
 
         return (
             left_tbl.join(
@@ -1515,3 +1949,355 @@ def _merge_fields_with_prefixing(
                 merged_fields[field_name] = field_value
 
     return FrozenDict(merged_fields)
+
+
+# ==============================================================================
+# Column Tracking for Projection Pushdown
+# ==============================================================================
+
+
+@frozen
+class ColumnTracker:
+    """Immutable tracker for column references during expression evaluation.
+
+    Uses frozenset for tracked columns. New columns are added by creating
+    new tracker instances with updated sets.
+    """
+
+    columns: frozenset[str] = field(factory=frozenset, converter=frozenset)
+
+    def with_column(self, col_name: str) -> ColumnTracker:
+        """Return new tracker with additional column."""
+        return ColumnTracker(columns=self.columns | {col_name})
+
+    def merge(self, other: ColumnTracker) -> ColumnTracker:
+        """Return new tracker with merged columns."""
+        return ColumnTracker(columns=self.columns | other.columns)
+
+
+@frozen
+class ColumnExtractionResult:
+    """Result of column extraction with error handling.
+
+    Separates successful extraction from error cases.
+    """
+
+    columns: frozenset[str] = field(factory=frozenset, converter=frozenset)
+    extraction_failed: bool = False
+    error_type: type[Exception] | None = None
+
+    @classmethod
+    def success(cls, columns: set[str] | frozenset[str]) -> ColumnExtractionResult:
+        """Create successful result."""
+        return cls(columns=frozenset(columns), extraction_failed=False)
+
+    @classmethod
+    def failure(cls, error: Exception) -> ColumnExtractionResult:
+        """Create failure result with error information."""
+        return cls(
+            columns=frozenset(),
+            extraction_failed=True,
+            error_type=type(error),
+        )
+
+    def is_success(self) -> bool:
+        """Check if extraction succeeded."""
+        return not self.extraction_failed
+
+
+@frozen
+class JoinColumnExtractionResult:
+    """Result of join column extraction for both tables."""
+
+    left_columns: frozenset[str] = field(factory=frozenset, converter=frozenset)
+    right_columns: frozenset[str] = field(factory=frozenset, converter=frozenset)
+    extraction_failed: bool = False
+    error_type: type[Exception] | None = None
+
+    @classmethod
+    def success(
+        cls,
+        left: set[str] | frozenset[str],
+        right: set[str] | frozenset[str],
+    ) -> JoinColumnExtractionResult:
+        """Create successful result."""
+        return cls(
+            left_columns=frozenset(left),
+            right_columns=frozenset(right),
+            extraction_failed=False,
+        )
+
+    @classmethod
+    def failure(cls, error: Exception) -> JoinColumnExtractionResult:
+        """Create failure result with error information."""
+        return cls(
+            left_columns=frozenset(),
+            right_columns=frozenset(),
+            extraction_failed=True,
+            error_type=type(error),
+        )
+
+    def is_success(self) -> bool:
+        """Check if extraction succeeded."""
+        return not self.extraction_failed
+
+
+def _make_tracking_proxy(
+    table: ir.Table,
+    on_access: Callable[[str], None],
+) -> Any:
+    """Create tracking proxy with custom access handler.
+
+    Composable factory that enables different tracking strategies
+    via the on_access callback.
+    """
+
+    class _TrackingProxy:
+        """Proxy that tracks attribute and item access."""
+
+        def __init__(self, inner_table: ir.Table, access_handler: Callable[[str], None]):
+            object.__setattr__(self, "_table", inner_table)
+            object.__setattr__(self, "_on_access", access_handler)
+
+        def __getattr__(self, name: str):
+            if name.startswith("_"):
+                return getattr(self._table, name)
+            self._on_access(name)
+            return getattr(self._table, name)
+
+        def __getitem__(self, name: str):
+            self._on_access(name)
+            return self._table[name]
+
+    return _TrackingProxy(table, on_access)
+
+
+def _extract_columns_from_callable(
+    fn: Any,
+    table: ir.Table,
+) -> ColumnExtractionResult:
+    """Extract column names referenced by a callable.
+
+    Uses immutable tracking and returns structured result.
+    """
+    if not callable(fn):
+        return ColumnExtractionResult.success(frozenset())
+
+    # Use list as reference cell for immutable tracker
+    tracker_ref = [ColumnTracker()]
+
+    def on_column_access(col_name: str) -> None:
+        """Callback that updates tracker reference."""
+        tracker_ref[0] = tracker_ref[0].with_column(col_name)
+
+    try:
+        tracking_proxy = _make_tracking_proxy(table, on_column_access)
+        fn(tracking_proxy)
+        return ColumnExtractionResult.success(tracker_ref[0].columns)
+
+    except Exception as e:
+        return ColumnExtractionResult.failure(e)
+
+
+def _extract_join_key_columns(
+    on: Callable[[Any, Any], ir.BooleanValue],
+    left_table: ir.Table,
+    right_table: ir.Table,
+) -> JoinColumnExtractionResult:
+    """Extract column names used in join predicate.
+
+    Uses immutable trackers for both tables.
+    """
+    # Use lists as reference cells for immutable trackers
+    left_tracker_ref = [ColumnTracker()]
+    right_tracker_ref = [ColumnTracker()]
+
+    def on_left_access(col_name: str) -> None:
+        """Callback for left table column access."""
+        left_tracker_ref[0] = left_tracker_ref[0].with_column(col_name)
+
+    def on_right_access(col_name: str) -> None:
+        """Callback for right table column access."""
+        right_tracker_ref[0] = right_tracker_ref[0].with_column(col_name)
+
+    try:
+        left_proxy = _make_tracking_proxy(left_table, on_left_access)
+        right_proxy = _make_tracking_proxy(right_table, on_right_access)
+        on(left_proxy, right_proxy)
+
+        return JoinColumnExtractionResult.success(
+            left_tracker_ref[0].columns,
+            right_tracker_ref[0].columns,
+        )
+
+    except Exception as e:
+        return JoinColumnExtractionResult.failure(e)
+
+
+# ==============================================================================
+# Table Column Requirements
+# ==============================================================================
+
+
+@frozen
+class TableColumnRequirements:
+    """Immutable representation of column requirements per table.
+
+    Maps table names to sets of required column names.
+    """
+
+    requirements: FrozenDict[str, frozenset[str]] = field(
+        factory=lambda: FrozenDict({}),
+        converter=lambda d: FrozenDict(
+            {k: frozenset(v) if not isinstance(v, frozenset) else v for k, v in d.items()},
+        ),
+    )
+
+    def with_column(self, table_name: str, col_name: str) -> TableColumnRequirements:
+        """Return new requirements with additional column for table."""
+        current_cols = self.requirements.get(table_name, frozenset())
+        updated_cols = current_cols | {col_name}
+
+        return TableColumnRequirements(
+            requirements=dict(self.requirements) | {table_name: updated_cols},
+        )
+
+    def with_columns(
+        self,
+        table_name: str,
+        col_names: Iterable[str],
+    ) -> TableColumnRequirements:
+        """Return new requirements with multiple columns for table."""
+        current_cols = self.requirements.get(table_name, frozenset())
+        updated_cols = current_cols | frozenset(col_names)
+
+        return TableColumnRequirements(
+            requirements=dict(self.requirements) | {table_name: updated_cols},
+        )
+
+    def merge(self, other: TableColumnRequirements) -> TableColumnRequirements:
+        """Merge requirements from another instance."""
+        merged_dict = dict(self.requirements)
+
+        for table, cols in other.requirements.items():
+            if table in merged_dict:
+                merged_dict[table] = merged_dict[table] | cols
+            else:
+                merged_dict[table] = cols
+
+        return TableColumnRequirements(requirements=merged_dict)
+
+    def to_dict(self) -> dict[str, set[str]]:
+        """Convert to mutable dict for API compatibility."""
+        return {table: set(cols) for table, cols in self.requirements.items()}
+
+
+def _parse_prefixed_field(field_name: str) -> tuple[str | None, str]:
+    """Parse potentially prefixed field name.
+
+    Args:
+        field_name: Field name, possibly prefixed (e.g., "table.column")
+
+    Returns:
+        Tuple of (table_name or None, column_name)
+    """
+    if "." in field_name:
+        table, col = field_name.split(".", 1)
+        return (table, col)
+    return (None, field_name)
+
+
+def _extract_requirements_from_keys(
+    keys: Iterable[str],
+    merged_dimensions: Mapping[str, Any],
+    all_roots: Sequence[Any],
+    table: ir.Table,
+) -> TableColumnRequirements:
+    """Extract column requirements from group-by keys using graph traversal."""
+    from ibis.expr import operations as ibis_ops
+
+    from .graph_utils import walk_nodes
+
+    requirements = TableColumnRequirements()
+
+    for key in keys:
+        table_name, col_name = _parse_prefixed_field(key)
+
+        if table_name:
+            # Prefixed: we know the table
+            requirements = requirements.with_column(table_name, col_name)
+        else:
+            # Unprefixed: resolve dimension or use conservative fallback
+            if key in merged_dimensions:
+                dim_fn = merged_dimensions[key]
+
+                try:
+                    # Evaluate the dimension to get an Ibis expression
+                    dim_expr = dim_fn(table)
+
+                    # Walk the expression graph to find all Field nodes (column references)
+                    field_names = {node.name for node in walk_nodes(ibis_ops.Field, dim_expr)}
+
+                    # Filter to only actual columns in the table schema
+                    actual_cols = {col for col in field_names if col in table.columns}
+
+                    if actual_cols:
+                        for root in all_roots:
+                            if root.name:
+                                requirements = requirements.with_columns(root.name, actual_cols)
+                    else:
+                        # Fallback: assume key name is column name
+                        for root in all_roots:
+                            if root.name:
+                                requirements = requirements.with_column(root.name, key)
+                except Exception:
+                    # Fallback: assume key name is column name
+                    for root in all_roots:
+                        if root.name:
+                            requirements = requirements.with_column(root.name, key)
+            else:
+                # Raw column
+                for root in all_roots:
+                    if root.name:
+                        requirements = requirements.with_column(root.name, key)
+
+    return requirements
+
+
+def _extract_requirements_from_measures(
+    aggs: Mapping[str, Callable],
+    all_roots: Sequence[Any],
+    table: ir.Table,
+) -> TableColumnRequirements:
+    """Extract column requirements from measure aggregations using graph traversal."""
+    from ibis.expr import operations as ibis_ops
+
+    from .graph_utils import walk_nodes
+
+    requirements = TableColumnRequirements()
+
+    for measure_name, measure_fn in aggs.items():
+        fn = _unwrap(measure_fn)
+
+        try:
+            # Evaluate the measure to get an Ibis expression
+            measure_expr = fn(table)
+
+            # Walk the expression graph to find all Field nodes (column references)
+            field_names = {node.name for node in walk_nodes(ibis_ops.Field, measure_expr)}
+
+            # Filter to only actual columns in the table schema
+            actual_cols = {col for col in field_names if col in table.columns}
+
+            if actual_cols:
+                for root in all_roots:
+                    if root.name:
+                        requirements = requirements.with_columns(root.name, actual_cols)
+        except Exception:
+            # Conservative fallback: if measure name looks like a column, include it
+            if measure_name.isidentifier():
+                for root in all_roots:
+                    if root.name:
+                        requirements = requirements.with_column(root.name, measure_name)
+
+    return requirements

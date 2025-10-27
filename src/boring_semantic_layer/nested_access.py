@@ -197,12 +197,14 @@ class NestedArrayProxy:
 
 def is_array_column(table: ir.Table, column_name: str) -> bool:
     """Check if a column is an array type."""
-    try:
-        col = getattr(table, column_name)
-        col_type = col.type()
-        return str(col_type).startswith("array")
-    except (AttributeError, KeyError):
-        return False
+    from .utils import try_result
+
+    result = (
+        try_result(lambda: getattr(table, column_name))
+        .flatmap(lambda col: try_result(lambda: col.type()))
+        .map(lambda col_type: str(col_type).startswith("array"))
+    )
+    return result.unwrap_or(False)
 
 
 @curry
