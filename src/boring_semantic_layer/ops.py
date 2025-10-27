@@ -898,8 +898,10 @@ class SemanticJoinOp(Relation):
         other: SemanticTable,
         on: Callable[[Any, Any], ir.BooleanValue] | None = None,
         how: str = "inner",
-    ) -> SemanticJoinOp:
-        return SemanticJoinOp(
+    ):
+        from .expr import SemanticJoin
+
+        return SemanticJoin(
             left=self,
             right=_unwrap_semantic_table(other),
             on=on,
@@ -911,8 +913,10 @@ class SemanticJoinOp(Relation):
         other: SemanticTable,
         left_on: str,
         right_on: str,
-    ) -> SemanticJoinOp:
-        return SemanticJoinOp(
+    ):
+        from .expr import SemanticJoin
+
+        return SemanticJoin(
             left=self,
             right=_unwrap_semantic_table(other),
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
@@ -924,8 +928,10 @@ class SemanticJoinOp(Relation):
         other: SemanticTable,
         left_on: str,
         right_on: str,
-    ) -> SemanticJoinOp:
-        return SemanticJoinOp(
+    ):
+        from .expr import SemanticJoin
+
+        return SemanticJoin(
             left=self,
             right=_unwrap_semantic_table(other),
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
