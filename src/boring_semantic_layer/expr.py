@@ -287,15 +287,42 @@ class SemanticModel(SemanticTable):
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | None = None,
         how: str = "inner",
+        lname: str | None = None,
+        rname: str | None = None,
     ):
-        """Join with another semantic table."""
+        """Join with another semantic table.
+
+        Args:
+            other: Right semantic table to join with
+            on: Join condition callable taking (left_table, right_table)
+            how: Join type (inner, left, right, outer, cross)
+            lname: Optional format string for left table columns (default: "")
+            rname: Optional format string for right table columns (default: uses right table's name)
+        """
         from .ops import SemanticJoinOp
 
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoinOp(left=self.op(), right=other_op, on=on, how=how)
+        return SemanticJoinOp(
+            left=self.op(), right=other_op, on=on, how=how, lname=lname, rname=rname
+        )
 
-    def join_one(self, other: SemanticModel, left_on: str, right_on: str):
-        """Inner join one-to-one or many-to-one."""
+    def join_one(
+        self,
+        other: SemanticModel,
+        left_on: str,
+        right_on: str,
+        lname: str | None = None,
+        rname: str | None = None,
+    ):
+        """Inner join one-to-one or many-to-one.
+
+        Args:
+            other: Right semantic table to join with
+            left_on: Column name in left table for join condition
+            right_on: Column name in right table for join condition
+            lname: Optional format string for left table columns (default: "")
+            rname: Optional format string for right table columns (default: uses right table's name)
+        """
         from .ops import SemanticJoinOp
 
         other_op = other.op() if isinstance(other, SemanticModel) else other
@@ -304,10 +331,27 @@ class SemanticModel(SemanticTable):
             right=other_op,
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
             how="inner",
+            lname=lname,
+            rname=rname,
         )
 
-    def join_many(self, other: SemanticModel, left_on: str, right_on: str):
-        """Left join one-to-many."""
+    def join_many(
+        self,
+        other: SemanticModel,
+        left_on: str,
+        right_on: str,
+        lname: str | None = None,
+        rname: str | None = None,
+    ):
+        """Left join one-to-many.
+
+        Args:
+            other: Right semantic table to join with
+            left_on: Column name in left table for join condition
+            right_on: Column name in right table for join condition
+            lname: Optional format string for left table columns (default: "")
+            rname: Optional format string for right table columns (default: uses right table's name)
+        """
         from .ops import SemanticJoinOp
 
         other_op = other.op() if isinstance(other, SemanticModel) else other
@@ -316,14 +360,24 @@ class SemanticModel(SemanticTable):
             right=other_op,
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
             how="left",
+            lname=lname,
+            rname=rname,
         )
 
-    def join_cross(self, other: SemanticModel):
-        """Cross join."""
+    def join_cross(self, other: SemanticModel, lname: str | None = None, rname: str | None = None):
+        """Cross join.
+
+        Args:
+            other: Right semantic table to cross join with
+            lname: Optional format string for left table columns (default: "")
+            rname: Optional format string for right table columns (default: uses right table's name)
+        """
         from .ops import SemanticJoinOp
 
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoinOp(left=self.op(), right=other_op, on=None, how="cross")
+        return SemanticJoinOp(
+            left=self.op(), right=other_op, on=None, how="cross", lname=lname, rname=rname
+        )
 
     def index(
         self,

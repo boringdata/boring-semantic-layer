@@ -770,6 +770,8 @@ class SemanticJoinOp(Relation):
     right: Relation
     how: str
     on: Callable[[Any, Any], ir.BooleanValue] | None
+    lname: str | None
+    rname: str | None
 
     def __init__(
         self,
@@ -777,12 +779,16 @@ class SemanticJoinOp(Relation):
         right: Relation,
         how: str = "inner",
         on: Callable[[Any, Any], ir.BooleanValue] | None = None,
+        lname: str | None = None,
+        rname: str | None = None,
     ) -> None:
         super().__init__(
             left=Relation.__coerce__(left),
             right=Relation.__coerce__(right),
             how=how,
             on=on,
+            lname=lname,
+            rname=rname,
         )
 
     @property
@@ -898,12 +904,16 @@ class SemanticJoinOp(Relation):
         other: SemanticTable,
         on: Callable[[Any, Any], ir.BooleanValue] | None = None,
         how: str = "inner",
+        lname: str | None = None,
+        rname: str | None = None,
     ) -> SemanticJoinOp:
         return SemanticJoinOp(
             left=self,
             right=_unwrap_semantic_table(other),
             on=on,
             how=how,
+            lname=lname,
+            rname=rname,
         )
 
     def join_one(
@@ -911,12 +921,16 @@ class SemanticJoinOp(Relation):
         other: SemanticTable,
         left_on: str,
         right_on: str,
+        lname: str | None = None,
+        rname: str | None = None,
     ) -> SemanticJoinOp:
         return SemanticJoinOp(
             left=self,
             right=_unwrap_semantic_table(other),
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
             how="inner",
+            lname=lname,
+            rname=rname,
         )
 
     def join_many(
@@ -924,12 +938,16 @@ class SemanticJoinOp(Relation):
         other: SemanticTable,
         left_on: str,
         right_on: str,
+        lname: str | None = None,
+        rname: str | None = None,
     ) -> SemanticJoinOp:
         return SemanticJoinOp(
             left=self,
             right=_unwrap_semantic_table(other),
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
             how="left",
+            lname=lname,
+            rname=rname,
         )
 
     def index(
@@ -943,18 +961,52 @@ class SemanticJoinOp(Relation):
     def to_ibis(self):
         from .convert import _Resolver
 
-        left_tbl = _to_ibis(self.left)
-        right_tbl = _to_ibis(self.right)
+        left_tbl_orig = _to_ibis(self.left)
+        right_tbl_orig = _to_ibis(self.right)
 
-        return (
-            left_tbl.join(
-                right_tbl,
-                self.on(_Resolver(left_tbl), _Resolver(right_tbl)),
+        # Perform join first with original column names
+        if self.on is not None:
+            joined = left_tbl_orig.join(
+                right_tbl_orig,
+                self.on(_Resolver(left_tbl_orig), _Resolver(right_tbl_orig)),
                 how=self.how,
             )
-            if self.on is not None
-            else left_tbl.join(right_tbl, how=self.how)
-        )
+        else:
+            joined = left_tbl_orig.join(right_tbl_orig, how=self.how)
+
+        # Apply Ibis-level column prefixing only if explicitly requested
+        # This is opt-in to avoid conflicts with semantic-level prefixing
+        if self.lname is not None or self.rname is not None:
+            # Determine column prefixes
+            left_prefix = self.lname if self.lname is not None else ""
+
+            if self.rname is not None:
+                right_prefix = self.rname
+            else:
+                # Auto-derive from right table's semantic name if rname explicitly set to None
+                # but lname was provided (indicating user wants prefixing)
+                right_roots = _find_all_root_models(self.right)
+                if right_roots and right_roots[0].name:
+                    right_prefix = f"{right_roots[0].name}_{{name}}"
+                else:
+                    right_prefix = "{name}_right"
+
+            # Build the select list with prefixed names
+            select_exprs = []
+
+            # Left table columns
+            for col in left_tbl_orig.columns:
+                new_name = left_prefix.format(name=col) if left_prefix else col
+                select_exprs.append(joined[col].name(new_name))
+
+            # Right table columns
+            for col in right_tbl_orig.columns:
+                new_name = right_prefix.format(name=col) if right_prefix else col
+                select_exprs.append(joined[col].name(new_name))
+
+            return joined.select(select_exprs)
+
+        return joined
 
     def execute(self):
         return self.to_ibis().execute()
