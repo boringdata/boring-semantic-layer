@@ -12,6 +12,9 @@ from . import (
 from .api import (
     to_semantic_table,
 )
+from .config import (
+    options,
+)
 from .expr import (
     SemanticModel,
     SemanticTable,
@@ -37,6 +40,7 @@ __all__ = [
     "Measure",
     "from_yaml",
     "MCPSemanticModel",
+    "options",
 ]
 
 # Import MCP functionality from separate module if available
