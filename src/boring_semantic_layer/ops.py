@@ -1042,6 +1042,11 @@ class SemanticJoinOp(Relation):
         return dict(self.get_calculated_measures())
 
     @property
+    def calc_measures(self) -> dict[str, Any]:
+        """Get calculated measures as dict (for consistency with SemanticModel)."""
+        return dict(self.get_calculated_measures())
+
+    @property
     def measures(self) -> tuple[str, ...]:
         return tuple(self.get_measures().keys()) + tuple(
             self.get_calculated_measures().keys(),
