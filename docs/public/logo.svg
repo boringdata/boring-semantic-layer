@@ -1,0 +1,12 @@
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle -->
+  <circle cx="100" cy="100" r="90" fill="#1e293b" stroke="#3b82f6" stroke-width="4"/>
+
+  <!-- Layered rectangles representing semantic layers -->
+  <rect x="40" y="130" width="120" height="20" rx="2" fill="#60a5fa" opacity="0.9"/>
+  <rect x="40" y="100" width="120" height="20" rx="2" fill="#3b82f6" opacity="0.9"/>
+  <rect x="40" y="70" width="120" height="20" rx="2" fill="#2563eb" opacity="0.9"/>
+
+  <!-- "BSL" text -->
+  <text x="100" y="55" font-family="system-ui, -apple-system, sans-serif" font-size="32" font-weight="bold" fill="#f1f5f9" text-anchor="middle">BSL</text>
+</svg>
