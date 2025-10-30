@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 @frozen
 class TableRequirements:
-    """Column requirements for each table in the query."""
+    """Immutable column requirements for each table in the query."""
 
     requirements: Mapping[str, frozenset[str]]
 
