@@ -20,9 +20,6 @@ from .expr import (
     SemanticTable,
     to_ibis,
 )
-from .mcp import (
-    MCPSemanticModel,
-)
 from .ops import (
     Dimension,
     Measure,
@@ -50,8 +47,6 @@ try:
     _MCP_AVAILABLE = True
 except ImportError:
     _MCP_AVAILABLE = False
-
-__all__.append("MCPSemanticModel")
 
 
 def __getattr__(name):
