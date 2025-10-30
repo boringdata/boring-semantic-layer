@@ -1,0 +1,766 @@
+{
+  "markdown": "# Charting\n\nBSL includes built-in support for generating data visualizations from your semantic queries. Create charts directly from query results with automatic chart type detection or full custom control.\n\n## Installation\n\nTo use chart visualization, install with the appropriate backend:\n\n```bash\n# For Altair backend (default)\npip install 'boring-semantic-layer[viz-altair]'\n\n# For Plotly backend\npip install 'boring-semantic-layer[viz-plotly]'\n```\n\n## Quick Start\n\nHere's a simple example showing how to create a chart:\n\n```setup_chart_data\nimport ibis\nfrom boring_semantic_layer import to_semantic_table\n\ncon = ibis.duckdb.connect(\":memory:\")\nflights_data = ibis.memtable({\n    \"origin\": [\"JFK\", \"LAX\", \"SFO\", \"ORD\", \"DFW\", \"ATL\", \"DEN\"],\n    \"flight_count\": [150, 135, 89, 112, 98, 145, 78],\n    \"avg_distance\": [2475, 1850, 1200, 950, 1100, 1650, 900]\n})\nflights_tbl = con.create_table(\"flights\", flights_data)\n\nflights_st = (\n    to_semantic_table(flights_tbl, name=\"flights\")\n    .with_dimensions(\n        origin=lambda t: t.origin\n    )\n    .with_measures(\n        flight_count=lambda t: t.flight_count.sum(),\n        avg_distance=lambda t: t.avg_distance.mean()\n    )\n)\n```\n\n<collapsedcodeblock code-block=\"setup_chart_data\" title=\"Setup: Create Sample Data\"></collapsedcodeblock>\n\n```query_basic_chart\n# Query and chart in one fluent chain\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\")\n    .order_by(ibis.desc(\"flight_count\"))\n    .limit(5)\n)\n\nresult.chart()\n```\n\n<altairchart code-block=\"query_basic_chart\"></altairchart>\n\n<note type=\"info\">\nThe `.chart()` method is available on query results from `.aggregate()`, `.order_by()`, `.limit()`, and `.mutate()` operations.\n</note>\n\n## Backend Selection\n\nBSL supports two charting backends with different strengths:\n\n### Altair (Default)\n\n**Best for:** Web-native interactive visualizations, declarative specifications, embedding in notebooks and web apps.\n\n```python\n# Use Altair backend (default)\nchart = result.chart()\n# or explicitly\nchart = result.chart(backend=\"altair\")\n```\n\n**Features:**\n- Built on Vega-Lite grammar\n- Declarative JSON specifications\n- Great for interactive web visualizations\n- Excellent notebook integration\n\n### Plotly\n\n**Best for:** Rich interactive dashboards, 3D visualizations, extensive chart types, business intelligence tools.\n\n```python\n# Use Plotly backend\nchart = result.chart(backend=\"plotly\")\n```\n\n**Features:**\n- Extensive chart type library\n- Rich interactivity out of the box\n- Dashboard integration\n- Export to static formats\n\n## Auto-Detection\n\nBSL automatically detects the appropriate chart type based on your query structure:\n\n### Bar Chart (Categorical Data)\n\nSingle dimension + measure \u2192 Bar chart\n\n```query_bar_chart\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\")\n    .order_by(ibis.desc(\"flight_count\"))\n)\n\nresult.chart()\n```\n\n<altairchart code-block=\"query_bar_chart\"></altairchart>\n\n**Auto-detected because:** Single categorical dimension (`origin`) with one measure (`flight_count`)\n\n### Time Series (Temporal Data)\n\nTime dimension + measure \u2192 Line chart with time-aware formatting\n\n```setup_timeseries\nimport ibis\nfrom boring_semantic_layer import to_semantic_table\n\ncon = ibis.duckdb.connect(\":memory:\")\ntimeseries_data = ibis.memtable({\n    \"date\": [\"2024-01-01\", \"2024-01-02\", \"2024-01-03\", \"2024-01-04\", \"2024-01-05\", \"2024-01-06\", \"2024-01-07\"],\n    \"flight_count\": [145, 152, 148, 139, 156, 161, 143]\n})\ntimeseries_tbl = con.create_table(\"daily_flights\", timeseries_data)\n\ndaily_flights_st = (\n    to_semantic_table(timeseries_tbl, name=\"daily_flights\")\n    .with_dimensions(\n        date={\n            \"expr\": lambda t: t.date.cast(\"date\"),\n            \"is_time_dimension\": True,\n            \"smallest_time_grain\": \"TIME_GRAIN_DAY\"\n        }\n    )\n    .with_measures(\n        flight_count=lambda t: t.flight_count.sum()\n    )\n)\n```\n\n<collapsedcodeblock code-block=\"setup_timeseries\" title=\"Setup: Create Time Series Data\"></collapsedcodeblock>\n\n```query_timeseries\nresult = (\n    daily_flights_st\n    .group_by(\"date\")\n    .aggregate(\"flight_count\")\n)\nresult.chart()\n```\n\n<altairchart code-block=\"query_timeseries\"></altairchart>\n\n**Auto-detected because:** Dimension marked as `is_time_dimension=True`\n\n### Heatmap (Two Dimensions)\n\nTwo categorical dimensions + measure \u2192 Heatmap\n\n```setup_heatmap\nimport ibis\nfrom boring_semantic_layer import to_semantic_table\n\ncon = ibis.duckdb.connect(\":memory:\")\nroute_data = ibis.memtable({\n    \"origin\": [\"JFK\", \"JFK\", \"LAX\", \"LAX\", \"SFO\", \"SFO\"],\n    \"dest\": [\"LAX\", \"SFO\", \"JFK\", \"SFO\", \"JFK\", \"LAX\"],\n    \"flight_count\": [45, 32, 43, 28, 31, 27]\n})\nroute_tbl = con.create_table(\"routes\", route_data)\n\nroutes_st = (\n    to_semantic_table(route_tbl, name=\"routes\")\n    .with_dimensions(\n        origin=lambda t: t.origin,\n        dest=lambda t: t.dest\n    )\n    .with_measures(\n        flight_count=lambda t: t.flight_count.sum()\n    )\n)\n```\n\n<collapsedcodeblock code-block=\"setup_heatmap\" title=\"Setup: Create Route Data\"></collapsedcodeblock>\n\n```query_heatmap\nresult = (\n    routes_st\n    .group_by(\"origin\", \"dest\")\n    .aggregate(\"flight_count\")\n)\nresult.chart()\n```\n\n<altairchart code-block=\"query_heatmap\"></altairchart>\n\n**Auto-detected because:** Two categorical dimensions with one measure\n\n### Multi-Series Charts\n\nMultiple measures \u2192 Grouped/overlaid visualization with color encoding\n\n```query_multi_measure\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"avg_distance\")\n    .limit(5)\n)\nresult.chart()\n```\n\n<altairchart code-block=\"query_multi_measure\"></altairchart>\n\n**Auto-detected because:** Multiple measures trigger automatic color encoding by measure name\n\n\n## Custom Specifications\n\nOverride auto-detection with custom specifications:\n\n### Change Mark Type And Add Styling\n\nCustomize the mark type while providing explicit encodings:\n\n```query_custom_mark\nimport ibis\n# Create line chart with custom spec\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\")\n    .order_by(ibis.desc(\"flight_count\"))\n    .limit(5)\n)\nresult.chart(spec={\n    \"mark\": {\"type\": \"line\", \"color\": \"#e74c3c\"}\n})\n```\n\n<altairchart code-block=\"query_custom_mark\"></altairchart>\n\n<note type=\"info\">\nYou don't need to provide full vega spec: the spec object is merged with the BSL's default one.\n</note>\n\n## Export Formats\n\nExport charts in various formats for different use cases:\n\n```python\n# Interactive chart object (default)\nchart = result.chart()\n\n# JSON specification for web embedding\njson_spec = result.chart(format=\"json\")\n\n# PNG image (requires altair[all] or plotly)\npng_bytes = result.chart(format=\"png\")\n\n# SVG markup (requires altair[all] or plotly)\nsvg_str = result.chart(format=\"svg\")\n\n# Save to file\nwith open(\"my_chart.png\", \"wb\") as f:\n    f.write(png_bytes)\n```\n\n**Available formats:**\n- `\"static\"` or `\"interactive\"` - Chart object (default)\n- `\"json\"` - JSON specification\n- `\"png\"` - PNG image bytes\n- `\"svg\"` - SVG markup string\n\n## Next Steps\n\n- Learn about [Query Methods](query-methods.md) to build complex queries\n- Explore [YAML Configuration](yaml-config.md) for declarative semantic models\n- See [Compose Models](compose.md) for joining semantic tables\n",
+  "queries": {
+    "setup_chart_data": {
+      "code": "import ibis\nfrom boring_semantic_layer import to_semantic_table\n\ncon = ibis.duckdb.connect(\":memory:\")\nflights_data = ibis.memtable({\n    \"origin\": [\"JFK\", \"LAX\", \"SFO\", \"ORD\", \"DFW\", \"ATL\", \"DEN\"],\n    \"flight_count\": [150, 135, 89, 112, 98, 145, 78],\n    \"avg_distance\": [2475, 1850, 1200, 950, 1100, 1650, 900]\n})\nflights_tbl = con.create_table(\"flights\", flights_data)\n\nflights_st = (\n    to_semantic_table(flights_tbl, name=\"flights\")\n    .with_dimensions(\n        origin=lambda t: t.origin\n    )\n    .with_measures(\n        flight_count=lambda t: t.flight_count.sum(),\n        avg_distance=lambda t: t.avg_distance.mean()\n    )\n)",
+      "sql": "SELECT\n  *\nFROM \"memory\".\"main\".\"flights\"",
+      "table": {
+        "columns": [
+          "origin",
+          "flight_count",
+          "avg_distance"
+        ],
+        "data": [
+          [
+            "JFK",
+            150,
+            2475
+          ],
+          [
+            "LAX",
+            135,
+            1850
+          ],
+          [
+            "SFO",
+            89,
+            1200
+          ],
+          [
+            "ORD",
+            112,
+            950
+          ],
+          [
+            "DFW",
+            98,
+            1100
+          ],
+          [
+            "ATL",
+            145,
+            1650
+          ],
+          [
+            "DEN",
+            78,
+            900
+          ]
+        ]
+      }
+    },
+    "query_basic_chart": {
+      "chart_spec": {
+        "config": {
+          "view": {
+            "continuousWidth": 300,
+            "continuousHeight": 300
+          }
+        },
+        "data": {
+          "name": "data-7c737749f9aa5e3d76f7415b3506172a"
+        },
+        "mark": {
+          "type": "bar"
+        },
+        "encoding": {
+          "tooltip": [
+            {
+              "field": "origin",
+              "type": "nominal"
+            },
+            {
+              "field": "flight_count",
+              "type": "quantitative"
+            }
+          ],
+          "x": {
+            "field": "origin",
+            "sort": null,
+            "type": "ordinal"
+          },
+          "y": {
+            "field": "flight_count",
+            "type": "quantitative"
+          }
+        },
+        "height": 400,
+        "width": 700,
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+        "datasets": {
+          "data-7c737749f9aa5e3d76f7415b3506172a": [
+            {
+              "origin": "DFW",
+              "flight_count": 98
+            },
+            {
+              "origin": "ATL",
+              "flight_count": 145
+            },
+            {
+              "origin": "DEN",
+              "flight_count": 78
+            },
+            {
+              "origin": "ORD",
+              "flight_count": 112
+            },
+            {
+              "origin": "SFO",
+              "flight_count": 89
+            },
+            {
+              "origin": "JFK",
+              "flight_count": 150
+            },
+            {
+              "origin": "LAX",
+              "flight_count": 135
+            }
+          ]
+        }
+      },
+      "code": "# Query and chart in one fluent chain\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\")\n    .order_by(ibis.desc(\"flight_count\"))\n    .limit(5)\n)\n\nresult.chart()"
+    },
+    "query_bar_chart": {
+      "chart_spec": {
+        "config": {
+          "view": {
+            "continuousWidth": 300,
+            "continuousHeight": 300
+          }
+        },
+        "data": {
+          "name": "data-61701342328432a1249d28736cb1334a"
+        },
+        "mark": {
+          "type": "bar"
+        },
+        "encoding": {
+          "tooltip": [
+            {
+              "field": "origin",
+              "type": "nominal"
+            },
+            {
+              "field": "flight_count",
+              "type": "quantitative"
+            }
+          ],
+          "x": {
+            "field": "origin",
+            "sort": null,
+            "type": "ordinal"
+          },
+          "y": {
+            "field": "flight_count",
+            "type": "quantitative"
+          }
+        },
+        "height": 400,
+        "width": 700,
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+        "datasets": {
+          "data-61701342328432a1249d28736cb1334a": [
+            {
+              "origin": "JFK",
+              "flight_count": 150
+            },
+            {
+              "origin": "SFO",
+              "flight_count": 89
+            },
+            {
+              "origin": "DEN",
+              "flight_count": 78
+            },
+            {
+              "origin": "ATL",
+              "flight_count": 145
+            },
+            {
+              "origin": "DFW",
+              "flight_count": 98
+            },
+            {
+              "origin": "LAX",
+              "flight_count": 135
+            },
+            {
+              "origin": "ORD",
+              "flight_count": 112
+            }
+          ]
+        }
+      },
+      "code": "result = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\")\n    .order_by(ibis.desc(\"flight_count\"))\n)\n\nresult.chart()"
+    },
+    "setup_timeseries": {
+      "code": "import ibis\nfrom boring_semantic_layer import to_semantic_table\n\ncon = ibis.duckdb.connect(\":memory:\")\ntimeseries_data = ibis.memtable({\n    \"date\": [\"2024-01-01\", \"2024-01-02\", \"2024-01-03\", \"2024-01-04\", \"2024-01-05\", \"2024-01-06\", \"2024-01-07\"],\n    \"flight_count\": [145, 152, 148, 139, 156, 161, 143]\n})\ntimeseries_tbl = con.create_table(\"daily_flights\", timeseries_data)\n\ndaily_flights_st = (\n    to_semantic_table(timeseries_tbl, name=\"daily_flights\")\n    .with_dimensions(\n        date={\n            \"expr\": lambda t: t.date.cast(\"date\"),\n            \"is_time_dimension\": True,\n            \"smallest_time_grain\": \"TIME_GRAIN_DAY\"\n        }\n    )\n    .with_measures(\n        flight_count=lambda t: t.flight_count.sum()\n    )\n)",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    SUM(\"t1\".\"flight_count\") AS \"flight_count\"\n  FROM (\n    SELECT\n      *\n    FROM \"memory\".\"main\".\"flights\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"\nORDER BY\n  \"t2\".\"flight_count\" DESC",
+      "table": {
+        "columns": [
+          "origin",
+          "flight_count"
+        ],
+        "data": [
+          [
+            "JFK",
+            150
+          ],
+          [
+            "ATL",
+            145
+          ],
+          [
+            "LAX",
+            135
+          ],
+          [
+            "ORD",
+            112
+          ],
+          [
+            "DFW",
+            98
+          ],
+          [
+            "SFO",
+            89
+          ],
+          [
+            "DEN",
+            78
+          ]
+        ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-fb2b4c26543b1ed7f74dff28086672be"
+          },
+          "mark": {
+            "type": "bar"
+          },
+          "encoding": {
+            "tooltip": [
+              {
+                "field": "origin",
+                "type": "nominal"
+              },
+              {
+                "field": "flight_count",
+                "type": "quantitative"
+              }
+            ],
+            "x": {
+              "field": "origin",
+              "sort": null,
+              "type": "ordinal"
+            },
+            "y": {
+              "field": "flight_count",
+              "type": "quantitative"
+            }
+          },
+          "height": 400,
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-fb2b4c26543b1ed7f74dff28086672be": [
+              {
+                "origin": "ATL",
+                "flight_count": 145
+              },
+              {
+                "origin": "SFO",
+                "flight_count": 89
+              },
+              {
+                "origin": "JFK",
+                "flight_count": 150
+              },
+              {
+                "origin": "LAX",
+                "flight_count": 135
+              },
+              {
+                "origin": "DEN",
+                "flight_count": 78
+              },
+              {
+                "origin": "DFW",
+                "flight_count": 98
+              },
+              {
+                "origin": "ORD",
+                "flight_count": 112
+              }
+            ]
+          }
+        }
+      }
+    },
+    "query_timeseries": {
+      "chart_spec": {
+        "config": {
+          "view": {
+            "continuousWidth": 300,
+            "continuousHeight": 300
+          }
+        },
+        "data": {
+          "name": "data-bad51634bba5e5445cd0abc579b6de09"
+        },
+        "mark": {
+          "type": "line"
+        },
+        "encoding": {
+          "tooltip": [
+            {
+              "field": "date",
+              "format": "%Y-%m-%d",
+              "type": "temporal"
+            },
+            {
+              "field": "flight_count",
+              "type": "quantitative"
+            }
+          ],
+          "x": {
+            "axis": {
+              "format": "%Y-%m-%d",
+              "labelAngle": -45
+            },
+            "field": "date",
+            "type": "temporal"
+          },
+          "y": {
+            "field": "flight_count",
+            "type": "quantitative"
+          }
+        },
+        "height": 400,
+        "width": 700,
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+        "datasets": {
+          "data-bad51634bba5e5445cd0abc579b6de09": [
+            {
+              "date": "2024-01-07T00:00:00",
+              "flight_count": 143
+            },
+            {
+              "date": "2024-01-06T00:00:00",
+              "flight_count": 161
+            },
+            {
+              "date": "2024-01-02T00:00:00",
+              "flight_count": 152
+            },
+            {
+              "date": "2024-01-03T00:00:00",
+              "flight_count": 148
+            },
+            {
+              "date": "2024-01-05T00:00:00",
+              "flight_count": 156
+            },
+            {
+              "date": "2024-01-04T00:00:00",
+              "flight_count": 139
+            },
+            {
+              "date": "2024-01-01T00:00:00",
+              "flight_count": 145
+            }
+          ]
+        }
+      },
+      "code": "result = (\n    daily_flights_st\n    .group_by(\"date\")\n    .aggregate(\"flight_count\")\n)\nresult.chart()"
+    },
+    "setup_heatmap": {
+      "code": "import ibis\nfrom boring_semantic_layer import to_semantic_table\n\ncon = ibis.duckdb.connect(\":memory:\")\nroute_data = ibis.memtable({\n    \"origin\": [\"JFK\", \"JFK\", \"LAX\", \"LAX\", \"SFO\", \"SFO\"],\n    \"dest\": [\"LAX\", \"SFO\", \"JFK\", \"SFO\", \"JFK\", \"LAX\"],\n    \"flight_count\": [45, 32, 43, 28, 31, 27]\n})\nroute_tbl = con.create_table(\"routes\", route_data)\n\nroutes_st = (\n    to_semantic_table(route_tbl, name=\"routes\")\n    .with_dimensions(\n        origin=lambda t: t.origin,\n        dest=lambda t: t.dest\n    )\n    .with_measures(\n        flight_count=lambda t: t.flight_count.sum()\n    )\n)",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"date\",\n    SUM(\"t1\".\"flight_count\") AS \"flight_count\"\n  FROM (\n    SELECT\n      CAST(\"t0\".\"date\" AS DATE) AS \"date\",\n      \"t0\".\"flight_count\"\n    FROM \"memory\".\"main\".\"daily_flights\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "table": {
+        "columns": [
+          "date",
+          "flight_count"
+        ],
+        "data": [
+          [
+            "2024-01-06",
+            161
+          ],
+          [
+            "2024-01-07",
+            143
+          ],
+          [
+            "2024-01-02",
+            152
+          ],
+          [
+            "2024-01-03",
+            148
+          ],
+          [
+            "2024-01-05",
+            156
+          ],
+          [
+            "2024-01-04",
+            139
+          ],
+          [
+            "2024-01-01",
+            145
+          ]
+        ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-afaffc2f52a3f3e396211995b0771f7d"
+          },
+          "mark": {
+            "type": "line"
+          },
+          "encoding": {
+            "tooltip": [
+              {
+                "field": "date",
+                "format": "%Y-%m-%d",
+                "type": "temporal"
+              },
+              {
+                "field": "flight_count",
+                "type": "quantitative"
+              }
+            ],
+            "x": {
+              "axis": {
+                "format": "%Y-%m-%d",
+                "labelAngle": -45
+              },
+              "field": "date",
+              "type": "temporal"
+            },
+            "y": {
+              "field": "flight_count",
+              "type": "quantitative"
+            }
+          },
+          "height": 400,
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-afaffc2f52a3f3e396211995b0771f7d": [
+              {
+                "date": "2024-01-06T00:00:00",
+                "flight_count": 161
+              },
+              {
+                "date": "2024-01-07T00:00:00",
+                "flight_count": 143
+              },
+              {
+                "date": "2024-01-01T00:00:00",
+                "flight_count": 145
+              },
+              {
+                "date": "2024-01-02T00:00:00",
+                "flight_count": 152
+              },
+              {
+                "date": "2024-01-03T00:00:00",
+                "flight_count": 148
+              },
+              {
+                "date": "2024-01-05T00:00:00",
+                "flight_count": 156
+              },
+              {
+                "date": "2024-01-04T00:00:00",
+                "flight_count": 139
+              }
+            ]
+          }
+        }
+      }
+    },
+    "query_heatmap": {
+      "chart_spec": {
+        "config": {
+          "view": {
+            "continuousWidth": 300,
+            "continuousHeight": 300
+          }
+        },
+        "data": {
+          "name": "data-2feedb7a5700ceb3013408945ae11837"
+        },
+        "mark": {
+          "type": "rect"
+        },
+        "encoding": {
+          "color": {
+            "field": "flight_count",
+            "type": "quantitative"
+          },
+          "tooltip": [
+            {
+              "field": "origin",
+              "type": "nominal"
+            },
+            {
+              "field": "dest",
+              "type": "nominal"
+            },
+            {
+              "field": "flight_count",
+              "type": "quantitative"
+            }
+          ],
+          "x": {
+            "field": "origin",
+            "sort": null,
+            "type": "ordinal"
+          },
+          "y": {
+            "field": "dest",
+            "sort": null,
+            "type": "ordinal"
+          }
+        },
+        "height": 400,
+        "width": 700,
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+        "datasets": {
+          "data-2feedb7a5700ceb3013408945ae11837": [
+            {
+              "origin": "SFO",
+              "dest": "JFK",
+              "flight_count": 31
+            },
+            {
+              "origin": "JFK",
+              "dest": "LAX",
+              "flight_count": 45
+            },
+            {
+              "origin": "JFK",
+              "dest": "SFO",
+              "flight_count": 32
+            },
+            {
+              "origin": "LAX",
+              "dest": "SFO",
+              "flight_count": 28
+            },
+            {
+              "origin": "LAX",
+              "dest": "JFK",
+              "flight_count": 43
+            },
+            {
+              "origin": "SFO",
+              "dest": "LAX",
+              "flight_count": 27
+            }
+          ]
+        }
+      },
+      "code": "result = (\n    routes_st\n    .group_by(\"origin\", \"dest\")\n    .aggregate(\"flight_count\")\n)\nresult.chart()"
+    },
+    "query_multi_measure": {
+      "chart_spec": {
+        "config": {
+          "view": {
+            "continuousWidth": 300,
+            "continuousHeight": 300
+          }
+        },
+        "data": {
+          "name": "data-840fb65a3ee3c30d91bb5e6f9b818ba5"
+        },
+        "mark": {
+          "type": "bar"
+        },
+        "encoding": {
+          "color": {
+            "field": "measure",
+            "type": "nominal"
+          },
+          "tooltip": [
+            {
+              "field": "origin",
+              "type": "nominal"
+            },
+            {
+              "field": "measure",
+              "type": "nominal"
+            },
+            {
+              "field": "value",
+              "type": "quantitative"
+            }
+          ],
+          "x": {
+            "field": "origin",
+            "sort": null,
+            "type": "ordinal"
+          },
+          "xOffset": {
+            "field": "measure"
+          },
+          "y": {
+            "field": "value",
+            "type": "quantitative"
+          }
+        },
+        "height": 400,
+        "transform": [
+          {
+            "fold": [
+              "flight_count",
+              "avg_distance"
+            ],
+            "as": [
+              "measure",
+              "value"
+            ]
+          }
+        ],
+        "width": 700,
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+        "datasets": {
+          "data-840fb65a3ee3c30d91bb5e6f9b818ba5": [
+            {
+              "origin": "SFO",
+              "flight_count": 89,
+              "avg_distance": 1200.0
+            },
+            {
+              "origin": "DFW",
+              "flight_count": 98,
+              "avg_distance": 1100.0
+            },
+            {
+              "origin": "ORD",
+              "flight_count": 112,
+              "avg_distance": 950.0
+            },
+            {
+              "origin": "ATL",
+              "flight_count": 145,
+              "avg_distance": 1650.0
+            },
+            {
+              "origin": "JFK",
+              "flight_count": 150,
+              "avg_distance": 2475.0
+            },
+            {
+              "origin": "DEN",
+              "flight_count": 78,
+              "avg_distance": 900.0
+            },
+            {
+              "origin": "LAX",
+              "flight_count": 135,
+              "avg_distance": 1850.0
+            }
+          ]
+        }
+      },
+      "code": "result = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"avg_distance\")\n    .limit(5)\n)\nresult.chart()"
+    },
+    "query_custom_mark": {
+      "chart_spec": {
+        "config": {
+          "view": {
+            "continuousWidth": 300,
+            "continuousHeight": 300
+          }
+        },
+        "data": {
+          "name": "data-c83d584c12c2f36b4a5051977a93d0d5"
+        },
+        "mark": {
+          "type": "bar"
+        },
+        "encoding": {
+          "tooltip": [
+            {
+              "field": "origin",
+              "type": "nominal"
+            },
+            {
+              "field": "flight_count",
+              "type": "quantitative"
+            }
+          ],
+          "x": {
+            "field": "origin",
+            "sort": null,
+            "type": "ordinal"
+          },
+          "y": {
+            "field": "flight_count",
+            "type": "quantitative"
+          }
+        },
+        "height": 400,
+        "width": 700,
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+        "datasets": {
+          "data-c83d584c12c2f36b4a5051977a93d0d5": [
+            {
+              "origin": "ATL",
+              "flight_count": 145
+            },
+            {
+              "origin": "ORD",
+              "flight_count": 112
+            },
+            {
+              "origin": "SFO",
+              "flight_count": 89
+            },
+            {
+              "origin": "JFK",
+              "flight_count": 150
+            },
+            {
+              "origin": "LAX",
+              "flight_count": 135
+            },
+            {
+              "origin": "DFW",
+              "flight_count": 98
+            },
+            {
+              "origin": "DEN",
+              "flight_count": 78
+            }
+          ]
+        }
+      }
+    }
+  },
+  "files": {}
+}

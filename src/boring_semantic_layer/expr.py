@@ -102,6 +102,16 @@ class SemanticTable(ir.Table):
         """Execute via to_ibis() to ensure proper lowering."""
         return to_ibis(self).execute()
 
+    def compile(self, **kwargs):
+        """Compile to SQL via to_ibis()."""
+        return to_ibis(self).compile(**kwargs)
+
+    def sql(self, **kwargs):
+        """Generate SQL string via ibis.to_sql()."""
+        import ibis
+
+        return ibis.to_sql(to_ibis(self), **kwargs)
+
 
 def _create_dimension(expr: Dimension | Callable | dict) -> Dimension:
     """Transform various input types to Dimension."""
@@ -443,7 +453,7 @@ class SemanticFilter(SemanticTable):
         return (
             SemanticModel(
                 table=self.op().to_ibis(),
-                dimensions=_get_merged_fields(all_roots, "dims"),
+                dimensions=_get_merged_fields(all_roots, "dimensions"),
                 measures=_get_merged_fields(all_roots, "measures"),
                 calc_measures=_get_merged_fields(all_roots, "calc_measures"),
             )
@@ -681,11 +691,46 @@ class SemanticAggregate(SemanticTable):
             calc_measures={},
         )
 
-    def chart(self, backend: str = "altair", chart_type: str | None = None):
-        """Create a chart from the aggregate."""
+    def chart(
+        self,
+        spec: dict[str, Any] | None = None,
+        backend: str = "altair",
+        format: str = "static",
+    ):
+        """Create a chart from the aggregate.
+
+        Args:
+            spec: Optional chart specification dict (backend-specific format)
+            backend: Visualization backend ("altair" or "plotly")
+            format: Output format ("static", "json", "interactive", "png", "svg")
+
+        Returns:
+            Chart object or specification in requested format
+        """
         from .chart import chart as create_chart
 
-        return create_chart(self.op(), backend=backend, chart_type=chart_type)
+        chart_obj = create_chart(self.op(), spec=spec, backend=backend)
+
+        # Handle format parameter
+        if format in ("static", "interactive"):
+            return chart_obj
+        elif format == "json":
+            return chart_obj.to_dict()
+        elif format == "png":
+            if backend == "altair":
+                return chart_obj.to_png()
+            else:
+                return chart_obj.to_image(format="png")
+        elif format == "svg":
+            if backend == "altair":
+                return chart_obj.to_svg()
+            else:
+                return chart_obj.to_image(format="svg")
+        else:
+            raise ValueError(
+                f"Unsupported format: {format}. "
+                "Supported: 'static', 'interactive', 'json', 'png', 'svg'"
+            )
 
 
 class SemanticOrderBy(SemanticTable):
@@ -723,7 +768,7 @@ class SemanticOrderBy(SemanticTable):
         if all_roots:
             return SemanticModel(
                 table=self.op().to_ibis(),
-                dimensions=_get_merged_fields(all_roots, "dims"),
+                dimensions=_get_merged_fields(all_roots, "dimensions"),
                 measures=_get_merged_fields(all_roots, "measures"),
                 calc_measures=_get_merged_fields(all_roots, "calc_measures"),
             )
@@ -735,7 +780,12 @@ class SemanticOrderBy(SemanticTable):
                 calc_measures={},
             )
 
-    def chart(self, backend: str = "altair", chart_type: str | None = None):
+    def chart(
+        self,
+        spec: dict[str, Any] | None = None,
+        backend: str = "altair",
+        format: str = "static",
+    ):
         """Create a chart from the ordered aggregate."""
         from .chart import chart as create_chart
 
@@ -744,7 +794,28 @@ class SemanticOrderBy(SemanticTable):
         while hasattr(source, "source") and not hasattr(source, "aggs"):
             source = source.source
         if hasattr(source, "aggs"):
-            return create_chart(source, backend=backend, chart_type=chart_type)
+            chart_obj = create_chart(source, spec=spec, backend=backend)
+
+            # Handle format parameter
+            if format in ("static", "interactive"):
+                return chart_obj
+            elif format == "json":
+                return chart_obj.to_dict()
+            elif format == "png":
+                if backend == "altair":
+                    return chart_obj.to_png()
+                else:
+                    return chart_obj.to_image(format="png")
+            elif format == "svg":
+                if backend == "altair":
+                    return chart_obj.to_svg()
+                else:
+                    return chart_obj.to_image(format="svg")
+            else:
+                raise ValueError(
+                    f"Unsupported format: {format}. "
+                    "Supported: 'static', 'interactive', 'json', 'png', 'svg'"
+                )
         raise ValueError("Cannot create chart: no aggregate found in query chain")
 
 
@@ -785,7 +856,7 @@ class SemanticLimit(SemanticTable):
         if all_roots:
             return SemanticModel(
                 table=self.op().to_ibis(),
-                dimensions=_get_merged_fields(all_roots, "dims"),
+                dimensions=_get_merged_fields(all_roots, "dimensions"),
                 measures=_get_merged_fields(all_roots, "measures"),
                 calc_measures=_get_merged_fields(all_roots, "calc_measures"),
             )
@@ -797,7 +868,12 @@ class SemanticLimit(SemanticTable):
                 calc_measures={},
             )
 
-    def chart(self, backend: str = "altair", chart_type: str | None = None):
+    def chart(
+        self,
+        spec: dict[str, Any] | None = None,
+        backend: str = "altair",
+        format: str = "static",
+    ):
         """Create a chart from the limited aggregate."""
         from .chart import chart as create_chart
 
@@ -805,7 +881,28 @@ class SemanticLimit(SemanticTable):
         while hasattr(source, "source") and not hasattr(source, "aggs"):
             source = source.source
         if hasattr(source, "aggs"):
-            return create_chart(source, backend=backend, chart_type=chart_type)
+            chart_obj = create_chart(source, spec=spec, backend=backend)
+
+            # Handle format parameter
+            if format in ("static", "interactive"):
+                return chart_obj
+            elif format == "json":
+                return chart_obj.to_dict()
+            elif format == "png":
+                if backend == "altair":
+                    return chart_obj.to_png()
+                else:
+                    return chart_obj.to_image(format="png")
+            elif format == "svg":
+                if backend == "altair":
+                    return chart_obj.to_svg()
+                else:
+                    return chart_obj.to_image(format="svg")
+            else:
+                raise ValueError(
+                    f"Unsupported format: {format}. "
+                    "Supported: 'static', 'interactive', 'json', 'png', 'svg'"
+                )
         raise ValueError("Cannot create chart: no aggregate found in query chain")
 
 
@@ -842,7 +939,7 @@ class SemanticUnnest(SemanticTable):
         if all_roots:
             return SemanticModel(
                 table=self.op().to_ibis(),
-                dimensions=_get_merged_fields(all_roots, "dims"),
+                dimensions=_get_merged_fields(all_roots, "dimensions"),
                 measures=_get_merged_fields(all_roots, "measures"),
                 calc_measures=_get_merged_fields(all_roots, "calc_measures"),
             )
@@ -997,6 +1094,44 @@ class SemanticMutate(SemanticTable):
 
         return SemanticGroupBy(source=source_with_unnests, keys=keys)
 
+    def chart(
+        self,
+        spec: dict[str, Any] | None = None,
+        backend: str = "altair",
+        format: str = "static",
+    ):
+        """Create a chart from the mutated aggregate."""
+        from .chart import chart as create_chart
+
+        # Get the original aggregate to extract dimensions/measures
+        source = self.source
+        while hasattr(source, "source") and not hasattr(source, "aggs"):
+            source = source.source
+        if hasattr(source, "aggs"):
+            chart_obj = create_chart(source, spec=spec, backend=backend)
+
+            # Handle format parameter
+            if format in ("static", "interactive"):
+                return chart_obj
+            elif format == "json":
+                return chart_obj.to_dict()
+            elif format == "png":
+                if backend == "altair":
+                    return chart_obj.to_png()
+                else:
+                    return chart_obj.to_image(format="png")
+            elif format == "svg":
+                if backend == "altair":
+                    return chart_obj.to_svg()
+                else:
+                    return chart_obj.to_image(format="svg")
+            else:
+                raise ValueError(
+                    f"Unsupported format: {format}. "
+                    "Supported: 'static', 'interactive', 'json', 'png', 'svg'"
+                )
+        raise ValueError("Cannot create chart: no aggregate found in query chain")
+
     def as_table(self) -> SemanticModel:
         """Convert to SemanticModel with no semantic metadata (columns are materialized)."""
         return SemanticModel(
@@ -1040,7 +1175,7 @@ class SemanticProject(SemanticTable):
 
         if all_roots:
             # Get all available semantic metadata
-            all_dims = _get_merged_fields(all_roots, "dims")
+            all_dims = _get_merged_fields(all_roots, "dimensions")
             all_measures = _get_merged_fields(all_roots, "measures")
             all_calc_measures = _get_merged_fields(all_roots, "calc_measures")
 
