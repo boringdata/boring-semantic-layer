@@ -538,6 +538,190 @@ class TestDimensionPrefixing:
         assert us_revenue > uk_revenue
 
 
+class TestJoinOneMethod:
+    """Test join_one() method with left_on/right_on parameters."""
+
+    def test_join_one_repr_does_not_crash(self, ecommerce_tables):
+        """Test that repr() on a grouped join does not crash with AttributeError."""
+        orders_tbl = ecommerce_tables["orders"]
+        customers_tbl = ecommerce_tables["customers"]
+
+        # Create orders with product_category dimension
+        orders_df = pd.DataFrame(
+            {
+                "order_id": [1, 2, 3, 4],
+                "customer_id": [101, 102, 101, 103],
+                "amount": [100.0, 200.0, 150.0, 300.0],
+                "product_category": ["electronics", "books", "electronics", "books"],
+            }
+        )
+        orders_tbl = (
+            ecommerce_tables["orders"]._find_backend().create_table("orders_repr_test", orders_df)
+        )
+
+        orders = (
+            to_semantic_table(orders_tbl, name="orders")
+            .with_dimensions(
+                category=lambda t: t.product_category,
+            )
+            .with_measures(
+                total_revenue=lambda t: t.amount.sum(),
+            )
+        )
+
+        customers = (
+            to_semantic_table(customers_tbl, name="customers")
+            .with_measures(
+                customer_count=lambda t: t.customer_id.count(),
+            )
+            .with_dimensions(
+                country=lambda t: t.country,
+            )
+        )
+
+        joined = orders.join_one(
+            customers,
+            left_on="customer_id",
+            right_on="customer_id",
+        )
+
+        # Create a group_by operation
+        grouped = joined.group_by("customers.country").aggregate("orders.total_revenue")
+
+        # This should not crash with AttributeError: 'SemanticJoinOp' object has no attribute 'calc_measures'
+        repr_str = repr(grouped)
+        assert "SemanticGroupByOp" in repr_str or "SemanticAggregateOp" in repr_str
+
+    def test_join_one_with_dimension_access(self, ecommerce_tables):
+        """Test that dimensions work correctly after join_one()."""
+        orders_tbl = ecommerce_tables["orders"]
+        customers_tbl = ecommerce_tables["customers"]
+
+        # Create orders with product_category dimension
+        orders_df = pd.DataFrame(
+            {
+                "order_id": [1, 2, 3, 4],
+                "customer_id": [101, 102, 101, 103],
+                "amount": [100.0, 200.0, 150.0, 300.0],
+                "product_category": ["electronics", "books", "electronics", "books"],
+            }
+        )
+        orders_tbl = (
+            ecommerce_tables["orders"]
+            ._find_backend()
+            .create_table("orders_with_category", orders_df)
+        )
+
+        orders = (
+            to_semantic_table(orders_tbl, name="orders")
+            .with_dimensions(
+                category=lambda t: t.product_category,
+            )
+            .with_measures(
+                total_revenue=lambda t: t.amount.sum(),
+                avg_order_value=lambda t: t.amount.mean(),
+                order_count=lambda t: t.order_id.count(),
+            )
+        )
+
+        customers_tbl = ecommerce_tables["customers"]
+        customers = (
+            to_semantic_table(customers_tbl, name="customers")
+            .with_measures(
+                customer_count=lambda t: t.customer_id.count(),
+            )
+            .with_dimensions(
+                country=lambda t: t.country,
+            )
+        )
+
+        joined = orders.join_one(
+            customers,
+            right_on="customer_id",
+            left_on="customer_id",
+        )
+
+        # Check that dimensions are properly prefixed
+        assert "orders.category" in joined.dimensions
+        assert "customers.country" in joined.dimensions
+
+        # Test aggregation with single dimension (the bug scenario)
+        result = joined.group_by("orders.category").aggregate("orders.total_revenue").execute()
+
+        assert "orders.category" in result.columns
+        assert "orders.total_revenue" in result.columns
+        # Electronics should have 250.0 total (100 + 150)
+        electronics_revenue = result[result["orders.category"] == "electronics"][
+            "orders.total_revenue"
+        ].iloc[0]
+        assert electronics_revenue == 250.0
+
+    def test_join_one_with_multiple_dimensions_and_measures(self, ecommerce_tables):
+        """Test join_one() with multiple dimensions and measures in aggregation."""
+        orders_tbl = ecommerce_tables["orders"]
+        customers_tbl = ecommerce_tables["customers"]
+
+        # Create orders with product_category dimension
+        orders_df = pd.DataFrame(
+            {
+                "order_id": [1, 2, 3, 4],
+                "customer_id": [101, 102, 101, 103],
+                "amount": [100.0, 200.0, 150.0, 300.0],
+                "product_category": ["electronics", "books", "electronics", "books"],
+            }
+        )
+        orders_tbl = (
+            ecommerce_tables["orders"]
+            ._find_backend()
+            .create_table("orders_with_category2", orders_df)
+        )
+
+        orders = (
+            to_semantic_table(orders_tbl, name="orders")
+            .with_dimensions(
+                category=lambda t: t.product_category,
+            )
+            .with_measures(
+                total_revenue=lambda t: t.amount.sum(),
+                avg_order_value=lambda t: t.amount.mean(),
+                order_count=lambda t: t.order_id.count(),
+            )
+        )
+
+        customers = (
+            to_semantic_table(customers_tbl, name="customers")
+            .with_measures(
+                customer_count=lambda t: t.customer_id.count(),
+            )
+            .with_dimensions(
+                country=lambda t: t.country,
+            )
+        )
+
+        joined = orders.join_one(
+            customers,
+            right_on="customer_id",
+            left_on="customer_id",
+        )
+
+        # Test with multiple dimensions and measures (the failing notebook case)
+        result = joined.group_by("customers.country", "orders.category").aggregate(
+            "orders.total_revenue",
+            "orders.avg_order_value",
+            "orders.order_count",
+            "customers.customer_count",
+        )
+
+        executed = result.execute()
+
+        assert "customers.country" in executed.columns
+        assert "orders.category" in executed.columns
+        assert "orders.total_revenue" in executed.columns
+        assert "orders.avg_order_value" in executed.columns
+        assert "orders.order_count" in executed.columns
+        assert "customers.customer_count" in executed.columns
+
+
 class TestEdgeCases:
     """Test edge cases and potential error scenarios."""
 
