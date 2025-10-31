@@ -62,8 +62,8 @@ jobs:
 
   deploy:
     name: Deploy to GitHub Pages
-    # Deploy from main and bslv2-doc branches (v0: testing)
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bslv2-doc'
+    # Deploy from main and bslv2 branches (v0: testing)
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bslv2'
     needs: build
     runs-on: ubuntu-latest
 
