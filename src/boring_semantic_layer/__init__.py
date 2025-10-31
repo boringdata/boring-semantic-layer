@@ -1,13 +1,43 @@
-from .semantic_model import SemanticModel
-from .semantic_model import Join, Filter, QueryExpr, DimensionSpec, MeasureSpec
+"""
+Semantic API layer on top of external ibis.
+"""
+
+# Import convert and format to register dispatch handlers for semantic operations
+from . import (
+    convert,  # noqa: F401
+    format,  # noqa: F401
+)
+
+# Main API exports
+from .api import (
+    to_semantic_table,
+)
+from .config import (
+    options,
+)
+from .expr import (
+    SemanticModel,
+    SemanticTable,
+    to_ibis,
+)
+from .ops import (
+    Dimension,
+    Measure,
+)
+from .yaml import (
+    from_yaml,
+)
 
 __all__ = [
+    "to_semantic_table",
+    "to_ibis",
     "SemanticModel",
-    "Join",
-    "Filter",
-    "QueryExpr",
-    "DimensionSpec",
-    "MeasureSpec",
+    "SemanticTable",
+    "Dimension",
+    "Measure",
+    "from_yaml",
+    "MCPSemanticModel",
+    "options",
 ]
 
 # Import MCP functionality from separate module if available
@@ -17,8 +47,6 @@ try:
     _MCP_AVAILABLE = True
 except ImportError:
     _MCP_AVAILABLE = False
-
-__all__.append("MCPSemanticModel")
 
 
 def __getattr__(name):

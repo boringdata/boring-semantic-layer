@@ -1,0 +1,60 @@
+# Example YAML configuration for flights semantic model
+# This demonstrates the YAML loader for the Boring Semantic Layer
+
+carriers:
+  table: carriers_tbl
+  description: "Airline carrier information"
+
+  dimensions:
+    code: _.code
+    name:
+      expr: _.name
+      description: "Full airline name"
+    nickname: _.nickname
+
+  measures:
+    carrier_count:
+      expr: _.count()
+      description: "Number of carriers"
+
+flights:
+  table: flights_tbl
+  description: "Flight data with origin, destination, and metrics"
+
+  dimensions:
+    origin:
+      expr: _.origin
+      description: "Origin airport code"
+    destination:
+      expr: _.destination
+      description: "Destination airport code"
+    carrier: _.carrier
+    arr_time:
+      expr: _.arr_time
+      description: "Arrival timestamp"
+      is_time_dimension: true
+      smallest_time_grain: "TIME_GRAIN_DAY"
+
+  measures:
+    flight_count:
+      expr: _.count()
+      description: "Total number of flights"
+    total_distance:
+      expr: _.distance.sum()
+      description: "Total distance flown"
+    avg_distance:
+      expr: _.distance.mean()
+      description: "Average flight distance"
+    max_distance:
+      expr: _.distance.max()
+      description: "Maximum flight distance"
+    avg_delay:
+      expr: _.dep_delay.mean()
+      description: "Average departure delay"
+
+  joins:
+    carriers:
+      model: carriers
+      type: one
+      left_on: carrier
+      right_on: code

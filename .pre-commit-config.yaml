@@ -13,14 +13,14 @@ repos:
       - id: codespell
         additional_dependencies:
           - tomli
-        args: [--ignore-words=.codespell.ignore-words, --skip=*.ipynb]
+        args: ["--skip=*.ipynb,**/node_modules/**,**/package-lock.json", "--ignore-words-list=hastable"]
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
     rev: v0.11.13
     hooks:
       # Run the linter.
       - id: ruff
-        args: ["--output-format=full", "--fix", "src", "examples", "tests"]
+        args: ["--output-format=full", "--fix", "src", "src/boring_semantic_layer/tests"]
       # Run the formatter.
       - id: ruff-format
   - repo: https://github.com/astral-sh/uv-pre-commit
