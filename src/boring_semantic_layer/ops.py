@@ -980,6 +980,54 @@ class SemanticJoinOp(Relation):
     def json_definition(self) -> Mapping[str, Any]:
         return _build_json_definition(self.get_dimensions(), self.get_measures(), None)
 
+    @property
+    def name(self) -> str | None:
+        """Get name of joined model (or None for anonymous joins)."""
+        # Joins are typically anonymous unless explicitly named via as_table()
+        return None
+
+    @property
+    def table(self):
+        """Get the underlying Ibis table expression."""
+        return self.to_ibis()
+
+    def query(
+        self,
+        dimensions: Sequence[str] | None = None,
+        measures: Sequence[str] | None = None,
+        filters: list | None = None,
+        order_by: Sequence[tuple[str, str]] | None = None,
+        limit: int | None = None,
+        time_grain: str | None = None,
+        time_range: dict[str, str] | None = None,
+    ):
+        """Query using parameter-based interface.
+
+        Args:
+            dimensions: List of dimension names to group by
+            measures: List of measure names to aggregate
+            filters: List of filters (dict, str, callable, or Filter objects)
+            order_by: List of (field, direction) tuples
+            limit: Maximum number of rows to return
+            time_grain: Optional time grain (e.g., "TIME_GRAIN_MONTH")
+            time_range: Optional time range with 'start' and 'end' keys
+
+        Returns:
+            SemanticAggregate or SemanticTable ready for execution
+        """
+        from .query import query as build_query
+
+        return build_query(
+            semantic_table=self,
+            dimensions=dimensions,
+            measures=measures,
+            filters=filters,
+            order_by=order_by,
+            limit=limit,
+            time_grain=time_grain,
+            time_range=time_range,
+        )
+
     def with_dimensions(self, **dims) -> SemanticTable:
         return _semantic_table(
             table=self.to_ibis(),
@@ -1032,8 +1080,10 @@ class SemanticJoinOp(Relation):
         other: SemanticTable,
         on: Callable[[Any, Any], ir.BooleanValue] | None = None,
         how: str = "inner",
-    ) -> SemanticJoinOp:
-        return SemanticJoinOp(
+    ):
+        from .expr import SemanticJoin
+
+        return SemanticJoin(
             left=self,
             right=_unwrap_semantic_table(other),
             on=on,
@@ -1045,8 +1095,10 @@ class SemanticJoinOp(Relation):
         other: SemanticTable,
         left_on: str,
         right_on: str,
-    ) -> SemanticJoinOp:
-        return SemanticJoinOp(
+    ):
+        from .expr import SemanticJoin
+
+        return SemanticJoin(
             left=self,
             right=_unwrap_semantic_table(other),
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
@@ -1058,8 +1110,10 @@ class SemanticJoinOp(Relation):
         other: SemanticTable,
         left_on: str,
         right_on: str,
-    ) -> SemanticJoinOp:
-        return SemanticJoinOp(
+    ):
+        from .expr import SemanticJoin
+
+        return SemanticJoin(
             left=self,
             right=_unwrap_semantic_table(other),
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),

@@ -10,15 +10,12 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from functools import reduce
 from operator import attrgetter
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ibis.common.collections import FrozenDict
 from ibis.expr import types as ir
 
 from .ops import Dimension, Measure, SemanticTableOp
-
-if TYPE_CHECKING:
-    from .ops import SemanticJoinOp
 
 
 def to_ibis(expr):
@@ -97,6 +94,10 @@ class SemanticTable(ir.Table):
     def pipe(self, func, *args, **kwargs):
         """Apply a function to self."""
         return func(self, *args, **kwargs)
+
+    def to_ibis(self):
+        """Convert to Ibis expression."""
+        return self.op().to_ibis()
 
     def execute(self):
         """Execute via to_ibis() to ensure proper lowering."""
@@ -303,17 +304,13 @@ class SemanticModel(SemanticTable):
         how: str = "inner",
     ):
         """Join with another semantic table."""
-        from .ops import SemanticJoinOp
-
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoinOp(left=self.op(), right=other_op, on=on, how=how)
+        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how)
 
     def join_one(self, other: SemanticModel, left_on: str, right_on: str):
         """Inner join one-to-one or many-to-one."""
-        from .ops import SemanticJoinOp
-
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoinOp(
+        return SemanticJoin(
             left=self.op(),
             right=other_op,
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
@@ -322,10 +319,8 @@ class SemanticModel(SemanticTable):
 
     def join_many(self, other: SemanticModel, left_on: str, right_on: str):
         """Left join one-to-many."""
-        from .ops import SemanticJoinOp
-
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoinOp(
+        return SemanticJoin(
             left=self.op(),
             right=other_op,
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
@@ -334,10 +329,8 @@ class SemanticModel(SemanticTable):
 
     def join_cross(self, other: SemanticModel):
         """Cross join."""
-        from .ops import SemanticJoinOp
-
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoinOp(left=self.op(), right=other_op, on=None, how="cross")
+        return SemanticJoin(left=self.op(), right=other_op, on=None, how="cross")
 
     def index(
         self,
@@ -419,6 +412,178 @@ class SemanticModel(SemanticTable):
         )
 
     # __repr__ inherited from ir.Table, uses custom formatter registered in convert.py
+
+
+class SemanticJoin(SemanticTable):
+    """User-facing join expression wrapping SemanticJoinOp Operation."""
+
+    def __init__(
+        self,
+        left: SemanticTableOp,
+        right: SemanticTableOp,
+        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
+        how: str = "inner",
+    ) -> None:
+        from .ops import SemanticJoinOp
+
+        op = SemanticJoinOp(left=left, right=right, on=on, how=how)
+        super().__init__(op)
+
+    @property
+    def left(self):
+        return self.op().left
+
+    @property
+    def right(self):
+        return self.op().right
+
+    @property
+    def on(self):
+        return self.op().on
+
+    @property
+    def how(self):
+        return self.op().how
+
+    @property
+    def values(self):
+        return self.op().values
+
+    @property
+    def schema(self):
+        return self.op().schema
+
+    @property
+    def dimensions(self):
+        """Get tuple of dimension names."""
+        return self.op().dimensions
+
+    @property
+    def measures(self):
+        return self.op().measures
+
+    def get_dimensions(self):
+        """Get dictionary of dimensions with metadata."""
+        return self.op().get_dimensions()
+
+    def get_measures(self):
+        """Get dictionary of base measures with metadata."""
+        return self.op().get_measures()
+
+    def get_calculated_measures(self):
+        """Get dictionary of calculated measures with metadata."""
+        return self.op().get_calculated_measures()
+
+    @property
+    def _dims(self):
+        """Internal: Forward to Operation._dims (dict of Dimension objects)."""
+        return self.op()._dims
+
+    @property
+    def _base_measures(self):
+        """Internal: Forward to Operation._base_measures."""
+        return self.op()._base_measures
+
+    @property
+    def _calc_measures(self):
+        """Internal: Forward to Operation._calc_measures."""
+        return self.op()._calc_measures
+
+    @property
+    def json_definition(self):
+        return self.op().json_definition
+
+    def with_dimensions(self, **dims) -> SemanticModel:
+        """Add or update dimensions."""
+        return SemanticModel(
+            table=self.op().to_ibis(),
+            dimensions={**self.get_dimensions(), **dims},
+            measures=self.get_measures(),
+            calc_measures=self.get_calculated_measures(),
+        )
+
+    def with_measures(self, **meas) -> SemanticModel:
+        """Add or update measures."""
+        from .measure_scope import MeasureScope
+        from .ops import _classify_measure
+
+        joined_tbl = self.op().to_ibis()
+        all_known = (
+            list(self.get_measures().keys())
+            + list(self.get_calculated_measures().keys())
+            + list(meas.keys())
+        )
+        scope = MeasureScope(_tbl=joined_tbl, _known=all_known)
+
+        new_base, new_calc = (
+            dict(self.get_measures()),
+            dict(self.get_calculated_measures()),
+        )
+        for name, fn_or_expr in meas.items():
+            kind, value = _classify_measure(fn_or_expr, scope)
+            (new_calc if kind == "calc" else new_base)[name] = value
+
+        return SemanticModel(
+            table=joined_tbl,
+            dimensions=self.get_dimensions(),
+            measures=new_base,
+            calc_measures=new_calc,
+        )
+
+    def join(
+        self,
+        other: SemanticModel,
+        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
+        how: str = "inner",
+    ):
+        """Join with another semantic table."""
+        from .ops import _unwrap_semantic_table
+
+        return SemanticJoin(
+            left=self.op(),
+            right=_unwrap_semantic_table(other),
+            on=on,
+            how=how,
+        )
+
+    def join_one(self, other: SemanticModel, left_on: str, right_on: str):
+        """Inner join one-to-one or many-to-one."""
+        from .ops import _unwrap_semantic_table
+
+        return SemanticJoin(
+            left=self.op(),
+            right=_unwrap_semantic_table(other),
+            on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
+            how="inner",
+        )
+
+    def join_many(self, other: SemanticModel, left_on: str, right_on: str):
+        """Left join one-to-many."""
+        from .ops import _unwrap_semantic_table
+
+        return SemanticJoin(
+            left=self.op(),
+            right=_unwrap_semantic_table(other),
+            on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
+            how="left",
+        )
+
+    def join_cross(self, other: SemanticModel):
+        """Cross join."""
+        from .ops import _unwrap_semantic_table
+
+        return SemanticJoin(
+            left=self.op(), right=_unwrap_semantic_table(other), on=None, how="cross"
+        )
+
+    def as_table(self) -> SemanticModel:
+        """Convert to SemanticModel, preserving semantic metadata from joined tables."""
+        return SemanticModel(
+            table=self.op().to_ibis(),
+            dimensions=self.get_dimensions(),
+            measures=self.get_measures(),
+            calc_measures=self.get_calculated_measures(),
+        )
 
 
 class SemanticFilter(SemanticTable):
@@ -510,7 +675,7 @@ class SemanticGroupBy(SemanticTable):
         aggs = {}
         for item in measure_names:
             if isinstance(item, str):
-                aggs[item] = lambda t, n=item: getattr(t, n)
+                aggs[item] = lambda t, n=item: t[n]
             elif callable(item):
                 aggs[f"_measure_{id(item)}"] = item
             else:
@@ -639,11 +804,11 @@ class SemanticAggregate(SemanticTable):
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | None = None,
         how: str = "inner",
-    ) -> SemanticJoinOp:
+    ) -> SemanticJoin:
         """Join with another semantic table."""
-        from .ops import SemanticJoinOp, _unwrap_semantic_table
+        from .ops import _unwrap_semantic_table
 
-        return SemanticJoinOp(
+        return SemanticJoin(
             left=self.op(),
             right=_unwrap_semantic_table(other),
             on=on,
@@ -655,11 +820,11 @@ class SemanticAggregate(SemanticTable):
         other: SemanticModel,
         left_on: str,
         right_on: str,
-    ) -> SemanticJoinOp:
+    ) -> SemanticJoin:
         """Join with a one-to-one relationship."""
-        from .ops import SemanticJoinOp, _unwrap_semantic_table
+        from .ops import _unwrap_semantic_table
 
-        return SemanticJoinOp(
+        return SemanticJoin(
             left=self.op(),
             right=_unwrap_semantic_table(other),
             on=lambda left, right: left[left_on] == right[right_on],
@@ -671,11 +836,11 @@ class SemanticAggregate(SemanticTable):
         other: SemanticModel,
         left_on: str,
         right_on: str,
-    ) -> SemanticJoinOp:
+    ) -> SemanticJoin:
         """Join with a one-to-many relationship."""
-        from .ops import SemanticJoinOp, _unwrap_semantic_table
+        from .ops import _unwrap_semantic_table
 
-        return SemanticJoinOp(
+        return SemanticJoin(
             left=self.op(),
             right=_unwrap_semantic_table(other),
             on=lambda left, right: left[left_on] == right[right_on],
