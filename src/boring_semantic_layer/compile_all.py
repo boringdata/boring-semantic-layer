@@ -43,7 +43,10 @@ def _unnest_nested_arrays(base_tbl, array_path: tuple[str, ...]):
 
 def _collect_all_refs(expr: MeasureExpr, out: set[str]) -> None:
     if isinstance(expr, AllOf):
-        out.add(expr.ref.name)
+        # Only add if ref is a MeasureRef, not an AggregationExpr
+        if isinstance(expr.ref, MeasureRef):
+            out.add(expr.ref.name)
+        # If it's an AggregationExpr, it will be resolved during compilation
     elif isinstance(expr, BinOp):
         _collect_all_refs(expr.left, out)
         _collect_all_refs(expr.right, out)
@@ -65,12 +68,60 @@ def _compile_binop(by_tbl, all_tbl, op: str, left: Any, right: Any):
 
 
 def _compile_formula(expr: MeasureExpr, by_tbl, all_tbl):
+    """Compile a measure expression to ibis, using functional dispatch for AggregationExpr."""
+    from .measure_scope import AggregationExpr
+
     if isinstance(expr, int | float):
         return ibis.literal(expr)
     if isinstance(expr, MeasureRef):
         return by_tbl[expr.name]
     if isinstance(expr, AllOf):
-        return all_tbl[expr.ref.name]
+        # Handle AllOf with AggregationExpr or MeasureRef
+        if isinstance(expr.ref, MeasureRef):
+            return all_tbl[expr.ref.name]
+        elif isinstance(expr.ref, AggregationExpr):
+            # AllOf with AggregationExpr requires the measure to exist
+            raise ValueError(
+                f"Unresolved AggregationExpr in AllOf: {expr.ref}. "
+                f"Expected a measure computing {expr.ref.column}.{expr.ref.operation}() to exist."
+            )
+    if isinstance(expr, AggregationExpr):
+        # If AggregationExpr wasn't resolved to a measure, we might be in a calculated
+        # measure context (BinOp). In that case, the raw column won't exist in the
+        # grouped table. We should raise a helpful error.
+        if expr.column not in by_tbl.columns and expr.column != "*":
+            raise ValueError(
+                f"Unresolved AggregationExpr: {expr}. "
+                f"Column '{expr.column}' not found in grouped table. "
+                f"This can happen when using inline aggregations like _.distance.sum() in complex expressions. "
+                f"Consider defining base measures first, e.g.:\n"
+                f"  .with_measures(total_distance=_.distance.sum())\n"
+                f"  .with_measures(my_calc=lambda t: t.total_distance + ...))"
+            )
+
+        # Compile AggregationExpr directly from grouped table
+        # This allows inline aggregations like lambda t: t.distance.sum() to work
+        # when the measure is a simple aggregation (not part of a BinOp)
+        operations = {
+            "sum": lambda col: col.sum(),
+            "mean": lambda col: col.mean(),
+            "avg": lambda col: col.mean(),
+            "count": lambda col: col.count(),
+            "min": lambda col: col.min(),
+            "max": lambda col: col.max(),
+        }
+
+        op_fn = operations.get(expr.operation)
+        if op_fn is None:
+            raise ValueError(f"Unknown aggregation operation: {expr.operation}")
+
+        # Apply the operation to the column
+        if expr.operation == "count":
+            return by_tbl.count()
+
+        column = by_tbl[expr.column]
+        result = op_fn(column)
+        return result
     if isinstance(expr, BinOp):
         return _compile_binop(by_tbl, all_tbl, expr.op, expr.left, expr.right)
     return expr

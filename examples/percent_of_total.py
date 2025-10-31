@@ -23,36 +23,22 @@ def main():
         how="inner",
     )
 
-    flights = (
-        to_semantic_table(flights_with_carriers, name="flights")
-        .with_measures(
-            flight_count=lambda t: t.count(),
-            total_distance=lambda t: t.distance.sum(),
-        )
-        .with_measures(
-            market_share=lambda t: t.flight_count / t.all(t.flight_count) * 100,
-            distance_share=lambda t: t.total_distance / t.all(t.total_distance) * 100,
-        )
+    flights = to_semantic_table(flights_with_carriers, name="flights").with_measures(
+        flight_count=_.count(),
+        total_distance=_.distance.sum(),
+        # Automatic measure deduplication!
+        # This automatically uses the total_distance measure defined above
+        distance_share=lambda t: t.distance.sum() / t.all(t.distance.sum()) * 100,
     )
 
     result = (
         flights.group_by("nickname")
-        .aggregate("flight_count", "market_share")
-        .order_by(_.market_share.desc())
+        .aggregate("flight_count", "distance_share")
+        .order_by(_.distance_share.desc())
         .limit(10)
         .execute()
     )
     print("\nMarket share by carrier:")
-    print(result)
-
-    result = (
-        flights.group_by("origin", "nickname")
-        .aggregate("flight_count", "market_share")
-        .order_by(_.market_share.desc())
-        .limit(15)
-        .execute()
-    )
-    print("\nMarket share by origin and carrier:")
     print(result)
 
 

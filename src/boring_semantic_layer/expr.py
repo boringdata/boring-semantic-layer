@@ -517,6 +517,23 @@ class SemanticGroupBy(SemanticTable):
                 raise TypeError(
                     f"measure_names must be strings or callables, got {type(item)}",
                 )
+
+        # Wrap AggregationExpr in callables
+        from .measure_scope import AggregationExpr
+
+        def wrap_aggregation_expr(expr):
+            """Wrap AggregationExpr in a callable for inline aggregates."""
+            if isinstance(expr, AggregationExpr):
+
+                def wrapped(t):
+                    if expr.operation == "count":
+                        return t.count()
+                    return getattr(t[expr.column], expr.operation)()
+
+                return wrapped
+            return expr
+
+        aliased = {k: wrap_aggregation_expr(v) for k, v in aliased.items()}
         aggs.update(aliased)
 
         if nest:

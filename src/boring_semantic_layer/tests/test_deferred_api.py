@@ -138,7 +138,10 @@ def test_mixed_deferred_and_lambda():
 
 
 def test_deferred_with_complex_expression():
-    """Test deferred API with complex expressions."""
+    """Test deferred API with complex expressions.
+
+    For complex expressions, define base measures first, then combine them.
+    """
     con = ibis.duckdb.connect(":memory:")
     flights = pd.DataFrame(
         {
@@ -149,9 +152,17 @@ def test_deferred_with_complex_expression():
     )
     f_tbl = con.create_table("flights", flights)
 
-    flights_st = to_semantic_table(f_tbl, "flights").with_measures(
-        # Complex deferred expression
-        total_delay_distance=_.distance.sum() + _.delay.sum(),
+    # Define base measures with _, then combine them
+    flights_st = (
+        to_semantic_table(f_tbl, "flights")
+        .with_measures(
+            total_distance=_.distance.sum(),
+            total_delay=_.delay.sum(),
+        )
+        .with_measures(
+            # Combine the base measures
+            total_delay_distance=lambda t: t.total_distance + t.total_delay,
+        )
     )
 
     df = flights_st.group_by("carrier").aggregate("total_delay_distance").execute()
@@ -337,3 +348,41 @@ def test_deferred_comprehensive_workflow():
     assert df.total_distance.sum() == 1050  # 200+300+400+150 (100 filtered out)
     # AA has 1 flight (200) - 0 long, UA has 2 flights (300, 400) - 2 long, DL has 1 flight (150) - 0 long
     assert df.long_flights.sum() == 2
+
+
+def test_aggregation_expr_method_chaining():
+    """Test that AggregationExpr supports method chaining for post-aggregation operations.
+
+    This allows patterns like t.time.max().epoch_seconds() when defining base measures.
+    """
+    con = ibis.duckdb.connect(":memory:")
+    events = pd.DataFrame(
+        {
+            "session_id": [1, 1, 2],
+            "event_time": pd.to_datetime(
+                ["2023-01-01 10:00", "2023-01-01 10:10", "2023-01-01 11:00"]
+            ),
+        },
+    )
+    events_tbl = con.create_table("events", events)
+
+    # Method chaining works when defining base measures
+    events_st = (
+        to_semantic_table(events_tbl, "events")
+        .with_measures(
+            # ✅ Method chaining: t.event_time.max().epoch_seconds()
+            max_time_epoch=lambda t: t.event_time.max().epoch_seconds(),
+            min_time_epoch=lambda t: t.event_time.min().epoch_seconds(),
+        )
+        .with_measures(
+            # Combine base measures
+            duration_seconds=lambda t: t.max_time_epoch - t.min_time_epoch,
+        )
+    )
+
+    df = events_st.group_by("session_id").aggregate("duration_seconds").execute()
+
+    # Session 1: 10 minutes = 600 seconds
+    assert df[df.session_id == 1]["duration_seconds"].values[0] == 600
+    # Session 2: 0 seconds (single event)
+    assert df[df.session_id == 2]["duration_seconds"].values[0] == 0

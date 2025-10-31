@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from functools import reduce
 from operator import methodcaller
 from typing import TYPE_CHECKING, Any
 
@@ -22,30 +23,24 @@ if TYPE_CHECKING:
 
 
 def _to_ibis(source: Any) -> ir.Table:
-    """Convert semantic or Ibis object to Ibis table expression."""
     return source.to_ibis() if hasattr(source, "to_ibis") else source.to_expr()
 
 
 def _semantic_table(*args, **kwargs) -> SemanticTable:
-    """Late-binding import to avoid circular dependency."""
     from .expr import SemanticModel
 
     return SemanticModel(*args, **kwargs)
 
 
 def _unwrap_semantic_table(other: Any) -> Any:
-    """Unwrap SemanticTable Expression to SemanticTableOp Operation."""
-    # Use methodcaller to get .op() if it exists, otherwise return as-is
     return methodcaller("op")(other) if hasattr(other, "op") and callable(other.op) else other
 
 
 def _unwrap(wrapped: Any) -> Any:
-    """Extract the underlying callable/Deferred from wrapper."""
     return wrapped.unwrap if isinstance(wrapped, _CallableWrapper) else wrapped
 
 
 def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
-    """Resolve deferred expressions or callables to Ibis values."""
     return (
         expr.resolve(scope)
         if isinstance(expr, Deferred)
@@ -56,7 +51,6 @@ def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
 
 
 def _get_field_dict(root: Any, field_type: str) -> dict:
-    """Get field dict from SemanticOp using public methods."""
     method_map = {
         "dimensions": "get_dimensions",
         "measures": "get_measures",
@@ -85,7 +79,8 @@ def _collect_measure_refs(expr, refs_out: set):
     if isinstance(expr, MeasureRef):
         refs_out.add(expr.name)
     elif isinstance(expr, AllOf):
-        refs_out.add(expr.ref.name)
+        if isinstance(expr.ref, MeasureRef):
+            refs_out.add(expr.ref.name)
     elif isinstance(expr, BinOp):
         _collect_measure_refs(expr.left, refs_out)
         _collect_measure_refs(expr.right, refs_out)
@@ -159,10 +154,112 @@ def _extract_measure_metadata(fn_or_expr: Any) -> tuple[Any, str | None, str | N
 
 
 def _is_calculated_measure(val: Any) -> bool:
-    """Check if value represents a calculated measure."""
     from .measure_scope import AllOf, BinOp, MeasureRef
 
     return isinstance(val, MeasureRef | AllOf | BinOp | int | float)
+
+
+def _matches_aggregation_pattern(measure_expr, agg_expr, tbl):
+    from toolz import curry
+
+    from .measure_scope import AggregationExpr, ColumnScope
+    from .utils import success, try_result
+
+    if not isinstance(agg_expr, AggregationExpr):
+        return success(False)
+
+    @curry
+    def evaluate_in_scope(tbl, expr):
+        """Evaluate measure expression in a ColumnScope."""
+        scope = ColumnScope(_tbl=tbl)
+        return (
+            expr.resolve(scope)
+            if isinstance(expr, Deferred)
+            else expr(scope)
+            if callable(expr)
+            else expr
+        )
+
+    @curry
+    def has_matching_operation(agg_expr, result):
+        """Check if the operation matches the expected aggregation."""
+        if not hasattr(result, "op"):
+            return False
+
+        op_name = type(result.op()).__name__.lower()
+        expected_op = "avg" if agg_expr.operation.lower() == "mean" else agg_expr.operation.lower()
+
+        return expected_op in op_name
+
+    @curry
+    def has_matching_column(agg_expr, result):
+        """Check if the column matches the expected column."""
+        if not hasattr(result, "op"):
+            return False
+
+        op = result.op()
+        if not hasattr(op, "args") or len(op.args) == 0:
+            return False
+
+        first_arg = op.args[0]
+        if not hasattr(first_arg, "__class__"):
+            return False
+
+        arg_name = type(first_arg).__name__
+        if "Field" not in arg_name and "Column" not in arg_name:
+            return False
+
+        # Try direct name attribute
+        if hasattr(first_arg, "name"):
+            return first_arg.name == agg_expr.column
+
+        # Try extracting from args
+        if hasattr(first_arg, "args") and len(first_arg.args) > 1:
+            field_name = first_arg.args[1]
+            # Skip if it's a type, not a name
+            if hasattr(field_name, "__class__") and type(field_name).__name__ == "str":
+                return False
+            return field_name == agg_expr.column
+
+        return False
+
+    def matches_pattern(result):
+        """Check if result matches both operation and column."""
+        return has_matching_operation(agg_expr, result) and has_matching_column(agg_expr, result)
+
+    return try_result(lambda: evaluate_in_scope(tbl, measure_expr)).map(matches_pattern)
+
+
+def _find_matching_measure(agg_expr, known_measures: dict, tbl):
+    """Find a measure that matches the aggregation expression pattern.
+
+    Returns Option[str] using functional patterns.
+    """
+    from toolz import curry
+
+    from .measure_scope import AggregationExpr
+    from .utils import nothing, some
+
+    if not isinstance(agg_expr, AggregationExpr):
+        return nothing()
+
+    @curry
+    def is_valid_measure(measure_obj):
+        """Check if object has expr attribute (is a Measure)."""
+        return hasattr(measure_obj, "expr")
+
+    @curry
+    def matches_pattern(agg_expr, tbl, measure_obj):
+        """Check if measure matches the aggregation pattern."""
+        result = _matches_aggregation_pattern(measure_obj.expr, agg_expr, tbl)
+        return result.unwrap_or(False)
+
+    # Find first measure that matches the pattern
+    for measure_name, measure_obj in known_measures.items():
+        if is_valid_measure(measure_obj) and matches_pattern(agg_expr, tbl, measure_obj):
+            return some(measure_name)
+
+    return nothing()
 
 
 def _make_base_measure(
@@ -171,17 +268,142 @@ def _make_base_measure(
     locality: str | None,
     requires_unnest: tuple,
 ) -> Measure:
-    """Create a base measure with proper callable wrapping."""
-    from .measure_scope import ColumnScope
+    """Create a base measure with proper callable wrapping using functional patterns."""
+    from toolz import curry
 
-    return Measure(
-        expr=lambda t, fn=expr: (
-            fn.resolve(ColumnScope(_tbl=t)) if isinstance(fn, Deferred) else fn(ColumnScope(_tbl=t))
-        ),
-        description=description,
-        locality=locality,
-        requires_unnest=requires_unnest,
-    )
+    from .measure_scope import AggregationExpr, ColumnScope
+    from .utils import option_of
+
+    # Functional mapping of aggregation operations to ibis column methods
+    @curry
+    def apply_aggregation(operation: str, column):
+        """Apply aggregation operation to a column using functional dispatch."""
+        operations = {
+            "sum": lambda c: c.sum(),
+            "mean": lambda c: c.mean(),
+            "avg": lambda c: c.mean(),
+            "count": lambda c: c.count(),
+            "min": lambda c: c.min(),
+            "max": lambda c: c.max(),
+        }
+
+        return (
+            option_of(operations.get(operation))
+            .map(lambda fn: fn(column))
+            .unwrap_or_else(
+                lambda: (_ for _ in ()).throw(
+                    ValueError(f"Unknown aggregation operation: {operation}")
+                )
+            )
+        )
+
+    @curry
+    def evaluate_expr(expr, scope):
+        """Evaluate expression in given scope."""
+        return (
+            expr.resolve(scope)
+            if isinstance(expr, Deferred)
+            else expr(scope)
+            if callable(expr)
+            else expr
+        )
+
+    def convert_aggregation_expr(t, agg_expr: AggregationExpr):
+        """Convert AggregationExpr to ibis expression."""
+        # First, perform the aggregation
+        if agg_expr.operation == "count":
+            # Count operates on the table, not a specific column
+            result = t.count()
+        else:
+            result = apply_aggregation(agg_expr.operation, t[agg_expr.column])
+
+        # Then, apply any post-aggregation operations (e.g., .epoch_seconds())
+        for method_name, args, kwargs in agg_expr.post_ops:
+            result = getattr(result, method_name)(*args, **kwargs)
+
+        return result
+
+    # Handle AggregationExpr passed directly (e.g., from _.count())
+    if isinstance(expr, AggregationExpr):
+
+        def wrapped_expr(t):
+            """Convert AggregationExpr to ibis expression."""
+            return convert_aggregation_expr(t, expr)
+
+        return Measure(
+            expr=wrapped_expr,
+            description=description,
+            locality=locality,
+            requires_unnest=requires_unnest,
+        )
+
+    if callable(expr):
+
+        def wrapped_expr(t):
+            """Wrapped expression that handles AggregationExpr conversion."""
+            scope = ColumnScope(_tbl=t)
+            result = evaluate_expr(expr, scope)
+
+            # Convert AggregationExpr to actual ibis expression
+            if isinstance(result, AggregationExpr):
+                return convert_aggregation_expr(t, result)
+            return result
+
+        return Measure(
+            expr=wrapped_expr,
+            description=description,
+            locality=locality,
+            requires_unnest=requires_unnest,
+        )
+    else:
+        return Measure(
+            expr=lambda t, fn=expr: evaluate_expr(fn, ColumnScope(_tbl=t)),
+            description=description,
+            locality=locality,
+            requires_unnest=requires_unnest,
+        )
+
+
+def _check_op_for_window(op, depth=0):
+    """Recursively check an operation node for window functions."""
+    if op is None or depth > 20:  # Prevent infinite recursion
+        return False
+
+    # Skip primitive types and common non-operation types
+    if isinstance(op, str | int | float | bool | type(None)):
+        return False
+
+    op_name = type(op).__name__
+
+    # Check if this is a window operation
+    if "Window" in op_name or "AnalyticOp" in op_name:
+        return True
+
+    # Only recurse into ibis operation objects (they have __module__ containing 'ibis')
+    if (
+        hasattr(op, "__class__")
+        and hasattr(op.__class__, "__module__")
+        and "ibis" not in op.__class__.__module__
+    ):
+        return False
+
+    # Recursively check args
+    if hasattr(op, "args"):
+        for arg in op.args:
+            if _check_op_for_window(arg, depth + 1):
+                return True
+
+    return False
+
+
+def _has_window_function(expr, depth=0):
+    """Check if an ibis expression contains window functions."""
+    if not hasattr(expr, "op"):
+        return False
+    try:
+        return _check_op_for_window(expr.op(), depth)
+    except Exception:
+        return False
 
 
 def _classify_measure(fn_or_expr: Any, scope: Any) -> tuple[str, Any]:
@@ -667,12 +889,69 @@ class SemanticAggregateOp(Relation):
             )
             scope = MeasureScope(_tbl=tbl, _known=all_measure_names)
 
+        def _resolve_aggregation_exprs(expr):
+            """Recursively resolve AggregationExpr to MeasureRef if a matching measure exists.
+
+            Uses functional composition with Option monads for cleaner control flow.
+            """
+            from toolz import curry
+
+            from .measure_scope import AggregationExpr, BinOp
+
+            @curry
+            def find_in_calc_measures(expr, calc_measures):
+                """Find matching AggregationExpr in calc measures."""
+                from .utils import nothing, some
+
+                for calc_name, calc_expr in calc_measures.items():
+                    if isinstance(calc_expr, AggregationExpr) and (
+                        calc_expr.column == expr.column and calc_expr.operation == expr.operation
+                    ):
+                        return some(calc_name)
+                return nothing()
+
+            def resolve_aggregation(agg_expr):
+                """Resolve an AggregationExpr to a MeasureRef or keep as-is."""
+                # Try base measures first, then calc measures
+                matched = _find_matching_measure(agg_expr, merged_base_measures, tbl)
+
+                return matched.map(
+                    MeasureRef
+                ).unwrap_or_else(  # Map Option[str] -> Option[MeasureRef]
+                    lambda: (
+                        find_in_calc_measures(agg_expr, merged_calc_measures)
+                        .map(MeasureRef)
+                        .unwrap_or(agg_expr)  # Keep original if no match
+                    )
+                )
+
+            if isinstance(expr, AggregationExpr):
+                return resolve_aggregation(expr)
+            elif isinstance(expr, BinOp):
+                # Recursively resolve in binary operations
+                return BinOp(
+                    op=expr.op,
+                    left=_resolve_aggregation_exprs(expr.left),
+                    right=_resolve_aggregation_exprs(expr.right),
+                )
+            elif isinstance(expr, AllOf):
+                # Recursively resolve the reference
+                if isinstance(expr.ref, AggregationExpr):
+                    resolved_ref = resolve_aggregation(expr.ref)
+                    return AllOf(resolved_ref)
+                return expr
+            else:
+                return expr
+
         agg_specs = {}
         calc_specs = {}
 
         for name, fn_wrapped in self.aggs.items():
             fn = _unwrap(fn_wrapped)
             val = _resolve_expr(fn, scope)
+
+            # Try to resolve any AggregationExpr to existing measures
+            val = _resolve_aggregation_exprs(val)
 
             # In post-aggregation context, treat all expressions as regular aggregations
             if is_post_agg:
@@ -684,7 +963,9 @@ class SemanticAggregateOp(Relation):
             elif isinstance(val, MeasureRef):
                 ref_name = val.name
                 if ref_name in merged_calc_measures:
-                    calc_specs[name] = merged_calc_measures[ref_name]
+                    # Resolve any AggregationExpr in the calc measure
+                    calc_expr = merged_calc_measures[ref_name]
+                    calc_specs[name] = _resolve_aggregation_exprs(calc_expr)
                 elif ref_name in merged_base_measures:
                     measure_obj = merged_base_measures[ref_name]
                     agg_specs[name] = lambda t, m=measure_obj: m(t)
@@ -805,8 +1086,6 @@ class SemanticMutateOp(Relation):
                     else reqs
                 )
             )
-
-        from functools import reduce
 
         requirements = reduce(
             process_mutation, self.post.values(), projection_utils.TableRequirements.empty()
@@ -1760,8 +2039,6 @@ class SemanticIndexOp(Relation):
         )
 
     def to_ibis(self):
-        from functools import reduce
-
         import ibis
 
         all_roots = _find_all_root_models(self.source)

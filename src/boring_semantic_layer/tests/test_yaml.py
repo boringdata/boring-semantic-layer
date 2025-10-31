@@ -223,9 +223,7 @@ flights:
 
         # Test query with joined dimension (use dot notation)
         result = (
-            flights.group_by("flights.origin", "carriers.name")
-            .aggregate("flight_count")
-            .execute()
+            flights.group_by("flights.origin", "carriers.name").aggregate("flight_count").execute()
         )
 
         # Verify the join worked
@@ -270,14 +268,10 @@ flights:
         assert "flights" in models
 
         # Test both models work
-        carriers_result = (
-            models["carriers"].group_by("name").aggregate("carrier_count").execute()
-        )
+        carriers_result = models["carriers"].group_by("name").aggregate("carrier_count").execute()
         assert len(carriers_result) == 4
 
-        flights_result = (
-            models["flights"].group_by("origin").aggregate("flight_count").execute()
-        )
+        flights_result = models["flights"].group_by("origin").aggregate("flight_count").execute()
         assert len(flights_result) > 0
 
     finally:
@@ -363,18 +357,13 @@ flights:
         assert model.get_dimensions()["origin"].description is None
 
         # Extended format dimension has description
-        assert (
-            model.get_dimensions()["destination"].description == "Destination airport"
-        )
+        assert model.get_dimensions()["destination"].description == "Destination airport"
 
         # Simple format measure has no description (use _base_measures to get Measure objects)
         assert model._base_measures["flight_count"].description is None
 
         # Extended format measure has description
-        assert (
-            model._base_measures["avg_distance"].description
-            == "Average flight distance"
-        )
+        assert model._base_measures["avg_distance"].description == "Average flight distance"
 
     finally:
         os.unlink(yaml_path)
@@ -415,7 +404,10 @@ flights:
 
 
 def test_complex_measure_expressions(sample_tables):
-    """Test loading models with complex measure expressions."""
+    """Test loading models with complex measure expressions.
+
+    Note: With ColumnProxy enabled, complex BinOp expressions need base measures defined first.
+    """
     yaml_content = """
 flights:
   table: flights_tbl
@@ -425,7 +417,7 @@ flights:
     flight_count: _.count()
     on_time_rate: (_.dep_delay <= 0).mean()
     total_delay: _.dep_delay.sum()
-    delay_per_mile: _.dep_delay.sum() / _.distance.sum()
+    total_distance: _.distance.sum()
 """
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
@@ -436,9 +428,14 @@ flights:
         models = from_yaml(yaml_path, tables=sample_tables)
         model = models["flights"]
 
+        # Test complex measures - we can add calc measures after loading
+        flights_with_calc = model.with_measures(
+            delay_per_mile=lambda t: t.total_delay / t.total_distance,
+        )
+
         # Test complex measures
         result = (
-            model.group_by("carrier")
+            flights_with_calc.group_by("carrier")
             .aggregate("on_time_rate", "delay_per_mile")
             .execute()
         )

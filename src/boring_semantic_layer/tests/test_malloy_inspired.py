@@ -19,6 +19,7 @@ Test categories:
 import ibis
 import pandas as pd
 import pytest
+from ibis import _
 
 from boring_semantic_layer import to_semantic_table
 
@@ -156,19 +157,20 @@ class TestSessionization:
             .with_measures(
                 event_count=lambda t: t.count(),
                 total_page_views=lambda t: t.page_views.sum(),
+                max_time_epoch=_.event_time.max().epoch_seconds(),
+                min_time_epoch=_.event_time.min().epoch_seconds(),
+            )
+            .with_measures(
+                duration_minutes=lambda t: (t.max_time_epoch - t.min_time_epoch) / 60,
             )
         )
 
-        # Calculate session duration (max - min event time)
         result = (
             sessions_st.group_by("session_id")
             .aggregate(
                 "event_count",
                 "total_page_views",
-                duration_minutes=lambda t: (
-                    t.event_time.max().epoch_seconds() - t.event_time.min().epoch_seconds()
-                )
-                / 60,
+                "duration_minutes",
             )
             .execute()
         )
