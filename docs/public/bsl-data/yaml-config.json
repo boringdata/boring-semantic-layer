@@ -9,7 +9,8 @@
     },
     "query_yaml_model": {
       "code": "# Query the YAML-defined model\nresult = (\n    flights_sm\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"avg_distance\")\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"distance\") AS \"avg_distance\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_2de5zq4rjbalpkvxiyf7czm6rm\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"distance\") AS \"avg_distance\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_qghq5qlwmbh2vl4zbsmu3y72qq\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "plan": "r0 := SemanticTableOp[flights]\n  4 dimensions: origin, destination, year, ...\n  3 measures: flight_count, total_distance, avg_distance\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['origin']\n  inherited dimensions: 4\n  inherited measures: 3\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['origin']\n  aggs: [flight_count, avg_distance]",
       "table": {
         "columns": [
           "origin",
@@ -23,14 +24,14 @@
             382.0
           ],
           [
-            "LAX",
-            1,
-            337.0
-          ],
-          [
             "JFK",
             1,
             2475.0
+          ],
+          [
+            "LAX",
+            1,
+            337.0
           ]
         ]
       },
@@ -44,7 +45,7 @@
             }
           },
           "data": {
-            "name": "data-a056b2f336c39790a24c67d49a5c81ca"
+            "name": "data-5e957fb8d888b60ccb5be04ecb943b47"
           },
           "mark": {
             "type": "bar"
@@ -97,12 +98,7 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-a056b2f336c39790a24c67d49a5c81ca": [
-              {
-                "origin": "LAX",
-                "flight_count": 1,
-                "avg_distance": 337.0
-              },
+            "data-5e957fb8d888b60ccb5be04ecb943b47": [
               {
                 "origin": "JFK",
                 "flight_count": 1,
@@ -112,6 +108,11 @@
                 "origin": "SFO",
                 "flight_count": 1,
                 "avg_distance": 382.0
+              },
+              {
+                "origin": "LAX",
+                "flight_count": 1,
+                "avg_distance": 337.0
               }
             ]
           }

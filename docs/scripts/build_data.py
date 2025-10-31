@@ -504,9 +504,18 @@ def execute_bsl_query(
             # Convert to values.tolist() after type conversions
             # Replace NaN with None for valid JSON serialization
             df_copy = df_copy.replace({float("nan"): None})
+
+            # Get query plan (string representation of the expression)
+            query_plan = None
+            try:
+                query_plan = str(result.expr) if hasattr(result, "expr") else str(result)
+            except Exception as e:
+                print(f"    Warning: Could not generate query plan: {str(e)}")
+
             result_data = {
                 "code": query_code,  # The original BSL query code
                 "sql": sql_query,
+                "plan": query_plan,  # Query plan (string representation)
                 "table": {"columns": list(df_copy.columns), "data": df_copy.values.tolist()},
             }
 

@@ -35,36 +35,21 @@ result = flights.group_by("origin").aggregate("flight_count").execute()
 ## Installation
 
 ```bash
-# Basic installation
 pip install boring-semantic-layer
-
-# With DuckDB support (for examples)
-pip install 'boring-semantic-layer[examples]'
-
-# With MCP integration
-pip install 'boring-semantic-layer[fastmcp]'
-
-# With visualization support
-pip install 'boring-semantic-layer[viz-altair]'  # or viz-plotly
 ```
 
 ---
 
 ## 📚 Documentation
 
-**[→ View the full documentation](https://xorq-labs.github.io/boring-semantic-layer/)**
-
-Learn about:
-- Getting started guide
-- Defining semantic tables with dimensions and measures
-- Advanced query patterns (filters, joins, window functions)
-- MCP integration for AI agents
-- Chart visualization with Altair and Plotly
-- YAML configuration
-- Complete API reference
+**[→ View the full documentation](https://boringdata.github.io/boring-semantic-layer/)**
 
 ---
 
 *This project is a joint effort by [xorq-labs](https://github.com/xorq-labs/xorq) and [boringdata](https://www.boringdata.io/).*
 
 *We welcome feedback and contributions!*
+
+---
+
+*Freely inspired by the awesome [Malloy](https://github.com/malloydata/malloy) project. We loved the vision, just took the Python route.*

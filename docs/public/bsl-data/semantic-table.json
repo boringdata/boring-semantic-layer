@@ -10,6 +10,7 @@
     "measure_all_demo": {
       "code": "flights_with_pct = flights_st.with_measures(\n        flight_count=lambda t: t.count(),\n        market_share=lambda t: t.flight_count / t.all(t.flight_count) * 100  # Percent of total\n    )\n\n# Query by carrier\nresult = (\n    flights_with_pct\n    .group_by(\"carrier\")\n    .aggregate(\"flight_count\", \"market_share\")\n)",
       "sql": "WITH \"t1\" AS (\n  SELECT\n    *\n  FROM \"memory\".\"main\".\"flights\" AS \"t0\"\n)\nSELECT\n  \"t7\".\"carrier\",\n  \"t7\".\"flight_count\",\n  (\n    CAST(\"t7\".\"flight_count\" AS DOUBLE) / CAST(\"t7\".\"flight_count_right\" AS DOUBLE)\n  ) * 100 AS \"market_share\"\nFROM (\n  SELECT\n    \"t5\".\"carrier\",\n    \"t5\".\"flight_count\",\n    \"t6\".\"flight_count\" AS \"flight_count_right\"\n  FROM (\n    SELECT\n      \"t2\".\"carrier\",\n      COUNT(*) AS \"flight_count\"\n    FROM \"t1\" AS \"t2\"\n    GROUP BY\n      1\n  ) AS \"t5\"\n  CROSS JOIN (\n    SELECT\n      COUNT(*) AS \"flight_count\"\n    FROM \"t1\" AS \"t2\"\n  ) AS \"t6\"\n) AS \"t7\"",
+      "plan": "r0 := SemanticTableOp[flights]\n  4 dimensions: origin, destination, year, ...\n  7 measures: total_flights, total_distance, max_delay, ...\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['carrier']\n  inherited dimensions: 4\n  inherited measures: 7\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['carrier']\n  aggs: [flight_count, market_share]",
       "table": {
         "columns": [
           "carrier",
@@ -18,10 +19,117 @@
         ],
         "data": [
           [
+            "AA",
+            1,
+            33.33333333333333
+          ],
+          [
             "UA",
             1,
             33.33333333333333
           ],
+          [
+            "DL",
+            1,
+            33.33333333333333
+          ]
+        ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-a098f4283cba9ac81fceb508a14e3c06"
+          },
+          "mark": {
+            "type": "bar"
+          },
+          "encoding": {
+            "color": {
+              "field": "measure",
+              "type": "nominal"
+            },
+            "tooltip": [
+              {
+                "field": "carrier",
+                "type": "nominal"
+              },
+              {
+                "field": "measure",
+                "type": "nominal"
+              },
+              {
+                "field": "value",
+                "type": "quantitative"
+              }
+            ],
+            "x": {
+              "field": "carrier",
+              "sort": null,
+              "type": "ordinal"
+            },
+            "xOffset": {
+              "field": "measure"
+            },
+            "y": {
+              "field": "value",
+              "type": "quantitative"
+            }
+          },
+          "height": 400,
+          "transform": [
+            {
+              "fold": [
+                "flight_count",
+                "market_share"
+              ],
+              "as": [
+                "measure",
+                "value"
+              ]
+            }
+          ],
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-a098f4283cba9ac81fceb508a14e3c06": [
+              {
+                "carrier": "DL",
+                "flight_count": 1,
+                "market_share": 33.33333333333333
+              },
+              {
+                "carrier": "AA",
+                "flight_count": 1,
+                "market_share": 33.33333333333333
+              },
+              {
+                "carrier": "UA",
+                "flight_count": 1,
+                "market_share": 33.33333333333333
+              }
+            ]
+          }
+        }
+      }
+    },
+    "setup_carriers": {
+      "code": "import ibis\nfrom boring_semantic_layer import to_semantic_table\n\ncon = ibis.duckdb.connect(\":memory:\")\n\n# Create carriers data\ncarriers_data = ibis.memtable({\n    \"code\": [\"AA\", \"UA\", \"DL\"],\n    \"name\": [\"American Airlines\", \"United Airlines\", \"Delta Air Lines\"]\n})\ncarriers_tbl = con.create_table(\"carriers\", carriers_data)",
+      "sql": "WITH \"t1\" AS (\n  SELECT\n    *\n  FROM \"memory\".\"main\".\"flights\" AS \"t0\"\n)\nSELECT\n  \"t7\".\"carrier\",\n  \"t7\".\"flight_count\",\n  (\n    CAST(\"t7\".\"flight_count\" AS DOUBLE) / CAST(\"t7\".\"flight_count_right\" AS DOUBLE)\n  ) * 100 AS \"market_share\"\nFROM (\n  SELECT\n    \"t5\".\"carrier\",\n    \"t5\".\"flight_count\",\n    \"t6\".\"flight_count\" AS \"flight_count_right\"\n  FROM (\n    SELECT\n      \"t2\".\"carrier\",\n      COUNT(*) AS \"flight_count\"\n    FROM \"t1\" AS \"t2\"\n    GROUP BY\n      1\n  ) AS \"t5\"\n  CROSS JOIN (\n    SELECT\n      COUNT(*) AS \"flight_count\"\n    FROM \"t1\" AS \"t2\"\n  ) AS \"t6\"\n) AS \"t7\"",
+      "plan": "r0 := SemanticTableOp[flights]\n  4 dimensions: origin, destination, year, ...\n  7 measures: total_flights, total_distance, max_delay, ...\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['carrier']\n  inherited dimensions: 4\n  inherited measures: 7\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['carrier']\n  aggs: [flight_count, market_share]",
+      "table": {
+        "columns": [
+          "carrier",
+          "flight_count",
+          "market_share"
+        ],
+        "data": [
           [
             "AA",
             1,
@@ -29,6 +137,123 @@
           ],
           [
             "DL",
+            1,
+            33.33333333333333
+          ],
+          [
+            "UA",
+            1,
+            33.33333333333333
+          ]
+        ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-02b3c9107cbad36a10c64f9097bccef8"
+          },
+          "mark": {
+            "type": "bar"
+          },
+          "encoding": {
+            "color": {
+              "field": "measure",
+              "type": "nominal"
+            },
+            "tooltip": [
+              {
+                "field": "carrier",
+                "type": "nominal"
+              },
+              {
+                "field": "measure",
+                "type": "nominal"
+              },
+              {
+                "field": "value",
+                "type": "quantitative"
+              }
+            ],
+            "x": {
+              "field": "carrier",
+              "sort": null,
+              "type": "ordinal"
+            },
+            "xOffset": {
+              "field": "measure"
+            },
+            "y": {
+              "field": "value",
+              "type": "quantitative"
+            }
+          },
+          "height": 400,
+          "transform": [
+            {
+              "fold": [
+                "flight_count",
+                "market_share"
+              ],
+              "as": [
+                "measure",
+                "value"
+              ]
+            }
+          ],
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-02b3c9107cbad36a10c64f9097bccef8": [
+              {
+                "carrier": "UA",
+                "flight_count": 1,
+                "market_share": 33.33333333333333
+              },
+              {
+                "carrier": "DL",
+                "flight_count": 1,
+                "market_share": 33.33333333333333
+              },
+              {
+                "carrier": "AA",
+                "flight_count": 1,
+                "market_share": 33.33333333333333
+              }
+            ]
+          }
+        }
+      }
+    },
+    "join_demo": {
+      "code": "# Join carriers to flights - one carrier has many flights\nflights_with_carriers = flights_st.join_many(\n    carriers,\n    left_on=\"carrier\",\n    right_on=\"code\"\n)\n\n# Inspect available dimensions and measures\nflights_with_carriers.dimensions",
+      "sql": "WITH \"t1\" AS (\n  SELECT\n    *\n  FROM \"memory\".\"main\".\"flights\" AS \"t0\"\n)\nSELECT\n  \"t7\".\"carrier\",\n  \"t7\".\"flight_count\",\n  (\n    CAST(\"t7\".\"flight_count\" AS DOUBLE) / CAST(\"t7\".\"flight_count_right\" AS DOUBLE)\n  ) * 100 AS \"market_share\"\nFROM (\n  SELECT\n    \"t5\".\"carrier\",\n    \"t5\".\"flight_count\",\n    \"t6\".\"flight_count\" AS \"flight_count_right\"\n  FROM (\n    SELECT\n      \"t2\".\"carrier\",\n      COUNT(*) AS \"flight_count\"\n    FROM \"t1\" AS \"t2\"\n    GROUP BY\n      1\n  ) AS \"t5\"\n  CROSS JOIN (\n    SELECT\n      COUNT(*) AS \"flight_count\"\n    FROM \"t1\" AS \"t2\"\n  ) AS \"t6\"\n) AS \"t7\"",
+      "plan": "r0 := SemanticTableOp[flights]\n  4 dimensions: origin, destination, year, ...\n  7 measures: total_flights, total_distance, max_delay, ...\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['carrier']\n  inherited dimensions: 4\n  inherited measures: 7\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['carrier']\n  aggs: [flight_count, market_share]",
+      "table": {
+        "columns": [
+          "carrier",
+          "flight_count",
+          "market_share"
+        ],
+        "data": [
+          [
+            "AA",
+            1,
+            33.33333333333333
+          ],
+          [
+            "DL",
+            1,
+            33.33333333333333
+          ],
+          [
+            "UA",
             1,
             33.33333333333333
           ]
@@ -110,228 +335,6 @@
               },
               {
                 "carrier": "DL",
-                "flight_count": 1,
-                "market_share": 33.33333333333333
-              }
-            ]
-          }
-        }
-      }
-    },
-    "setup_carriers": {
-      "code": "import ibis\nfrom boring_semantic_layer import to_semantic_table\n\ncon = ibis.duckdb.connect(\":memory:\")\n\n# Create carriers data\ncarriers_data = ibis.memtable({\n    \"code\": [\"AA\", \"UA\", \"DL\"],\n    \"name\": [\"American Airlines\", \"United Airlines\", \"Delta Air Lines\"]\n})\ncarriers_tbl = con.create_table(\"carriers\", carriers_data)",
-      "sql": "WITH \"t1\" AS (\n  SELECT\n    *\n  FROM \"memory\".\"main\".\"flights\" AS \"t0\"\n)\nSELECT\n  \"t7\".\"carrier\",\n  \"t7\".\"flight_count\",\n  (\n    CAST(\"t7\".\"flight_count\" AS DOUBLE) / CAST(\"t7\".\"flight_count_right\" AS DOUBLE)\n  ) * 100 AS \"market_share\"\nFROM (\n  SELECT\n    \"t5\".\"carrier\",\n    \"t5\".\"flight_count\",\n    \"t6\".\"flight_count\" AS \"flight_count_right\"\n  FROM (\n    SELECT\n      \"t2\".\"carrier\",\n      COUNT(*) AS \"flight_count\"\n    FROM \"t1\" AS \"t2\"\n    GROUP BY\n      1\n  ) AS \"t5\"\n  CROSS JOIN (\n    SELECT\n      COUNT(*) AS \"flight_count\"\n    FROM \"t1\" AS \"t2\"\n  ) AS \"t6\"\n) AS \"t7\"",
-      "table": {
-        "columns": [
-          "carrier",
-          "flight_count",
-          "market_share"
-        ],
-        "data": [
-          [
-            "AA",
-            1,
-            33.33333333333333
-          ],
-          [
-            "DL",
-            1,
-            33.33333333333333
-          ],
-          [
-            "UA",
-            1,
-            33.33333333333333
-          ]
-        ]
-      },
-      "chart": {
-        "type": "vega",
-        "spec": {
-          "config": {
-            "view": {
-              "continuousWidth": 300,
-              "continuousHeight": 300
-            }
-          },
-          "data": {
-            "name": "data-957c443b2b52e9d52db460acc818b08e"
-          },
-          "mark": {
-            "type": "bar"
-          },
-          "encoding": {
-            "color": {
-              "field": "measure",
-              "type": "nominal"
-            },
-            "tooltip": [
-              {
-                "field": "carrier",
-                "type": "nominal"
-              },
-              {
-                "field": "measure",
-                "type": "nominal"
-              },
-              {
-                "field": "value",
-                "type": "quantitative"
-              }
-            ],
-            "x": {
-              "field": "carrier",
-              "sort": null,
-              "type": "ordinal"
-            },
-            "xOffset": {
-              "field": "measure"
-            },
-            "y": {
-              "field": "value",
-              "type": "quantitative"
-            }
-          },
-          "height": 400,
-          "transform": [
-            {
-              "fold": [
-                "flight_count",
-                "market_share"
-              ],
-              "as": [
-                "measure",
-                "value"
-              ]
-            }
-          ],
-          "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
-          "datasets": {
-            "data-957c443b2b52e9d52db460acc818b08e": [
-              {
-                "carrier": "AA",
-                "flight_count": 1,
-                "market_share": 33.33333333333333
-              },
-              {
-                "carrier": "DL",
-                "flight_count": 1,
-                "market_share": 33.33333333333333
-              },
-              {
-                "carrier": "UA",
-                "flight_count": 1,
-                "market_share": 33.33333333333333
-              }
-            ]
-          }
-        }
-      }
-    },
-    "join_demo": {
-      "code": "# Join carriers to flights - one carrier has many flights\nflights_with_carriers = flights_st.join_many(\n    carriers,\n    left_on=\"carrier\",\n    right_on=\"code\"\n)\n\n# Inspect available dimensions and measures\nflights_with_carriers.dimensions",
-      "sql": "WITH \"t1\" AS (\n  SELECT\n    *\n  FROM \"memory\".\"main\".\"flights\" AS \"t0\"\n)\nSELECT\n  \"t7\".\"carrier\",\n  \"t7\".\"flight_count\",\n  (\n    CAST(\"t7\".\"flight_count\" AS DOUBLE) / CAST(\"t7\".\"flight_count_right\" AS DOUBLE)\n  ) * 100 AS \"market_share\"\nFROM (\n  SELECT\n    \"t5\".\"carrier\",\n    \"t5\".\"flight_count\",\n    \"t6\".\"flight_count\" AS \"flight_count_right\"\n  FROM (\n    SELECT\n      \"t2\".\"carrier\",\n      COUNT(*) AS \"flight_count\"\n    FROM \"t1\" AS \"t2\"\n    GROUP BY\n      1\n  ) AS \"t5\"\n  CROSS JOIN (\n    SELECT\n      COUNT(*) AS \"flight_count\"\n    FROM \"t1\" AS \"t2\"\n  ) AS \"t6\"\n) AS \"t7\"",
-      "table": {
-        "columns": [
-          "carrier",
-          "flight_count",
-          "market_share"
-        ],
-        "data": [
-          [
-            "AA",
-            1,
-            33.33333333333333
-          ],
-          [
-            "DL",
-            1,
-            33.33333333333333
-          ],
-          [
-            "UA",
-            1,
-            33.33333333333333
-          ]
-        ]
-      },
-      "chart": {
-        "type": "vega",
-        "spec": {
-          "config": {
-            "view": {
-              "continuousWidth": 300,
-              "continuousHeight": 300
-            }
-          },
-          "data": {
-            "name": "data-957c443b2b52e9d52db460acc818b08e"
-          },
-          "mark": {
-            "type": "bar"
-          },
-          "encoding": {
-            "color": {
-              "field": "measure",
-              "type": "nominal"
-            },
-            "tooltip": [
-              {
-                "field": "carrier",
-                "type": "nominal"
-              },
-              {
-                "field": "measure",
-                "type": "nominal"
-              },
-              {
-                "field": "value",
-                "type": "quantitative"
-              }
-            ],
-            "x": {
-              "field": "carrier",
-              "sort": null,
-              "type": "ordinal"
-            },
-            "xOffset": {
-              "field": "measure"
-            },
-            "y": {
-              "field": "value",
-              "type": "quantitative"
-            }
-          },
-          "height": 400,
-          "transform": [
-            {
-              "fold": [
-                "flight_count",
-                "market_share"
-              ],
-              "as": [
-                "measure",
-                "value"
-              ]
-            }
-          ],
-          "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
-          "datasets": {
-            "data-957c443b2b52e9d52db460acc818b08e": [
-              {
-                "carrier": "AA",
-                "flight_count": 1,
-                "market_share": 33.33333333333333
-              },
-              {
-                "carrier": "DL",
-                "flight_count": 1,
-                "market_share": 33.33333333333333
-              },
-              {
-                "carrier": "UA",
                 "flight_count": 1,
                 "market_share": 33.33333333333333
               }

@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - bslv2-doc  # v0: testing on feature branch
+      - bslv2  # v0: testing on feature branch
   workflow_dispatch:
 
 # Grant GITHUB_TOKEN the permissions needed

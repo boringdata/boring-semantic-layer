@@ -4,6 +4,7 @@
     "setup_data": {
       "code": "import ibis\nfrom ibis import _\nfrom datetime import datetime, timedelta\nimport random\n\n# Create daily sales data spanning 90 days\nstart_date = datetime(2024, 1, 1)\ndates = [start_date + timedelta(days=i) for i in range(90)]\n\n# Generate synthetic revenue with upward trend and weekly patterns\nrandom.seed(42)\n\nrevenue_values = []\nfor i, date in enumerate(dates):\n    # Base trend: increasing over time\n    base = 1000 + (i * 10)\n\n    # Weekly pattern: weekends have higher sales\n    weekday_multiplier = 1.3 if date.weekday() >= 5 else 1.0\n\n    # Random variation\n    noise = random.uniform(-100, 100)\n\n    revenue = base * weekday_multiplier + noise\n    revenue_values.append(round(revenue, 2))\n\n# Create table\nsales_data = ibis.memtable({\n    \"sale_date\": dates,\n    \"revenue\": revenue_values,\n    \"product_category\": [\"Electronics\" if i % 3 == 0 else \"Clothing\" if i % 3 == 1 else \"Home\" for i in range(90)],\n})",
       "sql": "Error generating SQL: Table.sql() missing 1 required positional argument: 'query'",
+      "plan": "InMemoryTable\n  data:\n    PandasDataFrameProxy:\n          sale_date  revenue product_category\n      0  2024-01-01  1027.89      Electronics\n      1  2024-01-02   915.00         Clothing\n      2  2024-01-03   975.01             Home\n      3  2024-01-04   974.64      Electronics\n      4  2024-01-05  1087.29         Clothing\n      ..        ...      ...              ...\n      85 2024-03-26  1793.86         Clothing\n      86 2024-03-27  1959.51             Home\n      87 2024-03-28  1871.91      Electronics\n      88 2024-03-29  1798.18         Clothing\n      89 2024-03-30  2366.42             Home\n\n      [90 rows x 3 columns]",
       "table": {
         "columns": [
           "sale_date",
@@ -466,7 +467,8 @@
     },
     "setup_st": {
       "code": "from boring_semantic_layer import to_semantic_table\n\n# Create semantic table with measures\nsales_st = to_semantic_table(\n    sales_data,\n    name=\"daily_sales\"\n).with_measures(\n    total_revenue=lambda t: t.revenue.sum(),\n    avg_revenue=lambda t: t.revenue.mean(),\n    sale_count=lambda t: t.count(),\n)",
-      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_c3jamzcbibgevoe3fe6cdhuqwm\"",
+      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_zjqqocvolneqhpencyin23wvaa\"",
+      "plan": "SemanticTableOp[daily_sales]\n  3 measures: total_revenue, avg_revenue, sale_count",
       "table": {
         "columns": [
           "sale_date",
@@ -929,7 +931,8 @@
     },
     "query_lag_lead": {
       "code": "from ibis import _\n\n# Aggregate daily revenue\ndaily_revenue = (\n    sales_st\n    .group_by(\"sale_date\")\n    .aggregate(\"total_revenue\")\n    .order_by(\"sale_date\")\n)\n\n# Add window functions for lag/lead\nresult = daily_revenue.mutate(\n    prev_day_revenue=_.total_revenue.lag(),\n    next_day_revenue=_.total_revenue.lead(),\n    day_over_day_change=_.total_revenue - _.total_revenue.lag(),\n    pct_change=((_.total_revenue - _.total_revenue.lag()) / _.total_revenue.lag() * 100).round(2)\n).limit(10)",
-      "sql": "SELECT\n  \"t5\".\"sale_date\",\n  \"t5\".\"total_revenue\",\n  \"t5\".\"prev_day_revenue\",\n  \"t5\".\"next_day_revenue\",\n  \"t5\".\"day_over_day_change\",\n  CAST(ROUND(\n    (\n      (\n        \"t5\".\"total_revenue\" - LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n      ) / LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n    ) * 100,\n    2\n  ) AS DOUBLE) AS \"pct_change\"\nFROM (\n  SELECT\n    \"t4\".\"sale_date\",\n    \"t4\".\"total_revenue\",\n    \"t4\".\"prev_day_revenue\",\n    \"t4\".\"next_day_revenue\",\n    \"t4\".\"total_revenue\" - LAG(\"t4\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"day_over_day_change\"\n  FROM (\n    SELECT\n      \"t3\".\"sale_date\",\n      \"t3\".\"total_revenue\",\n      \"t3\".\"prev_day_revenue\",\n      LEAD(\"t3\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"next_day_revenue\"\n    FROM (\n      SELECT\n        \"t2\".\"sale_date\",\n        \"t2\".\"total_revenue\",\n        LAG(\"t2\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_day_revenue\"\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            \"t0\".\"sale_date\",\n            SUM(\"t0\".\"revenue\") AS \"total_revenue\"\n          FROM \"ibis_pandas_memtable_c3jamzcbibgevoe3fe6cdhuqwm\" AS \"t0\"\n          GROUP BY\n            1\n        ) AS \"t1\"\n        ORDER BY\n          \"t1\".\"sale_date\" ASC\n      ) AS \"t2\"\n    ) AS \"t3\"\n  ) AS \"t4\"\n) AS \"t5\"\nLIMIT 10",
+      "sql": "SELECT\n  \"t5\".\"sale_date\",\n  \"t5\".\"total_revenue\",\n  \"t5\".\"prev_day_revenue\",\n  \"t5\".\"next_day_revenue\",\n  \"t5\".\"day_over_day_change\",\n  CAST(ROUND(\n    (\n      (\n        \"t5\".\"total_revenue\" - LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n      ) / LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n    ) * 100,\n    2\n  ) AS DOUBLE) AS \"pct_change\"\nFROM (\n  SELECT\n    \"t4\".\"sale_date\",\n    \"t4\".\"total_revenue\",\n    \"t4\".\"prev_day_revenue\",\n    \"t4\".\"next_day_revenue\",\n    \"t4\".\"total_revenue\" - LAG(\"t4\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"day_over_day_change\"\n  FROM (\n    SELECT\n      \"t3\".\"sale_date\",\n      \"t3\".\"total_revenue\",\n      \"t3\".\"prev_day_revenue\",\n      LEAD(\"t3\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"next_day_revenue\"\n    FROM (\n      SELECT\n        \"t2\".\"sale_date\",\n        \"t2\".\"total_revenue\",\n        LAG(\"t2\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_day_revenue\"\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            \"t0\".\"sale_date\",\n            SUM(\"t0\".\"revenue\") AS \"total_revenue\"\n          FROM \"ibis_pandas_memtable_zjqqocvolneqhpencyin23wvaa\" AS \"t0\"\n          GROUP BY\n            1\n        ) AS \"t1\"\n        ORDER BY\n          \"t1\".\"sale_date\" ASC\n      ) AS \"t2\"\n    ) AS \"t3\"\n  ) AS \"t4\"\n) AS \"t5\"\nLIMIT 10",
+      "plan": null,
       "table": {
         "columns": [
           "sale_date",
@@ -1032,7 +1035,7 @@
             }
           },
           "data": {
-            "name": "data-07aa9f04d766d23e527fcaa6415e4551"
+            "name": "data-73e1ae1f7ce9e7edf30ebecfb0d6ae22"
           },
           "mark": {
             "type": "bar"
@@ -1062,7 +1065,35 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-07aa9f04d766d23e527fcaa6415e4551": [
+            "data-73e1ae1f7ce9e7edf30ebecfb0d6ae22": [
+              {
+                "sale_date": "2024-01-08T00:00:00",
+                "total_revenue": 987.39
+              },
+              {
+                "sale_date": "2024-01-12T00:00:00",
+                "total_revenue": 1111.07
+              },
+              {
+                "sale_date": "2024-01-26T00:00:00",
+                "total_revenue": 1217.32
+              },
+              {
+                "sale_date": "2024-02-14T00:00:00",
+                "total_revenue": 1355.96
+              },
+              {
+                "sale_date": "2024-02-22T00:00:00",
+                "total_revenue": 1473.4
+              },
+              {
+                "sale_date": "2024-03-08T00:00:00",
+                "total_revenue": 1576.42
+              },
+              {
+                "sale_date": "2024-03-27T00:00:00",
+                "total_revenue": 1959.51
+              },
               {
                 "sale_date": "2024-01-11T00:00:00",
                 "total_revenue": 1043.73
@@ -1080,28 +1111,24 @@
                 "total_revenue": 1819.88
               },
               {
-                "sale_date": "2024-01-18T00:00:00",
-                "total_revenue": 1187.85
+                "sale_date": "2024-01-14T00:00:00",
+                "total_revenue": 1408.77
               },
               {
-                "sale_date": "2024-01-19T00:00:00",
-                "total_revenue": 1241.89
+                "sale_date": "2024-01-28T00:00:00",
+                "total_revenue": 1570.34
               },
               {
-                "sale_date": "2024-02-02T00:00:00",
-                "total_revenue": 1327.25
+                "sale_date": "2024-02-09T00:00:00",
+                "total_revenue": 1405.47
               },
               {
-                "sale_date": "2024-02-06T00:00:00",
-                "total_revenue": 1425.88
+                "sale_date": "2024-03-15T00:00:00",
+                "total_revenue": 1771.09
               },
               {
-                "sale_date": "2024-03-06T00:00:00",
-                "total_revenue": 1705.2
-              },
-              {
-                "sale_date": "2024-03-23T00:00:00",
-                "total_revenue": 2382.92
+                "sale_date": "2024-03-18T00:00:00",
+                "total_revenue": 1761.77
               },
               {
                 "sale_date": "2024-01-16T00:00:00",
@@ -1128,20 +1155,192 @@
                 "total_revenue": 1642.2
               },
               {
-                "sale_date": "2024-01-15T00:00:00",
-                "total_revenue": 1169.98
+                "sale_date": "2024-01-01T00:00:00",
+                "total_revenue": 1027.89
               },
               {
-                "sale_date": "2024-02-16T00:00:00",
-                "total_revenue": 1380.2
+                "sale_date": "2024-01-04T00:00:00",
+                "total_revenue": 974.64
               },
               {
-                "sale_date": "2024-03-02T00:00:00",
-                "total_revenue": 2121.0
+                "sale_date": "2024-01-22T00:00:00",
+                "total_revenue": 1249.63
               },
               {
-                "sale_date": "2024-03-10T00:00:00",
-                "total_revenue": 2150.55
+                "sale_date": "2024-02-23T00:00:00",
+                "total_revenue": 1617.33
+              },
+              {
+                "sale_date": "2024-03-01T00:00:00",
+                "total_revenue": 1697.9
+              },
+              {
+                "sale_date": "2024-03-07T00:00:00",
+                "total_revenue": 1605.81
+              },
+              {
+                "sale_date": "2024-03-29T00:00:00",
+                "total_revenue": 1798.18
+              },
+              {
+                "sale_date": "2024-01-05T00:00:00",
+                "total_revenue": 1087.29
+              },
+              {
+                "sale_date": "2024-01-07T00:00:00",
+                "total_revenue": 1456.44
+              },
+              {
+                "sale_date": "2024-01-30T00:00:00",
+                "total_revenue": 1310.75
+              },
+              {
+                "sale_date": "2024-02-10T00:00:00",
+                "total_revenue": 1860.91
+              },
+              {
+                "sale_date": "2024-02-12T00:00:00",
+                "total_revenue": 1365.58
+              },
+              {
+                "sale_date": "2024-02-28T00:00:00",
+                "total_revenue": 1512.68
+              },
+              {
+                "sale_date": "2024-03-13T00:00:00",
+                "total_revenue": 1795.27
+              },
+              {
+                "sale_date": "2024-03-14T00:00:00",
+                "total_revenue": 1692.94
+              },
+              {
+                "sale_date": "2024-03-21T00:00:00",
+                "total_revenue": 1812.27
+              },
+              {
+                "sale_date": "2024-01-23T00:00:00",
+                "total_revenue": 1188.05
+              },
+              {
+                "sale_date": "2024-01-25T00:00:00",
+                "total_revenue": 1331.44
+              },
+              {
+                "sale_date": "2024-02-03T00:00:00",
+                "total_revenue": 1823.62
+              },
+              {
+                "sale_date": "2024-02-11T00:00:00",
+                "total_revenue": 1742.16
+              },
+              {
+                "sale_date": "2024-02-18T00:00:00",
+                "total_revenue": 1951.14
+              },
+              {
+                "sale_date": "2024-02-25T00:00:00",
+                "total_revenue": 2036.83
+              },
+              {
+                "sale_date": "2024-01-02T00:00:00",
+                "total_revenue": 915.0
+              },
+              {
+                "sale_date": "2024-01-06T00:00:00",
+                "total_revenue": 1400.34
+              },
+              {
+                "sale_date": "2024-01-13T00:00:00",
+                "total_revenue": 1361.31
+              },
+              {
+                "sale_date": "2024-01-31T00:00:00",
+                "total_revenue": 1361.43
+              },
+              {
+                "sale_date": "2024-03-09T00:00:00",
+                "total_revenue": 2147.09
+              },
+              {
+                "sale_date": "2024-03-22T00:00:00",
+                "total_revenue": 1762.55
+              },
+              {
+                "sale_date": "2024-03-24T00:00:00",
+                "total_revenue": 2458.56
+              },
+              {
+                "sale_date": "2024-01-18T00:00:00",
+                "total_revenue": 1187.85
+              },
+              {
+                "sale_date": "2024-01-19T00:00:00",
+                "total_revenue": 1241.89
+              },
+              {
+                "sale_date": "2024-02-02T00:00:00",
+                "total_revenue": 1327.25
+              },
+              {
+                "sale_date": "2024-02-06T00:00:00",
+                "total_revenue": 1425.88
+              },
+              {
+                "sale_date": "2024-03-06T00:00:00",
+                "total_revenue": 1705.2
+              },
+              {
+                "sale_date": "2024-03-23T00:00:00",
+                "total_revenue": 2382.92
+              },
+              {
+                "sale_date": "2024-01-17T00:00:00",
+                "total_revenue": 1104.09
+              },
+              {
+                "sale_date": "2024-01-24T00:00:00",
+                "total_revenue": 1161.1
+              },
+              {
+                "sale_date": "2024-02-20T00:00:00",
+                "total_revenue": 1474.04
+              },
+              {
+                "sale_date": "2024-01-29T00:00:00",
+                "total_revenue": 1349.5
+              },
+              {
+                "sale_date": "2024-03-30T00:00:00",
+                "total_revenue": 2366.42
+              },
+              {
+                "sale_date": "2024-01-03T00:00:00",
+                "total_revenue": 975.01
+              },
+              {
+                "sale_date": "2024-01-09T00:00:00",
+                "total_revenue": 1064.38
+              },
+              {
+                "sale_date": "2024-01-20T00:00:00",
+                "total_revenue": 1448.3
+              },
+              {
+                "sale_date": "2024-02-07T00:00:00",
+                "total_revenue": 1393.7
+              },
+              {
+                "sale_date": "2024-02-08T00:00:00",
+                "total_revenue": 1452.34
+              },
+              {
+                "sale_date": "2024-02-24T00:00:00",
+                "total_revenue": 2031.61
+              },
+              {
+                "sale_date": "2024-03-26T00:00:00",
+                "total_revenue": 1793.86
               },
               {
                 "sale_date": "2024-01-10T00:00:00",
@@ -1184,224 +1383,12 @@
                 "total_revenue": 1739.33
               },
               {
-                "sale_date": "2024-01-23T00:00:00",
-                "total_revenue": 1188.05
-              },
-              {
-                "sale_date": "2024-01-25T00:00:00",
-                "total_revenue": 1331.44
-              },
-              {
-                "sale_date": "2024-02-03T00:00:00",
-                "total_revenue": 1823.62
-              },
-              {
-                "sale_date": "2024-02-11T00:00:00",
-                "total_revenue": 1742.16
-              },
-              {
-                "sale_date": "2024-02-18T00:00:00",
-                "total_revenue": 1951.14
-              },
-              {
-                "sale_date": "2024-02-25T00:00:00",
-                "total_revenue": 2036.83
-              },
-              {
-                "sale_date": "2024-01-14T00:00:00",
-                "total_revenue": 1408.77
-              },
-              {
-                "sale_date": "2024-01-28T00:00:00",
-                "total_revenue": 1570.34
-              },
-              {
-                "sale_date": "2024-02-09T00:00:00",
-                "total_revenue": 1405.47
-              },
-              {
-                "sale_date": "2024-03-15T00:00:00",
-                "total_revenue": 1771.09
-              },
-              {
-                "sale_date": "2024-03-18T00:00:00",
-                "total_revenue": 1761.77
-              },
-              {
-                "sale_date": "2024-01-29T00:00:00",
-                "total_revenue": 1349.5
-              },
-              {
-                "sale_date": "2024-03-30T00:00:00",
-                "total_revenue": 2366.42
-              },
-              {
-                "sale_date": "2024-01-17T00:00:00",
-                "total_revenue": 1104.09
-              },
-              {
-                "sale_date": "2024-01-24T00:00:00",
-                "total_revenue": 1161.1
-              },
-              {
-                "sale_date": "2024-02-20T00:00:00",
-                "total_revenue": 1474.04
-              },
-              {
                 "sale_date": "2024-02-04T00:00:00",
                 "total_revenue": 1717.71
               },
               {
                 "sale_date": "2024-03-17T00:00:00",
                 "total_revenue": 2370.91
-              },
-              {
-                "sale_date": "2024-01-08T00:00:00",
-                "total_revenue": 987.39
-              },
-              {
-                "sale_date": "2024-01-12T00:00:00",
-                "total_revenue": 1111.07
-              },
-              {
-                "sale_date": "2024-01-26T00:00:00",
-                "total_revenue": 1217.32
-              },
-              {
-                "sale_date": "2024-02-14T00:00:00",
-                "total_revenue": 1355.96
-              },
-              {
-                "sale_date": "2024-02-22T00:00:00",
-                "total_revenue": 1473.4
-              },
-              {
-                "sale_date": "2024-03-08T00:00:00",
-                "total_revenue": 1576.42
-              },
-              {
-                "sale_date": "2024-03-27T00:00:00",
-                "total_revenue": 1959.51
-              },
-              {
-                "sale_date": "2024-01-01T00:00:00",
-                "total_revenue": 1027.89
-              },
-              {
-                "sale_date": "2024-01-04T00:00:00",
-                "total_revenue": 974.64
-              },
-              {
-                "sale_date": "2024-01-22T00:00:00",
-                "total_revenue": 1249.63
-              },
-              {
-                "sale_date": "2024-02-23T00:00:00",
-                "total_revenue": 1617.33
-              },
-              {
-                "sale_date": "2024-03-01T00:00:00",
-                "total_revenue": 1697.9
-              },
-              {
-                "sale_date": "2024-03-07T00:00:00",
-                "total_revenue": 1605.81
-              },
-              {
-                "sale_date": "2024-03-29T00:00:00",
-                "total_revenue": 1798.18
-              },
-              {
-                "sale_date": "2024-01-03T00:00:00",
-                "total_revenue": 975.01
-              },
-              {
-                "sale_date": "2024-01-09T00:00:00",
-                "total_revenue": 1064.38
-              },
-              {
-                "sale_date": "2024-01-20T00:00:00",
-                "total_revenue": 1448.3
-              },
-              {
-                "sale_date": "2024-02-07T00:00:00",
-                "total_revenue": 1393.7
-              },
-              {
-                "sale_date": "2024-02-08T00:00:00",
-                "total_revenue": 1452.34
-              },
-              {
-                "sale_date": "2024-02-24T00:00:00",
-                "total_revenue": 2031.61
-              },
-              {
-                "sale_date": "2024-03-26T00:00:00",
-                "total_revenue": 1793.86
-              },
-              {
-                "sale_date": "2024-01-05T00:00:00",
-                "total_revenue": 1087.29
-              },
-              {
-                "sale_date": "2024-01-07T00:00:00",
-                "total_revenue": 1456.44
-              },
-              {
-                "sale_date": "2024-01-30T00:00:00",
-                "total_revenue": 1310.75
-              },
-              {
-                "sale_date": "2024-02-10T00:00:00",
-                "total_revenue": 1860.91
-              },
-              {
-                "sale_date": "2024-02-12T00:00:00",
-                "total_revenue": 1365.58
-              },
-              {
-                "sale_date": "2024-02-28T00:00:00",
-                "total_revenue": 1512.68
-              },
-              {
-                "sale_date": "2024-03-13T00:00:00",
-                "total_revenue": 1795.27
-              },
-              {
-                "sale_date": "2024-03-14T00:00:00",
-                "total_revenue": 1692.94
-              },
-              {
-                "sale_date": "2024-03-21T00:00:00",
-                "total_revenue": 1812.27
-              },
-              {
-                "sale_date": "2024-01-02T00:00:00",
-                "total_revenue": 915.0
-              },
-              {
-                "sale_date": "2024-01-06T00:00:00",
-                "total_revenue": 1400.34
-              },
-              {
-                "sale_date": "2024-01-13T00:00:00",
-                "total_revenue": 1361.31
-              },
-              {
-                "sale_date": "2024-01-31T00:00:00",
-                "total_revenue": 1361.43
-              },
-              {
-                "sale_date": "2024-03-09T00:00:00",
-                "total_revenue": 2147.09
-              },
-              {
-                "sale_date": "2024-03-22T00:00:00",
-                "total_revenue": 1762.55
-              },
-              {
-                "sale_date": "2024-03-24T00:00:00",
-                "total_revenue": 2458.56
               },
               {
                 "sale_date": "2024-02-27T00:00:00",
@@ -1422,6 +1409,22 @@
               {
                 "sale_date": "2024-03-28T00:00:00",
                 "total_revenue": 1871.91
+              },
+              {
+                "sale_date": "2024-01-15T00:00:00",
+                "total_revenue": 1169.98
+              },
+              {
+                "sale_date": "2024-02-16T00:00:00",
+                "total_revenue": 1380.2
+              },
+              {
+                "sale_date": "2024-03-02T00:00:00",
+                "total_revenue": 2121.0
+              },
+              {
+                "sale_date": "2024-03-10T00:00:00",
+                "total_revenue": 2150.55
               }
             ]
           }
@@ -1430,7 +1433,8 @@
     },
     "query_running_total": {
       "code": "from ibis import _\n\n# Daily revenue with cumulative total\ndaily_revenue = (\n    sales_st\n    .group_by(\"sale_date\")\n    .aggregate(\"total_revenue\")\n    .order_by(\"sale_date\")\n)\n\n# Calculate cumulative sum and running average\nwindow_unbounded = ibis.window(rows=(None, 0), order_by=\"sale_date\")\n\nresult = daily_revenue.mutate(\n    cumulative_revenue=_.total_revenue.cumsum(),\n    days_count=lambda t: t.count().over(window_unbounded),\n    avg_daily_so_far=lambda t: (t.cumulative_revenue / t.days_count).round(2)\n).limit(10)",
-      "sql": "SELECT\n  \"t4\".\"sale_date\",\n  \"t4\".\"total_revenue\",\n  \"t4\".\"cumulative_revenue\",\n  \"t4\".\"days_count\",\n  CAST(ROUND(\"t4\".\"cumulative_revenue\" / \"t4\".\"days_count\", 2) AS DOUBLE) AS \"avg_daily_so_far\"\nFROM (\n  SELECT\n    \"t3\".\"sale_date\",\n    \"t3\".\"total_revenue\",\n    \"t3\".\"cumulative_revenue\",\n    COUNT(*) OVER (ORDER BY \"t3\".\"sale_date\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"days_count\"\n  FROM (\n    SELECT\n      \"t2\".\"sale_date\",\n      \"t2\".\"total_revenue\",\n      SUM(\"t2\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"cumulative_revenue\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t0\".\"sale_date\",\n          SUM(\"t0\".\"revenue\") AS \"total_revenue\"\n        FROM \"ibis_pandas_memtable_c3jamzcbibgevoe3fe6cdhuqwm\" AS \"t0\"\n        GROUP BY\n          1\n      ) AS \"t1\"\n      ORDER BY\n        \"t1\".\"sale_date\" ASC\n    ) AS \"t2\"\n  ) AS \"t3\"\n) AS \"t4\"\nLIMIT 10",
+      "sql": "SELECT\n  \"t4\".\"sale_date\",\n  \"t4\".\"total_revenue\",\n  \"t4\".\"cumulative_revenue\",\n  \"t4\".\"days_count\",\n  CAST(ROUND(\"t4\".\"cumulative_revenue\" / \"t4\".\"days_count\", 2) AS DOUBLE) AS \"avg_daily_so_far\"\nFROM (\n  SELECT\n    \"t3\".\"sale_date\",\n    \"t3\".\"total_revenue\",\n    \"t3\".\"cumulative_revenue\",\n    COUNT(*) OVER (ORDER BY \"t3\".\"sale_date\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"days_count\"\n  FROM (\n    SELECT\n      \"t2\".\"sale_date\",\n      \"t2\".\"total_revenue\",\n      SUM(\"t2\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"cumulative_revenue\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t0\".\"sale_date\",\n          SUM(\"t0\".\"revenue\") AS \"total_revenue\"\n        FROM \"ibis_pandas_memtable_zjqqocvolneqhpencyin23wvaa\" AS \"t0\"\n        GROUP BY\n          1\n      ) AS \"t1\"\n      ORDER BY\n        \"t1\".\"sale_date\" ASC\n    ) AS \"t2\"\n  ) AS \"t3\"\n) AS \"t4\"\nLIMIT 10",
+      "plan": null,
       "table": {
         "columns": [
           "sale_date",
@@ -1522,7 +1526,7 @@
             }
           },
           "data": {
-            "name": "data-08ef2a96fd1acb3c89436f6dfede12e4"
+            "name": "data-7b5066ac6a63c113851e706128d2e1cd"
           },
           "mark": {
             "type": "bar"
@@ -1552,75 +1556,7 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-08ef2a96fd1acb3c89436f6dfede12e4": [
-              {
-                "sale_date": "2024-01-11T00:00:00",
-                "total_revenue": 1043.73
-              },
-              {
-                "sale_date": "2024-01-27T00:00:00",
-                "total_revenue": 1556.55
-              },
-              {
-                "sale_date": "2024-02-17T00:00:00",
-                "total_revenue": 1866.59
-              },
-              {
-                "sale_date": "2024-03-25T00:00:00",
-                "total_revenue": 1819.88
-              },
-              {
-                "sale_date": "2024-01-17T00:00:00",
-                "total_revenue": 1104.09
-              },
-              {
-                "sale_date": "2024-01-24T00:00:00",
-                "total_revenue": 1161.1
-              },
-              {
-                "sale_date": "2024-02-20T00:00:00",
-                "total_revenue": 1474.04
-              },
-              {
-                "sale_date": "2024-01-16T00:00:00",
-                "total_revenue": 1158.99
-              },
-              {
-                "sale_date": "2024-02-01T00:00:00",
-                "total_revenue": 1355.95
-              },
-              {
-                "sale_date": "2024-02-19T00:00:00",
-                "total_revenue": 1462.97
-              },
-              {
-                "sale_date": "2024-03-03T00:00:00",
-                "total_revenue": 2117.39
-              },
-              {
-                "sale_date": "2024-03-04T00:00:00",
-                "total_revenue": 1666.92
-              },
-              {
-                "sale_date": "2024-03-11T00:00:00",
-                "total_revenue": 1642.2
-              },
-              {
-                "sale_date": "2024-01-15T00:00:00",
-                "total_revenue": 1169.98
-              },
-              {
-                "sale_date": "2024-02-16T00:00:00",
-                "total_revenue": 1380.2
-              },
-              {
-                "sale_date": "2024-03-02T00:00:00",
-                "total_revenue": 2121.0
-              },
-              {
-                "sale_date": "2024-03-10T00:00:00",
-                "total_revenue": 2150.55
-              },
+            "data-7b5066ac6a63c113851e706128d2e1cd": [
               {
                 "sale_date": "2024-01-05T00:00:00",
                 "total_revenue": 1087.29
@@ -1656,34 +1592,6 @@
               {
                 "sale_date": "2024-03-21T00:00:00",
                 "total_revenue": 1812.27
-              },
-              {
-                "sale_date": "2024-01-03T00:00:00",
-                "total_revenue": 975.01
-              },
-              {
-                "sale_date": "2024-01-09T00:00:00",
-                "total_revenue": 1064.38
-              },
-              {
-                "sale_date": "2024-01-20T00:00:00",
-                "total_revenue": 1448.3
-              },
-              {
-                "sale_date": "2024-02-07T00:00:00",
-                "total_revenue": 1393.7
-              },
-              {
-                "sale_date": "2024-02-08T00:00:00",
-                "total_revenue": 1452.34
-              },
-              {
-                "sale_date": "2024-02-24T00:00:00",
-                "total_revenue": 2031.61
-              },
-              {
-                "sale_date": "2024-03-26T00:00:00",
-                "total_revenue": 1793.86
               },
               {
                 "sale_date": "2024-01-10T00:00:00",
@@ -1726,56 +1634,60 @@
                 "total_revenue": 1739.33
               },
               {
-                "sale_date": "2024-01-01T00:00:00",
-                "total_revenue": 1027.89
+                "sale_date": "2024-01-14T00:00:00",
+                "total_revenue": 1408.77
               },
               {
-                "sale_date": "2024-01-04T00:00:00",
-                "total_revenue": 974.64
+                "sale_date": "2024-01-28T00:00:00",
+                "total_revenue": 1570.34
               },
               {
-                "sale_date": "2024-01-22T00:00:00",
-                "total_revenue": 1249.63
+                "sale_date": "2024-02-09T00:00:00",
+                "total_revenue": 1405.47
               },
               {
-                "sale_date": "2024-02-23T00:00:00",
-                "total_revenue": 1617.33
+                "sale_date": "2024-03-15T00:00:00",
+                "total_revenue": 1771.09
               },
               {
-                "sale_date": "2024-03-01T00:00:00",
-                "total_revenue": 1697.9
+                "sale_date": "2024-03-18T00:00:00",
+                "total_revenue": 1761.77
               },
               {
-                "sale_date": "2024-03-07T00:00:00",
-                "total_revenue": 1605.81
+                "sale_date": "2024-01-17T00:00:00",
+                "total_revenue": 1104.09
               },
               {
-                "sale_date": "2024-03-29T00:00:00",
-                "total_revenue": 1798.18
+                "sale_date": "2024-01-24T00:00:00",
+                "total_revenue": 1161.1
               },
               {
-                "sale_date": "2024-01-18T00:00:00",
-                "total_revenue": 1187.85
+                "sale_date": "2024-02-20T00:00:00",
+                "total_revenue": 1474.04
               },
               {
-                "sale_date": "2024-01-19T00:00:00",
-                "total_revenue": 1241.89
+                "sale_date": "2024-01-23T00:00:00",
+                "total_revenue": 1188.05
               },
               {
-                "sale_date": "2024-02-02T00:00:00",
-                "total_revenue": 1327.25
+                "sale_date": "2024-01-25T00:00:00",
+                "total_revenue": 1331.44
               },
               {
-                "sale_date": "2024-02-06T00:00:00",
-                "total_revenue": 1425.88
+                "sale_date": "2024-02-03T00:00:00",
+                "total_revenue": 1823.62
               },
               {
-                "sale_date": "2024-03-06T00:00:00",
-                "total_revenue": 1705.2
+                "sale_date": "2024-02-11T00:00:00",
+                "total_revenue": 1742.16
               },
               {
-                "sale_date": "2024-03-23T00:00:00",
-                "total_revenue": 2382.92
+                "sale_date": "2024-02-18T00:00:00",
+                "total_revenue": 1951.14
+              },
+              {
+                "sale_date": "2024-02-25T00:00:00",
+                "total_revenue": 2036.83
               },
               {
                 "sale_date": "2024-01-02T00:00:00",
@@ -1806,56 +1718,80 @@
                 "total_revenue": 2458.56
               },
               {
-                "sale_date": "2024-01-23T00:00:00",
-                "total_revenue": 1188.05
+                "sale_date": "2024-01-03T00:00:00",
+                "total_revenue": 975.01
               },
               {
-                "sale_date": "2024-01-25T00:00:00",
-                "total_revenue": 1331.44
+                "sale_date": "2024-01-09T00:00:00",
+                "total_revenue": 1064.38
               },
               {
-                "sale_date": "2024-02-03T00:00:00",
-                "total_revenue": 1823.62
+                "sale_date": "2024-01-20T00:00:00",
+                "total_revenue": 1448.3
               },
               {
-                "sale_date": "2024-02-11T00:00:00",
-                "total_revenue": 1742.16
+                "sale_date": "2024-02-07T00:00:00",
+                "total_revenue": 1393.7
               },
               {
-                "sale_date": "2024-02-18T00:00:00",
-                "total_revenue": 1951.14
+                "sale_date": "2024-02-08T00:00:00",
+                "total_revenue": 1452.34
               },
               {
-                "sale_date": "2024-02-25T00:00:00",
-                "total_revenue": 2036.83
+                "sale_date": "2024-02-24T00:00:00",
+                "total_revenue": 2031.61
               },
               {
-                "sale_date": "2024-01-14T00:00:00",
-                "total_revenue": 1408.77
+                "sale_date": "2024-03-26T00:00:00",
+                "total_revenue": 1793.86
               },
               {
-                "sale_date": "2024-01-28T00:00:00",
-                "total_revenue": 1570.34
+                "sale_date": "2024-01-01T00:00:00",
+                "total_revenue": 1027.89
               },
               {
-                "sale_date": "2024-02-09T00:00:00",
-                "total_revenue": 1405.47
+                "sale_date": "2024-01-04T00:00:00",
+                "total_revenue": 974.64
               },
               {
-                "sale_date": "2024-03-15T00:00:00",
-                "total_revenue": 1771.09
+                "sale_date": "2024-01-22T00:00:00",
+                "total_revenue": 1249.63
               },
               {
-                "sale_date": "2024-03-18T00:00:00",
-                "total_revenue": 1761.77
+                "sale_date": "2024-02-23T00:00:00",
+                "total_revenue": 1617.33
               },
               {
-                "sale_date": "2024-01-29T00:00:00",
-                "total_revenue": 1349.5
+                "sale_date": "2024-03-01T00:00:00",
+                "total_revenue": 1697.9
               },
               {
-                "sale_date": "2024-03-30T00:00:00",
-                "total_revenue": 2366.42
+                "sale_date": "2024-03-07T00:00:00",
+                "total_revenue": 1605.81
+              },
+              {
+                "sale_date": "2024-03-29T00:00:00",
+                "total_revenue": 1798.18
+              },
+              {
+                "sale_date": "2024-02-27T00:00:00",
+                "total_revenue": 1615.83
+              },
+              {
+                "sale_date": "2024-02-29T00:00:00",
+                "total_revenue": 1565.89
+              },
+              {
+                "sale_date": "2024-03-05T00:00:00",
+                "total_revenue": 1708.57
+              },
+              {
+                "sale_date": "2024-03-16T00:00:00",
+                "total_revenue": 2254.13
+              },
+              {
+                "sale_date": "2024-03-28T00:00:00",
+                "total_revenue": 1871.91
               },
               {
                 "sale_date": "2024-02-04T00:00:00",
@@ -1864,6 +1800,86 @@
               {
                 "sale_date": "2024-03-17T00:00:00",
                 "total_revenue": 2370.91
+              },
+              {
+                "sale_date": "2024-01-16T00:00:00",
+                "total_revenue": 1158.99
+              },
+              {
+                "sale_date": "2024-02-01T00:00:00",
+                "total_revenue": 1355.95
+              },
+              {
+                "sale_date": "2024-02-19T00:00:00",
+                "total_revenue": 1462.97
+              },
+              {
+                "sale_date": "2024-03-03T00:00:00",
+                "total_revenue": 2117.39
+              },
+              {
+                "sale_date": "2024-03-04T00:00:00",
+                "total_revenue": 1666.92
+              },
+              {
+                "sale_date": "2024-03-11T00:00:00",
+                "total_revenue": 1642.2
+              },
+              {
+                "sale_date": "2024-01-11T00:00:00",
+                "total_revenue": 1043.73
+              },
+              {
+                "sale_date": "2024-01-27T00:00:00",
+                "total_revenue": 1556.55
+              },
+              {
+                "sale_date": "2024-02-17T00:00:00",
+                "total_revenue": 1866.59
+              },
+              {
+                "sale_date": "2024-03-25T00:00:00",
+                "total_revenue": 1819.88
+              },
+              {
+                "sale_date": "2024-01-18T00:00:00",
+                "total_revenue": 1187.85
+              },
+              {
+                "sale_date": "2024-01-19T00:00:00",
+                "total_revenue": 1241.89
+              },
+              {
+                "sale_date": "2024-02-02T00:00:00",
+                "total_revenue": 1327.25
+              },
+              {
+                "sale_date": "2024-02-06T00:00:00",
+                "total_revenue": 1425.88
+              },
+              {
+                "sale_date": "2024-03-06T00:00:00",
+                "total_revenue": 1705.2
+              },
+              {
+                "sale_date": "2024-03-23T00:00:00",
+                "total_revenue": 2382.92
+              },
+              {
+                "sale_date": "2024-01-15T00:00:00",
+                "total_revenue": 1169.98
+              },
+              {
+                "sale_date": "2024-02-16T00:00:00",
+                "total_revenue": 1380.2
+              },
+              {
+                "sale_date": "2024-03-02T00:00:00",
+                "total_revenue": 2121.0
+              },
+              {
+                "sale_date": "2024-03-10T00:00:00",
+                "total_revenue": 2150.55
               },
               {
                 "sale_date": "2024-01-08T00:00:00",
@@ -1894,24 +1910,12 @@
                 "total_revenue": 1959.51
               },
               {
-                "sale_date": "2024-02-27T00:00:00",
-                "total_revenue": 1615.83
+                "sale_date": "2024-01-29T00:00:00",
+                "total_revenue": 1349.5
               },
               {
-                "sale_date": "2024-02-29T00:00:00",
-                "total_revenue": 1565.89
-              },
-              {
-                "sale_date": "2024-03-05T00:00:00",
-                "total_revenue": 1708.57
-              },
-              {
-                "sale_date": "2024-03-16T00:00:00",
-                "total_revenue": 2254.13
-              },
-              {
-                "sale_date": "2024-03-28T00:00:00",
-                "total_revenue": 1871.91
+                "sale_date": "2024-03-30T00:00:00",
+                "total_revenue": 2366.42
               }
             ]
           }
@@ -1920,7 +1924,8 @@
     },
     "query_moving_average": {
       "code": "from ibis import _\n\n# Daily revenue\ndaily_revenue = (\n    sales_st\n    .group_by(\"sale_date\")\n    .aggregate(\"total_revenue\")\n    .order_by(\"sale_date\")\n)\n\n# 7-day moving average\nwindow_7d = ibis.window(rows=(-6, 0), order_by=\"sale_date\")\n\nresult = daily_revenue.mutate(\n    ma_7day=_.total_revenue.mean().over(window_7d).round(2),\n    ma_7day_sum=_.total_revenue.sum().over(window_7d).round(2),\n).limit(10)",
-      "sql": "SELECT\n  \"t3\".\"sale_date\",\n  \"t3\".\"total_revenue\",\n  \"t3\".\"ma_7day\",\n  CAST(ROUND(\n    SUM(\"t3\".\"total_revenue\") OVER (ORDER BY \"t3\".\"sale_date\" ASC ROWS BETWEEN 6 preceding AND CURRENT ROW),\n    2\n  ) AS DOUBLE) AS \"ma_7day_sum\"\nFROM (\n  SELECT\n    \"t2\".\"sale_date\",\n    \"t2\".\"total_revenue\",\n    CAST(ROUND(\n      AVG(\"t2\".\"total_revenue\") OVER (ORDER BY \"t2\".\"sale_date\" ASC ROWS BETWEEN 6 preceding AND CURRENT ROW),\n      2\n    ) AS DOUBLE) AS \"ma_7day\"\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        \"t0\".\"sale_date\",\n        SUM(\"t0\".\"revenue\") AS \"total_revenue\"\n      FROM \"ibis_pandas_memtable_c3jamzcbibgevoe3fe6cdhuqwm\" AS \"t0\"\n      GROUP BY\n        1\n    ) AS \"t1\"\n    ORDER BY\n      \"t1\".\"sale_date\" ASC\n  ) AS \"t2\"\n) AS \"t3\"\nLIMIT 10",
+      "sql": "SELECT\n  \"t3\".\"sale_date\",\n  \"t3\".\"total_revenue\",\n  \"t3\".\"ma_7day\",\n  CAST(ROUND(\n    SUM(\"t3\".\"total_revenue\") OVER (ORDER BY \"t3\".\"sale_date\" ASC ROWS BETWEEN 6 preceding AND CURRENT ROW),\n    2\n  ) AS DOUBLE) AS \"ma_7day_sum\"\nFROM (\n  SELECT\n    \"t2\".\"sale_date\",\n    \"t2\".\"total_revenue\",\n    CAST(ROUND(\n      AVG(\"t2\".\"total_revenue\") OVER (ORDER BY \"t2\".\"sale_date\" ASC ROWS BETWEEN 6 preceding AND CURRENT ROW),\n      2\n    ) AS DOUBLE) AS \"ma_7day\"\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        \"t0\".\"sale_date\",\n        SUM(\"t0\".\"revenue\") AS \"total_revenue\"\n      FROM \"ibis_pandas_memtable_zjqqocvolneqhpencyin23wvaa\" AS \"t0\"\n      GROUP BY\n        1\n    ) AS \"t1\"\n    ORDER BY\n      \"t1\".\"sale_date\" ASC\n  ) AS \"t2\"\n) AS \"t3\"\nLIMIT 10",
+      "plan": null,
       "table": {
         "columns": [
           "sale_date",
@@ -2001,7 +2006,7 @@
             }
           },
           "data": {
-            "name": "data-c4ce13ae1e7bedc9de4eefc0197ed349"
+            "name": "data-8bef3aba7e1d77d87a0b46079c78c868"
           },
           "mark": {
             "type": "bar"
@@ -2031,7 +2036,27 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-c4ce13ae1e7bedc9de4eefc0197ed349": [
+            "data-8bef3aba7e1d77d87a0b46079c78c868": [
+              {
+                "sale_date": "2024-02-27T00:00:00",
+                "total_revenue": 1615.83
+              },
+              {
+                "sale_date": "2024-02-29T00:00:00",
+                "total_revenue": 1565.89
+              },
+              {
+                "sale_date": "2024-03-05T00:00:00",
+                "total_revenue": 1708.57
+              },
+              {
+                "sale_date": "2024-03-16T00:00:00",
+                "total_revenue": 2254.13
+              },
+              {
+                "sale_date": "2024-03-28T00:00:00",
+                "total_revenue": 1871.91
+              },
               {
                 "sale_date": "2024-01-05T00:00:00",
                 "total_revenue": 1087.29
@@ -2069,20 +2094,60 @@
                 "total_revenue": 1812.27
               },
               {
-                "sale_date": "2024-01-11T00:00:00",
-                "total_revenue": 1043.73
+                "sale_date": "2024-01-01T00:00:00",
+                "total_revenue": 1027.89
               },
               {
-                "sale_date": "2024-01-27T00:00:00",
-                "total_revenue": 1556.55
+                "sale_date": "2024-01-04T00:00:00",
+                "total_revenue": 974.64
               },
               {
-                "sale_date": "2024-02-17T00:00:00",
-                "total_revenue": 1866.59
+                "sale_date": "2024-01-22T00:00:00",
+                "total_revenue": 1249.63
               },
               {
-                "sale_date": "2024-03-25T00:00:00",
-                "total_revenue": 1819.88
+                "sale_date": "2024-02-23T00:00:00",
+                "total_revenue": 1617.33
+              },
+              {
+                "sale_date": "2024-03-01T00:00:00",
+                "total_revenue": 1697.9
+              },
+              {
+                "sale_date": "2024-03-07T00:00:00",
+                "total_revenue": 1605.81
+              },
+              {
+                "sale_date": "2024-03-29T00:00:00",
+                "total_revenue": 1798.18
+              },
+              {
+                "sale_date": "2024-01-08T00:00:00",
+                "total_revenue": 987.39
+              },
+              {
+                "sale_date": "2024-01-12T00:00:00",
+                "total_revenue": 1111.07
+              },
+              {
+                "sale_date": "2024-01-26T00:00:00",
+                "total_revenue": 1217.32
+              },
+              {
+                "sale_date": "2024-02-14T00:00:00",
+                "total_revenue": 1355.96
+              },
+              {
+                "sale_date": "2024-02-22T00:00:00",
+                "total_revenue": 1473.4
+              },
+              {
+                "sale_date": "2024-03-08T00:00:00",
+                "total_revenue": 1576.42
+              },
+              {
+                "sale_date": "2024-03-27T00:00:00",
+                "total_revenue": 1959.51
               },
               {
                 "sale_date": "2024-01-15T00:00:00",
@@ -2101,70 +2166,6 @@
                 "total_revenue": 2150.55
               },
               {
-                "sale_date": "2024-01-23T00:00:00",
-                "total_revenue": 1188.05
-              },
-              {
-                "sale_date": "2024-01-25T00:00:00",
-                "total_revenue": 1331.44
-              },
-              {
-                "sale_date": "2024-02-03T00:00:00",
-                "total_revenue": 1823.62
-              },
-              {
-                "sale_date": "2024-02-11T00:00:00",
-                "total_revenue": 1742.16
-              },
-              {
-                "sale_date": "2024-02-18T00:00:00",
-                "total_revenue": 1951.14
-              },
-              {
-                "sale_date": "2024-02-25T00:00:00",
-                "total_revenue": 2036.83
-              },
-              {
-                "sale_date": "2024-01-14T00:00:00",
-                "total_revenue": 1408.77
-              },
-              {
-                "sale_date": "2024-01-28T00:00:00",
-                "total_revenue": 1570.34
-              },
-              {
-                "sale_date": "2024-02-09T00:00:00",
-                "total_revenue": 1405.47
-              },
-              {
-                "sale_date": "2024-03-15T00:00:00",
-                "total_revenue": 1771.09
-              },
-              {
-                "sale_date": "2024-03-18T00:00:00",
-                "total_revenue": 1761.77
-              },
-              {
-                "sale_date": "2024-02-27T00:00:00",
-                "total_revenue": 1615.83
-              },
-              {
-                "sale_date": "2024-02-29T00:00:00",
-                "total_revenue": 1565.89
-              },
-              {
-                "sale_date": "2024-03-05T00:00:00",
-                "total_revenue": 1708.57
-              },
-              {
-                "sale_date": "2024-03-16T00:00:00",
-                "total_revenue": 2254.13
-              },
-              {
-                "sale_date": "2024-03-28T00:00:00",
-                "total_revenue": 1871.91
-              },
-              {
                 "sale_date": "2024-02-04T00:00:00",
                 "total_revenue": 1717.71
               },
@@ -2173,28 +2174,12 @@
                 "total_revenue": 2370.91
               },
               {
-                "sale_date": "2024-01-16T00:00:00",
-                "total_revenue": 1158.99
+                "sale_date": "2024-01-29T00:00:00",
+                "total_revenue": 1349.5
               },
               {
-                "sale_date": "2024-02-01T00:00:00",
-                "total_revenue": 1355.95
-              },
-              {
-                "sale_date": "2024-02-19T00:00:00",
-                "total_revenue": 1462.97
-              },
-              {
-                "sale_date": "2024-03-03T00:00:00",
-                "total_revenue": 2117.39
-              },
-              {
-                "sale_date": "2024-03-04T00:00:00",
-                "total_revenue": 1666.92
-              },
-              {
-                "sale_date": "2024-03-11T00:00:00",
-                "total_revenue": 1642.2
+                "sale_date": "2024-03-30T00:00:00",
+                "total_revenue": 2366.42
               },
               {
                 "sale_date": "2024-01-10T00:00:00",
@@ -2237,40 +2222,24 @@
                 "total_revenue": 1739.33
               },
               {
-                "sale_date": "2024-01-18T00:00:00",
-                "total_revenue": 1187.85
+                "sale_date": "2024-01-14T00:00:00",
+                "total_revenue": 1408.77
               },
               {
-                "sale_date": "2024-01-19T00:00:00",
-                "total_revenue": 1241.89
+                "sale_date": "2024-01-28T00:00:00",
+                "total_revenue": 1570.34
               },
               {
-                "sale_date": "2024-02-02T00:00:00",
-                "total_revenue": 1327.25
+                "sale_date": "2024-02-09T00:00:00",
+                "total_revenue": 1405.47
               },
               {
-                "sale_date": "2024-02-06T00:00:00",
-                "total_revenue": 1425.88
+                "sale_date": "2024-03-15T00:00:00",
+                "total_revenue": 1771.09
               },
               {
-                "sale_date": "2024-03-06T00:00:00",
-                "total_revenue": 1705.2
-              },
-              {
-                "sale_date": "2024-03-23T00:00:00",
-                "total_revenue": 2382.92
-              },
-              {
-                "sale_date": "2024-01-17T00:00:00",
-                "total_revenue": 1104.09
-              },
-              {
-                "sale_date": "2024-01-24T00:00:00",
-                "total_revenue": 1161.1
-              },
-              {
-                "sale_date": "2024-02-20T00:00:00",
-                "total_revenue": 1474.04
+                "sale_date": "2024-03-18T00:00:00",
+                "total_revenue": 1761.77
               },
               {
                 "sale_date": "2024-01-03T00:00:00",
@@ -2301,68 +2270,104 @@
                 "total_revenue": 1793.86
               },
               {
-                "sale_date": "2024-01-08T00:00:00",
-                "total_revenue": 987.39
+                "sale_date": "2024-01-18T00:00:00",
+                "total_revenue": 1187.85
               },
               {
-                "sale_date": "2024-01-12T00:00:00",
-                "total_revenue": 1111.07
+                "sale_date": "2024-01-19T00:00:00",
+                "total_revenue": 1241.89
               },
               {
-                "sale_date": "2024-01-26T00:00:00",
-                "total_revenue": 1217.32
+                "sale_date": "2024-02-02T00:00:00",
+                "total_revenue": 1327.25
               },
               {
-                "sale_date": "2024-02-14T00:00:00",
-                "total_revenue": 1355.96
+                "sale_date": "2024-02-06T00:00:00",
+                "total_revenue": 1425.88
               },
               {
-                "sale_date": "2024-02-22T00:00:00",
-                "total_revenue": 1473.4
+                "sale_date": "2024-03-06T00:00:00",
+                "total_revenue": 1705.2
               },
               {
-                "sale_date": "2024-03-08T00:00:00",
-                "total_revenue": 1576.42
+                "sale_date": "2024-03-23T00:00:00",
+                "total_revenue": 2382.92
               },
               {
-                "sale_date": "2024-03-27T00:00:00",
-                "total_revenue": 1959.51
+                "sale_date": "2024-01-11T00:00:00",
+                "total_revenue": 1043.73
               },
               {
-                "sale_date": "2024-01-01T00:00:00",
-                "total_revenue": 1027.89
+                "sale_date": "2024-01-27T00:00:00",
+                "total_revenue": 1556.55
               },
               {
-                "sale_date": "2024-01-04T00:00:00",
-                "total_revenue": 974.64
+                "sale_date": "2024-02-17T00:00:00",
+                "total_revenue": 1866.59
               },
               {
-                "sale_date": "2024-01-22T00:00:00",
-                "total_revenue": 1249.63
+                "sale_date": "2024-03-25T00:00:00",
+                "total_revenue": 1819.88
               },
               {
-                "sale_date": "2024-02-23T00:00:00",
-                "total_revenue": 1617.33
+                "sale_date": "2024-01-23T00:00:00",
+                "total_revenue": 1188.05
               },
               {
-                "sale_date": "2024-03-01T00:00:00",
-                "total_revenue": 1697.9
+                "sale_date": "2024-01-25T00:00:00",
+                "total_revenue": 1331.44
               },
               {
-                "sale_date": "2024-03-07T00:00:00",
-                "total_revenue": 1605.81
+                "sale_date": "2024-02-03T00:00:00",
+                "total_revenue": 1823.62
               },
               {
-                "sale_date": "2024-03-29T00:00:00",
-                "total_revenue": 1798.18
+                "sale_date": "2024-02-11T00:00:00",
+                "total_revenue": 1742.16
               },
               {
-                "sale_date": "2024-01-29T00:00:00",
-                "total_revenue": 1349.5
+                "sale_date": "2024-02-18T00:00:00",
+                "total_revenue": 1951.14
               },
               {
-                "sale_date": "2024-03-30T00:00:00",
-                "total_revenue": 2366.42
+                "sale_date": "2024-02-25T00:00:00",
+                "total_revenue": 2036.83
+              },
+              {
+                "sale_date": "2024-01-17T00:00:00",
+                "total_revenue": 1104.09
+              },
+              {
+                "sale_date": "2024-01-24T00:00:00",
+                "total_revenue": 1161.1
+              },
+              {
+                "sale_date": "2024-02-20T00:00:00",
+                "total_revenue": 1474.04
+              },
+              {
+                "sale_date": "2024-01-16T00:00:00",
+                "total_revenue": 1158.99
+              },
+              {
+                "sale_date": "2024-02-01T00:00:00",
+                "total_revenue": 1355.95
+              },
+              {
+                "sale_date": "2024-02-19T00:00:00",
+                "total_revenue": 1462.97
+              },
+              {
+                "sale_date": "2024-03-03T00:00:00",
+                "total_revenue": 2117.39
+              },
+              {
+                "sale_date": "2024-03-04T00:00:00",
+                "total_revenue": 1666.92
+              },
+              {
+                "sale_date": "2024-03-11T00:00:00",
+                "total_revenue": 1642.2
               },
               {
                 "sale_date": "2024-01-02T00:00:00",
@@ -2399,7 +2404,8 @@
     },
     "query_ranking": {
       "code": "from ibis import _\n\n# Aggregate by product category\ncategory_revenue = (\n    sales_st\n    .group_by(\"product_category\")\n    .aggregate(\"total_revenue\", \"sale_count\")\n    .order_by(_.total_revenue.desc())\n)\n\n# Add rank columns\nresult = category_revenue.mutate(\n    rank=ibis.rank().over(ibis.window(order_by=_.total_revenue.desc())),\n    dense_rank=ibis.dense_rank().over(ibis.window(order_by=_.total_revenue.desc())),\n    row_number=ibis.row_number().over(ibis.window(order_by=_.total_revenue.desc())),\n)",
-      "sql": "SELECT\n  \"t4\".\"product_category\",\n  \"t4\".\"total_revenue\",\n  \"t4\".\"sale_count\",\n  \"t4\".\"rank\",\n  \"t4\".\"dense_rank\",\n  ROW_NUMBER() OVER (ORDER BY \"t4\".\"total_revenue\" DESC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) - 1 AS \"row_number\"\nFROM (\n  SELECT\n    \"t3\".\"product_category\",\n    \"t3\".\"total_revenue\",\n    \"t3\".\"sale_count\",\n    \"t3\".\"rank\",\n    DENSE_RANK() OVER (ORDER BY \"t3\".\"total_revenue\" DESC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) - 1 AS \"dense_rank\"\n  FROM (\n    SELECT\n      \"t2\".\"product_category\",\n      \"t2\".\"total_revenue\",\n      \"t2\".\"sale_count\",\n      RANK() OVER (ORDER BY \"t2\".\"total_revenue\" DESC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) - 1 AS \"rank\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t0\".\"product_category\",\n          SUM(\"t0\".\"revenue\") AS \"total_revenue\",\n          COUNT(*) AS \"sale_count\"\n        FROM \"ibis_pandas_memtable_c3jamzcbibgevoe3fe6cdhuqwm\" AS \"t0\"\n        GROUP BY\n          1\n      ) AS \"t1\"\n      ORDER BY\n        \"t1\".\"total_revenue\" DESC\n    ) AS \"t2\"\n  ) AS \"t3\"\n) AS \"t4\"",
+      "sql": "SELECT\n  \"t4\".\"product_category\",\n  \"t4\".\"total_revenue\",\n  \"t4\".\"sale_count\",\n  \"t4\".\"rank\",\n  \"t4\".\"dense_rank\",\n  ROW_NUMBER() OVER (ORDER BY \"t4\".\"total_revenue\" DESC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) - 1 AS \"row_number\"\nFROM (\n  SELECT\n    \"t3\".\"product_category\",\n    \"t3\".\"total_revenue\",\n    \"t3\".\"sale_count\",\n    \"t3\".\"rank\",\n    DENSE_RANK() OVER (ORDER BY \"t3\".\"total_revenue\" DESC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) - 1 AS \"dense_rank\"\n  FROM (\n    SELECT\n      \"t2\".\"product_category\",\n      \"t2\".\"total_revenue\",\n      \"t2\".\"sale_count\",\n      RANK() OVER (ORDER BY \"t2\".\"total_revenue\" DESC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) - 1 AS \"rank\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t0\".\"product_category\",\n          SUM(\"t0\".\"revenue\") AS \"total_revenue\",\n          COUNT(*) AS \"sale_count\"\n        FROM \"ibis_pandas_memtable_zjqqocvolneqhpencyin23wvaa\" AS \"t0\"\n        GROUP BY\n          1\n      ) AS \"t1\"\n      ORDER BY\n        \"t1\".\"total_revenue\" DESC\n    ) AS \"t2\"\n  ) AS \"t3\"\n) AS \"t4\"",
+      "plan": null,
       "table": {
         "columns": [
           "product_category",
@@ -2446,7 +2452,7 @@
             }
           },
           "data": {
-            "name": "data-c6a2a35853dd374222df54065804c93c"
+            "name": "data-87fdb8ffbd592eedb8c38f36c96f7693"
           },
           "mark": {
             "type": "bar"
@@ -2499,12 +2505,7 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-c6a2a35853dd374222df54065804c93c": [
-              {
-                "product_category": "Electronics",
-                "total_revenue": 46555.450000000004,
-                "sale_count": 30
-              },
+            "data-87fdb8ffbd592eedb8c38f36c96f7693": [
               {
                 "product_category": "Clothing",
                 "total_revenue": 46158.00000000001,
@@ -2514,6 +2515,11 @@
                 "product_category": "Home",
                 "total_revenue": 47712.26999999998,
                 "sale_count": 30
+              },
+              {
+                "product_category": "Electronics",
+                "total_revenue": 46555.450000000004,
+                "sale_count": 30
               }
             ]
           }
@@ -2522,7 +2528,8 @@
     },
     "query_week_over_week": {
       "code": "from ibis import _\n\n# Aggregate by week\nweekly_revenue = (\n    sales_st\n    .mutate(week_start=_.sale_date.truncate(\"W\"))\n    .group_by(\"week_start\")\n    .aggregate(\"total_revenue\")\n    .order_by(\"week_start\")\n)\n\n# Calculate week-over-week changes\nresult = weekly_revenue.mutate(\n    prev_week_revenue=_.total_revenue.lag(),\n    wow_change=_.total_revenue - _.total_revenue.lag(),\n    wow_pct_change=((_.total_revenue - _.total_revenue.lag()) / _.total_revenue.lag() * 100).round(2)\n).limit(10)",
-      "sql": "SELECT\n  \"t5\".\"week_start\",\n  \"t5\".\"total_revenue\",\n  \"t5\".\"prev_week_revenue\",\n  \"t5\".\"wow_change\",\n  CAST(ROUND(\n    (\n      (\n        \"t5\".\"total_revenue\" - LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n      ) / LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n    ) * 100,\n    2\n  ) AS DOUBLE) AS \"wow_pct_change\"\nFROM (\n  SELECT\n    \"t4\".\"week_start\",\n    \"t4\".\"total_revenue\",\n    \"t4\".\"prev_week_revenue\",\n    \"t4\".\"total_revenue\" - LAG(\"t4\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"wow_change\"\n  FROM (\n    SELECT\n      \"t3\".\"week_start\",\n      \"t3\".\"total_revenue\",\n      LAG(\"t3\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_week_revenue\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t1\".\"week_start\",\n          SUM(\"t1\".\"revenue\") AS \"total_revenue\"\n        FROM (\n          SELECT\n            \"t0\".\"sale_date\",\n            \"t0\".\"revenue\",\n            \"t0\".\"product_category\",\n            DATE_TRUNC('WEEK', \"t0\".\"sale_date\") AS \"week_start\"\n          FROM \"ibis_pandas_memtable_c3jamzcbibgevoe3fe6cdhuqwm\" AS \"t0\"\n        ) AS \"t1\"\n        GROUP BY\n          1\n      ) AS \"t2\"\n      ORDER BY\n        \"t2\".\"week_start\" ASC\n    ) AS \"t3\"\n  ) AS \"t4\"\n) AS \"t5\"\nLIMIT 10",
+      "sql": "SELECT\n  \"t5\".\"week_start\",\n  \"t5\".\"total_revenue\",\n  \"t5\".\"prev_week_revenue\",\n  \"t5\".\"wow_change\",\n  CAST(ROUND(\n    (\n      (\n        \"t5\".\"total_revenue\" - LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n      ) / LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n    ) * 100,\n    2\n  ) AS DOUBLE) AS \"wow_pct_change\"\nFROM (\n  SELECT\n    \"t4\".\"week_start\",\n    \"t4\".\"total_revenue\",\n    \"t4\".\"prev_week_revenue\",\n    \"t4\".\"total_revenue\" - LAG(\"t4\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"wow_change\"\n  FROM (\n    SELECT\n      \"t3\".\"week_start\",\n      \"t3\".\"total_revenue\",\n      LAG(\"t3\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_week_revenue\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t1\".\"week_start\",\n          SUM(\"t1\".\"revenue\") AS \"total_revenue\"\n        FROM (\n          SELECT\n            \"t0\".\"sale_date\",\n            \"t0\".\"revenue\",\n            \"t0\".\"product_category\",\n            DATE_TRUNC('WEEK', \"t0\".\"sale_date\") AS \"week_start\"\n          FROM \"ibis_pandas_memtable_zjqqocvolneqhpencyin23wvaa\" AS \"t0\"\n        ) AS \"t1\"\n        GROUP BY\n          1\n      ) AS \"t2\"\n      ORDER BY\n        \"t2\".\"week_start\" ASC\n    ) AS \"t3\"\n  ) AS \"t4\"\n) AS \"t5\"\nLIMIT 10",
+      "plan": null,
       "table": {
         "columns": [
           "week_start",
@@ -2614,7 +2621,7 @@
             }
           },
           "data": {
-            "name": "data-809ef63d62178fe7d51827ab65a852d3"
+            "name": "data-bc53fa2afa6270e39a962c42215cede6"
           },
           "mark": {
             "type": "bar"
@@ -2644,14 +2651,14 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-809ef63d62178fe7d51827ab65a852d3": [
+            "data-bc53fa2afa6270e39a962c42215cede6": [
               {
-                "week_start": "2024-02-26T00:00:00",
-                "total_revenue": 12124.92
+                "week_start": "2024-03-18T00:00:00",
+                "total_revenue": 13650.38
               },
               {
-                "week_start": "2024-02-05T00:00:00",
-                "total_revenue": 10640.87
+                "week_start": "2024-03-04T00:00:00",
+                "total_revenue": 12560.560000000001
               },
               {
                 "week_start": "2024-01-29T00:00:00",
@@ -2660,22 +2667,6 @@
               {
                 "week_start": "2024-03-11T00:00:00",
                 "total_revenue": 13325.119999999999
-              },
-              {
-                "week_start": "2024-03-25T00:00:00",
-                "total_revenue": 11609.76
-              },
-              {
-                "week_start": "2024-01-08T00:00:00",
-                "total_revenue": 7972.610000000001
-              },
-              {
-                "week_start": "2024-03-18T00:00:00",
-                "total_revenue": 13650.38
-              },
-              {
-                "week_start": "2024-01-01T00:00:00",
-                "total_revenue": 7836.610000000001
               },
               {
                 "week_start": "2024-01-15T00:00:00",
@@ -2690,12 +2681,28 @@
                 "total_revenue": 11548.08
               },
               {
+                "week_start": "2024-01-08T00:00:00",
+                "total_revenue": 7972.610000000001
+              },
+              {
                 "week_start": "2024-01-22T00:00:00",
                 "total_revenue": 9274.43
               },
               {
-                "week_start": "2024-03-04T00:00:00",
-                "total_revenue": 12560.560000000001
+                "week_start": "2024-02-26T00:00:00",
+                "total_revenue": 12124.92
+              },
+              {
+                "week_start": "2024-01-01T00:00:00",
+                "total_revenue": 7836.610000000001
+              },
+              {
+                "week_start": "2024-02-05T00:00:00",
+                "total_revenue": 10640.87
+              },
+              {
+                "week_start": "2024-03-25T00:00:00",
+                "total_revenue": 11609.76
               }
             ]
           }
@@ -2704,7 +2711,8 @@
     },
     "query_pct_running": {
       "code": "from ibis import _\n\n# Top 10 days by revenue\ntop_days = (\n    sales_st\n    .group_by(\"sale_date\")\n    .aggregate(\"total_revenue\")\n    .order_by(_.total_revenue.desc())\n    .limit(10)\n)\n\n# Calculate cumulative percentage\nresult = top_days.mutate(\n    cumulative_revenue=_.total_revenue.cumsum(),\n    total_top10=_.total_revenue.sum(),\n    pct_of_top10=(_.total_revenue.cumsum() / _.total_revenue.sum() * 100).round(2)\n)",
-      "sql": "SELECT\n  \"t5\".\"sale_date\",\n  \"t5\".\"total_revenue\",\n  \"t5\".\"cumulative_revenue\",\n  \"t5\".\"total_top10\",\n  CAST(ROUND(\n    (\n      SUM(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) / SUM(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n    ) * 100,\n    2\n  ) AS DOUBLE) AS \"pct_of_top10\"\nFROM (\n  SELECT\n    \"t4\".\"sale_date\",\n    \"t4\".\"total_revenue\",\n    \"t4\".\"cumulative_revenue\",\n    SUM(\"t4\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"total_top10\"\n  FROM (\n    SELECT\n      \"t3\".\"sale_date\",\n      \"t3\".\"total_revenue\",\n      SUM(\"t3\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"cumulative_revenue\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t0\".\"sale_date\",\n          SUM(\"t0\".\"revenue\") AS \"total_revenue\"\n        FROM \"ibis_pandas_memtable_c3jamzcbibgevoe3fe6cdhuqwm\" AS \"t0\"\n        GROUP BY\n          1\n      ) AS \"t1\"\n      ORDER BY\n        \"t1\".\"total_revenue\" DESC\n      LIMIT 10\n    ) AS \"t3\"\n  ) AS \"t4\"\n) AS \"t5\"",
+      "sql": "SELECT\n  \"t5\".\"sale_date\",\n  \"t5\".\"total_revenue\",\n  \"t5\".\"cumulative_revenue\",\n  \"t5\".\"total_top10\",\n  CAST(ROUND(\n    (\n      SUM(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) / SUM(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n    ) * 100,\n    2\n  ) AS DOUBLE) AS \"pct_of_top10\"\nFROM (\n  SELECT\n    \"t4\".\"sale_date\",\n    \"t4\".\"total_revenue\",\n    \"t4\".\"cumulative_revenue\",\n    SUM(\"t4\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"total_top10\"\n  FROM (\n    SELECT\n      \"t3\".\"sale_date\",\n      \"t3\".\"total_revenue\",\n      SUM(\"t3\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"cumulative_revenue\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t0\".\"sale_date\",\n          SUM(\"t0\".\"revenue\") AS \"total_revenue\"\n        FROM \"ibis_pandas_memtable_zjqqocvolneqhpencyin23wvaa\" AS \"t0\"\n        GROUP BY\n          1\n      ) AS \"t1\"\n      ORDER BY\n        \"t1\".\"total_revenue\" DESC\n      LIMIT 10\n    ) AS \"t3\"\n  ) AS \"t4\"\n) AS \"t5\"",
+      "plan": null,
       "table": {
         "columns": [
           "sale_date",
@@ -2796,7 +2804,7 @@
             }
           },
           "data": {
-            "name": "data-022fb4f64acbf9ea44d8964a14d59fb5"
+            "name": "data-dbe30fddf7c9a137dfb8dc67df829d5e"
           },
           "mark": {
             "type": "bar"
@@ -2826,155 +2834,7 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-022fb4f64acbf9ea44d8964a14d59fb5": [
-              {
-                "sale_date": "2024-01-11T00:00:00",
-                "total_revenue": 1043.73
-              },
-              {
-                "sale_date": "2024-01-27T00:00:00",
-                "total_revenue": 1556.55
-              },
-              {
-                "sale_date": "2024-02-17T00:00:00",
-                "total_revenue": 1866.59
-              },
-              {
-                "sale_date": "2024-03-25T00:00:00",
-                "total_revenue": 1819.88
-              },
-              {
-                "sale_date": "2024-01-17T00:00:00",
-                "total_revenue": 1104.09
-              },
-              {
-                "sale_date": "2024-01-24T00:00:00",
-                "total_revenue": 1161.1
-              },
-              {
-                "sale_date": "2024-02-20T00:00:00",
-                "total_revenue": 1474.04
-              },
-              {
-                "sale_date": "2024-01-18T00:00:00",
-                "total_revenue": 1187.85
-              },
-              {
-                "sale_date": "2024-01-19T00:00:00",
-                "total_revenue": 1241.89
-              },
-              {
-                "sale_date": "2024-02-02T00:00:00",
-                "total_revenue": 1327.25
-              },
-              {
-                "sale_date": "2024-02-06T00:00:00",
-                "total_revenue": 1425.88
-              },
-              {
-                "sale_date": "2024-03-06T00:00:00",
-                "total_revenue": 1705.2
-              },
-              {
-                "sale_date": "2024-03-23T00:00:00",
-                "total_revenue": 2382.92
-              },
-              {
-                "sale_date": "2024-01-02T00:00:00",
-                "total_revenue": 915.0
-              },
-              {
-                "sale_date": "2024-01-06T00:00:00",
-                "total_revenue": 1400.34
-              },
-              {
-                "sale_date": "2024-01-13T00:00:00",
-                "total_revenue": 1361.31
-              },
-              {
-                "sale_date": "2024-01-31T00:00:00",
-                "total_revenue": 1361.43
-              },
-              {
-                "sale_date": "2024-03-09T00:00:00",
-                "total_revenue": 2147.09
-              },
-              {
-                "sale_date": "2024-03-22T00:00:00",
-                "total_revenue": 1762.55
-              },
-              {
-                "sale_date": "2024-03-24T00:00:00",
-                "total_revenue": 2458.56
-              },
-              {
-                "sale_date": "2024-01-15T00:00:00",
-                "total_revenue": 1169.98
-              },
-              {
-                "sale_date": "2024-02-16T00:00:00",
-                "total_revenue": 1380.2
-              },
-              {
-                "sale_date": "2024-03-02T00:00:00",
-                "total_revenue": 2121.0
-              },
-              {
-                "sale_date": "2024-03-10T00:00:00",
-                "total_revenue": 2150.55
-              },
-              {
-                "sale_date": "2024-01-23T00:00:00",
-                "total_revenue": 1188.05
-              },
-              {
-                "sale_date": "2024-01-25T00:00:00",
-                "total_revenue": 1331.44
-              },
-              {
-                "sale_date": "2024-02-03T00:00:00",
-                "total_revenue": 1823.62
-              },
-              {
-                "sale_date": "2024-02-11T00:00:00",
-                "total_revenue": 1742.16
-              },
-              {
-                "sale_date": "2024-02-18T00:00:00",
-                "total_revenue": 1951.14
-              },
-              {
-                "sale_date": "2024-02-25T00:00:00",
-                "total_revenue": 2036.83
-              },
-              {
-                "sale_date": "2024-01-08T00:00:00",
-                "total_revenue": 987.39
-              },
-              {
-                "sale_date": "2024-01-12T00:00:00",
-                "total_revenue": 1111.07
-              },
-              {
-                "sale_date": "2024-01-26T00:00:00",
-                "total_revenue": 1217.32
-              },
-              {
-                "sale_date": "2024-02-14T00:00:00",
-                "total_revenue": 1355.96
-              },
-              {
-                "sale_date": "2024-02-22T00:00:00",
-                "total_revenue": 1473.4
-              },
-              {
-                "sale_date": "2024-03-08T00:00:00",
-                "total_revenue": 1576.42
-              },
-              {
-                "sale_date": "2024-03-27T00:00:00",
-                "total_revenue": 1959.51
-              },
+            "data-dbe30fddf7c9a137dfb8dc67df829d5e": [
               {
                 "sale_date": "2024-01-05T00:00:00",
                 "total_revenue": 1087.29
@@ -3012,80 +2872,72 @@
                 "total_revenue": 1812.27
               },
               {
-                "sale_date": "2024-01-03T00:00:00",
-                "total_revenue": 975.01
+                "sale_date": "2024-01-11T00:00:00",
+                "total_revenue": 1043.73
               },
               {
-                "sale_date": "2024-01-09T00:00:00",
-                "total_revenue": 1064.38
+                "sale_date": "2024-01-27T00:00:00",
+                "total_revenue": 1556.55
               },
               {
-                "sale_date": "2024-01-20T00:00:00",
-                "total_revenue": 1448.3
+                "sale_date": "2024-02-17T00:00:00",
+                "total_revenue": 1866.59
               },
               {
-                "sale_date": "2024-02-07T00:00:00",
-                "total_revenue": 1393.7
+                "sale_date": "2024-03-25T00:00:00",
+                "total_revenue": 1819.88
               },
               {
-                "sale_date": "2024-02-08T00:00:00",
-                "total_revenue": 1452.34
+                "sale_date": "2024-01-17T00:00:00",
+                "total_revenue": 1104.09
               },
               {
-                "sale_date": "2024-02-24T00:00:00",
-                "total_revenue": 2031.61
+                "sale_date": "2024-01-24T00:00:00",
+                "total_revenue": 1161.1
               },
               {
-                "sale_date": "2024-03-26T00:00:00",
-                "total_revenue": 1793.86
+                "sale_date": "2024-02-20T00:00:00",
+                "total_revenue": 1474.04
               },
               {
-                "sale_date": "2024-02-27T00:00:00",
-                "total_revenue": 1615.83
+                "sale_date": "2024-01-15T00:00:00",
+                "total_revenue": 1169.98
               },
               {
-                "sale_date": "2024-02-29T00:00:00",
-                "total_revenue": 1565.89
+                "sale_date": "2024-02-16T00:00:00",
+                "total_revenue": 1380.2
               },
               {
-                "sale_date": "2024-03-05T00:00:00",
-                "total_revenue": 1708.57
+                "sale_date": "2024-03-02T00:00:00",
+                "total_revenue": 2121.0
               },
               {
-                "sale_date": "2024-03-16T00:00:00",
-                "total_revenue": 2254.13
+                "sale_date": "2024-03-10T00:00:00",
+                "total_revenue": 2150.55
               },
               {
-                "sale_date": "2024-03-28T00:00:00",
-                "total_revenue": 1871.91
+                "sale_date": "2024-01-16T00:00:00",
+                "total_revenue": 1158.99
               },
               {
-                "sale_date": "2024-01-14T00:00:00",
-                "total_revenue": 1408.77
+                "sale_date": "2024-02-01T00:00:00",
+                "total_revenue": 1355.95
               },
               {
-                "sale_date": "2024-01-28T00:00:00",
-                "total_revenue": 1570.34
+                "sale_date": "2024-02-19T00:00:00",
+                "total_revenue": 1462.97
               },
               {
-                "sale_date": "2024-02-09T00:00:00",
-                "total_revenue": 1405.47
+                "sale_date": "2024-03-03T00:00:00",
+                "total_revenue": 2117.39
               },
               {
-                "sale_date": "2024-03-15T00:00:00",
-                "total_revenue": 1771.09
+                "sale_date": "2024-03-04T00:00:00",
+                "total_revenue": 1666.92
               },
               {
-                "sale_date": "2024-03-18T00:00:00",
-                "total_revenue": 1761.77
-              },
-              {
-                "sale_date": "2024-01-29T00:00:00",
-                "total_revenue": 1349.5
-              },
-              {
-                "sale_date": "2024-03-30T00:00:00",
-                "total_revenue": 2366.42
+                "sale_date": "2024-03-11T00:00:00",
+                "total_revenue": 1642.2
               },
               {
                 "sale_date": "2024-01-10T00:00:00",
@@ -3128,12 +2980,156 @@
                 "total_revenue": 1739.33
               },
               {
+                "sale_date": "2024-02-27T00:00:00",
+                "total_revenue": 1615.83
+              },
+              {
+                "sale_date": "2024-02-29T00:00:00",
+                "total_revenue": 1565.89
+              },
+              {
+                "sale_date": "2024-03-05T00:00:00",
+                "total_revenue": 1708.57
+              },
+              {
+                "sale_date": "2024-03-16T00:00:00",
+                "total_revenue": 2254.13
+              },
+              {
+                "sale_date": "2024-03-28T00:00:00",
+                "total_revenue": 1871.91
+              },
+              {
                 "sale_date": "2024-02-04T00:00:00",
                 "total_revenue": 1717.71
               },
               {
                 "sale_date": "2024-03-17T00:00:00",
                 "total_revenue": 2370.91
+              },
+              {
+                "sale_date": "2024-01-18T00:00:00",
+                "total_revenue": 1187.85
+              },
+              {
+                "sale_date": "2024-01-19T00:00:00",
+                "total_revenue": 1241.89
+              },
+              {
+                "sale_date": "2024-02-02T00:00:00",
+                "total_revenue": 1327.25
+              },
+              {
+                "sale_date": "2024-02-06T00:00:00",
+                "total_revenue": 1425.88
+              },
+              {
+                "sale_date": "2024-03-06T00:00:00",
+                "total_revenue": 1705.2
+              },
+              {
+                "sale_date": "2024-03-23T00:00:00",
+                "total_revenue": 2382.92
+              },
+              {
+                "sale_date": "2024-01-23T00:00:00",
+                "total_revenue": 1188.05
+              },
+              {
+                "sale_date": "2024-01-25T00:00:00",
+                "total_revenue": 1331.44
+              },
+              {
+                "sale_date": "2024-02-03T00:00:00",
+                "total_revenue": 1823.62
+              },
+              {
+                "sale_date": "2024-02-11T00:00:00",
+                "total_revenue": 1742.16
+              },
+              {
+                "sale_date": "2024-02-18T00:00:00",
+                "total_revenue": 1951.14
+              },
+              {
+                "sale_date": "2024-02-25T00:00:00",
+                "total_revenue": 2036.83
+              },
+              {
+                "sale_date": "2024-01-14T00:00:00",
+                "total_revenue": 1408.77
+              },
+              {
+                "sale_date": "2024-01-28T00:00:00",
+                "total_revenue": 1570.34
+              },
+              {
+                "sale_date": "2024-02-09T00:00:00",
+                "total_revenue": 1405.47
+              },
+              {
+                "sale_date": "2024-03-15T00:00:00",
+                "total_revenue": 1771.09
+              },
+              {
+                "sale_date": "2024-03-18T00:00:00",
+                "total_revenue": 1761.77
+              },
+              {
+                "sale_date": "2024-01-03T00:00:00",
+                "total_revenue": 975.01
+              },
+              {
+                "sale_date": "2024-01-09T00:00:00",
+                "total_revenue": 1064.38
+              },
+              {
+                "sale_date": "2024-01-20T00:00:00",
+                "total_revenue": 1448.3
+              },
+              {
+                "sale_date": "2024-02-07T00:00:00",
+                "total_revenue": 1393.7
+              },
+              {
+                "sale_date": "2024-02-08T00:00:00",
+                "total_revenue": 1452.34
+              },
+              {
+                "sale_date": "2024-02-24T00:00:00",
+                "total_revenue": 2031.61
+              },
+              {
+                "sale_date": "2024-03-26T00:00:00",
+                "total_revenue": 1793.86
+              },
+              {
+                "sale_date": "2024-01-08T00:00:00",
+                "total_revenue": 987.39
+              },
+              {
+                "sale_date": "2024-01-12T00:00:00",
+                "total_revenue": 1111.07
+              },
+              {
+                "sale_date": "2024-01-26T00:00:00",
+                "total_revenue": 1217.32
+              },
+              {
+                "sale_date": "2024-02-14T00:00:00",
+                "total_revenue": 1355.96
+              },
+              {
+                "sale_date": "2024-02-22T00:00:00",
+                "total_revenue": 1473.4
+              },
+              {
+                "sale_date": "2024-03-08T00:00:00",
+                "total_revenue": 1576.42
+              },
+              {
+                "sale_date": "2024-03-27T00:00:00",
+                "total_revenue": 1959.51
               },
               {
                 "sale_date": "2024-01-01T00:00:00",
@@ -3164,28 +3160,40 @@
                 "total_revenue": 1798.18
               },
               {
-                "sale_date": "2024-01-16T00:00:00",
-                "total_revenue": 1158.99
+                "sale_date": "2024-01-29T00:00:00",
+                "total_revenue": 1349.5
               },
               {
-                "sale_date": "2024-02-01T00:00:00",
-                "total_revenue": 1355.95
+                "sale_date": "2024-03-30T00:00:00",
+                "total_revenue": 2366.42
               },
               {
-                "sale_date": "2024-02-19T00:00:00",
-                "total_revenue": 1462.97
+                "sale_date": "2024-01-02T00:00:00",
+                "total_revenue": 915.0
               },
               {
-                "sale_date": "2024-03-03T00:00:00",
-                "total_revenue": 2117.39
+                "sale_date": "2024-01-06T00:00:00",
+                "total_revenue": 1400.34
               },
               {
-                "sale_date": "2024-03-04T00:00:00",
-                "total_revenue": 1666.92
+                "sale_date": "2024-01-13T00:00:00",
+                "total_revenue": 1361.31
               },
               {
-                "sale_date": "2024-03-11T00:00:00",
-                "total_revenue": 1642.2
+                "sale_date": "2024-01-31T00:00:00",
+                "total_revenue": 1361.43
+              },
+              {
+                "sale_date": "2024-03-09T00:00:00",
+                "total_revenue": 2147.09
+              },
+              {
+                "sale_date": "2024-03-22T00:00:00",
+                "total_revenue": 1762.55
+              },
+              {
+                "sale_date": "2024-03-24T00:00:00",
+                "total_revenue": 2458.56
               }
             ]
           }
@@ -3194,7 +3202,8 @@
     },
     "query_window_filter": {
       "code": "from ibis import _\n\n# Focus on weekends only\nweekend_revenue = (\n    sales_st\n    .mutate(is_weekend=_.sale_date.day_of_week.index().isin([5, 6]))\n    .filter(_.is_weekend)\n    .group_by(\"sale_date\")\n    .aggregate(\"total_revenue\")\n    .order_by(\"sale_date\")\n)\n\n# 3-weekend moving average\nwindow_3 = ibis.window(rows=(-2, 0), order_by=\"sale_date\")\n\nresult = weekend_revenue.mutate(\n    ma_3weekend=_.total_revenue.mean().over(window_3).round(2),\n    prev_weekend=_.total_revenue.lag(),\n    weekend_change=_.total_revenue - _.total_revenue.lag()\n).limit(10)",
-      "sql": "SELECT\n  \"t5\".\"sale_date\",\n  \"t5\".\"total_revenue\",\n  \"t5\".\"ma_3weekend\",\n  \"t5\".\"prev_weekend\",\n  \"t5\".\"total_revenue\" - LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"weekend_change\"\nFROM (\n  SELECT\n    \"t4\".\"sale_date\",\n    \"t4\".\"total_revenue\",\n    \"t4\".\"ma_3weekend\",\n    LAG(\"t4\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_weekend\"\n  FROM (\n    SELECT\n      \"t3\".\"sale_date\",\n      \"t3\".\"total_revenue\",\n      CAST(ROUND(\n        AVG(\"t3\".\"total_revenue\") OVER (ORDER BY \"t3\".\"sale_date\" ASC ROWS BETWEEN 2 preceding AND CURRENT ROW),\n        2\n      ) AS DOUBLE) AS \"ma_3weekend\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t1\".\"sale_date\",\n          SUM(\"t1\".\"revenue\") AS \"total_revenue\"\n        FROM (\n          SELECT\n            \"t0\".\"sale_date\",\n            \"t0\".\"revenue\",\n            \"t0\".\"product_category\",\n            (\n              DAYOFWEEK(\"t0\".\"sale_date\") + 6\n            ) % 7 IN (5, 6) AS \"is_weekend\"\n          FROM \"ibis_pandas_memtable_c3jamzcbibgevoe3fe6cdhuqwm\" AS \"t0\"\n          WHERE\n            (\n              DAYOFWEEK(\"t0\".\"sale_date\") + 6\n            ) % 7 IN (5, 6)\n        ) AS \"t1\"\n        GROUP BY\n          1\n      ) AS \"t2\"\n      ORDER BY\n        \"t2\".\"sale_date\" ASC\n    ) AS \"t3\"\n  ) AS \"t4\"\n) AS \"t5\"\nLIMIT 10",
+      "sql": "SELECT\n  \"t5\".\"sale_date\",\n  \"t5\".\"total_revenue\",\n  \"t5\".\"ma_3weekend\",\n  \"t5\".\"prev_weekend\",\n  \"t5\".\"total_revenue\" - LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"weekend_change\"\nFROM (\n  SELECT\n    \"t4\".\"sale_date\",\n    \"t4\".\"total_revenue\",\n    \"t4\".\"ma_3weekend\",\n    LAG(\"t4\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_weekend\"\n  FROM (\n    SELECT\n      \"t3\".\"sale_date\",\n      \"t3\".\"total_revenue\",\n      CAST(ROUND(\n        AVG(\"t3\".\"total_revenue\") OVER (ORDER BY \"t3\".\"sale_date\" ASC ROWS BETWEEN 2 preceding AND CURRENT ROW),\n        2\n      ) AS DOUBLE) AS \"ma_3weekend\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t1\".\"sale_date\",\n          SUM(\"t1\".\"revenue\") AS \"total_revenue\"\n        FROM (\n          SELECT\n            \"t0\".\"sale_date\",\n            \"t0\".\"revenue\",\n            \"t0\".\"product_category\",\n            (\n              DAYOFWEEK(\"t0\".\"sale_date\") + 6\n            ) % 7 IN (5, 6) AS \"is_weekend\"\n          FROM \"ibis_pandas_memtable_zjqqocvolneqhpencyin23wvaa\" AS \"t0\"\n          WHERE\n            (\n              DAYOFWEEK(\"t0\".\"sale_date\") + 6\n            ) % 7 IN (5, 6)\n        ) AS \"t1\"\n        GROUP BY\n          1\n      ) AS \"t2\"\n      ORDER BY\n        \"t2\".\"sale_date\" ASC\n    ) AS \"t3\"\n  ) AS \"t4\"\n) AS \"t5\"\nLIMIT 10",
+      "plan": null,
       "table": {
         "columns": [
           "sale_date",
@@ -3286,7 +3295,7 @@
             }
           },
           "data": {
-            "name": "data-39bc3e7f39022ebc57582c784dea92a1"
+            "name": "data-a03f337fab4cc1cc40c69a57cec0068b"
           },
           "mark": {
             "type": "bar"
@@ -3316,26 +3325,14 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-39bc3e7f39022ebc57582c784dea92a1": [
+            "data-a03f337fab4cc1cc40c69a57cec0068b": [
               {
-                "sale_date": "2024-03-16T00:00:00",
-                "total_revenue": 2254.13
+                "sale_date": "2024-03-02T00:00:00",
+                "total_revenue": 2121.0
               },
               {
-                "sale_date": "2024-01-07T00:00:00",
-                "total_revenue": 1456.44
-              },
-              {
-                "sale_date": "2024-02-10T00:00:00",
-                "total_revenue": 1860.91
-              },
-              {
-                "sale_date": "2024-01-21T00:00:00",
-                "total_revenue": 1621.16
-              },
-              {
-                "sale_date": "2024-03-03T00:00:00",
-                "total_revenue": 2117.39
+                "sale_date": "2024-03-10T00:00:00",
+                "total_revenue": 2150.55
               },
               {
                 "sale_date": "2024-02-03T00:00:00",
@@ -3354,14 +3351,6 @@
                 "total_revenue": 2036.83
               },
               {
-                "sale_date": "2024-02-04T00:00:00",
-                "total_revenue": 1717.71
-              },
-              {
-                "sale_date": "2024-03-17T00:00:00",
-                "total_revenue": 2370.91
-              },
-              {
                 "sale_date": "2024-01-14T00:00:00",
                 "total_revenue": 1408.77
               },
@@ -3370,28 +3359,20 @@
                 "total_revenue": 1570.34
               },
               {
+                "sale_date": "2024-03-16T00:00:00",
+                "total_revenue": 2254.13
+              },
+              {
+                "sale_date": "2024-02-04T00:00:00",
+                "total_revenue": 1717.71
+              },
+              {
+                "sale_date": "2024-03-17T00:00:00",
+                "total_revenue": 2370.91
+              },
+              {
                 "sale_date": "2024-03-30T00:00:00",
                 "total_revenue": 2366.42
-              },
-              {
-                "sale_date": "2024-01-27T00:00:00",
-                "total_revenue": 1556.55
-              },
-              {
-                "sale_date": "2024-02-17T00:00:00",
-                "total_revenue": 1866.59
-              },
-              {
-                "sale_date": "2024-03-02T00:00:00",
-                "total_revenue": 2121.0
-              },
-              {
-                "sale_date": "2024-03-10T00:00:00",
-                "total_revenue": 2150.55
-              },
-              {
-                "sale_date": "2024-03-23T00:00:00",
-                "total_revenue": 2382.92
               },
               {
                 "sale_date": "2024-01-20T00:00:00",
@@ -3400,6 +3381,26 @@
               {
                 "sale_date": "2024-02-24T00:00:00",
                 "total_revenue": 2031.61
+              },
+              {
+                "sale_date": "2024-03-03T00:00:00",
+                "total_revenue": 2117.39
+              },
+              {
+                "sale_date": "2024-01-21T00:00:00",
+                "total_revenue": 1621.16
+              },
+              {
+                "sale_date": "2024-01-07T00:00:00",
+                "total_revenue": 1456.44
+              },
+              {
+                "sale_date": "2024-02-10T00:00:00",
+                "total_revenue": 1860.91
+              },
+              {
+                "sale_date": "2024-03-23T00:00:00",
+                "total_revenue": 2382.92
               },
               {
                 "sale_date": "2024-01-06T00:00:00",
@@ -3416,6 +3417,14 @@
               {
                 "sale_date": "2024-03-24T00:00:00",
                 "total_revenue": 2458.56
+              },
+              {
+                "sale_date": "2024-01-27T00:00:00",
+                "total_revenue": 1556.55
+              },
+              {
+                "sale_date": "2024-02-17T00:00:00",
+                "total_revenue": 1866.59
               }
             ]
           }

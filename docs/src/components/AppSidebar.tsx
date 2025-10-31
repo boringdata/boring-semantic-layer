@@ -89,7 +89,7 @@ const navigationStructure = [
 export function AppSidebar() {
   const { open } = useSidebar();
   const location = useLocation();
-  const [openSections, setOpenSections] = useState<string[]>(["About BSL", "Building a Semantic Table", "Querying Semantic Tables", "Advanced Patterns", "Query Methods", "Defining Semantic Tables"]);
+  const [openSections, setOpenSections] = useState<string[]>(["About BSL", "Building a Semantic Table", "Querying Semantic Tables", "Advanced Patterns", "Query Methods", "Defining Semantic Tables", "Semantic Tables"]);
 
   const toggleSection = (title: string) => {
     setOpenSections((prev) =>

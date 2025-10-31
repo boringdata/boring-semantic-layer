@@ -59,27 +59,42 @@ const Home = () => {
           </Button>
         </div>
 
-        <div className="pt-12">
-          <p className="text-sm text-muted-foreground mb-4">A joint effort by</p>
-          <div className="flex items-center justify-center gap-6 text-sm">
-            <a 
-              href="https://github.com/xorq-labs/xorq" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-muted-foreground hover:text-accent transition-colors"
-            >
-              xorq-labs
-            </a>
-            <span className="text-muted-foreground">×</span>
-            <a 
-              href="https://www.boringdata.io/" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-muted-foreground hover:text-accent transition-colors"
-            >
-              boringdata
-            </a>
+        <div className="pt-12 space-y-6">
+          <div>
+            <p className="text-sm text-muted-foreground mb-4">A joint effort by</p>
+            <div className="flex items-center justify-center gap-6 text-sm">
+              <a
+                href="https://github.com/xorq-labs/xorq"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-muted-foreground hover:text-accent transition-colors"
+              >
+                xorq-labs
+              </a>
+              <span className="text-muted-foreground">×</span>
+              <a
+                href="https://www.boringdata.io/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-muted-foreground hover:text-accent transition-colors"
+              >
+                boringdata
+              </a>
+            </div>
           </div>
+
+          <p className="text-xs text-muted-foreground/70">
+            Freely inspired by the awesome{" "}
+            <a
+              href="https://github.com/malloydata/malloy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-accent transition-colors underline decoration-dotted"
+            >
+              Malloy
+            </a>
+            {" "}project. We loved the vision, just took the Python route
+          </p>
         </div>
       </div>
     </div>

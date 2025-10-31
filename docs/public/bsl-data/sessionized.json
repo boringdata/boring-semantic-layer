@@ -4,6 +4,7 @@
     "setup_raw_data": {
       "code": "import ibis\nfrom ibis import _\nfrom boring_semantic_layer import to_semantic_table\n\n# Create user activity events with minute offsets instead of timestamps\nactivity_data = ibis.memtable({\n    \"user_id\": [\"user1\", \"user1\", \"user1\", \"user1\", \"user2\", \"user2\", \"user2\", \"user3\", \"user3\", \"user3\", \"user3\", \"user3\"],\n    \"minute_offset\": [0, 5, 10, 45, 2, 40, 42, 1, 3, 7, 50, 52],  # Minutes from start\n    \"page_url\": [\"/home\", \"/products\", \"/cart\", \"/checkout\", \"/home\", \"/products\", \"/cart\",\n                 \"/home\", \"/about\", \"/products\", \"/home\", \"/contact\"],\n    \"action\": [\"view\", \"view\", \"view\", \"purchase\", \"view\", \"view\", \"view\",\n               \"view\", \"view\", \"view\", \"view\", \"view\"]\n})",
       "sql": "Error generating SQL: Table.sql() missing 1 required positional argument: 'query'",
+      "plan": "InMemoryTable\n  data:\n    PandasDataFrameProxy:\n         user_id  minute_offset   page_url    action\n      0    user1              0      /home      view\n      1    user1              5  /products      view\n      2    user1             10      /cart      view\n      3    user1             45  /checkout  purchase\n      4    user2              2      /home      view\n      5    user2             40  /products      view\n      6    user2             42      /cart      view\n      7    user3              1      /home      view\n      8    user3              3     /about      view\n      9    user3              7  /products      view\n      10   user3             50      /home      view\n      11   user3             52   /contact      view",
       "table": {
         "columns": [
           "user_id",
@@ -89,7 +90,8 @@
     },
     "query_session_boundaries": {
       "code": "from ibis import _\n\nresult = (\n    activity_st\n    .group_by(\"user_id\", \"minute_offset\", \"page_url\", \"action\")\n    .aggregate()\n    .mutate(\n        # Calculate time since previous event for same user\n        prev_minute=lambda t: t.minute_offset.lag().over(\n            group_by=\"user_id\",\n            order_by=t.minute_offset\n        ),\n        # Calculate minutes since last event\n        minutes_since_last=lambda t: t.minute_offset - t.prev_minute,\n        # Mark session start (>30 min gap or first event)\n        is_session_start=lambda t: (t.minutes_since_last > 30) | t.prev_minute.isnull()\n    )\n    .order_by(_.user_id, _.minute_offset)\n)",
-      "sql": "SELECT\n  \"t4\".\"user_id\",\n  \"t4\".\"minute_offset\",\n  \"t4\".\"page_url\",\n  \"t4\".\"action\",\n  \"t4\".\"prev_minute\",\n  \"t4\".\"minute_offset\" - \"t4\".\"prev_minute\" AS \"minutes_since_last\",\n  (\n    (\n      \"t4\".\"minute_offset\" - \"t4\".\"prev_minute\"\n    ) > 30\n  )\n  OR (\n    \"t4\".\"prev_minute\" IS NULL\n  ) AS \"is_session_start\"\nFROM (\n  SELECT\n    \"t3\".\"user_id\",\n    \"t3\".\"minute_offset\",\n    \"t3\".\"page_url\",\n    \"t3\".\"action\",\n    LAG(\"t3\".\"minute_offset\") OVER (PARTITION BY \"t3\".\"user_id\" ORDER BY \"t3\".\"minute_offset\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_minute\"\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        \"t1\".\"user_id\",\n        \"t1\".\"minute_offset\",\n        \"t1\".\"page_url\",\n        \"t1\".\"action\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_m5dgklmvbfc25jmzkkksx4ffwa\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1,\n        2,\n        3,\n        4\n    ) AS \"t2\"\n  ) AS \"t3\"\n) AS \"t4\"\nORDER BY\n  \"t4\".\"user_id\" ASC,\n  \"t4\".\"minute_offset\" ASC",
+      "sql": "SELECT\n  \"t4\".\"user_id\",\n  \"t4\".\"minute_offset\",\n  \"t4\".\"page_url\",\n  \"t4\".\"action\",\n  \"t4\".\"prev_minute\",\n  \"t4\".\"minute_offset\" - \"t4\".\"prev_minute\" AS \"minutes_since_last\",\n  (\n    (\n      \"t4\".\"minute_offset\" - \"t4\".\"prev_minute\"\n    ) > 30\n  )\n  OR (\n    \"t4\".\"prev_minute\" IS NULL\n  ) AS \"is_session_start\"\nFROM (\n  SELECT\n    \"t3\".\"user_id\",\n    \"t3\".\"minute_offset\",\n    \"t3\".\"page_url\",\n    \"t3\".\"action\",\n    LAG(\"t3\".\"minute_offset\") OVER (PARTITION BY \"t3\".\"user_id\" ORDER BY \"t3\".\"minute_offset\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_minute\"\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        \"t1\".\"user_id\",\n        \"t1\".\"minute_offset\",\n        \"t1\".\"page_url\",\n        \"t1\".\"action\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_6ewuzmrwmra5bnh7xthrs65v74\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1,\n        2,\n        3,\n        4\n    ) AS \"t2\"\n  ) AS \"t3\"\n) AS \"t4\"\nORDER BY\n  \"t4\".\"user_id\" ASC,\n  \"t4\".\"minute_offset\" ASC",
+      "plan": "r0 := SemanticTableOp[activity]\n  4 dimensions: user_id, minute_offset, page_url, ...\n  2 measures: event_count, unique_users\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['user_id', 'minute_offset', 'page_url', 'action']\n  inherited dimensions: 4\n  inherited measures: 2\n\nr2 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['user_id', 'minute_offset', 'page_url', 'action']\n  aggs: []\n\nr3 := SemanticMutateOp\n  source: SemanticAggregateOp\n  columns: [prev_minute, minutes_since_last, is_session_start]\n\nSemanticOrderByOp\n  source: SemanticMutateOp\n  keys: [<expr>, <expr>]",
       "table": {
         "columns": [
           "user_id",
@@ -221,7 +223,7 @@
             }
           },
           "data": {
-            "name": "data-4efd92e9813fd3005639d7e1e17bd010"
+            "name": "data-3b75cc8804cfea4384d064f5d8335db2"
           },
           "mark": {
             "type": "text"
@@ -235,7 +237,7 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-4efd92e9813fd3005639d7e1e17bd010": [
+            "data-3b75cc8804cfea4384d064f5d8335db2": [
               {
                 "user_id": "user1",
                 "minute_offset": 5,
@@ -256,14 +258,38 @@
               },
               {
                 "user_id": "user1",
+                "minute_offset": 45,
+                "page_url": "/checkout",
+                "action": "purchase"
+              },
+              {
+                "user_id": "user3",
+                "minute_offset": 50,
+                "page_url": "/home",
+                "action": "view"
+              },
+              {
+                "user_id": "user1",
                 "minute_offset": 0,
                 "page_url": "/home",
                 "action": "view"
               },
               {
                 "user_id": "user3",
+                "minute_offset": 52,
+                "page_url": "/contact",
+                "action": "view"
+              },
+              {
+                "user_id": "user3",
                 "minute_offset": 3,
                 "page_url": "/about",
+                "action": "view"
+              },
+              {
+                "user_id": "user2",
+                "minute_offset": 2,
+                "page_url": "/home",
                 "action": "view"
               },
               {
@@ -279,33 +305,9 @@
                 "action": "view"
               },
               {
-                "user_id": "user1",
-                "minute_offset": 45,
-                "page_url": "/checkout",
-                "action": "purchase"
-              },
-              {
-                "user_id": "user3",
-                "minute_offset": 50,
-                "page_url": "/home",
-                "action": "view"
-              },
-              {
-                "user_id": "user3",
-                "minute_offset": 52,
-                "page_url": "/contact",
-                "action": "view"
-              },
-              {
                 "user_id": "user2",
                 "minute_offset": 42,
                 "page_url": "/cart",
-                "action": "view"
-              },
-              {
-                "user_id": "user2",
-                "minute_offset": 2,
-                "page_url": "/home",
                 "action": "view"
               }
             ]
@@ -315,7 +317,8 @@
     },
     "query_with_session_ids": {
       "code": "from ibis import _\n\nresult = (\n    activity_st\n    .group_by(\"user_id\", \"minute_offset\", \"page_url\", \"action\")\n    .aggregate()\n    .mutate(\n        prev_minute=lambda t: t.minute_offset.lag().over(\n            group_by=\"user_id\",\n            order_by=t.minute_offset\n        ),\n        minutes_since_last=lambda t: t.minute_offset - t.prev_minute,\n        is_session_start=lambda t: (t.minutes_since_last > 30) | t.prev_minute.isnull(),\n        # Cumulative sum of session starts gives session ID\n        session_id=lambda t: t.is_session_start.cast(\"int32\").sum().over(\n            group_by=\"user_id\",\n            order_by=t.minute_offset,\n            rows=(None, 0)  # Cumulative sum\n        )\n    )\n    .order_by(_.user_id, _.minute_offset)\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t5\".\"user_id\",\n    \"t5\".\"minute_offset\",\n    \"t5\".\"page_url\",\n    \"t5\".\"action\",\n    \"t5\".\"prev_minute\",\n    \"t5\".\"minutes_since_last\",\n    \"t5\".\"is_session_start\",\n    SUM(CAST(\"t5\".\"is_session_start\" AS INT)) OVER (PARTITION BY \"t5\".\"user_id\" ORDER BY \"t5\".\"minute_offset\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"session_id\"\n  FROM (\n    SELECT\n      \"t4\".\"user_id\",\n      \"t4\".\"minute_offset\",\n      \"t4\".\"page_url\",\n      \"t4\".\"action\",\n      \"t4\".\"prev_minute\",\n      \"t4\".\"minute_offset\" - \"t4\".\"prev_minute\" AS \"minutes_since_last\",\n      (\n        (\n          \"t4\".\"minute_offset\" - \"t4\".\"prev_minute\"\n        ) > 30\n      )\n      OR (\n        \"t4\".\"prev_minute\" IS NULL\n      ) AS \"is_session_start\"\n    FROM (\n      SELECT\n        \"t3\".\"user_id\",\n        \"t3\".\"minute_offset\",\n        \"t3\".\"page_url\",\n        \"t3\".\"action\",\n        LAG(\"t3\".\"minute_offset\") OVER (PARTITION BY \"t3\".\"user_id\" ORDER BY \"t3\".\"minute_offset\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_minute\"\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            \"t1\".\"user_id\",\n            \"t1\".\"minute_offset\",\n            \"t1\".\"page_url\",\n            \"t1\".\"action\"\n          FROM (\n            SELECT\n              *\n            FROM \"ibis_pandas_memtable_m5dgklmvbfc25jmzkkksx4ffwa\" AS \"t0\"\n          ) AS \"t1\"\n          GROUP BY\n            1,\n            2,\n            3,\n            4\n        ) AS \"t2\"\n      ) AS \"t3\"\n    ) AS \"t4\"\n  ) AS \"t5\"\n) AS \"t6\"\nORDER BY\n  \"t6\".\"user_id\" ASC,\n  \"t6\".\"minute_offset\" ASC",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t5\".\"user_id\",\n    \"t5\".\"minute_offset\",\n    \"t5\".\"page_url\",\n    \"t5\".\"action\",\n    \"t5\".\"prev_minute\",\n    \"t5\".\"minutes_since_last\",\n    \"t5\".\"is_session_start\",\n    SUM(CAST(\"t5\".\"is_session_start\" AS INT)) OVER (PARTITION BY \"t5\".\"user_id\" ORDER BY \"t5\".\"minute_offset\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"session_id\"\n  FROM (\n    SELECT\n      \"t4\".\"user_id\",\n      \"t4\".\"minute_offset\",\n      \"t4\".\"page_url\",\n      \"t4\".\"action\",\n      \"t4\".\"prev_minute\",\n      \"t4\".\"minute_offset\" - \"t4\".\"prev_minute\" AS \"minutes_since_last\",\n      (\n        (\n          \"t4\".\"minute_offset\" - \"t4\".\"prev_minute\"\n        ) > 30\n      )\n      OR (\n        \"t4\".\"prev_minute\" IS NULL\n      ) AS \"is_session_start\"\n    FROM (\n      SELECT\n        \"t3\".\"user_id\",\n        \"t3\".\"minute_offset\",\n        \"t3\".\"page_url\",\n        \"t3\".\"action\",\n        LAG(\"t3\".\"minute_offset\") OVER (PARTITION BY \"t3\".\"user_id\" ORDER BY \"t3\".\"minute_offset\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_minute\"\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            \"t1\".\"user_id\",\n            \"t1\".\"minute_offset\",\n            \"t1\".\"page_url\",\n            \"t1\".\"action\"\n          FROM (\n            SELECT\n              *\n            FROM \"ibis_pandas_memtable_6ewuzmrwmra5bnh7xthrs65v74\" AS \"t0\"\n          ) AS \"t1\"\n          GROUP BY\n            1,\n            2,\n            3,\n            4\n        ) AS \"t2\"\n      ) AS \"t3\"\n    ) AS \"t4\"\n  ) AS \"t5\"\n) AS \"t6\"\nORDER BY\n  \"t6\".\"user_id\" ASC,\n  \"t6\".\"minute_offset\" ASC",
+      "plan": "r0 := SemanticTableOp[activity]\n  4 dimensions: user_id, minute_offset, page_url, ...\n  2 measures: event_count, unique_users\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['user_id', 'minute_offset', 'page_url', 'action']\n  inherited dimensions: 4\n  inherited measures: 2\n\nr2 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['user_id', 'minute_offset', 'page_url', 'action']\n  aggs: []\n\nr3 := SemanticMutateOp\n  source: SemanticAggregateOp\n  columns: [prev_minute, minutes_since_last, is_session_start, session_id]\n\nSemanticOrderByOp\n  source: SemanticMutateOp\n  keys: [<expr>, <expr>]",
       "table": {
         "columns": [
           "user_id",
@@ -460,7 +463,7 @@
             }
           },
           "data": {
-            "name": "data-8f452fa86f409e78111fcd4fad8f0703"
+            "name": "data-5250c2a5c7c48682a94dbe86536dc5e8"
           },
           "mark": {
             "type": "text"
@@ -474,7 +477,25 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-8f452fa86f409e78111fcd4fad8f0703": [
+            "data-5250c2a5c7c48682a94dbe86536dc5e8": [
+              {
+                "user_id": "user2",
+                "minute_offset": 42,
+                "page_url": "/cart",
+                "action": "view"
+              },
+              {
+                "user_id": "user1",
+                "minute_offset": 45,
+                "page_url": "/checkout",
+                "action": "purchase"
+              },
+              {
+                "user_id": "user3",
+                "minute_offset": 50,
+                "page_url": "/home",
+                "action": "view"
+              },
               {
                 "user_id": "user2",
                 "minute_offset": 40,
@@ -485,6 +506,12 @@
                 "user_id": "user3",
                 "minute_offset": 7,
                 "page_url": "/products",
+                "action": "view"
+              },
+              {
+                "user_id": "user3",
+                "minute_offset": 3,
+                "page_url": "/about",
                 "action": "view"
               },
               {
@@ -500,33 +527,9 @@
                 "action": "view"
               },
               {
-                "user_id": "user2",
-                "minute_offset": 42,
-                "page_url": "/cart",
-                "action": "view"
-              },
-              {
                 "user_id": "user3",
                 "minute_offset": 52,
                 "page_url": "/contact",
-                "action": "view"
-              },
-              {
-                "user_id": "user3",
-                "minute_offset": 3,
-                "page_url": "/about",
-                "action": "view"
-              },
-              {
-                "user_id": "user1",
-                "minute_offset": 45,
-                "page_url": "/checkout",
-                "action": "purchase"
-              },
-              {
-                "user_id": "user3",
-                "minute_offset": 50,
-                "page_url": "/home",
                 "action": "view"
               },
               {
@@ -554,7 +557,8 @@
     },
     "query_session_metrics": {
       "code": "from ibis import _\n\nresult = (\n    activity_st\n    .group_by(\"user_id\", \"minute_offset\", \"action\")\n    .aggregate()\n    .mutate(\n        prev_minute=lambda t: t.minute_offset.lag().over(\n            group_by=\"user_id\",\n            order_by=t.minute_offset\n        ),\n        minutes_since_last=lambda t: t.minute_offset - t.prev_minute,\n        is_session_start=lambda t: (t.minutes_since_last > 30) | t.prev_minute.isnull(),\n        session_id=lambda t: t.is_session_start.cast(\"int32\").sum().over(\n            group_by=\"user_id\",\n            order_by=t.minute_offset,\n            rows=(None, 0)\n        )\n    )\n    .group_by(\"user_id\", \"session_id\")\n    .aggregate(\n        events_in_session=lambda t: t.count(),\n        session_start_min=lambda t: t.minute_offset.min(),\n        session_end_min=lambda t: t.minute_offset.max(),\n        has_purchase=lambda t: (t.action == \"purchase\").any()\n    )\n    .mutate(\n        session_duration_min=lambda t: (t.session_end_min - t.session_start_min)\n    )\n    .order_by(_.user_id, _.session_id)\n)",
-      "sql": "SELECT\n  \"t8\".\"user_id\",\n  \"t8\".\"session_id\",\n  \"t8\".\"events_in_session\",\n  \"t8\".\"session_start_min\",\n  \"t8\".\"session_end_min\",\n  \"t8\".\"has_purchase\",\n  \"t8\".\"session_end_min\" - \"t8\".\"session_start_min\" AS \"session_duration_min\"\nFROM (\n  SELECT\n    \"t7\".\"user_id\",\n    \"t7\".\"session_id\",\n    COUNT(*) AS \"events_in_session\",\n    MIN(\"t7\".\"minute_offset\") AS \"session_start_min\",\n    MAX(\"t7\".\"minute_offset\") AS \"session_end_min\",\n    BOOL_OR(\"t7\".\"action\" = 'purchase') AS \"has_purchase\"\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        \"t5\".\"user_id\",\n        \"t5\".\"minute_offset\",\n        \"t5\".\"action\",\n        \"t5\".\"prev_minute\",\n        \"t5\".\"minutes_since_last\",\n        \"t5\".\"is_session_start\",\n        SUM(CAST(\"t5\".\"is_session_start\" AS INT)) OVER (PARTITION BY \"t5\".\"user_id\" ORDER BY \"t5\".\"minute_offset\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"session_id\"\n      FROM (\n        SELECT\n          \"t4\".\"user_id\",\n          \"t4\".\"minute_offset\",\n          \"t4\".\"action\",\n          \"t4\".\"prev_minute\",\n          \"t4\".\"minute_offset\" - \"t4\".\"prev_minute\" AS \"minutes_since_last\",\n          (\n            (\n              \"t4\".\"minute_offset\" - \"t4\".\"prev_minute\"\n            ) > 30\n          )\n          OR (\n            \"t4\".\"prev_minute\" IS NULL\n          ) AS \"is_session_start\"\n        FROM (\n          SELECT\n            \"t3\".\"user_id\",\n            \"t3\".\"minute_offset\",\n            \"t3\".\"action\",\n            LAG(\"t3\".\"minute_offset\") OVER (PARTITION BY \"t3\".\"user_id\" ORDER BY \"t3\".\"minute_offset\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_minute\"\n          FROM (\n            SELECT\n              *\n            FROM (\n              SELECT\n                \"t1\".\"user_id\",\n                \"t1\".\"minute_offset\",\n                \"t1\".\"action\"\n              FROM (\n                SELECT\n                  *\n                FROM \"ibis_pandas_memtable_m5dgklmvbfc25jmzkkksx4ffwa\" AS \"t0\"\n              ) AS \"t1\"\n              GROUP BY\n                1,\n                2,\n                3\n            ) AS \"t2\"\n          ) AS \"t3\"\n        ) AS \"t4\"\n      ) AS \"t5\"\n    ) AS \"t6\"\n  ) AS \"t7\"\n  GROUP BY\n    1,\n    2\n) AS \"t8\"\nORDER BY\n  \"t8\".\"user_id\" ASC,\n  \"t8\".\"session_id\" ASC",
+      "sql": "SELECT\n  \"t8\".\"user_id\",\n  \"t8\".\"session_id\",\n  \"t8\".\"events_in_session\",\n  \"t8\".\"session_start_min\",\n  \"t8\".\"session_end_min\",\n  \"t8\".\"has_purchase\",\n  \"t8\".\"session_end_min\" - \"t8\".\"session_start_min\" AS \"session_duration_min\"\nFROM (\n  SELECT\n    \"t7\".\"user_id\",\n    \"t7\".\"session_id\",\n    COUNT(*) AS \"events_in_session\",\n    MIN(\"t7\".\"minute_offset\") AS \"session_start_min\",\n    MAX(\"t7\".\"minute_offset\") AS \"session_end_min\",\n    BOOL_OR(\"t7\".\"action\" = 'purchase') AS \"has_purchase\"\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        \"t5\".\"user_id\",\n        \"t5\".\"minute_offset\",\n        \"t5\".\"action\",\n        \"t5\".\"prev_minute\",\n        \"t5\".\"minutes_since_last\",\n        \"t5\".\"is_session_start\",\n        SUM(CAST(\"t5\".\"is_session_start\" AS INT)) OVER (PARTITION BY \"t5\".\"user_id\" ORDER BY \"t5\".\"minute_offset\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"session_id\"\n      FROM (\n        SELECT\n          \"t4\".\"user_id\",\n          \"t4\".\"minute_offset\",\n          \"t4\".\"action\",\n          \"t4\".\"prev_minute\",\n          \"t4\".\"minute_offset\" - \"t4\".\"prev_minute\" AS \"minutes_since_last\",\n          (\n            (\n              \"t4\".\"minute_offset\" - \"t4\".\"prev_minute\"\n            ) > 30\n          )\n          OR (\n            \"t4\".\"prev_minute\" IS NULL\n          ) AS \"is_session_start\"\n        FROM (\n          SELECT\n            \"t3\".\"user_id\",\n            \"t3\".\"minute_offset\",\n            \"t3\".\"action\",\n            LAG(\"t3\".\"minute_offset\") OVER (PARTITION BY \"t3\".\"user_id\" ORDER BY \"t3\".\"minute_offset\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_minute\"\n          FROM (\n            SELECT\n              *\n            FROM (\n              SELECT\n                \"t1\".\"user_id\",\n                \"t1\".\"minute_offset\",\n                \"t1\".\"action\"\n              FROM (\n                SELECT\n                  *\n                FROM \"ibis_pandas_memtable_6ewuzmrwmra5bnh7xthrs65v74\" AS \"t0\"\n              ) AS \"t1\"\n              GROUP BY\n                1,\n                2,\n                3\n            ) AS \"t2\"\n          ) AS \"t3\"\n        ) AS \"t4\"\n      ) AS \"t5\"\n    ) AS \"t6\"\n  ) AS \"t7\"\n  GROUP BY\n    1,\n    2\n) AS \"t8\"\nORDER BY\n  \"t8\".\"user_id\" ASC,\n  \"t8\".\"session_id\" ASC",
+      "plan": "r0 := SemanticTableOp[activity]\n  4 dimensions: user_id, minute_offset, page_url, ...\n  2 measures: event_count, unique_users\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['user_id', 'minute_offset', 'action']\n  inherited dimensions: 4\n  inherited measures: 2\n\nr2 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['user_id', 'minute_offset', 'action']\n  aggs: []\n\nr3 := SemanticMutateOp\n  source: SemanticAggregateOp\n  columns: [prev_minute, minutes_since_last, is_session_start, session_id]\n\nr4 := SemanticGroupByOp\n  source: SemanticMutateOp\n  keys: ['user_id', 'session_id']\n\nr5 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['user_id', 'session_id']\n  aggs: [events_in_session, session_start_min, session_end_min, has_purchase]\n\nr6 := SemanticMutateOp\n  source: SemanticAggregateOp\n  columns: [session_duration_min]\n\nSemanticOrderByOp\n  source: SemanticMutateOp\n  keys: [<expr>, <expr>]",
       "table": {
         "columns": [
           "user_id",
@@ -632,7 +636,7 @@
             }
           },
           "data": {
-            "name": "data-905630679c171c2e6098c93976c1faaa"
+            "name": "data-8973dd72239d15964398c464fdf1a5ca"
           },
           "mark": {
             "type": "text"
@@ -646,7 +650,15 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-905630679c171c2e6098c93976c1faaa": [
+            "data-8973dd72239d15964398c464fdf1a5ca": [
+              {
+                "user_id": "user3",
+                "session_id": 1,
+                "events_in_session": 3,
+                "session_start_min": 1,
+                "session_end_min": 7,
+                "has_purchase": false
+              },
               {
                 "user_id": "user1",
                 "session_id": 1,
@@ -672,14 +684,6 @@
                 "has_purchase": false
               },
               {
-                "user_id": "user1",
-                "session_id": 2,
-                "events_in_session": 1,
-                "session_start_min": 45,
-                "session_end_min": 45,
-                "has_purchase": true
-              },
-              {
                 "user_id": "user2",
                 "session_id": 2,
                 "events_in_session": 2,
@@ -688,12 +692,12 @@
                 "has_purchase": false
               },
               {
-                "user_id": "user3",
-                "session_id": 1,
-                "events_in_session": 3,
-                "session_start_min": 1,
-                "session_end_min": 7,
-                "has_purchase": false
+                "user_id": "user1",
+                "session_id": 2,
+                "events_in_session": 1,
+                "session_start_min": 45,
+                "session_end_min": 45,
+                "has_purchase": true
               }
             ]
           }
@@ -702,7 +706,8 @@
     },
     "query_user_summary": {
       "code": "from ibis import _\n\nresult = (\n    activity_st\n    .group_by(\"user_id\", \"minute_offset\", \"action\")\n    .aggregate()\n    .mutate(\n        prev_minute=lambda t: t.minute_offset.lag().over(\n            group_by=\"user_id\",\n            order_by=t.minute_offset\n        ),\n        minutes_since_last=lambda t: t.minute_offset - t.prev_minute,\n        is_session_start=lambda t: (t.minutes_since_last > 30) | t.prev_minute.isnull(),\n        session_id=lambda t: t.is_session_start.cast(\"int32\").sum().over(\n            group_by=\"user_id\",\n            order_by=t.minute_offset,\n            rows=(None, 0)\n        )\n    )\n    .group_by(\"user_id\", \"session_id\")\n    .aggregate(\n        events_in_session=lambda t: t.count(),\n        has_purchase=lambda t: (t.action == \"purchase\").any()\n    )\n    .group_by(\"user_id\")\n    .aggregate(\n        total_sessions=lambda t: t.count(),\n        total_events=lambda t: t.events_in_session.sum(),\n        sessions_with_purchase=lambda t: t.has_purchase.cast(\"int32\").sum(),\n        avg_events_per_session=lambda t: t.events_in_session.mean().round(2)\n    )\n    .mutate(\n        conversion_rate=lambda t: (t.sessions_with_purchase / t.total_sessions * 100).round(2)\n    )\n    .order_by(_.total_events.desc())\n)",
-      "sql": "SELECT\n  \"t10\".\"user_id\",\n  \"t10\".\"total_sessions\",\n  \"t10\".\"total_events\",\n  \"t10\".\"sessions_with_purchase\",\n  \"t10\".\"avg_events_per_session\",\n  CAST(ROUND((\n    \"t10\".\"sessions_with_purchase\" / \"t10\".\"total_sessions\"\n  ) * 100, 2) AS DOUBLE) AS \"conversion_rate\"\nFROM (\n  SELECT\n    \"t9\".\"user_id\",\n    COUNT(*) AS \"total_sessions\",\n    SUM(\"t9\".\"events_in_session\") AS \"total_events\",\n    SUM(CAST(\"t9\".\"has_purchase\" AS INT)) AS \"sessions_with_purchase\",\n    CAST(ROUND(AVG(\"t9\".\"events_in_session\"), 2) AS DOUBLE) AS \"avg_events_per_session\"\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        \"t7\".\"user_id\",\n        \"t7\".\"session_id\",\n        COUNT(*) AS \"events_in_session\",\n        BOOL_OR(\"t7\".\"action\" = 'purchase') AS \"has_purchase\"\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            \"t5\".\"user_id\",\n            \"t5\".\"minute_offset\",\n            \"t5\".\"action\",\n            \"t5\".\"prev_minute\",\n            \"t5\".\"minutes_since_last\",\n            \"t5\".\"is_session_start\",\n            SUM(CAST(\"t5\".\"is_session_start\" AS INT)) OVER (PARTITION BY \"t5\".\"user_id\" ORDER BY \"t5\".\"minute_offset\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"session_id\"\n          FROM (\n            SELECT\n              \"t4\".\"user_id\",\n              \"t4\".\"minute_offset\",\n              \"t4\".\"action\",\n              \"t4\".\"prev_minute\",\n              \"t4\".\"minute_offset\" - \"t4\".\"prev_minute\" AS \"minutes_since_last\",\n              (\n                (\n                  \"t4\".\"minute_offset\" - \"t4\".\"prev_minute\"\n                ) > 30\n              )\n              OR (\n                \"t4\".\"prev_minute\" IS NULL\n              ) AS \"is_session_start\"\n            FROM (\n              SELECT\n                \"t3\".\"user_id\",\n                \"t3\".\"minute_offset\",\n                \"t3\".\"action\",\n                LAG(\"t3\".\"minute_offset\") OVER (PARTITION BY \"t3\".\"user_id\" ORDER BY \"t3\".\"minute_offset\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_minute\"\n              FROM (\n                SELECT\n                  *\n                FROM (\n                  SELECT\n                    \"t1\".\"user_id\",\n                    \"t1\".\"minute_offset\",\n                    \"t1\".\"action\"\n                  FROM (\n                    SELECT\n                      *\n                    FROM \"ibis_pandas_memtable_m5dgklmvbfc25jmzkkksx4ffwa\" AS \"t0\"\n                  ) AS \"t1\"\n                  GROUP BY\n                    1,\n                    2,\n                    3\n                ) AS \"t2\"\n              ) AS \"t3\"\n            ) AS \"t4\"\n          ) AS \"t5\"\n        ) AS \"t6\"\n      ) AS \"t7\"\n      GROUP BY\n        1,\n        2\n    ) AS \"t8\"\n  ) AS \"t9\"\n  GROUP BY\n    1\n) AS \"t10\"\nORDER BY\n  \"t10\".\"total_events\" DESC",
+      "sql": "SELECT\n  \"t10\".\"user_id\",\n  \"t10\".\"total_sessions\",\n  \"t10\".\"total_events\",\n  \"t10\".\"sessions_with_purchase\",\n  \"t10\".\"avg_events_per_session\",\n  CAST(ROUND((\n    \"t10\".\"sessions_with_purchase\" / \"t10\".\"total_sessions\"\n  ) * 100, 2) AS DOUBLE) AS \"conversion_rate\"\nFROM (\n  SELECT\n    \"t9\".\"user_id\",\n    COUNT(*) AS \"total_sessions\",\n    SUM(\"t9\".\"events_in_session\") AS \"total_events\",\n    SUM(CAST(\"t9\".\"has_purchase\" AS INT)) AS \"sessions_with_purchase\",\n    CAST(ROUND(AVG(\"t9\".\"events_in_session\"), 2) AS DOUBLE) AS \"avg_events_per_session\"\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        \"t7\".\"user_id\",\n        \"t7\".\"session_id\",\n        COUNT(*) AS \"events_in_session\",\n        BOOL_OR(\"t7\".\"action\" = 'purchase') AS \"has_purchase\"\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            \"t5\".\"user_id\",\n            \"t5\".\"minute_offset\",\n            \"t5\".\"action\",\n            \"t5\".\"prev_minute\",\n            \"t5\".\"minutes_since_last\",\n            \"t5\".\"is_session_start\",\n            SUM(CAST(\"t5\".\"is_session_start\" AS INT)) OVER (PARTITION BY \"t5\".\"user_id\" ORDER BY \"t5\".\"minute_offset\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"session_id\"\n          FROM (\n            SELECT\n              \"t4\".\"user_id\",\n              \"t4\".\"minute_offset\",\n              \"t4\".\"action\",\n              \"t4\".\"prev_minute\",\n              \"t4\".\"minute_offset\" - \"t4\".\"prev_minute\" AS \"minutes_since_last\",\n              (\n                (\n                  \"t4\".\"minute_offset\" - \"t4\".\"prev_minute\"\n                ) > 30\n              )\n              OR (\n                \"t4\".\"prev_minute\" IS NULL\n              ) AS \"is_session_start\"\n            FROM (\n              SELECT\n                \"t3\".\"user_id\",\n                \"t3\".\"minute_offset\",\n                \"t3\".\"action\",\n                LAG(\"t3\".\"minute_offset\") OVER (PARTITION BY \"t3\".\"user_id\" ORDER BY \"t3\".\"minute_offset\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_minute\"\n              FROM (\n                SELECT\n                  *\n                FROM (\n                  SELECT\n                    \"t1\".\"user_id\",\n                    \"t1\".\"minute_offset\",\n                    \"t1\".\"action\"\n                  FROM (\n                    SELECT\n                      *\n                    FROM \"ibis_pandas_memtable_6ewuzmrwmra5bnh7xthrs65v74\" AS \"t0\"\n                  ) AS \"t1\"\n                  GROUP BY\n                    1,\n                    2,\n                    3\n                ) AS \"t2\"\n              ) AS \"t3\"\n            ) AS \"t4\"\n          ) AS \"t5\"\n        ) AS \"t6\"\n      ) AS \"t7\"\n      GROUP BY\n        1,\n        2\n    ) AS \"t8\"\n  ) AS \"t9\"\n  GROUP BY\n    1\n) AS \"t10\"\nORDER BY\n  \"t10\".\"total_events\" DESC",
+      "plan": null,
       "table": {
         "columns": [
           "user_id",
@@ -749,7 +754,7 @@
             }
           },
           "data": {
-            "name": "data-894a0390f023fdf105e197ff6b824ba8"
+            "name": "data-7a35d3d2f461adac3eed2a9246d7f759"
           },
           "mark": {
             "type": "bar"
@@ -804,14 +809,7 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-894a0390f023fdf105e197ff6b824ba8": [
-              {
-                "user_id": "user2",
-                "total_sessions": 2,
-                "total_events": 3,
-                "sessions_with_purchase": 0,
-                "avg_events_per_session": 1.5
-              },
+            "data-7a35d3d2f461adac3eed2a9246d7f759": [
               {
                 "user_id": "user1",
                 "total_sessions": 2,
@@ -825,6 +823,13 @@
                 "total_events": 5,
                 "sessions_with_purchase": 0,
                 "avg_events_per_session": 2.5
+              },
+              {
+                "user_id": "user2",
+                "total_sessions": 2,
+                "total_events": 3,
+                "sessions_with_purchase": 0,
+                "avg_events_per_session": 1.5
               }
             ]
           }

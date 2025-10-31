@@ -8,7 +8,7 @@ export const Footer = () => {
           <div className="space-y-4">
             <h3 className="font-semibold text-lg">Boring Semantic Layer</h3>
             <p className="text-sm text-muted-foreground leading-relaxed">
-              A lightweight semantic layer built on Ibis. Define your data once, query it anywhere.
+              A lightweight semantic layer built on Ibis.
             </p>
           </div>
 

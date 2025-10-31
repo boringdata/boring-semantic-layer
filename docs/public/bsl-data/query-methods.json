@@ -1,9 +1,10 @@
 {
-  "markdown": "# Query Methods\n\nRetrieve data from your semantic tables using `group_by()` and `aggregate()` methods.\n\n## Overview\n\nBSL provides a simple and consistent query API that works with your semantic table definitions:\n\n- **`group_by()`**: Group data by dimension names (strings only, must be defined in `with_dimensions()`)\n- **`aggregate()`**: Calculate measures (with or without grouping)\n- **`filter()`**: Apply conditions to filter data\n- **`mutate()`**: Transform aggregated results\n- **`order_by()`**: Sort results\n- **`limit()`**: Restrict number of rows\n\n## Setup\n\n```setup_table\nimport ibis\nfrom ibis import _\nfrom boring_semantic_layer import to_semantic_table\n\n# Create Ibis table\nflights_tbl = ibis.memtable({\n    \"origin\": [\"NYC\", \"LAX\", \"NYC\", \"SFO\", \"LAX\", \"NYC\", \"SFO\", \"LAX\", \"NYC\"],\n    \"carrier\": [\"AA\", \"UA\", \"AA\", \"UA\", \"AA\", \"UA\", \"AA\", \"UA\", \"AA\"],\n    \"distance\": [2789, 2789, 2902, 2902, 347, 2789, 347, 347, 2789],\n    \"duration\": [330, 330, 360, 360, 65, 330, 65, 65, 330],\n})\n\n# Create semantic table\nflights_st = (\n    to_semantic_table(flights_tbl, name=\"flights\")\n    .with_dimensions(\n        origin=lambda t: t.origin,\n        carrier=lambda t: t.carrier,\n    )\n    .with_measures(\n        flight_count=lambda t: t.count(),\n        total_distance=lambda t: t.distance.sum(),\n        avg_duration=lambda t: t.duration.mean(),\n    )\n)\n```\n\n<collapsedcodeblock code-block=\"setup_table\" title=\"Setup: Create Ibis Table and Semantic Table\"></collapsedcodeblock>\n\n## group_by()\n\nThe `group_by()` method groups data by one or more dimensions.\n\n<note type=\"info\">\n`group_by()` only accepts string dimension names that were previously defined in `with_dimensions()`. It does not support lambda functions or unbound `_` syntax.\n</note>\n\n### Single Dimension\n\nGroup by a single dimension:\n\n```query_single_dimension\n# Group by one dimension\nresult = flights_st.group_by(\"origin\").aggregate(\"flight_count\")\n```\n\n<bslquery code-block=\"query_single_dimension\"></bslquery>\n\n### Multiple Dimensions\n\nGroup by multiple dimensions to create detailed breakdowns:\n\n```query_multiple_dimensions\n# Group by multiple dimensions\nresult = flights_st.group_by(\"origin\", \"carrier\").aggregate(\"flight_count\")\n```\n\n<bslquery code-block=\"query_multiple_dimensions\"></bslquery>\n\n### No Grouping\n\nCalculate overall statistics across all rows using `group_by()` with no arguments:\n\n```query_no_grouping\n# Aggregate entire dataset without grouping\nresult = flights_st.group_by().aggregate(\"flight_count\", \"total_distance\", \"avg_duration\")\n```\n\n<bslquery code-block=\"query_no_grouping\"></bslquery>\n\n## aggregate()\n\nThe `aggregate()` method calculates measures after grouping. You can reference pre-defined measures or compute new ones on-the-fly.\n\n### Pre-defined Measures\n\nReference measures by their string names:\n\n```query_predefined_measures\n# Use measures defined in with_measures()\nresult = flights_st.group_by(\"origin\").aggregate(\"flight_count\", \"avg_duration\")\n```\n\n<bslquery code-block=\"query_predefined_measures\"></bslquery>\n\n### On-the-Fly Transformations\n\nAdd computed measures directly in `aggregate()` without modifying the semantic table:\n\n```query_onthefly_measures\n# Mix predefined and computed measures\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\n        \"flight_count\",              # Pre-defined measure\n        \"avg_duration\",               # Pre-defined measure\n        total_miles=lambda t: t.distance.sum(),  # Computed on-the-fly\n        max_distance=lambda t: t.flight_count + 2  # You can reference other measures as well\n    )\n)\n```\n\n<bslquery code-block=\"query_onthefly_measures\"></bslquery>\n\n<note type=\"info\">\nOn-the-fly measures let you add context-specific calculations without modifying your semantic table definition. This keeps your base model clean while enabling flexible queries.\n</note>\n\n### Referencing Table Columns\n\nYou can reference **any column from the underlying table** in `aggregate()`, not just pre-defined measures. This is useful when you need one-off calculations without cluttering your semantic table definition.\n\n```query_table_columns\n# Reference table columns directly in aggregate()\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\n        \"flight_count\",                           # Pre-defined measure\n        total_distance=lambda t: t.distance.sum(),  # Table column 'distance'\n        avg_duration=lambda t: t.duration.mean(),   # Table column 'duration'\n        distance_in_km=lambda t: (t.distance * 1.60934).sum()  # Transform then aggregate\n    )\n)\n```\n\n<bslquery code-block=\"query_table_columns\"></bslquery>\n\n**Key points:**\n- Table columns **must be aggregated** (e.g., `.sum()`, `.mean()`, `.max()`, `.count()`)\n- You can transform columns before aggregating (e.g., `(t.distance * 1.60934).sum()`)\n- This works for any column in the underlying table, even if not defined as a dimension or measure\n- Use this for ad-hoc calculations without modifying your semantic table\n\n<note type=\"warning\">\nTable columns cannot be used without an aggregation function. For example, `lambda t: t.distance` will fail. You must use `lambda t: t.distance.sum()` or another aggregation.\n</note>\n\n## filter() / order_by() / limit() \n\nCombine `filter()`, `order_by()`, and `limit()` to refine your query results.\n\n```query_filter_order_limit\nfrom ibis import _\n\n# Filter data, sort, and limit results\nresult = (\n    flights_st\n    .filter(lambda t: t.origin.isin([\"NYC\", \"LAX\"]))  # Filter origins\n    .filter(_.distance > 500)                          # Filter distance using _ syntax\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"avg_duration\")        # Aggregate both measures\n    .order_by(ibis.desc(\"flight_count\"))              # Sort by flight_count descending\n    .limit(5)                                          # Top 5 results\n)\n```\n\n<bslquery code-block=\"query_filter_order_limit\"></bslquery>\n\n**Key points:**\n- **`filter()`**: Use lambda or `_` syntax to apply conditions before aggregation\n- **`order_by()`**: Use `ibis.desc()` for descending order, or column name for ascending\n- **`limit()`**: Restrict the number of rows returned\n\n## nest()\n\nThe `nest` parameter in `aggregate()` creates nested data structures (arrays of structs) in your query results. This is useful for API responses, hierarchical visualizations, and preserving relationships in aggregated data.\n\nUse `nest` to collect rows as structured arrays within each group:\n\n```query_basic_nest\nfrom ibis import _\n\n# Nest flight details within each origin\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\n        \"flight_count\",\n        \"total_distance\",\n        # Create nested array of flight details\n        nest={\"flights\": lambda t: t.group_by([\"carrier\", \"distance\"])}\n    )\n)\n```\n\n<bslquery code-block=\"query_basic_nest\"></bslquery>\n\n**How it works:**\n- The `nest` parameter accepts a dictionary: `{\"column_name\": lambda t: ...}`\n- The lambda specifies which columns to collect using `.group_by()` or `.select()`\n- Results in an array of structs column named `flights`\n\nYou can also use `.select()` to specify which columns to nest:\n\n```query_nest_select\n# Nest specific columns\nresult = (\n    flights_st\n    .group_by(\"carrier\")\n    .aggregate(\n        \"flight_count\",\n        nest={\"routes\": lambda t: t.select(\"origin\", \"distance\", \"duration\")}\n    )\n)\n```\n\n<bslquery code-block=\"query_nest_select\"></bslquery>\n\nAfter nesting, you can re-group which automatically unnests, then access the nested fields.\n\n**Step 1: Create nested data**\n\nFirst, create the nested structure. Notice the `flights` column contains arrays of structs:\n\n```query_nest_step1\nfrom ibis import _\n\n# Create nested data structure\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\n        \"flight_count\",\n        nest={\"flights\": lambda t: t.group_by([\"carrier\", \"distance\"])}\n    )\n)\n```\n\n<bslquery code-block=\"query_nest_step1\"></bslquery>\n\n**Step 2: Re-group to unnest and access fields**\n\nNow re-group on the same dimension, which automatically unnests the array, allowing you to access the nested fields:\n\n```query_nest_step2\nfrom ibis import _\n\n# Re-grouping automatically unnests the 'flights' array\nresult = (\n    result\n    .group_by(\"origin\")\n    .aggregate(\n        total_flights=lambda t: t.flight_count.sum(),\n        # Access unnested fields from the flights array\n        unique_carriers=lambda t: t.flights.carrier.nunique(),\n        avg_distance=lambda t: t.flights.distance.mean()\n    )\n)\n```\n\n<bslquery code-block=\"query_nest_step2\"></bslquery>\n\n**Use cases for nesting:**\n- **API responses**: Create JSON-compatible hierarchical structures\n- **Hierarchical data**: Preserve parent-child relationships in results\n- **Data export**: Generate nested documents for external systems\n- **Drill-down analysis**: Keep detailed records available in aggregated views\n\n<note type=\"info\">\nFor more complex nesting patterns and multi-level hierarchies, see [Advanced Nesting Patterns](/advanced/nesting).\n</note>\n\n## mutate()\n\nThe `mutate()` method transforms aggregated results by adding new computed columns. This is different from on-the-fly measures in `aggregate()` \u2014 `mutate()` works on already-aggregated data.\n\n<note type=\"warning\">\n**Key difference:** `.aggregate()` computes from raw data, while `.mutate()` transforms already-aggregated results.\n</note>\n\n```query_mutate\nfrom ibis import _\n\n# Add post-aggregation calculations\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"total_distance\")\n    .mutate(\n        avg_distance_per_flight=lambda t: t.total_distance / t.flight_count,\n        flight_category=lambda t: ibis.case()\n            .when(t.flight_count >= 3, \"high\")\n            .when(t.flight_count >= 2, \"medium\")\n            .else_(\"low\")\n            .end()\n    )\n)\n```\n\n<bslquery code-block=\"query_mutate\"></bslquery>\n\n**Use cases for `mutate()`:**\n- Calculate ratios from aggregated measures (e.g., `total / count`)\n- Create categories based on aggregated values\n- Add labels or formatting to results\n- Transform aggregated columns using the full power of Ibis\n\nFor more transformations, see [Ibis Table API reference](https://ibis-project.org/reference/expression-tables.html#ibis.expr.types.relations.Table.mutate).\n\n## Window Functions with .over()\n\nWindow functions perform calculations across ordered rows, enabling operations like running totals, moving averages, and ranking. Unlike regular aggregations that reduce many rows to one, window functions preserve row count while adding computed values.\n\n<note type=\"warning\">\n**Important:** Window functions can only be applied **after aggregation**, typically within a `.mutate()` call. They cannot be defined directly in measures.\n</note>\n\n**Common window functions:**\n- **`lag()` / `lead()`**: Access previous/next row values for period-over-period comparisons\n- **`cumsum()`**: Calculate running totals\n- **`.over(window)`**: Apply functions over sliding windows (e.g., moving averages)\n- **`rank()` / `row_number()`**: Assign ranks or sequential numbers to rows\n\nHere's a simple example:\n\n```query_window_example\nfrom ibis import _\n\n# First aggregate to daily level\ndaily_flights = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"total_distance\")\n    .order_by(\"origin\")\n)\n\n# Then apply window function for cumulative distance\nwindow_spec = ibis.window(order_by=\"origin\")\n\nresult = daily_flights.mutate(\n    cumulative_distance=_.total_distance.cumsum(),\n    flight_rank=lambda t: ibis.rank().over(ibis.window(order_by=_.flight_count.desc()))\n).limit(10)\n```\n\n<bslquery code-block=\"query_window_example\"></bslquery>\n\n**Key points:**\n- Window functions are applied **after** `.aggregate()` using `.mutate()`\n- Use `.order_by()` to establish row order for window operations\n- Combine with `ibis.window()` for advanced sliding window calculations\n\nFor comprehensive examples including lag/lead, moving averages, and ranking, see [Window Functions](/advanced/windowing).\n\n## as_table()\n\nAfter filtering or aggregating data, you may want to perform additional semantic operations. However, intermediate results don't always preserve the semantic table's dimensions and measures.\n\nThe Problem: Lost Semantic Information\n\nWhen you aggregate data, the result loses semantic metadata. The aggregated result is a `SemanticAggregate` expression, which doesn't have `.dimensions` or `.measures` attributes:\n\n```query_as_table_problem\nfrom ibis import _\n\n# Aggregate the data - this returns a SemanticAggregate\nagg_result = flights_st.group_by(\"origin\").aggregate(\"flight_count\", \"total_distance\")\n\n# Show the type/class of the result\nresult_type = type(agg_result).__name__\n\n# Try to access .dimensions - this will raise an AttributeError\ntry:\n    dimensions = agg_result.dimensions\n    result = f\"Type: {result_type}\\nDimensions: {dimensions}\"\nexcept AttributeError as e:\n    result = f\"Type: {result_type}\\nError: {str(e)}\"\n\nresult\n```\n\n<regularoutput code-block=\"query_as_table_problem\"></regularoutput>\n\n\nAfter aggregation, you can no longer access the original semantic table's dimensions and measures metadata.\n\nThe Solution: Use as_table()\n\nThe `as_table()` method converts results back into a `SemanticModel`. However, note that for aggregations, the metadata is intentionally cleared (since columns are now materialized):\n\n```query_as_table_after_aggregate\nfrom ibis import _\n\n# Aggregate the data\nagg_result = flights_st.group_by(\"origin\").aggregate(\"flight_count\", \"total_distance\")\n\n# Convert to SemanticModel using as_table()\nagg_table = agg_result.as_table()\n\n# Now .dimensions and .measures attributes exist, but they're empty (metadata was cleared)\nresult = f\"Type: {type(agg_table).__name__}\\nDimensions: {agg_table.dimensions}\\nMeasures: {agg_table.measures}\"\n```\n\n<regularoutput code-block=\"query_as_table_after_aggregate\"></regularoutput>\n\n### When Metadata IS Preserved\n\nFor operations like `filter()`, `order_by()`, and `limit()`, `as_table()` **preserves** the original semantic metadata:\n\n```query_as_table_filter_preserved\nfrom ibis import _\n\n# Filter the data\nfiltered = flights_st.filter(_.distance > 2000)\n\n# Convert back to SemanticModel - metadata is preserved!\nfiltered_table = filtered.as_table()\n\n# Dimensions and measures are still available (preserved from original semantic table)\nresult = f\"Type: {type(filtered_table).__name__}\\nDimensions: {filtered_table.dimensions}\\nMeasures: {filtered_table.measures}\"\n```\n\n<regularoutput code-block=\"query_as_table_filter_preserved\"></regularoutput>\n\nNotice how the dimensions and measures are preserved, unlike the aggregation case above where they were empty.\n\n**Key points:**\n- **Operations that preserve metadata**: `filter()`, `order_by()`, `limit()`, `unnest()` \u2014 calling `as_table()` restores full semantic capabilities with original dimensions/measures\n- **Operations that clear metadata**: `aggregate()`, `mutate()` \u2014 calling `as_table()` returns a `SemanticModel` with empty dimensions/measures (columns are materialized)\n- Use `as_table()` when you need to continue semantic operations on intermediate results\n\n## Next Steps\n\n- Learn about [Building Semantic Tables](/building/semantic-tables) to define dimensions and measures\n- Explore [Composing Models](/building/compose) for multi-table queries\n- Try [Advanced Patterns](/advanced/percentage-total) for complex analytics\n",
+  "markdown": "# Query Methods\n\nRetrieve data from your semantic tables using `group_by()` and `aggregate()` methods.\n\n## Overview\n\nBSL provides a simple and consistent query API for retrieving data from your semantic tables. Queries are built by chaining methods, then executed or inspected using output methods.\n\n### Building Queries\n\nStart with a semantic table and chain methods together. Here's the typical query flow:\n\n```setup_table\nimport ibis\nfrom ibis import _\nfrom boring_semantic_layer import to_semantic_table\n\n# Create Ibis table\nflights_tbl = ibis.memtable({\n    \"origin\": [\"NYC\", \"LAX\", \"NYC\", \"SFO\", \"LAX\", \"NYC\", \"SFO\", \"LAX\", \"NYC\"],\n    \"carrier\": [\"AA\", \"UA\", \"AA\", \"UA\", \"AA\", \"UA\", \"AA\", \"UA\", \"AA\"],\n    \"distance\": [2789, 2789, 2902, 2902, 347, 2789, 347, 347, 2789],\n    \"duration\": [330, 330, 360, 360, 65, 330, 65, 65, 330],\n})\n\n# Create semantic table\nflights_st = (\n    to_semantic_table(flights_tbl, name=\"flights\")\n    .with_dimensions(\n        origin=lambda t: t.origin,\n        carrier=lambda t: t.carrier,\n    )\n    .with_measures(\n        flight_count=lambda t: t.count(),\n        total_distance=lambda t: t.distance.sum(),\n        avg_duration=lambda t: t.duration.mean(),\n    )\n)\n```\n<collapsedcodeblock code-block=\"setup_table\" title=\"Setup: Create Ibis Table and Semantic Table\"></collapsedcodeblock>\n\n\n```python\nresult = (\n    flights_st                                   # Start with semantic table\n    .filter(_.distance > 1000)                   # 1. Filter (optional)\n    .group_by(\"origin\")                          # 2. Group by dimensions\n    .aggregate(\"flight_count\", \"total_distance\") # 3. Aggregate measures\n    .mutate(avg=lambda t: t.total_distance / t.flight_count)  # 4. Transform (optional)\n    .order_by(ibis.desc(\"flight_count\"))         # 5. Sort (optional)\n    .limit(10)                                   # 6. Limit rows (optional)\n)\n```\n\n### Inspecting and Executing Queries\n\nOnce you've built a query, you can inspect it or execute it:\n\n```simple_demo\n\n# Build a query\nresult = flights_st.group_by(\"origin\").aggregate(\"flight_count\")\n\n# Option 1: Execute and get data as pandas DataFrame\ndf = result.execute()\n\n# Option 2: View the generated SQL\nprint(result.sql())\n\n# Option 3: Generate a visualization (when applicable)\nchart = result.chart()\n\n# Option 4: See the semantic query plan\nprint(result)\n\nresult\n```\n<bslquery code-block=\"simple_demo\"></bslquery>\n\nThe output above includes a **Query Plan** tab showing how BSL translates this query into semantic operations. \n\nYou print the query object directly to see the plan:\n```python\nprint(result)\n```\n\nThis displays operations like `SemanticTableOp`, `SemanticGroupByOp`, and `SemanticAggregateOp`, useful for debugging and understanding query execution.\n\nLet's get now into the details of each query method.\n\n## group_by()\n\nThe `group_by()` method groups data by one or more dimensions.\n\n<note type=\"info\">\n`group_by()` only accepts string dimension names that were previously defined in `with_dimensions()`. It does not support lambda functions or unbound `_` syntax.\n</note>\n\n### Single Dimension\n\nGroup by a single dimension:\n\n```query_single_dimension\n# Group by one dimension\nresult = flights_st.group_by(\"origin\").aggregate(\"flight_count\")\n```\n\n<bslquery code-block=\"query_single_dimension\"></bslquery>\n\n### Multiple Dimensions\n\nGroup by multiple dimensions to create detailed breakdowns:\n\n```query_multiple_dimensions\n# Group by multiple dimensions\nresult = flights_st.group_by(\"origin\", \"carrier\").aggregate(\"flight_count\")\n```\n\n<bslquery code-block=\"query_multiple_dimensions\"></bslquery>\n\n### No Grouping\n\nCalculate overall statistics across all rows using `group_by()` with no arguments:\n\n```query_no_grouping\n# Aggregate entire dataset without grouping\nresult = flights_st.group_by().aggregate(\"flight_count\", \"total_distance\", \"avg_duration\")\n```\n\n<bslquery code-block=\"query_no_grouping\"></bslquery>\n\n## aggregate()\n\nThe `aggregate()` method calculates measures after grouping. You can reference pre-defined measures or compute new ones on-the-fly.\n\n### Pre-defined Measures\n\nReference measures by their string names:\n\n```query_predefined_measures\n# Use measures defined in with_measures()\nresult = flights_st.group_by(\"origin\").aggregate(\"flight_count\", \"avg_duration\")\n```\n\n<bslquery code-block=\"query_predefined_measures\"></bslquery>\n\n### On-the-Fly Transformations\n\nAdd computed measures directly in `aggregate()` without modifying the semantic table:\n\n```query_onthefly_measures\n# Mix predefined and computed measures\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\n        \"flight_count\",              # Pre-defined measure\n        \"avg_duration\",               # Pre-defined measure\n        total_miles=lambda t: t.distance.sum(),  # Computed on-the-fly\n        max_distance=lambda t: t.flight_count + 2  # You can reference other measures as well\n    )\n)\n```\n\n<bslquery code-block=\"query_onthefly_measures\"></bslquery>\n\n<note type=\"info\">\nOn-the-fly measures let you add context-specific calculations without modifying your semantic table definition. This keeps your base model clean while enabling flexible queries.\n</note>\n\n### Referencing Table Columns\n\nYou can reference **any column from the underlying table** in `aggregate()`, not just pre-defined measures. This is useful when you need one-off calculations without cluttering your semantic table definition.\n\n```query_table_columns\n# Reference table columns directly in aggregate()\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\n        \"flight_count\",                           # Pre-defined measure\n        total_distance=lambda t: t.distance.sum(),  # Table column 'distance'\n        avg_duration=lambda t: t.duration.mean(),   # Table column 'duration'\n        distance_in_km=lambda t: (t.distance * 1.60934).sum()  # Transform then aggregate\n    )\n)\n```\n\n<bslquery code-block=\"query_table_columns\"></bslquery>\n\n**Key points:**\n- Table columns **must be aggregated** (e.g., `.sum()`, `.mean()`, `.max()`, `.count()`)\n- You can transform columns before aggregating (e.g., `(t.distance * 1.60934).sum()`)\n- This works for any column in the underlying table, even if not defined as a dimension or measure\n- Use this for ad-hoc calculations without modifying your semantic table\n\n<note type=\"warning\">\nTable columns cannot be used without an aggregation function. For example, `lambda t: t.distance` will fail. You must use `lambda t: t.distance.sum()` or another aggregation.\n</note>\n\n## filter() / order_by() / limit() \n\nCombine `filter()`, `order_by()`, and `limit()` to refine your query results.\n\n```query_filter_order_limit\nfrom ibis import _\n\n# Filter data, sort, and limit results\nresult = (\n    flights_st\n    .filter(lambda t: t.origin.isin([\"NYC\", \"LAX\"]))  # Filter origins\n    .filter(_.distance > 500)                          # Filter distance using _ syntax\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"avg_duration\")        # Aggregate both measures\n    .order_by(ibis.desc(\"flight_count\"))              # Sort by flight_count descending\n    .limit(5)                                          # Top 5 results\n)\n```\n\n<bslquery code-block=\"query_filter_order_limit\"></bslquery>\n\n**Key points:**\n- **`filter()`**: Use lambda or `_` syntax to apply conditions before aggregation\n- **`order_by()`**: Use `ibis.desc()` for descending order, or column name for ascending\n- **`limit()`**: Restrict the number of rows returned\n\n## nest()\n\nThe `nest` parameter in `aggregate()` creates nested data structures (arrays of structs) in your query results. This is useful for API responses, hierarchical visualizations, and preserving relationships in aggregated data.\n\nUse `nest` to collect rows as structured arrays within each group:\n\n```query_basic_nest\nfrom ibis import _\n\n# Nest flight details within each origin\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\n        \"flight_count\",\n        \"total_distance\",\n        # Create nested array of flight details\n        nest={\"flights\": lambda t: t.group_by([\"carrier\", \"distance\"])}\n    )\n)\n```\n\n<bslquery code-block=\"query_basic_nest\"></bslquery>\n\n**How it works:**\n- The `nest` parameter accepts a dictionary: `{\"column_name\": lambda t: ...}`\n- The lambda specifies which columns to collect using `.group_by()` or `.select()`\n- Results in an array of structs column named `flights`\n\nYou can also use `.select()` to specify which columns to nest:\n\n```query_nest_select\n# Nest specific columns\nresult = (\n    flights_st\n    .group_by(\"carrier\")\n    .aggregate(\n        \"flight_count\",\n        nest={\"routes\": lambda t: t.select(\"origin\", \"distance\", \"duration\")}\n    )\n)\n```\n\n<bslquery code-block=\"query_nest_select\"></bslquery>\n\nAfter nesting, you can re-group which automatically unnests, then access the nested fields.\n\n**Step 1: Create nested data**\n\nFirst, create the nested structure. Notice the `flights` column contains arrays of structs:\n\n```query_nest_step1\nfrom ibis import _\n\n# Create nested data structure\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\n        \"flight_count\",\n        nest={\"flights\": lambda t: t.group_by([\"carrier\", \"distance\"])}\n    )\n)\n```\n\n<bslquery code-block=\"query_nest_step1\"></bslquery>\n\n**Step 2: Re-group to unnest and access fields**\n\nNow re-group on the same dimension, which automatically unnests the array, allowing you to access the nested fields:\n\n```query_nest_step2\nfrom ibis import _\n\n# Re-grouping automatically unnests the 'flights' array\nresult = (\n    result\n    .group_by(\"origin\")\n    .aggregate(\n        total_flights=lambda t: t.flight_count.sum(),\n        # Access unnested fields from the flights array\n        unique_carriers=lambda t: t.flights.carrier.nunique(),\n        avg_distance=lambda t: t.flights.distance.mean()\n    )\n)\n```\n\n<bslquery code-block=\"query_nest_step2\"></bslquery>\n\n**Use cases for nesting:**\n- **API responses**: Create JSON-compatible hierarchical structures\n- **Hierarchical data**: Preserve parent-child relationships in results\n- **Data export**: Generate nested documents for external systems\n- **Drill-down analysis**: Keep detailed records available in aggregated views\n\n<note type=\"info\">\nFor more complex nesting patterns and multi-level hierarchies, see [Advanced Nesting Patterns](/advanced/nesting).\n</note>\n\n## mutate()\n\nThe `mutate()` method transforms aggregated results by adding new computed columns. This is different from on-the-fly measures in `aggregate()` \u2014 `mutate()` works on already-aggregated data.\n\n<note type=\"warning\">\n**Key difference:** `.aggregate()` computes from raw data, while `.mutate()` transforms already-aggregated results.\n</note>\n\n```query_mutate\nfrom ibis import _\n\n# Add post-aggregation calculations\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"total_distance\")\n    .mutate(\n        avg_distance_per_flight=lambda t: t.total_distance / t.flight_count,\n        flight_category=lambda t: ibis.case()\n            .when(t.flight_count >= 3, \"high\")\n            .when(t.flight_count >= 2, \"medium\")\n            .else_(\"low\")\n            .end()\n    )\n)\n```\n\n<bslquery code-block=\"query_mutate\"></bslquery>\n\n**Use cases for `mutate()`:**\n- Calculate ratios from aggregated measures (e.g., `total / count`)\n- Create categories based on aggregated values\n- Add labels or formatting to results\n- Transform aggregated columns using the full power of Ibis\n\nFor more transformations, see [Ibis Table API reference](https://ibis-project.org/reference/expression-tables.html#ibis.expr.types.relations.Table.mutate).\n\n## Window Functions with .over()\n\nWindow functions perform calculations across ordered rows, enabling operations like running totals, moving averages, and ranking. Unlike regular aggregations that reduce many rows to one, window functions preserve row count while adding computed values.\n\n<note type=\"warning\">\n**Important:** Window functions can only be applied **after aggregation**, typically within a `.mutate()` call. They cannot be defined directly in measures.\n</note>\n\n**Common window functions:**\n- **`lag()` / `lead()`**: Access previous/next row values for period-over-period comparisons\n- **`cumsum()`**: Calculate running totals\n- **`.over(window)`**: Apply functions over sliding windows (e.g., moving averages)\n- **`rank()` / `row_number()`**: Assign ranks or sequential numbers to rows\n\nHere's a simple example:\n\n```query_window_example\nfrom ibis import _\n\n# First aggregate to daily level\ndaily_flights = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"total_distance\")\n    .order_by(\"origin\")\n)\n\n# Then apply window function for cumulative distance\nwindow_spec = ibis.window(order_by=\"origin\")\n\nresult = daily_flights.mutate(\n    cumulative_distance=_.total_distance.cumsum(),\n    flight_rank=lambda t: ibis.rank().over(ibis.window(order_by=_.flight_count.desc()))\n).limit(10)\n```\n\n<bslquery code-block=\"query_window_example\"></bslquery>\n\n**Key points:**\n- Window functions are applied **after** `.aggregate()` using `.mutate()`\n- Use `.order_by()` to establish row order for window operations\n- Combine with `ibis.window()` for advanced sliding window calculations\n\nFor comprehensive examples including lag/lead, moving averages, and ranking, see [Window Functions](/advanced/windowing).\n\n## as_table()\n\nAfter filtering or aggregating data, you may want to perform additional semantic operations. However, intermediate results don't always preserve the semantic table's dimensions and measures.\n\nThe Problem: Lost Semantic Information\n\nWhen you aggregate data, the result loses semantic metadata. The aggregated result is a `SemanticAggregate` expression, which doesn't have `.dimensions` or `.measures` attributes:\n\n```query_as_table_problem\nfrom ibis import _\n\n# Aggregate the data - this returns a SemanticAggregate\nagg_result = flights_st.group_by(\"origin\").aggregate(\"flight_count\", \"total_distance\")\n\n# Show the type/class of the result\nresult_type = type(agg_result).__name__\n\n# Try to access .dimensions - this will raise an AttributeError\ntry:\n    dimensions = agg_result.dimensions\n    result = f\"Type: {result_type}\\nDimensions: {dimensions}\"\nexcept AttributeError as e:\n    result = f\"Type: {result_type}\\nError: {str(e)}\"\n\nresult\n```\n\n<regularoutput code-block=\"query_as_table_problem\"></regularoutput>\n\n\nAfter aggregation, you can no longer access the original semantic table's dimensions and measures metadata.\n\nThe Solution: Use as_table()\n\nThe `as_table()` method converts results back into a `SemanticModel`. However, note that for aggregations, the metadata is intentionally cleared (since columns are now materialized):\n\n```query_as_table_after_aggregate\nfrom ibis import _\n\n# Aggregate the data\nagg_result = flights_st.group_by(\"origin\").aggregate(\"flight_count\", \"total_distance\")\n\n# Convert to SemanticModel using as_table()\nagg_table = agg_result.as_table()\n\n# Now .dimensions and .measures attributes exist, but they're empty (metadata was cleared)\nresult = f\"Type: {type(agg_table).__name__}\\nDimensions: {agg_table.dimensions}\\nMeasures: {agg_table.measures}\"\n```\n\n<regularoutput code-block=\"query_as_table_after_aggregate\"></regularoutput>\n\n### When Metadata IS Preserved\n\nFor operations like `filter()`, `order_by()`, and `limit()`, `as_table()` **preserves** the original semantic metadata:\n\n```query_as_table_filter_preserved\nfrom ibis import _\n\n# Filter the data\nfiltered = flights_st.filter(_.distance > 2000)\n\n# Convert back to SemanticModel - metadata is preserved!\nfiltered_table = filtered.as_table()\n\n# Dimensions and measures are still available (preserved from original semantic table)\nresult = f\"Type: {type(filtered_table).__name__}\\nDimensions: {filtered_table.dimensions}\\nMeasures: {filtered_table.measures}\"\n```\n\n<regularoutput code-block=\"query_as_table_filter_preserved\"></regularoutput>\n\nNotice how the dimensions and measures are preserved, unlike the aggregation case above where they were empty.\n\n**Key points:**\n- **Operations that preserve metadata**: `filter()`, `order_by()`, `limit()`, `unnest()` \u2014 calling `as_table()` restores full semantic capabilities with original dimensions/measures\n- **Operations that clear metadata**: `aggregate()`, `mutate()` \u2014 calling `as_table()` returns a `SemanticModel` with empty dimensions/measures (columns are materialized)\n- Use `as_table()` when you need to continue semantic operations on intermediate results\n\n## Next Steps\n\n- Learn about [Building Semantic Tables](/building/semantic-tables) to define dimensions and measures\n- Explore [Composing Models](/building/compose) for multi-table queries\n- Try [Advanced Patterns](/advanced/percentage-total) for complex analytics\n",
   "queries": {
     "setup_table": {
       "code": "import ibis\nfrom ibis import _\nfrom boring_semantic_layer import to_semantic_table\n\n# Create Ibis table\nflights_tbl = ibis.memtable({\n    \"origin\": [\"NYC\", \"LAX\", \"NYC\", \"SFO\", \"LAX\", \"NYC\", \"SFO\", \"LAX\", \"NYC\"],\n    \"carrier\": [\"AA\", \"UA\", \"AA\", \"UA\", \"AA\", \"UA\", \"AA\", \"UA\", \"AA\"],\n    \"distance\": [2789, 2789, 2902, 2902, 347, 2789, 347, 347, 2789],\n    \"duration\": [330, 330, 360, 360, 65, 330, 65, 65, 330],\n})\n\n# Create semantic table\nflights_st = (\n    to_semantic_table(flights_tbl, name=\"flights\")\n    .with_dimensions(\n        origin=lambda t: t.origin,\n        carrier=lambda t: t.carrier,\n    )\n    .with_measures(\n        flight_count=lambda t: t.count(),\n        total_distance=lambda t: t.distance.sum(),\n        avg_duration=lambda t: t.duration.mean(),\n    )\n)",
-      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_3reqxxdd6jg7pj5r5m7bra775m\"",
+      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_lorklcj5wrd4zeqvcatpzftdza\"",
+      "plan": "SemanticTableOp[flights]\n  2 dimensions: origin, carrier\n  3 measures: flight_count, total_distance, avg_duration",
       "table": {
         "columns": [
           "origin",
@@ -69,9 +70,10 @@
         ]
       }
     },
-    "query_single_dimension": {
-      "code": "# Group by one dimension\nresult = flights_st.group_by(\"origin\").aggregate(\"flight_count\")",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_3reqxxdd6jg7pj5r5m7bra775m\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+    "simple_demo": {
+      "code": "# Build a query\nresult = flights_st.group_by(\"origin\").aggregate(\"flight_count\")\n\n# Option 1: Execute and get data as pandas DataFrame\ndf = result.execute()\n\n# Option 2: View the generated SQL\nprint(result.sql())\n\n# Option 3: Generate a visualization (when applicable)\nchart = result.chart()\n\n# Option 4: See the semantic query plan\nprint(result)\n\nresult",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_lorklcj5wrd4zeqvcatpzftdza\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "plan": "r0 := SemanticTableOp[flights]\n  2 dimensions: origin, carrier\n  3 measures: flight_count, total_distance, avg_duration\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['origin']\n  inherited dimensions: 2\n  inherited measures: 3\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['origin']\n  aggs: [flight_count]",
       "table": {
         "columns": [
           "origin",
@@ -79,16 +81,16 @@
         ],
         "data": [
           [
-            "NYC",
-            4
-          ],
-          [
             "SFO",
             2
           ],
           [
             "LAX",
             3
+          ],
+          [
+            "NYC",
+            4
           ]
         ]
       },
@@ -102,7 +104,7 @@
             }
           },
           "data": {
-            "name": "data-3eaf3be1485583778a074de1413ab582"
+            "name": "data-b802f777b7c8ee8ce02e7779e5cf35a1"
           },
           "mark": {
             "type": "bar"
@@ -132,14 +134,14 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-3eaf3be1485583778a074de1413ab582": [
-              {
-                "origin": "SFO",
-                "flight_count": 2
-              },
+            "data-b802f777b7c8ee8ce02e7779e5cf35a1": [
               {
                 "origin": "LAX",
                 "flight_count": 3
+              },
+              {
+                "origin": "SFO",
+                "flight_count": 2
               },
               {
                 "origin": "NYC",
@@ -150,9 +152,92 @@
         }
       }
     },
+    "query_single_dimension": {
+      "code": "# Group by one dimension\nresult = flights_st.group_by(\"origin\").aggregate(\"flight_count\")",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_lorklcj5wrd4zeqvcatpzftdza\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "plan": "r0 := SemanticTableOp[flights]\n  2 dimensions: origin, carrier\n  3 measures: flight_count, total_distance, avg_duration\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['origin']\n  inherited dimensions: 2\n  inherited measures: 3\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['origin']\n  aggs: [flight_count]",
+      "table": {
+        "columns": [
+          "origin",
+          "flight_count"
+        ],
+        "data": [
+          [
+            "SFO",
+            2
+          ],
+          [
+            "NYC",
+            4
+          ],
+          [
+            "LAX",
+            3
+          ]
+        ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-6aac17ab347da150a44206e804007805"
+          },
+          "mark": {
+            "type": "bar"
+          },
+          "encoding": {
+            "tooltip": [
+              {
+                "field": "origin",
+                "type": "nominal"
+              },
+              {
+                "field": "flight_count",
+                "type": "quantitative"
+              }
+            ],
+            "x": {
+              "field": "origin",
+              "sort": null,
+              "type": "ordinal"
+            },
+            "y": {
+              "field": "flight_count",
+              "type": "quantitative"
+            }
+          },
+          "height": 400,
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-6aac17ab347da150a44206e804007805": [
+              {
+                "origin": "LAX",
+                "flight_count": 3
+              },
+              {
+                "origin": "NYC",
+                "flight_count": 4
+              },
+              {
+                "origin": "SFO",
+                "flight_count": 2
+              }
+            ]
+          }
+        }
+      }
+    },
     "query_multiple_dimensions": {
       "code": "# Group by multiple dimensions\nresult = flights_st.group_by(\"origin\", \"carrier\").aggregate(\"flight_count\")",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    \"t1\".\"carrier\",\n    COUNT(*) AS \"flight_count\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_3reqxxdd6jg7pj5r5m7bra775m\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1,\n    2\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    \"t1\".\"carrier\",\n    COUNT(*) AS \"flight_count\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_lorklcj5wrd4zeqvcatpzftdza\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1,\n    2\n) AS \"t2\"",
+      "plan": "r0 := SemanticTableOp[flights]\n  2 dimensions: origin, carrier\n  3 measures: flight_count, total_distance, avg_duration\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['origin', 'carrier']\n  inherited dimensions: 2\n  inherited measures: 3\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['origin', 'carrier']\n  aggs: [flight_count]",
       "table": {
         "columns": [
           "origin",
@@ -160,21 +245,6 @@
           "flight_count"
         ],
         "data": [
-          [
-            "SFO",
-            "AA",
-            1
-          ],
-          [
-            "LAX",
-            "AA",
-            1
-          ],
-          [
-            "NYC",
-            "UA",
-            1
-          ],
           [
             "NYC",
             "AA",
@@ -184,6 +254,21 @@
             "LAX",
             "UA",
             2
+          ],
+          [
+            "LAX",
+            "AA",
+            1
+          ],
+          [
+            "NYC",
+            "UA",
+            1
+          ],
+          [
+            "SFO",
+            "AA",
+            1
           ],
           [
             "SFO",
@@ -279,7 +364,8 @@
     },
     "query_no_grouping": {
       "code": "# Aggregate entire dataset without grouping\nresult = flights_st.group_by().aggregate(\"flight_count\", \"total_distance\", \"avg_duration\")",
-      "sql": "SELECT\n  COUNT(*) AS \"flight_count\",\n  SUM(\"t0\".\"distance\") AS \"total_distance\",\n  AVG(\"t0\".\"duration\") AS \"avg_duration\"\nFROM \"ibis_pandas_memtable_3reqxxdd6jg7pj5r5m7bra775m\" AS \"t0\"",
+      "sql": "SELECT\n  COUNT(*) AS \"flight_count\",\n  SUM(\"t0\".\"distance\") AS \"total_distance\",\n  AVG(\"t0\".\"duration\") AS \"avg_duration\"\nFROM \"ibis_pandas_memtable_lorklcj5wrd4zeqvcatpzftdza\" AS \"t0\"",
+      "plan": "r0 := SemanticTableOp[flights]\n  2 dimensions: origin, carrier\n  3 measures: flight_count, total_distance, avg_duration\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: []\n  inherited dimensions: 2\n  inherited measures: 3\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  aggs: [flight_count, total_distance, avg_duration]",
       "table": {
         "columns": [
           "flight_count",
@@ -331,7 +417,8 @@
     },
     "query_predefined_measures": {
       "code": "# Use measures defined in with_measures()\nresult = flights_st.group_by(\"origin\").aggregate(\"flight_count\", \"avg_duration\")",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_3reqxxdd6jg7pj5r5m7bra775m\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_lorklcj5wrd4zeqvcatpzftdza\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "plan": "r0 := SemanticTableOp[flights]\n  2 dimensions: origin, carrier\n  3 measures: flight_count, total_distance, avg_duration\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['origin']\n  inherited dimensions: 2\n  inherited measures: 3\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['origin']\n  aggs: [flight_count, avg_duration]",
       "table": {
         "columns": [
           "origin",
@@ -339,11 +426,6 @@
           "avg_duration"
         ],
         "data": [
-          [
-            "LAX",
-            3,
-            153.33333333333334
-          ],
           [
             "NYC",
             4,
@@ -353,6 +435,11 @@
             "SFO",
             2,
             212.5
+          ],
+          [
+            "LAX",
+            3,
+            153.33333333333334
           ]
         ]
       },
@@ -366,7 +453,7 @@
             }
           },
           "data": {
-            "name": "data-d0d39a81e22e7ec454a6eaad6417faac"
+            "name": "data-143072415254e2a139ddddbaa9dc6b24"
           },
           "mark": {
             "type": "bar"
@@ -419,7 +506,12 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-d0d39a81e22e7ec454a6eaad6417faac": [
+            "data-143072415254e2a139ddddbaa9dc6b24": [
+              {
+                "origin": "NYC",
+                "flight_count": 4,
+                "avg_duration": 337.5
+              },
               {
                 "origin": "SFO",
                 "flight_count": 2,
@@ -429,11 +521,6 @@
                 "origin": "LAX",
                 "flight_count": 3,
                 "avg_duration": 153.33333333333334
-              },
-              {
-                "origin": "NYC",
-                "flight_count": 4,
-                "avg_duration": 337.5
               }
             ]
           }
@@ -442,7 +529,8 @@
     },
     "query_onthefly_measures": {
       "code": "# Mix predefined and computed measures\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\n        \"flight_count\",              # Pre-defined measure\n        \"avg_duration\",               # Pre-defined measure\n        total_miles=lambda t: t.distance.sum(),  # Computed on-the-fly\n        max_distance=lambda t: t.flight_count + 2  # You can reference other measures as well\n    )\n)",
-      "sql": "SELECT\n  \"t2\".\"origin\",\n  \"t2\".\"flight_count\",\n  \"t2\".\"avg_duration\",\n  \"t2\".\"total_miles\",\n  \"t2\".\"flight_count\" + 2 AS \"max_distance\"\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\",\n    SUM(\"t1\".\"distance\") AS \"total_miles\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_3reqxxdd6jg7pj5r5m7bra775m\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  \"t2\".\"origin\",\n  \"t2\".\"flight_count\",\n  \"t2\".\"avg_duration\",\n  \"t2\".\"total_miles\",\n  \"t2\".\"flight_count\" + 2 AS \"max_distance\"\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\",\n    SUM(\"t1\".\"distance\") AS \"total_miles\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_lorklcj5wrd4zeqvcatpzftdza\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "plan": "r0 := SemanticTableOp[flights]\n  2 dimensions: origin, carrier\n  3 measures: flight_count, total_distance, avg_duration\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['origin']\n  inherited dimensions: 2\n  inherited measures: 3\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['origin']\n  aggs: [flight_count, avg_duration, total_miles, max_distance]",
       "table": {
         "columns": [
           "origin",
@@ -452,6 +540,13 @@
           "max_distance"
         ],
         "data": [
+          [
+            "SFO",
+            2,
+            212.5,
+            3249,
+            4
+          ],
           [
             "LAX",
             3,
@@ -465,13 +560,6 @@
             337.5,
             11269,
             6
-          ],
-          [
-            "SFO",
-            2,
-            212.5,
-            3249,
-            4
           ]
         ]
       },
@@ -485,7 +573,7 @@
             }
           },
           "data": {
-            "name": "data-22866678e8acf83c7eb8555595e76d9b"
+            "name": "data-dbba018e4cd469cc2fefe536ace9497b"
           },
           "mark": {
             "type": "bar"
@@ -540,7 +628,7 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-22866678e8acf83c7eb8555595e76d9b": [
+            "data-dbba018e4cd469cc2fefe536ace9497b": [
               {
                 "origin": "NYC",
                 "flight_count": 4,
@@ -549,18 +637,18 @@
                 "max_distance": 6
               },
               {
-                "origin": "LAX",
-                "flight_count": 3,
-                "avg_duration": 153.33333333333334,
-                "total_miles": 3483,
-                "max_distance": 5
-              },
-              {
                 "origin": "SFO",
                 "flight_count": 2,
                 "avg_duration": 212.5,
                 "total_miles": 3249,
                 "max_distance": 4
+              },
+              {
+                "origin": "LAX",
+                "flight_count": 3,
+                "avg_duration": 153.33333333333334,
+                "total_miles": 3483,
+                "max_distance": 5
               }
             ]
           }
@@ -569,7 +657,8 @@
     },
     "query_table_columns": {
       "code": "# Reference table columns directly in aggregate()\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\n        \"flight_count\",                           # Pre-defined measure\n        total_distance=lambda t: t.distance.sum(),  # Table column 'distance'\n        avg_duration=lambda t: t.duration.mean(),   # Table column 'duration'\n        distance_in_km=lambda t: (t.distance * 1.60934).sum()  # Transform then aggregate\n    )\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\",\n    SUM(\"t1\".\"distance\" * 1.60934) AS \"distance_in_km\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_3reqxxdd6jg7pj5r5m7bra775m\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\",\n    SUM(\"t1\".\"distance\" * 1.60934) AS \"distance_in_km\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_lorklcj5wrd4zeqvcatpzftdza\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "plan": "r0 := SemanticTableOp[flights]\n  2 dimensions: origin, carrier\n  3 measures: flight_count, total_distance, avg_duration\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['origin']\n  inherited dimensions: 2\n  inherited measures: 3\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['origin']\n  aggs: [flight_count, total_distance, avg_duration, distance_in_km]",
       "table": {
         "columns": [
           "origin",
@@ -696,7 +785,8 @@
     },
     "query_filter_order_limit": {
       "code": "from ibis import _\n\n# Filter data, sort, and limit results\nresult = (\n    flights_st\n    .filter(lambda t: t.origin.isin([\"NYC\", \"LAX\"]))  # Filter origins\n    .filter(_.distance > 500)                          # Filter distance using _ syntax\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"avg_duration\")        # Aggregate both measures\n    .order_by(ibis.desc(\"flight_count\"))              # Sort by flight_count descending\n    .limit(5)                                          # Top 5 results\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_3reqxxdd6jg7pj5r5m7bra775m\" AS \"t0\"\n    WHERE\n      \"t0\".\"origin\" IN ('NYC', 'LAX') AND \"t0\".\"distance\" > 500\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"\nORDER BY\n  \"t2\".\"flight_count\" DESC\nLIMIT 5",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_lorklcj5wrd4zeqvcatpzftdza\" AS \"t0\"\n    WHERE\n      \"t0\".\"origin\" IN ('NYC', 'LAX') AND \"t0\".\"distance\" > 500\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"\nORDER BY\n  \"t2\".\"flight_count\" DESC\nLIMIT 5",
+      "plan": null,
       "table": {
         "columns": [
           "origin",
@@ -797,7 +887,8 @@
     },
     "query_basic_nest": {
       "code": "from ibis import _\n\n# Nest flight details within each origin\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\n        \"flight_count\",\n        \"total_distance\",\n        # Create nested array of flight details\n        nest={\"flights\": lambda t: t.group_by([\"carrier\", \"distance\"])}\n    )\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\",\n    ARRAY_AGG({'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"}) FILTER(WHERE\n      {'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"} IS NOT NULL) AS \"flights\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_3reqxxdd6jg7pj5r5m7bra775m\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\",\n    ARRAY_AGG({'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"}) FILTER(WHERE\n      {'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"} IS NOT NULL) AS \"flights\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_lorklcj5wrd4zeqvcatpzftdza\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "plan": "r0 := SemanticTableOp[flights]\n  2 dimensions: origin, carrier\n  3 measures: flight_count, total_distance, avg_duration\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['origin']\n  inherited dimensions: 2\n  inherited measures: 3\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['origin']\n  aggs: [flight_count, total_distance, flights]",
       "table": {
         "columns": [
           "origin",
@@ -806,6 +897,21 @@
           "flights"
         ],
         "data": [
+          [
+            "SFO",
+            2,
+            3249,
+            [
+              {
+                "carrier": "UA",
+                "distance": 2902
+              },
+              {
+                "carrier": "AA",
+                "distance": 347
+              }
+            ]
+          ],
           [
             "LAX",
             3,
@@ -821,21 +927,6 @@
               },
               {
                 "carrier": "UA",
-                "distance": 347
-              }
-            ]
-          ],
-          [
-            "SFO",
-            2,
-            3249,
-            [
-              {
-                "carrier": "UA",
-                "distance": 2902
-              },
-              {
-                "carrier": "AA",
                 "distance": 347
               }
             ]
@@ -994,7 +1085,8 @@
     },
     "query_nest_select": {
       "code": "# Nest specific columns\nresult = (\n    flights_st\n    .group_by(\"carrier\")\n    .aggregate(\n        \"flight_count\",\n        nest={\"routes\": lambda t: t.select(\"origin\", \"distance\", \"duration\")}\n    )\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"carrier\",\n    COUNT(*) AS \"flight_count\",\n    ARRAY_AGG(\n      {'origin': \"t1\".\"origin\", 'distance': \"t1\".\"distance\", 'duration': \"t1\".\"duration\"}\n    ) FILTER(WHERE\n      {'origin': \"t1\".\"origin\", 'distance': \"t1\".\"distance\", 'duration': \"t1\".\"duration\"} IS NOT NULL) AS \"routes\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_3reqxxdd6jg7pj5r5m7bra775m\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"carrier\",\n    COUNT(*) AS \"flight_count\",\n    ARRAY_AGG(\n      {'origin': \"t1\".\"origin\", 'distance': \"t1\".\"distance\", 'duration': \"t1\".\"duration\"}\n    ) FILTER(WHERE\n      {'origin': \"t1\".\"origin\", 'distance': \"t1\".\"distance\", 'duration': \"t1\".\"duration\"} IS NOT NULL) AS \"routes\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_lorklcj5wrd4zeqvcatpzftdza\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "plan": "r0 := SemanticTableOp[flights]\n  2 dimensions: origin, carrier\n  3 measures: flight_count, total_distance, avg_duration\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['carrier']\n  inherited dimensions: 2\n  inherited measures: 3\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['carrier']\n  aggs: [flight_count, routes]",
       "table": {
         "columns": [
           "carrier",
@@ -1002,32 +1094,6 @@
           "routes"
         ],
         "data": [
-          [
-            "UA",
-            4,
-            [
-              {
-                "origin": "LAX",
-                "distance": 2789,
-                "duration": 330
-              },
-              {
-                "origin": "SFO",
-                "distance": 2902,
-                "duration": 360
-              },
-              {
-                "origin": "NYC",
-                "distance": 2789,
-                "duration": 330
-              },
-              {
-                "origin": "LAX",
-                "distance": 347,
-                "duration": 65
-              }
-            ]
-          ],
           [
             "AA",
             5,
@@ -1056,6 +1122,32 @@
                 "origin": "NYC",
                 "distance": 2789,
                 "duration": 330
+              }
+            ]
+          ],
+          [
+            "UA",
+            4,
+            [
+              {
+                "origin": "LAX",
+                "distance": 2789,
+                "duration": 330
+              },
+              {
+                "origin": "SFO",
+                "distance": 2902,
+                "duration": 360
+              },
+              {
+                "origin": "NYC",
+                "distance": 2789,
+                "duration": 330
+              },
+              {
+                "origin": "LAX",
+                "distance": 347,
+                "duration": 65
               }
             ]
           ]
@@ -1189,7 +1281,8 @@
     },
     "query_nest_step1": {
       "code": "from ibis import _\n\n# Create nested data structure\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\n        \"flight_count\",\n        nest={\"flights\": lambda t: t.group_by([\"carrier\", \"distance\"])}\n    )\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    ARRAY_AGG({'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"}) FILTER(WHERE\n      {'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"} IS NOT NULL) AS \"flights\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_3reqxxdd6jg7pj5r5m7bra775m\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    ARRAY_AGG({'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"}) FILTER(WHERE\n      {'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"} IS NOT NULL) AS \"flights\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_lorklcj5wrd4zeqvcatpzftdza\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "plan": "r0 := SemanticTableOp[flights]\n  2 dimensions: origin, carrier\n  3 measures: flight_count, total_distance, avg_duration\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['origin']\n  inherited dimensions: 2\n  inherited measures: 3\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['origin']\n  aggs: [flight_count, flights]",
       "table": {
         "columns": [
           "origin",
@@ -1263,7 +1356,7 @@
             }
           },
           "data": {
-            "name": "data-22fff5453736929a356005cc8fc72142"
+            "name": "data-9143403874e151f1e204eb64c55787ce"
           },
           "mark": {
             "type": "bar"
@@ -1316,7 +1409,25 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-22fff5453736929a356005cc8fc72142": [
+            "data-9143403874e151f1e204eb64c55787ce": [
+              {
+                "origin": "LAX",
+                "flight_count": 3,
+                "flights": [
+                  {
+                    "carrier": "UA",
+                    "distance": 2789
+                  },
+                  {
+                    "carrier": "AA",
+                    "distance": 347
+                  },
+                  {
+                    "carrier": "UA",
+                    "distance": 347
+                  }
+                ]
+              },
               {
                 "origin": "SFO",
                 "flight_count": 2,
@@ -1352,24 +1463,6 @@
                     "distance": 2789
                   }
                 ]
-              },
-              {
-                "origin": "LAX",
-                "flight_count": 3,
-                "flights": [
-                  {
-                    "carrier": "UA",
-                    "distance": 2789
-                  },
-                  {
-                    "carrier": "AA",
-                    "distance": 347
-                  },
-                  {
-                    "carrier": "UA",
-                    "distance": 347
-                  }
-                ]
               }
             ]
           }
@@ -1378,7 +1471,8 @@
     },
     "query_nest_step2": {
       "code": "from ibis import _\n\n# Re-grouping automatically unnests the 'flights' array\nresult = (\n    result\n    .group_by(\"origin\")\n    .aggregate(\n        total_flights=lambda t: t.flight_count.sum(),\n        # Access unnested fields from the flights array\n        unique_carriers=lambda t: t.flights.carrier.nunique(),\n        avg_distance=lambda t: t.flights.distance.mean()\n    )\n)",
-      "sql": "WITH \"t3\" AS (\n  SELECT\n    *\n  FROM (\n    SELECT\n      \"t1\".\"origin\",\n      COUNT(*) AS \"flight_count\",\n      ARRAY_AGG({'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"}) FILTER(WHERE\n        {'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"} IS NOT NULL) AS \"flights\"\n    FROM (\n      SELECT\n        *\n      FROM \"ibis_pandas_memtable_3reqxxdd6jg7pj5r5m7bra775m\" AS \"t0\"\n    ) AS \"t1\"\n    GROUP BY\n      1\n  ) AS \"t2\"\n)\nSELECT\n  *\nFROM (\n  SELECT\n    \"t7\".\"origin\",\n    \"t7\".\"total_flights\",\n    \"t9\".\"unique_carriers\",\n    \"t9\".\"avg_distance\"\n  FROM (\n    SELECT\n      \"t4\".\"origin\",\n      SUM(\"t4\".\"flight_count\") AS \"total_flights\"\n    FROM \"t3\" AS \"t4\"\n    GROUP BY\n      1\n  ) AS \"t7\"\n  LEFT OUTER JOIN (\n    SELECT\n      \"t5\".\"origin\",\n      COUNT(DISTINCT \"t5\".\"flights\".\"carrier\") AS \"unique_carriers\",\n      AVG(\"t5\".\"flights\".\"distance\") AS \"avg_distance\"\n    FROM (\n      SELECT\n        \"t4\".*\n        REPLACE (\"ibis_table_unnest_column_gc7rwvhw6jaufdwzy2lvac3cee\" AS \"flights\")\n      FROM \"t3\" AS \"t4\"\n      CROSS JOIN UNNEST(\"t4\".\"flights\") AS \"ibis_table_unnest_ixuk367itzaj3jmbtxiysyvlsq\"(\"ibis_table_unnest_column_gc7rwvhw6jaufdwzy2lvac3cee\")\n    ) AS \"t5\"\n    GROUP BY\n      1\n  ) AS \"t9\"\n    ON \"t7\".\"origin\" = \"t9\".\"origin\"\n) AS \"t10\"",
+      "sql": "WITH \"t3\" AS (\n  SELECT\n    *\n  FROM (\n    SELECT\n      \"t1\".\"origin\",\n      COUNT(*) AS \"flight_count\",\n      ARRAY_AGG({'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"}) FILTER(WHERE\n        {'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"} IS NOT NULL) AS \"flights\"\n    FROM (\n      SELECT\n        *\n      FROM \"ibis_pandas_memtable_lorklcj5wrd4zeqvcatpzftdza\" AS \"t0\"\n    ) AS \"t1\"\n    GROUP BY\n      1\n  ) AS \"t2\"\n)\nSELECT\n  *\nFROM (\n  SELECT\n    \"t7\".\"origin\",\n    \"t7\".\"total_flights\",\n    \"t9\".\"unique_carriers\",\n    \"t9\".\"avg_distance\"\n  FROM (\n    SELECT\n      \"t4\".\"origin\",\n      SUM(\"t4\".\"flight_count\") AS \"total_flights\"\n    FROM \"t3\" AS \"t4\"\n    GROUP BY\n      1\n  ) AS \"t7\"\n  LEFT OUTER JOIN (\n    SELECT\n      \"t5\".\"origin\",\n      COUNT(DISTINCT \"t5\".\"flights\".\"carrier\") AS \"unique_carriers\",\n      AVG(\"t5\".\"flights\".\"distance\") AS \"avg_distance\"\n    FROM (\n      SELECT\n        \"t4\".*\n        REPLACE (\"ibis_table_unnest_column_lavnv24gknbtdfnlyrhafqljqm\" AS \"flights\")\n      FROM \"t3\" AS \"t4\"\n      CROSS JOIN UNNEST(\"t4\".\"flights\") AS \"ibis_table_unnest_tondoortb5bj5gsjxvc2b3awde\"(\"ibis_table_unnest_column_lavnv24gknbtdfnlyrhafqljqm\")\n    ) AS \"t5\"\n    GROUP BY\n      1\n  ) AS \"t9\"\n    ON \"t7\".\"origin\" = \"t9\".\"origin\"\n) AS \"t10\"",
+      "plan": null,
       "table": {
         "columns": [
           "origin",
@@ -1417,7 +1511,7 @@
             }
           },
           "data": {
-            "name": "data-d782e4c945aacacb2b473b1f0b3c5334"
+            "name": "data-a71e83f66d0a9ab79dafa73c9811f28c"
           },
           "mark": {
             "type": "bar"
@@ -1471,7 +1565,7 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-d782e4c945aacacb2b473b1f0b3c5334": [
+            "data-a71e83f66d0a9ab79dafa73c9811f28c": [
               {
                 "origin": "NYC",
                 "total_flights": 4,
@@ -1479,16 +1573,16 @@
                 "avg_distance": 2817.25
               },
               {
-                "origin": "LAX",
-                "total_flights": 3,
-                "unique_carriers": 2,
-                "avg_distance": 1161.0
-              },
-              {
                 "origin": "SFO",
                 "total_flights": 2,
                 "unique_carriers": 2,
                 "avg_distance": 1624.5
+              },
+              {
+                "origin": "LAX",
+                "total_flights": 3,
+                "unique_carriers": 2,
+                "avg_distance": 1161.0
               }
             ]
           }
@@ -1497,7 +1591,8 @@
     },
     "query_mutate": {
       "code": "from ibis import _\n\n# Add post-aggregation calculations\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"total_distance\")\n    .mutate(\n        avg_distance_per_flight=lambda t: t.total_distance / t.flight_count,\n        flight_category=lambda t: ibis.case()\n            .when(t.flight_count >= 3, \"high\")\n            .when(t.flight_count >= 2, \"medium\")\n            .else_(\"low\")\n            .end()\n    )\n)",
-      "sql": "SELECT\n  \"t2\".\"origin\",\n  \"t2\".\"flight_count\",\n  \"t2\".\"total_distance\",\n  \"t2\".\"total_distance\" / \"t2\".\"flight_count\" AS \"avg_distance_per_flight\",\n  CASE\n    WHEN \"t2\".\"flight_count\" >= 3\n    THEN 'high'\n    WHEN \"t2\".\"flight_count\" >= 2\n    THEN 'medium'\n    ELSE 'low'\n  END AS \"flight_category\"\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_3reqxxdd6jg7pj5r5m7bra775m\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  \"t2\".\"origin\",\n  \"t2\".\"flight_count\",\n  \"t2\".\"total_distance\",\n  \"t2\".\"total_distance\" / \"t2\".\"flight_count\" AS \"avg_distance_per_flight\",\n  CASE\n    WHEN \"t2\".\"flight_count\" >= 3\n    THEN 'high'\n    WHEN \"t2\".\"flight_count\" >= 2\n    THEN 'medium'\n    ELSE 'low'\n  END AS \"flight_category\"\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_lorklcj5wrd4zeqvcatpzftdza\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "plan": "r0 := SemanticTableOp[flights]\n  2 dimensions: origin, carrier\n  3 measures: flight_count, total_distance, avg_duration\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['origin']\n  inherited dimensions: 2\n  inherited measures: 3\n\nr2 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['origin']\n  aggs: [flight_count, total_distance]\n\nSemanticMutateOp\n  source: SemanticAggregateOp\n  columns: [avg_distance_per_flight, flight_category]",
       "table": {
         "columns": [
           "origin",
@@ -1507,6 +1602,13 @@
           "flight_category"
         ],
         "data": [
+          [
+            "NYC",
+            4,
+            11269,
+            2817.25,
+            "high"
+          ],
           [
             "LAX",
             3,
@@ -1520,132 +1622,6 @@
             3249,
             1624.5,
             "medium"
-          ],
-          [
-            "NYC",
-            4,
-            11269,
-            2817.25,
-            "high"
-          ]
-        ]
-      },
-      "chart": {
-        "type": "vega",
-        "spec": {
-          "config": {
-            "view": {
-              "continuousWidth": 300,
-              "continuousHeight": 300
-            }
-          },
-          "data": {
-            "name": "data-f9d66f0b40b1ffd50f6a1cf836bc83a9"
-          },
-          "mark": {
-            "type": "bar"
-          },
-          "encoding": {
-            "color": {
-              "field": "measure",
-              "type": "nominal"
-            },
-            "tooltip": [
-              {
-                "field": "origin",
-                "type": "nominal"
-              },
-              {
-                "field": "measure",
-                "type": "nominal"
-              },
-              {
-                "field": "value",
-                "type": "quantitative"
-              }
-            ],
-            "x": {
-              "field": "origin",
-              "sort": null,
-              "type": "ordinal"
-            },
-            "xOffset": {
-              "field": "measure"
-            },
-            "y": {
-              "field": "value",
-              "type": "quantitative"
-            }
-          },
-          "height": 400,
-          "transform": [
-            {
-              "fold": [
-                "flight_count",
-                "total_distance"
-              ],
-              "as": [
-                "measure",
-                "value"
-              ]
-            }
-          ],
-          "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
-          "datasets": {
-            "data-f9d66f0b40b1ffd50f6a1cf836bc83a9": [
-              {
-                "origin": "SFO",
-                "flight_count": 2,
-                "total_distance": 3249
-              },
-              {
-                "origin": "LAX",
-                "flight_count": 3,
-                "total_distance": 3483
-              },
-              {
-                "origin": "NYC",
-                "flight_count": 4,
-                "total_distance": 11269
-              }
-            ]
-          }
-        }
-      }
-    },
-    "query_window_example": {
-      "code": "from ibis import _\n\n# First aggregate to daily level\ndaily_flights = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"total_distance\")\n    .order_by(\"origin\")\n)\n\n# Then apply window function for cumulative distance\nwindow_spec = ibis.window(order_by=\"origin\")\n\nresult = daily_flights.mutate(\n    cumulative_distance=_.total_distance.cumsum(),\n    flight_rank=lambda t: ibis.rank().over(ibis.window(order_by=_.flight_count.desc()))\n).limit(10)",
-      "sql": "SELECT\n  \"t4\".\"origin\",\n  \"t4\".\"flight_count\",\n  \"t4\".\"total_distance\",\n  \"t4\".\"cumulative_distance\",\n  RANK() OVER (ORDER BY \"t4\".\"flight_count\" DESC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) - 1 AS \"flight_rank\"\nFROM (\n  SELECT\n    \"t3\".\"origin\",\n    \"t3\".\"flight_count\",\n    \"t3\".\"total_distance\",\n    SUM(\"t3\".\"total_distance\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"cumulative_distance\"\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        \"t1\".\"origin\",\n        COUNT(*) AS \"flight_count\",\n        SUM(\"t1\".\"distance\") AS \"total_distance\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_3reqxxdd6jg7pj5r5m7bra775m\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1\n    ) AS \"t2\"\n    ORDER BY\n      \"t2\".\"origin\" ASC\n  ) AS \"t3\"\n) AS \"t4\"\nLIMIT 10",
-      "table": {
-        "columns": [
-          "origin",
-          "flight_count",
-          "total_distance",
-          "cumulative_distance",
-          "flight_rank"
-        ],
-        "data": [
-          [
-            "NYC",
-            4,
-            11269,
-            14752,
-            0
-          ],
-          [
-            "LAX",
-            3,
-            3483,
-            3483,
-            1
-          ],
-          [
-            "SFO",
-            2,
-            3249,
-            18001,
-            2
           ]
         ]
       },
@@ -1727,6 +1703,126 @@
                 "origin": "LAX",
                 "flight_count": 3,
                 "total_distance": 3483
+              }
+            ]
+          }
+        }
+      }
+    },
+    "query_window_example": {
+      "code": "from ibis import _\n\n# First aggregate to daily level\ndaily_flights = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"total_distance\")\n    .order_by(\"origin\")\n)\n\n# Then apply window function for cumulative distance\nwindow_spec = ibis.window(order_by=\"origin\")\n\nresult = daily_flights.mutate(\n    cumulative_distance=_.total_distance.cumsum(),\n    flight_rank=lambda t: ibis.rank().over(ibis.window(order_by=_.flight_count.desc()))\n).limit(10)",
+      "sql": "SELECT\n  \"t4\".\"origin\",\n  \"t4\".\"flight_count\",\n  \"t4\".\"total_distance\",\n  \"t4\".\"cumulative_distance\",\n  RANK() OVER (ORDER BY \"t4\".\"flight_count\" DESC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) - 1 AS \"flight_rank\"\nFROM (\n  SELECT\n    \"t3\".\"origin\",\n    \"t3\".\"flight_count\",\n    \"t3\".\"total_distance\",\n    SUM(\"t3\".\"total_distance\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"cumulative_distance\"\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        \"t1\".\"origin\",\n        COUNT(*) AS \"flight_count\",\n        SUM(\"t1\".\"distance\") AS \"total_distance\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_lorklcj5wrd4zeqvcatpzftdza\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1\n    ) AS \"t2\"\n    ORDER BY\n      \"t2\".\"origin\" ASC\n  ) AS \"t3\"\n) AS \"t4\"\nLIMIT 10",
+      "plan": null,
+      "table": {
+        "columns": [
+          "origin",
+          "flight_count",
+          "total_distance",
+          "cumulative_distance",
+          "flight_rank"
+        ],
+        "data": [
+          [
+            "NYC",
+            4,
+            11269,
+            14752,
+            0
+          ],
+          [
+            "LAX",
+            3,
+            3483,
+            3483,
+            1
+          ],
+          [
+            "SFO",
+            2,
+            3249,
+            18001,
+            2
+          ]
+        ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-f9d66f0b40b1ffd50f6a1cf836bc83a9"
+          },
+          "mark": {
+            "type": "bar"
+          },
+          "encoding": {
+            "color": {
+              "field": "measure",
+              "type": "nominal"
+            },
+            "tooltip": [
+              {
+                "field": "origin",
+                "type": "nominal"
+              },
+              {
+                "field": "measure",
+                "type": "nominal"
+              },
+              {
+                "field": "value",
+                "type": "quantitative"
+              }
+            ],
+            "x": {
+              "field": "origin",
+              "sort": null,
+              "type": "ordinal"
+            },
+            "xOffset": {
+              "field": "measure"
+            },
+            "y": {
+              "field": "value",
+              "type": "quantitative"
+            }
+          },
+          "height": 400,
+          "transform": [
+            {
+              "fold": [
+                "flight_count",
+                "total_distance"
+              ],
+              "as": [
+                "measure",
+                "value"
+              ]
+            }
+          ],
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-f9d66f0b40b1ffd50f6a1cf836bc83a9": [
+              {
+                "origin": "SFO",
+                "flight_count": 2,
+                "total_distance": 3249
+              },
+              {
+                "origin": "LAX",
+                "flight_count": 3,
+                "total_distance": 3483
+              },
+              {
+                "origin": "NYC",
+                "flight_count": 4,
+                "total_distance": 11269
               }
             ]
           }

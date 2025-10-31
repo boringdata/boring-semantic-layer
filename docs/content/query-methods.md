@@ -1,19 +1,10 @@
 # Query Methods
 
-Retrieve data from your semantic tables using `group_by()` and `aggregate()` methods.
-
 ## Overview
 
-BSL provides a simple and consistent query API that works with your semantic table definitions:
+BSL provides a simple and consistent query API for retrieving data from your semantic tables. Queries are built by chaining methods, then executed or inspected using output methods.
 
-- **`group_by()`**: Group data by dimension names (strings only, must be defined in `with_dimensions()`)
-- **`aggregate()`**: Calculate measures (with or without grouping)
-- **`filter()`**: Apply conditions to filter data
-- **`mutate()`**: Transform aggregated results
-- **`order_by()`**: Sort results
-- **`limit()`**: Restrict number of rows
-
-## Setup
+Start with a semantic table and chain methods together. Here's the typical query flow:
 
 ```setup_table
 import ibis
@@ -42,8 +33,54 @@ flights_st = (
     )
 )
 ```
-
 <collapsedcodeblock code-block="setup_table" title="Setup: Create Ibis Table and Semantic Table"></collapsedcodeblock>
+
+
+```python
+result = (
+    flights_st                                   # Start with semantic table
+    .filter(_.distance > 1000)                   # 1. Filter (optional)
+    .group_by("origin")                          # 2. Group by dimensions
+    .aggregate("flight_count", "total_distance") # 3. Aggregate measures
+    .mutate(avg=lambda t: t.total_distance / t.flight_count)  # 4. Transform (optional)
+    .order_by(ibis.desc("flight_count"))         # 5. Sort (optional)
+    .limit(10)                                   # 6. Limit rows (optional)
+)
+```
+
+Once you've built a query, you can inspect it or execute it:
+
+```simple_demo
+
+# Build a query
+result = flights_st.group_by("origin").aggregate("flight_count")
+
+# Option 1: Execute and get data as pandas DataFrame
+df = result.execute()
+
+# Option 2: View the generated SQL
+print(result.sql())
+
+# Option 3: Generate a visualization (when applicable)
+chart = result.chart()
+
+# Option 4: See the semantic query plan
+print(result)
+
+result
+```
+<bslquery code-block="simple_demo"></bslquery>
+
+The output above includes a **Query Plan** tab showing how BSL translates this query into semantic operations. 
+
+You print the query object directly to see the plan:
+```python
+print(result)
+```
+
+This displays operations like `SemanticTableOp`, `SemanticGroupByOp`, and `SemanticAggregateOp`, useful for debugging and understanding query execution.
+
+Let's get now into the details of each query method.
 
 ## group_by()
 
@@ -413,7 +450,7 @@ result = f"Type: {type(agg_table).__name__}\nDimensions: {agg_table.dimensions}\
 
 <regularoutput code-block="query_as_table_after_aggregate"></regularoutput>
 
-### When Metadata IS Preserved
+When are metadata preserved ?
 
 For operations like `filter()`, `order_by()`, and `limit()`, `as_table()` **preserves** the original semantic metadata:
 

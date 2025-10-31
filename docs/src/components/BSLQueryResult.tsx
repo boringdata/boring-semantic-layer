@@ -8,7 +8,7 @@ interface BSLQueryResultProps {
   name: string
 }
 
-type TabType = 'table' | 'chart' | 'sql'
+type TabType = 'table' | 'chart' | 'sql' | 'plan'
 
 function BSLQueryResult({ data, name }: BSLQueryResultProps) {
   const [activeTab, setActiveTab] = useState<TabType>('table')
@@ -22,6 +22,7 @@ function BSLQueryResult({ data, name }: BSLQueryResultProps) {
 
   const code = data.code  // Query code from data
   const sql = data.sql    // Generated SQL from data
+  const plan = data.plan  // Query plan from data
 
   // Handle error state
   if (data.error) {
@@ -66,9 +67,10 @@ function BSLQueryResult({ data, name }: BSLQueryResultProps) {
   const hasChart = data.chart && (data.chart.spec || data.chart.type)
   const hasTable = data.table && data.table.data && data.table.data.length > 0
   const hasSQL = sql && sql.length > 0
+  const hasQueryPlan = plan && plan.length > 0
 
   return (
-    <div className="my-8 border rounded-lg overflow-hidden bg-card">
+    <div className="-mt-6 mb-6 border rounded-lg overflow-hidden bg-card">
       {/* Tabs */}
       <div className="flex border-b bg-muted/30">
         <TabButton
@@ -76,21 +78,29 @@ function BSLQueryResult({ data, name }: BSLQueryResultProps) {
           onClick={() => setActiveTab('table')}
           disabled={!hasTable}
         >
-          📊 Table
+          <span className={`font-semibold ${activeTab === 'table' ? 'text-foreground' : 'text-muted-foreground'}`}>📊 Table:</span> <code className={activeTab === 'table' ? 'text-foreground' : 'text-muted-foreground'}>.execute()</code>
         </TabButton>
         <TabButton
           active={activeTab === 'chart'}
           onClick={() => setActiveTab('chart')}
           disabled={!hasChart}
         >
-          📈 Chart
+          <span className={`font-semibold ${activeTab === 'chart' ? 'text-foreground' : 'text-muted-foreground'}`}>📈 Chart:</span> <code className={activeTab === 'chart' ? 'text-foreground' : 'text-muted-foreground'}>.chart()</code>
         </TabButton>
         {hasSQL && (
           <TabButton
             active={activeTab === 'sql'}
             onClick={() => setActiveTab('sql')}
           >
-            💻 SQL
+            <span className={`font-semibold ${activeTab === 'sql' ? 'text-foreground' : 'text-muted-foreground'}`}>💻 SQL:</span> <code className={activeTab === 'sql' ? 'text-foreground' : 'text-muted-foreground'}>.sql()</code>
+          </TabButton>
+        )}
+        {hasQueryPlan && (
+          <TabButton
+            active={activeTab === 'plan'}
+            onClick={() => setActiveTab('plan')}
+          >
+            <span className={`font-semibold ${activeTab === 'plan' ? 'text-foreground' : 'text-muted-foreground'}`}>🗺️ Query Plan</span>
           </TabButton>
         )}
       </div>
@@ -107,6 +117,10 @@ function BSLQueryResult({ data, name }: BSLQueryResultProps) {
 
         {activeTab === 'sql' && hasSQL && (
           <SQLView sql={sql} />
+        )}
+
+        {activeTab === 'plan' && hasQueryPlan && (
+          <QueryPlanView plan={plan} />
         )}
       </div>
     </div>
@@ -319,6 +333,15 @@ function SQLView({ sql }: { sql: string }) {
   return (
     <div className="sql-view">
       <CodeBlock code={sql} language="sql" />
+    </div>
+  )
+}
+
+// Query Plan View Component
+function QueryPlanView({ plan }: { plan: string }) {
+  return (
+    <div className="query-plan-view">
+      <CodeBlock code={plan} language="text" />
     </div>
   )
 }

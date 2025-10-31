@@ -11,6 +11,7 @@ import { TableOfContents } from "@/components/TableOfContents";
 import { CommandPalette } from "@/components/CommandPalette";
 import { SearchButton } from "@/components/SearchButton";
 import { useState, useEffect } from "react";
+import { Github } from "lucide-react";
 import Home from "./pages/Home";
 import About from "./pages/About";
 import KeyFeatures from "./pages/KeyFeatures";
@@ -49,6 +50,15 @@ const HomeLayout = ({ children }: { children: React.ReactNode }) => {
         <span className="font-semibold">Boring Semantic Layer</span>
         <div className="flex items-center gap-2">
           <SearchButton onClick={() => setSearchOpen(true)} />
+          <a
+            href="https://github.com/boringdata/boring-semantic-layer"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
+            aria-label="View on GitHub"
+          >
+            <Github className="h-4 w-4" />
+          </a>
           <ThemeToggle />
         </div>
       </div>
@@ -76,6 +86,15 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
               </div>
               <div className="flex items-center gap-2">
                 <SearchButton onClick={() => setSearchOpen(true)} />
+                <a
+                  href="https://github.com/boringdata/boring-semantic-layer"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
+                  aria-label="View on GitHub"
+                >
+                  <Github className="h-4 w-4" />
+                </a>
                 <ThemeToggle />
               </div>
             </div>

@@ -4,6 +4,7 @@
     "setup_raw_data": {
       "code": "import ibis\nfrom ibis import _\nfrom boring_semantic_layer import to_semantic_table\n\n# Create customer transaction data\ncustomer_data = ibis.memtable({\n    \"customer_id\": list(range(1, 21)),\n    \"age\": [22, 28, 35, 42, 19, 55, 31, 67, 24, 38, 45, 29, 51, 33, 61, 26, 48, 36, 58, 41],\n    \"purchase_amount\": [45, 120, 250, 180, 35, 520, 95, 850, 65, 310, 190, 78, 420, 145, 680, 88, 275, 165, 590, 225],\n    \"product_category\": [\"Electronics\", \"Clothing\", \"Electronics\", \"Home\", \"Clothing\", \"Electronics\",\n                        \"Clothing\", \"Electronics\", \"Clothing\", \"Home\", \"Electronics\", \"Clothing\",\n                        \"Home\", \"Clothing\", \"Electronics\", \"Clothing\", \"Home\", \"Electronics\", \"Electronics\", \"Home\"]\n})",
       "sql": "Error generating SQL: Table.sql() missing 1 required positional argument: 'query'",
+      "plan": "InMemoryTable\n  data:\n    PandasDataFrameProxy:\n          customer_id  age  purchase_amount product_category\n      0             1   22               45      Electronics\n      1             2   28              120         Clothing\n      2             3   35              250      Electronics\n      3             4   42              180             Home\n      4             5   19               35         Clothing\n      5             6   55              520      Electronics\n      6             7   31               95         Clothing\n      7             8   67              850      Electronics\n      8             9   24               65         Clothing\n      9            10   38              310             Home\n      10           11   45              190      Electronics\n      11           12   29               78         Clothing\n      12           13   51              420             Home\n      13           14   33              145         Clothing\n      14           15   61              680      Electronics\n      15           16   26               88         Clothing\n      16           17   48              275             Home\n      17           18   36              165      Electronics\n      18           19   58              590      Electronics\n      19           20   41              225             Home",
       "table": {
         "columns": [
           "customer_id",
@@ -137,7 +138,8 @@
     },
     "semantic_table_def": {
       "code": "from boring_semantic_layer import to_semantic_table\n\ncustomer_st = (\n    to_semantic_table(customer_data, name=\"customers\")\n    .with_dimensions(\n        customer_id=lambda t: t.customer_id,\n        age=lambda t: t.age,\n        product_category=lambda t: t.product_category\n    )\n    .with_measures(\n        customer_count=lambda t: t.count(),\n        total_revenue=lambda t: t.purchase_amount.sum(),\n        avg_purchase=lambda t: t.purchase_amount.mean().round(2)\n    )\n)",
-      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_h5l62twvjnh2hehoabnjjkjasa\"",
+      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_dj2nkpm3ozefxgwmewedgtwp5a\"",
+      "plan": "SemanticTableOp[customers]\n  3 dimensions: customer_id, age, product_category\n  3 measures: customer_count, total_revenue, avg_purchase",
       "table": {
         "columns": [
           "customer_id",
@@ -271,7 +273,8 @@
     },
     "query_top_categories": {
       "code": "from ibis import _\n\n# Two-stage pipeline: rank then consolidate\nresult = (\n    customer_st\n    .group_by(\"product_category\")\n    .aggregate(\"total_revenue\", \"customer_count\")\n    .mutate(\n        # Rank categories by revenue\n        rank=lambda t: ibis.row_number().over(\n            ibis.window(order_by=t.total_revenue.desc())\n        )\n    )\n    .mutate(\n        # Replace non-top categories with \"Other\"\n        category_display=lambda t: ibis.case()\n            .when(t.rank <= 2, t.product_category)\n            .else_(\"Other\")\n            .end(),\n        # Keep original revenue for sorting (only for top categories)\n        sort_value=lambda t: ibis.case()\n            .when(t.rank <= 2, t.total_revenue)\n            .else_(0)\n            .end()\n    )\n    .group_by(\"category_display\")\n    .aggregate(\n        revenue=lambda t: t.total_revenue.sum(),\n        customers=lambda t: t.customer_count.sum(),\n        sort_helper=lambda t: t.sort_value.max()\n    )\n    .mutate(\n        avg_per_customer=lambda t: (t.revenue / t.customers).round(2)\n    )\n    .order_by(_.sort_helper.desc())\n)",
-      "sql": "SELECT\n  \"t6\".\"category_display\",\n  \"t6\".\"revenue\",\n  \"t6\".\"customers\",\n  \"t6\".\"sort_helper\",\n  CAST(ROUND(\"t6\".\"revenue\" / \"t6\".\"customers\", 2) AS DOUBLE) AS \"avg_per_customer\"\nFROM (\n  SELECT\n    \"t5\".\"category_display\",\n    SUM(\"t5\".\"total_revenue\") AS \"revenue\",\n    SUM(\"t5\".\"customer_count\") AS \"customers\",\n    MAX(\"t5\".\"sort_value\") AS \"sort_helper\"\n  FROM (\n    SELECT\n      \"t4\".\"product_category\",\n      \"t4\".\"total_revenue\",\n      \"t4\".\"customer_count\",\n      \"t4\".\"rank\",\n      CASE WHEN \"t4\".\"rank\" <= 2 THEN \"t4\".\"product_category\" ELSE 'Other' END AS \"category_display\",\n      CASE WHEN \"t4\".\"rank\" <= 2 THEN \"t4\".\"total_revenue\" ELSE 0 END AS \"sort_value\"\n    FROM (\n      SELECT\n        \"t3\".\"product_category\",\n        \"t3\".\"total_revenue\",\n        \"t3\".\"customer_count\",\n        ROW_NUMBER() OVER (ORDER BY \"t3\".\"total_revenue\" DESC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) - 1 AS \"rank\"\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            \"t1\".\"product_category\",\n            SUM(\"t1\".\"purchase_amount\") AS \"total_revenue\",\n            COUNT(*) AS \"customer_count\"\n          FROM (\n            SELECT\n              *\n            FROM \"ibis_pandas_memtable_h5l62twvjnh2hehoabnjjkjasa\" AS \"t0\"\n          ) AS \"t1\"\n          GROUP BY\n            1\n        ) AS \"t2\"\n      ) AS \"t3\"\n    ) AS \"t4\"\n  ) AS \"t5\"\n  GROUP BY\n    1\n) AS \"t6\"\nORDER BY\n  \"t6\".\"sort_helper\" DESC",
+      "sql": "SELECT\n  \"t6\".\"category_display\",\n  \"t6\".\"revenue\",\n  \"t6\".\"customers\",\n  \"t6\".\"sort_helper\",\n  CAST(ROUND(\"t6\".\"revenue\" / \"t6\".\"customers\", 2) AS DOUBLE) AS \"avg_per_customer\"\nFROM (\n  SELECT\n    \"t5\".\"category_display\",\n    SUM(\"t5\".\"total_revenue\") AS \"revenue\",\n    SUM(\"t5\".\"customer_count\") AS \"customers\",\n    MAX(\"t5\".\"sort_value\") AS \"sort_helper\"\n  FROM (\n    SELECT\n      \"t4\".\"product_category\",\n      \"t4\".\"total_revenue\",\n      \"t4\".\"customer_count\",\n      \"t4\".\"rank\",\n      CASE WHEN \"t4\".\"rank\" <= 2 THEN \"t4\".\"product_category\" ELSE 'Other' END AS \"category_display\",\n      CASE WHEN \"t4\".\"rank\" <= 2 THEN \"t4\".\"total_revenue\" ELSE 0 END AS \"sort_value\"\n    FROM (\n      SELECT\n        \"t3\".\"product_category\",\n        \"t3\".\"total_revenue\",\n        \"t3\".\"customer_count\",\n        ROW_NUMBER() OVER (ORDER BY \"t3\".\"total_revenue\" DESC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) - 1 AS \"rank\"\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            \"t1\".\"product_category\",\n            SUM(\"t1\".\"purchase_amount\") AS \"total_revenue\",\n            COUNT(*) AS \"customer_count\"\n          FROM (\n            SELECT\n              *\n            FROM \"ibis_pandas_memtable_dj2nkpm3ozefxgwmewedgtwp5a\" AS \"t0\"\n          ) AS \"t1\"\n          GROUP BY\n            1\n        ) AS \"t2\"\n      ) AS \"t3\"\n    ) AS \"t4\"\n  ) AS \"t5\"\n  GROUP BY\n    1\n) AS \"t6\"\nORDER BY\n  \"t6\".\"sort_helper\" DESC",
+      "plan": "r0 := SemanticTableOp[customers]\n  3 dimensions: customer_id, age, product_category\n  3 measures: customer_count, total_revenue, avg_purchase\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['product_category']\n  inherited dimensions: 3\n  inherited measures: 3\n\nr2 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['product_category']\n  aggs: [total_revenue, customer_count]\n\nr3 := SemanticMutateOp\n  source: SemanticAggregateOp\n  columns: [rank]\n\nr4 := SemanticMutateOp\n  source: SemanticMutateOp\n  columns: [category_display, sort_value]\n\nr5 := SemanticGroupByOp\n  source: SemanticMutateOp\n  keys: ['category_display']\n\nr6 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['category_display']\n  aggs: [revenue, customers, sort_helper]\n\nr7 := SemanticMutateOp\n  source: SemanticAggregateOp\n  columns: [avg_per_customer]\n\nSemanticOrderByOp\n  source: SemanticMutateOp\n  keys: [<expr>]",
       "table": {
         "columns": [
           "category_display",
@@ -314,7 +317,7 @@
             }
           },
           "data": {
-            "name": "data-b7f52209bdec16852547f9730aec7560"
+            "name": "data-505e91643f0b745bf018d520e3dfb219"
           },
           "mark": {
             "type": "bar"
@@ -368,18 +371,18 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-b7f52209bdec16852547f9730aec7560": [
-              {
-                "category_display": "Electronics",
-                "revenue": 3290,
-                "customers": 8,
-                "sort_helper": 3290
-              },
+            "data-505e91643f0b745bf018d520e3dfb219": [
               {
                 "category_display": "Clothing",
                 "revenue": 626,
                 "customers": 7,
                 "sort_helper": 626
+              },
+              {
+                "category_display": "Electronics",
+                "revenue": 3290,
+                "customers": 8,
+                "sort_helper": 3290
               },
               {
                 "category_display": "Home",
@@ -394,7 +397,8 @@
     },
     "query_age_buckets": {
       "code": "from ibis import _\nresult = (\n    customer_st\n    .group_by(\"customer_id\", \"age\", \"product_category\")\n    .aggregate(\"total_revenue\")\n    .mutate(\n        age_group=lambda t: ibis.case()\n            .when(t.age < 25, \"18-24\")\n            .when(t.age < 35, \"25-34\")\n            .when(t.age < 45, \"35-44\")\n            .when(t.age < 55, \"45-54\")\n            .else_(\"55+\")\n            .end()\n    )\n    .group_by(\"age_group\")\n    .aggregate(\n        customers=lambda t: t.count(),\n        revenue=lambda t: t.total_revenue.sum()\n    )\n    .order_by(_.age_group)\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t3\".\"age_group\",\n    COUNT(*) AS \"customers\",\n    SUM(\"t3\".\"total_revenue\") AS \"revenue\"\n  FROM (\n    SELECT\n      \"t2\".\"customer_id\",\n      \"t2\".\"age\",\n      \"t2\".\"product_category\",\n      \"t2\".\"total_revenue\",\n      CASE\n        WHEN \"t2\".\"age\" < 25\n        THEN '18-24'\n        WHEN \"t2\".\"age\" < 35\n        THEN '25-34'\n        WHEN \"t2\".\"age\" < 45\n        THEN '35-44'\n        WHEN \"t2\".\"age\" < 55\n        THEN '45-54'\n        ELSE '55+'\n      END AS \"age_group\"\n    FROM (\n      SELECT\n        \"t1\".\"customer_id\",\n        \"t1\".\"age\",\n        \"t1\".\"product_category\",\n        SUM(\"t1\".\"purchase_amount\") AS \"total_revenue\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_h5l62twvjnh2hehoabnjjkjasa\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1,\n        2,\n        3\n    ) AS \"t2\"\n  ) AS \"t3\"\n  GROUP BY\n    1\n) AS \"t4\"\nORDER BY\n  \"t4\".\"age_group\" ASC",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t3\".\"age_group\",\n    COUNT(*) AS \"customers\",\n    SUM(\"t3\".\"total_revenue\") AS \"revenue\"\n  FROM (\n    SELECT\n      \"t2\".\"customer_id\",\n      \"t2\".\"age\",\n      \"t2\".\"product_category\",\n      \"t2\".\"total_revenue\",\n      CASE\n        WHEN \"t2\".\"age\" < 25\n        THEN '18-24'\n        WHEN \"t2\".\"age\" < 35\n        THEN '25-34'\n        WHEN \"t2\".\"age\" < 45\n        THEN '35-44'\n        WHEN \"t2\".\"age\" < 55\n        THEN '45-54'\n        ELSE '55+'\n      END AS \"age_group\"\n    FROM (\n      SELECT\n        \"t1\".\"customer_id\",\n        \"t1\".\"age\",\n        \"t1\".\"product_category\",\n        SUM(\"t1\".\"purchase_amount\") AS \"total_revenue\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_dj2nkpm3ozefxgwmewedgtwp5a\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1,\n        2,\n        3\n    ) AS \"t2\"\n  ) AS \"t3\"\n  GROUP BY\n    1\n) AS \"t4\"\nORDER BY\n  \"t4\".\"age_group\" ASC",
+      "plan": null,
       "table": {
         "columns": [
           "age_group",
@@ -439,7 +443,7 @@
             }
           },
           "data": {
-            "name": "data-2a04190a3f702ea78dd2d0ae616acbec"
+            "name": "data-4e9229d9f3f520912569a06d669d68c9"
           },
           "mark": {
             "type": "bar"
@@ -492,16 +496,11 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-2a04190a3f702ea78dd2d0ae616acbec": [
+            "data-4e9229d9f3f520912569a06d669d68c9": [
               {
                 "age_group": "55+",
                 "customers": 4,
                 "revenue": 2640
-              },
-              {
-                "age_group": "25-34",
-                "customers": 5,
-                "revenue": 526
               },
               {
                 "age_group": "45-54",
@@ -509,14 +508,19 @@
                 "revenue": 885
               },
               {
-                "age_group": "35-44",
+                "age_group": "25-34",
                 "customers": 5,
-                "revenue": 1130
+                "revenue": 526
               },
               {
                 "age_group": "18-24",
                 "customers": 3,
                 "revenue": 145
+              },
+              {
+                "age_group": "35-44",
+                "customers": 5,
+                "revenue": 1130
               }
             ]
           }
@@ -525,7 +529,8 @@
     },
     "query_purchase_tiers": {
       "code": "from ibis import _\nresult = (\n    customer_st\n    .group_by(\"customer_id\")\n    .aggregate(\"total_revenue\")\n    .mutate(\n        tier=lambda t: ibis.case()\n            .when(t.total_revenue < 100, \"Small ($0-99)\")\n            .when(t.total_revenue < 250, \"Medium ($100-249)\")\n            .when(t.total_revenue < 500, \"Large ($250-499)\")\n            .else_(\"Premium ($500+)\")\n            .end()\n    )\n    .group_by(\"tier\")\n    .aggregate(\n        customer_count=lambda t: t.count(),\n        total_value=lambda t: t.total_revenue.sum(),\n        avg_value=lambda t: t.total_revenue.mean().round(2)\n    )\n    .order_by(_.total_value.desc())\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t3\".\"tier\",\n    COUNT(*) AS \"customer_count\",\n    SUM(\"t3\".\"total_revenue\") AS \"total_value\",\n    CAST(ROUND(AVG(\"t3\".\"total_revenue\"), 2) AS DOUBLE) AS \"avg_value\"\n  FROM (\n    SELECT\n      \"t2\".\"customer_id\",\n      \"t2\".\"total_revenue\",\n      CASE\n        WHEN \"t2\".\"total_revenue\" < 100\n        THEN 'Small ($0-99)'\n        WHEN \"t2\".\"total_revenue\" < 250\n        THEN 'Medium ($100-249)'\n        WHEN \"t2\".\"total_revenue\" < 500\n        THEN 'Large ($250-499)'\n        ELSE 'Premium ($500+)'\n      END AS \"tier\"\n    FROM (\n      SELECT\n        \"t1\".\"customer_id\",\n        SUM(\"t1\".\"purchase_amount\") AS \"total_revenue\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_h5l62twvjnh2hehoabnjjkjasa\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1\n    ) AS \"t2\"\n  ) AS \"t3\"\n  GROUP BY\n    1\n) AS \"t4\"\nORDER BY\n  \"t4\".\"total_value\" DESC",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t3\".\"tier\",\n    COUNT(*) AS \"customer_count\",\n    SUM(\"t3\".\"total_revenue\") AS \"total_value\",\n    CAST(ROUND(AVG(\"t3\".\"total_revenue\"), 2) AS DOUBLE) AS \"avg_value\"\n  FROM (\n    SELECT\n      \"t2\".\"customer_id\",\n      \"t2\".\"total_revenue\",\n      CASE\n        WHEN \"t2\".\"total_revenue\" < 100\n        THEN 'Small ($0-99)'\n        WHEN \"t2\".\"total_revenue\" < 250\n        THEN 'Medium ($100-249)'\n        WHEN \"t2\".\"total_revenue\" < 500\n        THEN 'Large ($250-499)'\n        ELSE 'Premium ($500+)'\n      END AS \"tier\"\n    FROM (\n      SELECT\n        \"t1\".\"customer_id\",\n        SUM(\"t1\".\"purchase_amount\") AS \"total_revenue\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_dj2nkpm3ozefxgwmewedgtwp5a\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1\n    ) AS \"t2\"\n  ) AS \"t3\"\n  GROUP BY\n    1\n) AS \"t4\"\nORDER BY\n  \"t4\".\"total_value\" DESC",
+      "plan": null,
       "table": {
         "columns": [
           "tier",
@@ -570,7 +575,7 @@
             }
           },
           "data": {
-            "name": "data-f3c12454c10596136f4e01d88f79dad8"
+            "name": "data-b5157bca7750a61fe536ab3403b6164f"
           },
           "mark": {
             "type": "bar"
@@ -624,18 +629,12 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-f3c12454c10596136f4e01d88f79dad8": [
+            "data-b5157bca7750a61fe536ab3403b6164f": [
               {
                 "tier": "Large ($250-499)",
                 "customer_count": 4,
                 "total_value": 1255,
                 "avg_value": 313.75
-              },
-              {
-                "tier": "Small ($0-99)",
-                "customer_count": 6,
-                "total_value": 406,
-                "avg_value": 67.67
               },
               {
                 "tier": "Medium ($100-249)",
@@ -648,6 +647,12 @@
                 "customer_count": 4,
                 "total_value": 2640,
                 "avg_value": 660.0
+              },
+              {
+                "tier": "Small ($0-99)",
+                "customer_count": 6,
+                "total_value": 406,
+                "avg_value": 67.67
               }
             ]
           }
@@ -656,7 +661,8 @@
     },
     "query_with_other": {
       "code": "from ibis import _\n\nresult = (\n    customer_st\n    .group_by(\"product_category\")\n    .aggregate(\"total_revenue\", \"customer_count\")\n    .mutate(\n        # Mark categories with less than 5 customers as \"Other\"\n        category_grouped=lambda t: ibis.case()\n            .when(t.customer_count >= 5, t.product_category)\n            .else_(\"Other\")\n            .end()\n    )\n    .group_by(\"category_grouped\")\n    .aggregate(\n        customers=lambda t: t.customer_count.sum(),\n        revenue=lambda t: t.total_revenue.sum()\n    )\n    .mutate(\n        avg_per_customer=lambda t: (t.revenue / t.customers).round(2)\n    )\n    .order_by(_.revenue.desc())\n)",
-      "sql": "SELECT\n  \"t4\".\"category_grouped\",\n  \"t4\".\"customers\",\n  \"t4\".\"revenue\",\n  CAST(ROUND(\"t4\".\"revenue\" / \"t4\".\"customers\", 2) AS DOUBLE) AS \"avg_per_customer\"\nFROM (\n  SELECT\n    \"t3\".\"category_grouped\",\n    SUM(\"t3\".\"customer_count\") AS \"customers\",\n    SUM(\"t3\".\"total_revenue\") AS \"revenue\"\n  FROM (\n    SELECT\n      \"t2\".\"product_category\",\n      \"t2\".\"total_revenue\",\n      \"t2\".\"customer_count\",\n      CASE WHEN \"t2\".\"customer_count\" >= 5 THEN \"t2\".\"product_category\" ELSE 'Other' END AS \"category_grouped\"\n    FROM (\n      SELECT\n        \"t1\".\"product_category\",\n        SUM(\"t1\".\"purchase_amount\") AS \"total_revenue\",\n        COUNT(*) AS \"customer_count\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_h5l62twvjnh2hehoabnjjkjasa\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1\n    ) AS \"t2\"\n  ) AS \"t3\"\n  GROUP BY\n    1\n) AS \"t4\"\nORDER BY\n  \"t4\".\"revenue\" DESC",
+      "sql": "SELECT\n  \"t4\".\"category_grouped\",\n  \"t4\".\"customers\",\n  \"t4\".\"revenue\",\n  CAST(ROUND(\"t4\".\"revenue\" / \"t4\".\"customers\", 2) AS DOUBLE) AS \"avg_per_customer\"\nFROM (\n  SELECT\n    \"t3\".\"category_grouped\",\n    SUM(\"t3\".\"customer_count\") AS \"customers\",\n    SUM(\"t3\".\"total_revenue\") AS \"revenue\"\n  FROM (\n    SELECT\n      \"t2\".\"product_category\",\n      \"t2\".\"total_revenue\",\n      \"t2\".\"customer_count\",\n      CASE WHEN \"t2\".\"customer_count\" >= 5 THEN \"t2\".\"product_category\" ELSE 'Other' END AS \"category_grouped\"\n    FROM (\n      SELECT\n        \"t1\".\"product_category\",\n        SUM(\"t1\".\"purchase_amount\") AS \"total_revenue\",\n        COUNT(*) AS \"customer_count\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_dj2nkpm3ozefxgwmewedgtwp5a\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1\n    ) AS \"t2\"\n  ) AS \"t3\"\n  GROUP BY\n    1\n) AS \"t4\"\nORDER BY\n  \"t4\".\"revenue\" DESC",
+      "plan": "r0 := SemanticTableOp[customers]\n  3 dimensions: customer_id, age, product_category\n  3 measures: customer_count, total_revenue, avg_purchase\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['product_category']\n  inherited dimensions: 3\n  inherited measures: 3\n\nr2 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['product_category']\n  aggs: [total_revenue, customer_count]\n\nr3 := SemanticMutateOp\n  source: SemanticAggregateOp\n  columns: [category_grouped]\n\nr4 := SemanticGroupByOp\n  source: SemanticMutateOp\n  keys: ['category_grouped']\n\nr5 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['category_grouped']\n  aggs: [customers, revenue]\n\nr6 := SemanticMutateOp\n  source: SemanticAggregateOp\n  columns: [avg_per_customer]\n\nSemanticOrderByOp\n  source: SemanticMutateOp\n  keys: [<expr>]",
       "table": {
         "columns": [
           "category_grouped",
@@ -695,7 +701,7 @@
             }
           },
           "data": {
-            "name": "data-7c189061b49621685b18b66d9e4fe564"
+            "name": "data-5afbdcbcb7736c8dd5250ae70eac4eee"
           },
           "mark": {
             "type": "bar"
@@ -748,7 +754,12 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-7c189061b49621685b18b66d9e4fe564": [
+            "data-5afbdcbcb7736c8dd5250ae70eac4eee": [
+              {
+                "category_grouped": "Clothing",
+                "customers": 7,
+                "revenue": 626
+              },
               {
                 "category_grouped": "Electronics",
                 "customers": 8,
@@ -758,11 +769,6 @@
                 "category_grouped": "Home",
                 "customers": 5,
                 "revenue": 1410
-              },
-              {
-                "category_grouped": "Clothing",
-                "customers": 7,
-                "revenue": 626
               }
             ]
           }
@@ -771,7 +777,8 @@
     },
     "query_combined_buckets": {
       "code": "from ibis import _\nresult = (\n    customer_st\n    .group_by(\"customer_id\", \"age\")\n    .aggregate(\"total_revenue\")\n    .mutate(\n        age_group=lambda t: ibis.case()\n            .when(t.age < 30, \"Young (18-29)\")\n            .when(t.age < 50, \"Middle (30-49)\")\n            .else_(\"Senior (50+)\")\n            .end(),\n        value_tier=lambda t: ibis.case()\n            .when(t.total_revenue < 150, \"Low Value\")\n            .when(t.total_revenue < 350, \"Mid Value\")\n            .else_(\"High Value\")\n            .end()\n    )\n    .group_by(\"age_group\", \"value_tier\")\n    .aggregate(\n        customers=lambda t: t.count(),\n        revenue=lambda t: t.total_revenue.sum()\n    )\n    .order_by(_.age_group, _.revenue.desc())\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t3\".\"age_group\",\n    \"t3\".\"value_tier\",\n    COUNT(*) AS \"customers\",\n    SUM(\"t3\".\"total_revenue\") AS \"revenue\"\n  FROM (\n    SELECT\n      \"t2\".\"customer_id\",\n      \"t2\".\"age\",\n      \"t2\".\"total_revenue\",\n      CASE\n        WHEN \"t2\".\"age\" < 30\n        THEN 'Young (18-29)'\n        WHEN \"t2\".\"age\" < 50\n        THEN 'Middle (30-49)'\n        ELSE 'Senior (50+)'\n      END AS \"age_group\",\n      CASE\n        WHEN \"t2\".\"total_revenue\" < 150\n        THEN 'Low Value'\n        WHEN \"t2\".\"total_revenue\" < 350\n        THEN 'Mid Value'\n        ELSE 'High Value'\n      END AS \"value_tier\"\n    FROM (\n      SELECT\n        \"t1\".\"customer_id\",\n        \"t1\".\"age\",\n        SUM(\"t1\".\"purchase_amount\") AS \"total_revenue\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_h5l62twvjnh2hehoabnjjkjasa\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1,\n        2\n    ) AS \"t2\"\n  ) AS \"t3\"\n  GROUP BY\n    1,\n    2\n) AS \"t4\"\nORDER BY\n  \"t4\".\"age_group\" ASC,\n  \"t4\".\"revenue\" DESC",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t3\".\"age_group\",\n    \"t3\".\"value_tier\",\n    COUNT(*) AS \"customers\",\n    SUM(\"t3\".\"total_revenue\") AS \"revenue\"\n  FROM (\n    SELECT\n      \"t2\".\"customer_id\",\n      \"t2\".\"age\",\n      \"t2\".\"total_revenue\",\n      CASE\n        WHEN \"t2\".\"age\" < 30\n        THEN 'Young (18-29)'\n        WHEN \"t2\".\"age\" < 50\n        THEN 'Middle (30-49)'\n        ELSE 'Senior (50+)'\n      END AS \"age_group\",\n      CASE\n        WHEN \"t2\".\"total_revenue\" < 150\n        THEN 'Low Value'\n        WHEN \"t2\".\"total_revenue\" < 350\n        THEN 'Mid Value'\n        ELSE 'High Value'\n      END AS \"value_tier\"\n    FROM (\n      SELECT\n        \"t1\".\"customer_id\",\n        \"t1\".\"age\",\n        SUM(\"t1\".\"purchase_amount\") AS \"total_revenue\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_dj2nkpm3ozefxgwmewedgtwp5a\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1,\n        2\n    ) AS \"t2\"\n  ) AS \"t3\"\n  GROUP BY\n    1,\n    2\n) AS \"t4\"\nORDER BY\n  \"t4\".\"age_group\" ASC,\n  \"t4\".\"revenue\" DESC",
+      "plan": null,
       "table": {
         "columns": [
           "age_group",
@@ -816,7 +823,7 @@
             }
           },
           "data": {
-            "name": "data-2d9f7d2923213d7d16e7c489928d5a03"
+            "name": "data-1d3731aedf836f9708c51c9fd11c4012"
           },
           "mark": {
             "type": "text"
@@ -830,19 +837,7 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-2d9f7d2923213d7d16e7c489928d5a03": [
-              {
-                "age_group": "Young (18-29)",
-                "value_tier": "Low Value",
-                "customers": 6,
-                "revenue": 431
-              },
-              {
-                "age_group": "Middle (30-49)",
-                "value_tier": "Low Value",
-                "customers": 2,
-                "revenue": 240
-              },
+            "data-1d3731aedf836f9708c51c9fd11c4012": [
               {
                 "age_group": "Middle (30-49)",
                 "value_tier": "Mid Value",
@@ -854,6 +849,18 @@
                 "value_tier": "High Value",
                 "customers": 5,
                 "revenue": 3060
+              },
+              {
+                "age_group": "Young (18-29)",
+                "value_tier": "Low Value",
+                "customers": 6,
+                "revenue": 431
+              },
+              {
+                "age_group": "Middle (30-49)",
+                "value_tier": "Low Value",
+                "customers": 2,
+                "revenue": 240
               }
             ]
           }
