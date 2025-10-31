@@ -1,0 +1,39 @@
+flights:
+  table: flights_tbl
+  dimensions:
+    origin:
+      expr: _.origin
+      description: "Flight origin airport code"
+    destination:
+      expr: _.dest
+      description: "Flight destination airport code"
+    year:
+      expr: _.year
+      description: "Flight year"
+    carrier:
+      expr: _.carrier
+      description: "Carrier code"
+  measures:
+    flight_count:
+      expr: _.count()
+      description: "Total number of flights"
+    total_distance:
+      expr: _.distance.sum()
+      description: "Total distance traveled"
+    avg_distance:
+      expr: _.distance.mean()
+      description: "Average flight distance"
+
+carriers:
+  table: carriers_tbl
+  dimensions:
+    code:
+      expr: _.code
+      description: "Carrier code"
+    name:
+      expr: _.name
+      description: "Carrier name"
+  measures:
+    carrier_count:
+      expr: _.count()
+      description: "Number of carriers"

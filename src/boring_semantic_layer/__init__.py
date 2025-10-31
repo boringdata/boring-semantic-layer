@@ -12,13 +12,13 @@ from . import (
 from .api import (
     to_semantic_table,
 )
+from .config import (
+    options,
+)
 from .expr import (
     SemanticModel,
     SemanticTable,
     to_ibis,
-)
-from .mcp import (
-    MCPSemanticModel,
 )
 from .ops import (
     Dimension,
@@ -37,6 +37,7 @@ __all__ = [
     "Measure",
     "from_yaml",
     "MCPSemanticModel",
+    "options",
 ]
 
 # Import MCP functionality from separate module if available
@@ -46,8 +47,6 @@ try:
     _MCP_AVAILABLE = True
 except ImportError:
     _MCP_AVAILABLE = False
-
-__all__.append("MCPSemanticModel")
 
 
 def __getattr__(name):

@@ -184,6 +184,66 @@ class TestChartErrors:
         assert callable(result.chart)
 
 
+class TestChartFieldNameSanitization:
+    """Test that field names with dots are sanitized for Vega-Lite compatibility."""
+
+    def test_dotted_field_names_sanitized(self, con):
+        """Test that field names with dots are converted to underscores."""
+        # Create test data with carriers table
+        carriers_df = pd.DataFrame(
+            {
+                "code": ["AA", "UA", "DL"],
+                "name": ["American Airlines", "United Airlines", "Delta Air Lines"],
+            }
+        )
+        carriers_tbl = con.create_table("carriers", carriers_df, overwrite=True)
+
+        flights_df = pd.DataFrame({"carrier": ["AA", "UA", "DL"], "distance": [2475, 337, 382]})
+        flights_tbl = con.create_table("flights_for_join", flights_df, overwrite=True)
+
+        # Create semantic tables
+        carriers_sm = (
+            to_semantic_table(carriers_tbl, name="carriers")
+            .with_dimensions(code=lambda t: t.code, name=lambda t: t.name)
+            .with_measures(carrier_count=lambda t: t.count())
+        )
+
+        flights_sm = (
+            to_semantic_table(flights_tbl, name="flights")
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(
+                flight_count=lambda t: t.count(), total_distance=lambda t: t.distance.sum()
+            )
+        )
+
+        # Join tables - this creates a "carriers.name" field
+        joined = flights_sm.join_many(carriers_sm, left_on="carrier", right_on="code")
+
+        # Query with the joined field
+        result = joined.group_by("carriers.name").aggregate("flight_count", "total_distance")
+
+        # Create chart - this should sanitize the dotted field name
+        chart = result.chart(backend="altair")
+
+        # Verify the chart was created
+        assert chart is not None
+        import altair as alt
+
+        assert isinstance(chart, alt.Chart)
+
+        # Verify the spec uses sanitized field names
+        spec = chart.to_dict()
+
+        # The X field should be "carriers_name" not "carriers.name"
+        assert spec["encoding"]["x"]["field"] == "carriers_name"
+
+        # The datasets should have "carriers_name" as a key
+        dataset_key = list(spec["datasets"].keys())[0]
+        first_row = spec["datasets"][dataset_key][0]
+        assert "carriers_name" in first_row
+        assert "carriers.name" not in first_row
+
+
 class TestChartWithFilters:
     """Test chart generation with filtered data."""
 

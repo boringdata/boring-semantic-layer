@@ -11,6 +11,22 @@ from typing import Any
 from ibis.common.collections import FrozenDict
 
 
+def _sanitize_field_name(field: str) -> str:
+    """
+    Sanitize field names for Vega-Lite compatibility.
+
+    Vega-Lite interprets dots as nested field accessors, which causes issues
+    with transforms like fold. Replace dots with underscores to avoid this.
+
+    Args:
+        field: Field name that may contain dots
+
+    Returns:
+        Sanitized field name safe for Vega-Lite
+    """
+    return field.replace(".", "_")
+
+
 def _detect_altair_spec(
     dimensions: Sequence[str],
     measures: Sequence[str],
@@ -335,19 +351,23 @@ def _prepare_plotly_data_and_params(query_expr, chart_type: str) -> tuple:
 
 def chart(
     semantic_aggregate: Any,
+    spec: dict[str, Any] | None = None,
     backend: str = "altair",
-    chart_type: str | None = None,
+    format: str = "static",
 ):
     """
     Generate a chart visualization for semantic aggregate query results.
 
     Args:
         semantic_aggregate: The SemanticAggregate object to visualize
+        spec: Optional chart specification dict (backend-specific format).
+              If partial spec is provided (e.g., only "mark" or only "encoding"),
+              missing parts will be auto-detected and merged.
         backend: Visualization backend ("altair" or "plotly")
-        chart_type: Optional manual chart type override
+        format: Output format ("static", "interactive", "json", "png", "svg")
 
     Returns:
-        Chart object (altair.Chart or plotly Figure)
+        Chart object (altair.Chart or plotly Figure) or formatted output
 
     Examples:
         # Auto-detect chart type with Altair
@@ -358,9 +378,17 @@ def chart(
         result = flights.group_by("dep_month").aggregate("flight_count")
         chart(result, backend="plotly")
 
-        # Override chart type
+        # Custom mark with auto-detected encoding
         result = flights.group_by("carrier").aggregate("flight_count")
-        chart(result, chart_type="bar")
+        chart(result, spec={"mark": "line"})
+
+        # Custom encoding with auto-detected mark
+        result = flights.group_by("carrier").aggregate("flight_count")
+        chart(result, spec={"encoding": {"color": {"field": "carrier"}}})
+
+        # Export as JSON
+        result = flights.group_by("carrier").aggregate("flight_count")
+        chart(result, format="json")
     """
     from .ops import _find_all_root_models, _get_merged_fields
 
@@ -384,20 +412,61 @@ def chart(
     if backend == "altair":
         import altair as alt
 
-        # Execute query to get data
-        df = semantic_aggregate.to_ibis().execute()
+        from .expr import SemanticAggregate
 
-        # Get chart spec
-        if chart_type:
-            # Manual override - create basic spec
-            spec = {"mark": chart_type, "encoding": {}}
-            if dimensions:
-                spec["encoding"]["x"] = {"field": dimensions[0], "type": "ordinal"}
-            if measures:
-                spec["encoding"]["y"] = {"field": measures[0], "type": "quantitative"}
+        # Execute query to get data
+        # If semantic_aggregate is an Op, wrap it in a SemanticAggregate expression
+        if (
+            hasattr(semantic_aggregate, "keys")
+            and hasattr(semantic_aggregate, "aggs")
+            and hasattr(semantic_aggregate, "source")
+        ):
+            # It's a SemanticAggregateOp, wrap it properly
+            semantic_aggregate_expr = SemanticAggregate(
+                source=semantic_aggregate.source,
+                keys=semantic_aggregate.keys,
+                aggs=dict(semantic_aggregate.aggs),
+                nested_columns=list(semantic_aggregate.nested_columns)
+                if hasattr(semantic_aggregate, "nested_columns")
+                else None,
+            )
         else:
-            # Auto-detect
-            spec = _detect_altair_spec(dimensions, measures, time_dimension, time_grain)
+            # It's already an expression
+            semantic_aggregate_expr = semantic_aggregate
+        df = semantic_aggregate_expr.execute()
+
+        # Sanitize column names to avoid Vega-Lite issues with dotted field names
+        # This is necessary because Vega-Lite transforms (like fold) don't handle
+        # dotted field names correctly - they interpret dots as nested accessors
+        column_mapping = {col: _sanitize_field_name(col) for col in df.columns}
+        df = df.rename(columns=column_mapping)
+
+        # Update dimensions and measures to use sanitized names
+        sanitized_dimensions = [_sanitize_field_name(d) for d in dimensions]
+        sanitized_measures = [_sanitize_field_name(m) for m in measures]
+        sanitized_time_dimension = _sanitize_field_name(time_dimension) if time_dimension else None
+
+        # Always start with auto-detected spec as base
+        base_spec = _detect_altair_spec(
+            sanitized_dimensions,
+            sanitized_measures,
+            sanitized_time_dimension,
+            time_grain,
+        )
+
+        # Merge with custom spec if provided
+        if spec is None:
+            spec = base_spec
+        else:
+            # Intelligent merging: fill in missing parts with auto-detected values
+            if "mark" not in spec:
+                spec["mark"] = base_spec.get("mark", "point")
+
+            if "encoding" not in spec:
+                spec["encoding"] = base_spec.get("encoding", {})
+
+            if "transform" not in spec:
+                spec["transform"] = base_spec.get("transform", [])
 
         # Create and return Altair chart
         chart_obj = alt.Chart(df)
@@ -426,18 +495,64 @@ def chart(
                         as_=transform.get("as", ["key", "value"]),
                     )
 
-        return chart_obj
+        # Handle different output formats
+        if format == "static":
+            return chart_obj
+        elif format == "interactive":
+            return chart_obj.interactive()
+        elif format == "json":
+            return chart_obj.to_dict()
+        elif format in ["png", "svg"]:
+            try:
+                import io
+
+                buffer = io.BytesIO()
+                chart_obj.save(buffer, format=format)
+                return buffer.getvalue()
+            except Exception as e:
+                raise ImportError(
+                    f"{format} export requires additional dependencies: {e}. "
+                    "Install with: pip install 'altair[all]' or pip install vl-convert-python"
+                ) from e
+        else:
+            raise ValueError(
+                f"Unsupported format: {format}. "
+                "Supported formats: 'static', 'interactive', 'json', 'png', 'svg'"
+            )
 
     elif backend == "plotly":
         import plotly.express as px
         import plotly.graph_objects as go
 
-        # Detect chart type
-        if not chart_type:
-            chart_type = _detect_plotly_chart_type(dimensions, measures, time_dimension)
+        # Auto-detect chart type if not provided in spec
+        chart_type = _detect_plotly_chart_type(dimensions, measures, time_dimension)
+
+        # Override with spec if provided
+        if spec and "chart_type" in spec:
+            chart_type = spec["chart_type"]
 
         # Execute query and prepare parameters
-        df = semantic_aggregate.to_ibis().execute()
+        from .expr import SemanticAggregate
+
+        # If semantic_aggregate is an Op, wrap it in a SemanticAggregate expression
+        if (
+            hasattr(semantic_aggregate, "keys")
+            and hasattr(semantic_aggregate, "aggs")
+            and hasattr(semantic_aggregate, "source")
+        ):
+            # It's a SemanticAggregateOp, wrap it properly
+            semantic_aggregate_expr = SemanticAggregate(
+                source=semantic_aggregate.source,
+                keys=semantic_aggregate.keys,
+                aggs=dict(semantic_aggregate.aggs),
+                nested_columns=list(semantic_aggregate.nested_columns)
+                if hasattr(semantic_aggregate, "nested_columns")
+                else None,
+            )
+        else:
+            # It's already an expression
+            semantic_aggregate_expr = semantic_aggregate
+        df = semantic_aggregate_expr.execute()
 
         # Create a minimal query expression object for _prepare_plotly_data_and_params
         class QueryExpr:
@@ -461,25 +576,40 @@ def chart(
 
         # Create chart based on type
         if chart_type == "bar":
-            return px.bar(**base_params)
+            fig = px.bar(**base_params)
         elif chart_type == "line":
-            return px.line(**base_params)
+            fig = px.line(**base_params)
         elif chart_type == "scatter":
-            return px.scatter(**base_params)
+            fig = px.scatter(**base_params)
         elif chart_type == "heatmap":
-            return go.Figure(data=go.Heatmap(**base_params))
+            fig = go.Figure(data=go.Heatmap(**base_params))
         elif chart_type == "indicator":
             value = df[measures[0]].iloc[0] if measures else 0
-            return go.Figure(go.Indicator(mode="number", value=value))
+            fig = go.Figure(go.Indicator(mode="number", value=value))
         else:
             # Default to table
-            return go.Figure(
+            fig = go.Figure(
                 data=[
                     go.Table(
                         header=dict(values=list(df.columns)),
                         cells=dict(values=[df[col] for col in df.columns]),
                     ),
                 ],
+            )
+
+        # Handle different output formats
+        if format == "static" or format == "interactive":
+            return fig
+        elif format == "json":
+            import plotly.io
+
+            return plotly.io.to_json(fig)
+        elif format in ["png", "svg"]:
+            return fig.to_image(format=format)
+        else:
+            raise ValueError(
+                f"Unsupported format: {format}. "
+                "Supported formats: 'static', 'interactive', 'json', 'png', 'svg'"
             )
     else:
         raise ValueError(f"Unsupported backend: {backend}. Use 'altair' or 'plotly'")

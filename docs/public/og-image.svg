@@ -1,0 +1,46 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background gradient -->
+  <rect width="1200" height="630" fill="#0f172a"/>
+  <rect width="1200" height="630" fill="url(#gradient)"/>
+
+  <defs>
+    <linearGradient id="gradient" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Logo in top left -->
+  <g transform="translate(80, 60)">
+    <circle cx="40" cy="40" r="35" fill="#1e293b" stroke="#3b82f6" stroke-width="3"/>
+    <rect x="15" y="52" width="50" height="8" rx="1" fill="#60a5fa" opacity="0.9"/>
+    <rect x="15" y="40" width="50" height="8" rx="1" fill="#3b82f6" opacity="0.9"/>
+    <rect x="15" y="28" width="50" height="8" rx="1" fill="#2563eb" opacity="0.9"/>
+    <text x="40" y="24" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="bold" fill="#f1f5f9" text-anchor="middle">BSL</text>
+  </g>
+
+  <!-- Main title -->
+  <text x="600" y="260" font-family="system-ui, -apple-system, sans-serif" font-size="72" font-weight="bold" fill="#f1f5f9" text-anchor="middle">Boring Semantic Layer</text>
+
+  <!-- Subtitle -->
+  <text x="600" y="330" font-family="system-ui, -apple-system, sans-serif" font-size="36" fill="#94a3b8" text-anchor="middle">Lightweight Ibis-powered semantic layer for Python</text>
+
+  <!-- Feature boxes -->
+  <g transform="translate(200, 400)">
+    <rect width="240" height="120" rx="8" fill="#1e293b" stroke="#3b82f6" stroke-width="2"/>
+    <text x="120" y="50" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="600" fill="#3b82f6" text-anchor="middle">Type-Safe</text>
+    <text x="120" y="80" font-family="system-ui, -apple-system, sans-serif" font-size="16" fill="#cbd5e1" text-anchor="middle">Pydantic Models</text>
+  </g>
+
+  <g transform="translate(480, 400)">
+    <rect width="240" height="120" rx="8" fill="#1e293b" stroke="#3b82f6" stroke-width="2"/>
+    <text x="120" y="50" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="600" fill="#3b82f6" text-anchor="middle">Flexible</text>
+    <text x="120" y="80" font-family="system-ui, -apple-system, sans-serif" font-size="16" fill="#cbd5e1" text-anchor="middle">Multi-Backend</text>
+  </g>
+
+  <g transform="translate(760, 400)">
+    <rect width="240" height="120" rx="8" fill="#1e293b" stroke="#3b82f6" stroke-width="2"/>
+    <text x="120" y="50" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="600" fill="#3b82f6" text-anchor="middle">Simple</text>
+    <text x="120" y="80" font-family="system-ui, -apple-system, sans-serif" font-size="16" fill="#cbd5e1" text-anchor="middle">Easy Integration</text>
+  </g>
+</svg>

@@ -1,0 +1,12 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle -->
+  <circle cx="16" cy="16" r="14" fill="#1e293b" stroke="#3b82f6" stroke-width="1"/>
+
+  <!-- Layered rectangles -->
+  <rect x="6" y="20" width="20" height="3" rx="0.5" fill="#60a5fa" opacity="0.9"/>
+  <rect x="6" y="15" width="20" height="3" rx="0.5" fill="#3b82f6" opacity="0.9"/>
+  <rect x="6" y="10" width="20" height="3" rx="0.5" fill="#2563eb" opacity="0.9"/>
+
+  <!-- "B" letter for Boring -->
+  <text x="16" y="9" font-family="system-ui, -apple-system, sans-serif" font-size="7" font-weight="bold" fill="#f1f5f9" text-anchor="middle">B</text>
+</svg>

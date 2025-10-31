@@ -298,7 +298,9 @@ def _normalize_filter(
 @curry
 def _make_time_range_filter(time_dim_name: str, start: str, end: str) -> Callable:
     """Create time range filter predicate (curried)."""
-    return lambda t, dim=time_dim_name, s=start, e=end: (t[dim] >= s) & (t[dim] <= e)
+    return lambda t, dim=time_dim_name, s=start, e=end: (
+        (t[dim] >= ibis.timestamp(s)) & (t[dim] <= ibis.timestamp(e))
+    )
 
 
 @curry
