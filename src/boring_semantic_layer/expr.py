@@ -129,12 +129,12 @@ def _create_dimension(expr: Dimension | Callable | dict) -> Dimension:
 
 def _derive_name(table: Any) -> str | None:
     """Derive table name from table expression."""
-    from .utils import try_result
+    from returns.result import safe
 
-    result = try_result(lambda: (table.to_expr() if hasattr(table, "to_expr") else table)).flatmap(
-        lambda t: try_result(lambda: t.get_name() if hasattr(t, "get_name") else None)
+    result = safe(lambda: (table.to_expr() if hasattr(table, "to_expr") else table))().bind(
+        lambda t: safe(lambda: t.get_name() if hasattr(t, "get_name") else None)()
     )
-    return result.unwrap_or(None)
+    return result.value_or(None)
 
 
 class SemanticModel(SemanticTable):

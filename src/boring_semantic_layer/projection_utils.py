@@ -8,9 +8,9 @@ from typing import Any
 
 import ibis.expr.types as ir
 from attrs import frozen
+from returns.result import Failure, Success
 
 from .graph_utils import walk_nodes
-from .utils import Result, failure, success
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ class TableRequirements:
         return f"TableRequirements({', '.join(items)})"
 
 
-def extract_column_names(expr: ir.Expr) -> Result[frozenset[str], Exception]:
+def extract_column_names(expr: ir.Expr) -> Success[frozenset[str]] | Failure[Exception]:
     """Extract column names referenced in an Ibis expression.
 
     Uses graph traversal to find all Field operations.
@@ -73,16 +73,16 @@ def extract_column_names(expr: ir.Expr) -> Result[frozenset[str], Exception]:
         from ibis.expr import operations as ops
 
         field_nodes = walk_nodes(ops.Field, expr)
-        return success(frozenset(field.name for field in field_nodes))
+        return Success(frozenset(field.name for field in field_nodes))
     except Exception as e:
         logger.debug(f"Failed to extract column names: {e}")
-        return failure(e)
+        return Failure(e)
 
 
 def extract_columns_from_callable(
     fn: Callable[[ir.Table], Any],
     table: ir.Table,
-) -> Result[frozenset[str], Exception]:
+) -> Success[frozenset[str]] | Failure[Exception]:
     """Extract column names that a callable (dimension/measure) uses.
 
     Calls the function with the table and inspects the resulting expression
@@ -99,10 +99,10 @@ def extract_columns_from_callable(
         result = fn(table)
         if isinstance(result, ir.Expr):
             return extract_column_names(result)
-        return success(frozenset())
+        return Success(frozenset())
     except Exception as e:
         logger.debug(f"Failed to extract columns from callable: {e}")
-        return failure(e)
+        return Failure(e)
 
 
 def extract_columns_from_callable_safe(
@@ -113,7 +113,7 @@ def extract_columns_from_callable_safe(
 
     Unwraps Result to frozenset for backward compatibility.
     """
-    return extract_columns_from_callable(fn, table).unwrap_or(frozenset())
+    return extract_columns_from_callable(fn, table).value_or(frozenset())
 
 
 def include_all_columns_for_table(
@@ -184,7 +184,7 @@ def extract_requirements_from_measures(
                 if cols
                 else reqs
             )
-            .unwrap_or(reqs)
+            .value_or(reqs)
         )
 
     from functools import reduce
@@ -216,7 +216,7 @@ def _extract_requirement_for_key(
                 if cols
                 else current_reqs
             )
-            .unwrap_or(current_reqs)
+            .value_or(current_reqs)
         )
 
     if key in available_cols:

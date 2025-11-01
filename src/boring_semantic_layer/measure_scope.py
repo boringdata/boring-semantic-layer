@@ -4,9 +4,8 @@ from collections.abc import Iterable
 from typing import Any
 
 from attrs import field, frozen
+from returns.maybe import Maybe, Some
 from toolz import curry
-
-from .utils import Option, option_of, some
 
 
 class _Node:
@@ -159,11 +158,11 @@ def _resolve_measure_name(
     name: str,
     known: tuple[str, ...],
     known_set: frozenset[str],
-) -> Option[str]:
+) -> Maybe[str]:
     if name in known_set:
-        return some(name)
+        return Some(name)
     result = next((k for k in known if k.endswith(f".{name}")), None)
-    return option_of(result)
+    return Maybe.from_optional(result)
 
 
 def _make_known_measures(
@@ -193,8 +192,8 @@ class MeasureScope:
             return getattr(self.tbl, name)
 
         maybe_measure = _resolve_measure_name(name, self.known, self.known_set).map(MeasureRef)
-        if maybe_measure.is_some():
-            return maybe_measure.value
+        if isinstance(maybe_measure, Some):
+            return maybe_measure.unwrap()
 
         if hasattr(self.tbl, "columns") and name in self.tbl.columns:
             return DeferredColumn(name, self.tbl)
@@ -205,11 +204,10 @@ class MeasureScope:
         if self.post_agg:
             return self.tbl[name]
 
-        return (
-            _resolve_measure_name(name, self.known, self.known_set)
-            .map(MeasureRef)
-            .unwrap_or_else(lambda: self.tbl[name])
-        )
+        maybe_measure = _resolve_measure_name(name, self.known, self.known_set).map(MeasureRef)
+        if isinstance(maybe_measure, Some):
+            return maybe_measure.unwrap()
+        return self.tbl[name]
 
     def all(self, ref):
         import ibis as ibis_mod
@@ -218,11 +216,12 @@ class MeasureScope:
             if self.post_agg:
                 return self.tbl[ref].sum().over(ibis_mod.window())
 
-            return (
-                _resolve_measure_name(ref, self.known, self.known_set)
-                .map(lambda name: AllOf(MeasureRef(name)))
-                .unwrap_or_else(lambda: self.tbl[ref].sum().over(ibis_mod.window()))
+            maybe_measure = _resolve_measure_name(ref, self.known, self.known_set).map(
+                lambda name: AllOf(MeasureRef(name))
             )
+            if isinstance(maybe_measure, Some):
+                return maybe_measure.unwrap()
+            return self.tbl[ref].sum().over(ibis_mod.window())
 
         if isinstance(ref, MeasureRef):
             return AllOf(ref)

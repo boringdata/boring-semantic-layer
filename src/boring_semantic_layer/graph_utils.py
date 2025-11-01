@@ -4,8 +4,8 @@ from typing import Any
 
 from ibis.expr.operations.core import Node
 from ibis.expr.types import Expr
-
-from .utils import Option, Result, failure, nothing, some, success
+from returns.maybe import Maybe, Nothing, Some
+from returns.result import Failure, Success
 
 
 def to_node(maybe_expr: Any) -> Node:
@@ -22,23 +22,23 @@ def to_node(maybe_expr: Any) -> Node:
     )
 
 
-def to_node_safe(maybe_expr: Any) -> Result[Node, ValueError]:
+def to_node_safe(maybe_expr: Any) -> Success[Node] | Failure[ValueError]:
     """Convert expression to Node, returning Result instead of raising."""
     try:
-        return success(to_node(maybe_expr))
+        return Success(to_node(maybe_expr))
     except ValueError as e:
-        return failure(e)
+        return Failure(e)
 
 
-def try_to_node(child: Any) -> Option[Node]:
-    """Try to convert child to Node, returning Option."""
-    return to_node_safe(child).map(some).unwrap_or(nothing())
+def try_to_node(child: Any) -> Maybe[Node]:
+    """Try to convert child to Node, returning Maybe."""
+    return to_node_safe(child).map(Some).value_or(Nothing)
 
 
 def gen_children_of(node: Node) -> tuple[Node, ...]:
     """Generate children nodes, filtering out conversion failures."""
     children = (try_to_node(c) for c in getattr(node, "__children__", ()))
-    return tuple(child.value for child in children if child.is_some())
+    return tuple(child.unwrap() for child in children if isinstance(child, Some))
 
 
 def bfs(expr: Expr) -> dict[Node, tuple[Node, ...]]:

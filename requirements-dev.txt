@@ -457,6 +457,8 @@ requests==2.32.4
     #   opentelemetry-exporter-otlp-proto-http
     #   pyiceberg
     #   snowflake-connector-python
+returns==0.26.0
+    # via boring-semantic-layer
 rfc3339-validator==0.1.4
     # via openapi-schema-validator
 rich==13.9.4
@@ -546,6 +548,7 @@ typing-extensions==4.14.0
     #   pydantic-core
     #   pyopenssl
     #   referencing
+    #   returns
     #   rich
     #   snowflake-connector-python
     #   sqlalchemy

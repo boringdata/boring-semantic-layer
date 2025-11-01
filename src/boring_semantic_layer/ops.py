@@ -160,13 +160,13 @@ def _is_calculated_measure(val: Any) -> bool:
 
 
 def _matches_aggregation_pattern(measure_expr, agg_expr, tbl):
+    from returns.result import Success
     from toolz import curry
 
     from .measure_scope import AggregationExpr, ColumnScope
-    from .utils import success, try_result
 
     if not isinstance(agg_expr, AggregationExpr):
-        return success(False)
+        return Success(False)
 
     @curry
     def evaluate_in_scope(tbl, expr):
@@ -227,21 +227,23 @@ def _matches_aggregation_pattern(measure_expr, agg_expr, tbl):
         """Check if result matches both operation and column."""
         return has_matching_operation(agg_expr, result) and has_matching_column(agg_expr, result)
 
-    return try_result(lambda: evaluate_in_scope(tbl, measure_expr)).map(matches_pattern)
+    from returns.result import safe
+
+    return safe(lambda: evaluate_in_scope(tbl, measure_expr))().map(matches_pattern)
 
 
 def _find_matching_measure(agg_expr, known_measures: dict, tbl):
     """Find a measure that matches the aggregation expression pattern.
 
-    Returns Option[str] using functional patterns.
+    Returns Maybe[str] using functional patterns.
     """
+    from returns.maybe import Nothing, Some
     from toolz import curry
 
     from .measure_scope import AggregationExpr
-    from .utils import nothing, some
 
     if not isinstance(agg_expr, AggregationExpr):
-        return nothing()
+        return Nothing
 
     @curry
     def is_valid_measure(measure_obj):
@@ -252,14 +254,14 @@ def _find_matching_measure(agg_expr, known_measures: dict, tbl):
     def matches_pattern(agg_expr, tbl, measure_obj):
         """Check if measure matches the aggregation pattern."""
         result = _matches_aggregation_pattern(measure_obj.expr, agg_expr, tbl)
-        return result.unwrap_or(False)
+        return result.value_or(False)
 
     # Find first measure that matches the pattern
     for measure_name, measure_obj in known_measures.items():
         if is_valid_measure(measure_obj) and matches_pattern(agg_expr, tbl, measure_obj):
-            return some(measure_name)
+            return Some(measure_name)
 
-    return nothing()
+    return Nothing
 
 
 def _make_base_measure(
@@ -269,10 +271,10 @@ def _make_base_measure(
     requires_unnest: tuple,
 ) -> Measure:
     """Create a base measure with proper callable wrapping using functional patterns."""
+    from returns.maybe import Maybe
     from toolz import curry
 
     from .measure_scope import AggregationExpr, ColumnScope
-    from .utils import option_of
 
     # Functional mapping of aggregation operations to ibis column methods
     @curry
@@ -288,12 +290,10 @@ def _make_base_measure(
         }
 
         return (
-            option_of(operations.get(operation))
+            Maybe.from_optional(operations.get(operation))
             .map(lambda fn: fn(column))
-            .unwrap_or_else(
-                lambda: (_ for _ in ()).throw(
-                    ValueError(f"Unknown aggregation operation: {operation}")
-                )
+            .value_or(
+                (_ for _ in ()).throw(ValueError(f"Unknown aggregation operation: {operation}"))
             )
         )
 
@@ -408,16 +408,16 @@ def _has_window_function(expr, depth=0):
 
 def _classify_measure(fn_or_expr: Any, scope: Any) -> tuple[str, Any]:
     """Classify measure as 'calc' or 'base' with appropriate handling."""
-    from .utils import try_result
+    from returns.result import Success, safe
 
     expr, description, locality, requires_unnest = _extract_measure_metadata(fn_or_expr)
 
-    resolved = try_result(lambda: _resolve_expr(expr, scope)).map(
+    resolved = safe(lambda: _resolve_expr(expr, scope))().map(
         lambda val: ("calc", val) if _is_calculated_measure(val) else None
     )
 
-    if resolved.is_success() and resolved.value is not None:
-        return resolved.value
+    if isinstance(resolved, Success) and resolved.unwrap() is not None:
+        return resolved.unwrap()
 
     if locality is None and callable(expr):
         table = getattr(scope, "tbl", None)
@@ -901,28 +901,24 @@ class SemanticAggregateOp(Relation):
             @curry
             def find_in_calc_measures(expr, calc_measures):
                 """Find matching AggregationExpr in calc measures."""
-                from .utils import nothing, some
+                from returns.maybe import Nothing, Some
 
                 for calc_name, calc_expr in calc_measures.items():
                     if isinstance(calc_expr, AggregationExpr) and (
                         calc_expr.column == expr.column and calc_expr.operation == expr.operation
                     ):
-                        return some(calc_name)
-                return nothing()
+                        return Some(calc_name)
+                return Nothing
 
             def resolve_aggregation(agg_expr):
                 """Resolve an AggregationExpr to a MeasureRef or keep as-is."""
                 # Try base measures first, then calc measures
                 matched = _find_matching_measure(agg_expr, merged_base_measures, tbl)
 
-                return matched.map(
-                    MeasureRef
-                ).unwrap_or_else(  # Map Option[str] -> Option[MeasureRef]
-                    lambda: (
-                        find_in_calc_measures(agg_expr, merged_calc_measures)
-                        .map(MeasureRef)
-                        .unwrap_or(agg_expr)  # Keep original if no match
-                    )
+                return matched.map(MeasureRef).value_or(
+                    find_in_calc_measures(agg_expr, merged_calc_measures)
+                    .map(MeasureRef)
+                    .value_or(agg_expr)
                 )
 
             if isinstance(expr, AggregationExpr):
@@ -1062,15 +1058,15 @@ class SemanticMutateOp(Relation):
             self.source.to_expr() if hasattr(self.source, "to_expr") else _to_ibis(self.source)
         )
 
-        from .utils import try_result
+        from returns.result import safe
 
         def process_mutation(
             reqs: projection_utils.TableRequirements, fn_wrapped: Any
         ) -> projection_utils.TableRequirements:
             """Process single mutation, extracting column requirements."""
             return (
-                try_result(lambda: _unwrap(fn_wrapped))
-                .flatmap(lambda fn: projection_utils.extract_columns_from_callable(fn, base_tbl))
+                safe(lambda: _unwrap(fn_wrapped))()
+                .bind(lambda fn: projection_utils.extract_columns_from_callable(fn, base_tbl))
                 .map(
                     lambda cols: projection_utils._apply_requirements_to_tables(
                         reqs, table_names, cols
@@ -1078,10 +1074,8 @@ class SemanticMutateOp(Relation):
                     if cols
                     else reqs
                 )
-                .unwrap_or_else(
-                    lambda: projection_utils.include_all_columns_for_table(
-                        reqs, base_tbl, table_names[0]
-                    )
+                .value_or(
+                    projection_utils.include_all_columns_for_table(reqs, base_tbl, table_names[0])
                     if table_names
                     else reqs
                 )
