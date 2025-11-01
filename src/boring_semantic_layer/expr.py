@@ -345,12 +345,43 @@ class SemanticModel(SemanticTable):
         by: str | None = None,
         sample: int | None = None,
     ):
-        """Create an index for search/discovery."""
+        """Create an index for search/discovery.
+
+        Args:
+            selector: Dimension selector - can be:
+                - None: select all dimensions
+                - str: select single dimension
+                - list[str]: select multiple dimensions
+                - Callable: custom selector function
+                - ibis selector (s.all(), s.cols(), etc.): ibis column selector
+            by: Optional dimension to group by
+            sample: Optional number of rows to sample
+        """
+
         from .ops import SemanticIndexOp
+
+        # Handle ibis selectors
+        processed_selector = selector
+        if (
+            selector is not None
+            and hasattr(selector, "__class__")
+            and "ibis.selectors" in str(type(selector).__module__)
+        ):
+            # Handle s.all() - select all columns
+            if type(selector).__name__ == "AllColumns":
+                processed_selector = None
+            # Handle s.cols() - select specific columns
+            elif type(selector).__name__ == "Cols":
+                # Extract column names from the Cols selector
+                # Convert to list (frozenset -> list) for consistency
+                processed_selector = sorted(selector.names)
+            # For other selectors, keep as-is
+            else:
+                processed_selector = selector
 
         return SemanticIndexOp(
             source=self.op(),
-            selector=selector,
+            selector=processed_selector,
             by=by,
             sample=sample,
         )

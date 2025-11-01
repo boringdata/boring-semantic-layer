@@ -1345,7 +1345,30 @@ class SemanticJoinOp(Relation):
         by: str | None = None,
         sample: int | None = None,
     ) -> SemanticIndexOp:
-        return SemanticIndexOp(source=self, selector=selector, by=by, sample=sample)
+        """Create an index for search/discovery.
+
+        Supports ibis selectors (s.all(), s.cols(), etc.).
+        """
+
+        # Handle ibis selectors
+        processed_selector = selector
+        if (
+            selector is not None
+            and hasattr(selector, "__class__")
+            and "ibis.selectors" in str(type(selector).__module__)
+        ):
+            # Handle s.all() - select all columns
+            if type(selector).__name__ == "AllColumns":
+                processed_selector = None
+            # Handle s.cols() - select specific columns
+            elif type(selector).__name__ == "Cols":
+                # Extract column names from the Cols selector
+                processed_selector = sorted(selector.names)
+            # For other selectors, keep as-is
+            else:
+                processed_selector = selector
+
+        return SemanticIndexOp(source=self, selector=processed_selector, by=by, sample=sample)
 
     def _collect_leaf_table_names(self) -> set[str]:
         """Collect names of all leaf (base) tables in this join tree."""
@@ -1972,14 +1995,14 @@ def _get_fields_to_index(
 
 class SemanticIndexOp(Relation):
     source: Relation
-    selector: str | list[str] | Callable | None
+    selector: str | list[str] | tuple[str, ...] | Callable | None
     by: str | None = None
     sample: int | None = None
 
     def __init__(
         self,
         source: Relation,
-        selector: str | list[str] | Callable | None = None,
+        selector: str | list[str] | tuple[str, ...] | Callable | None = None,
         by: str | None = None,
         sample: int | None = None,
     ) -> None:
@@ -1999,9 +2022,12 @@ class SemanticIndexOp(Relation):
                         f"Available measures: {', '.join(available) or 'none'}",
                     )
 
+        # Convert selector to tuple if it's a list (Ibis requires hashable types)
+        hashable_selector = tuple(selector) if isinstance(selector, list) else selector
+
         super().__init__(
             source=Relation.__coerce__(source),
-            selector=selector,
+            selector=hashable_selector,
             by=by,
             sample=sample,
         )
