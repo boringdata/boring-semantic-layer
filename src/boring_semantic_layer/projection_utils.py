@@ -203,22 +203,23 @@ def _extract_requirement_for_key(
     """Extract column requirement for a single key."""
     table_name, col_name = _parse_prefixed_field(key)
 
+    # First check if the key (with or without prefix) is a dimension
+    # This handles both 'orders.category' and 'category' dimension lookups
+    dim_fn = dimensions.get(key)
+    if dim_fn:
+        # Extract columns from the dimension's callable expression
+        result = extract_columns_from_callable(dim_fn, table)
+        if isinstance(result, Success):
+            cols = result.unwrap() & available_cols
+            if cols:
+                return _apply_requirements_to_tables(current_reqs, table_names, cols)
+        return current_reqs
+
+    # If not a dimension and we have a table prefix, assume col_name is a direct column reference
     if table_name and table_name in table_names:
         return current_reqs.add_columns(table_name, frozenset([col_name]))
 
-    dim_fn = dimensions.get(key)
-    if dim_fn:
-        return (
-            extract_columns_from_callable(dim_fn, table)
-            .map(lambda cols: cols & available_cols)
-            .map(
-                lambda cols: _apply_requirements_to_tables(current_reqs, table_names, cols)
-                if cols
-                else current_reqs
-            )
-            .value_or(current_reqs)
-        )
-
+    # Check if key is directly available as a column
     if key in available_cols:
         return _apply_requirements_to_tables(current_reqs, table_names, frozenset([key]))
 
