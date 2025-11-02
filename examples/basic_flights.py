@@ -51,12 +51,13 @@ def main():
 
     long_haul_flights = flights_enhanced.filter(lambda t: t.distance > 1000)
     result = (
-        long_haul_flights.group_by("carrier").aggregate("flight_count", "avg_distance")
-        # .limit(10)
-        # .execute()
+        long_haul_flights.group_by("carrier")
+        .aggregate("flight_count", "avg_distance")
+        .limit(10)
+        .execute()
     )
     print("\nLong-haul flights (>1000 miles):")
-    print(result.plan())
+    print(result)
 
 
 if __name__ == "__main__":

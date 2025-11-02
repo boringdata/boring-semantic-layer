@@ -2,15 +2,34 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import reduce
-from operator import methodcaller
 from typing import TYPE_CHECKING, Any
 
+import ibis
+import ibis.selectors as s
 from attrs import field, frozen
 from ibis.common.collections import FrozenDict, FrozenOrderedDict
 from ibis.common.deferred import Deferred
+from ibis.expr import datatypes as dt
+from ibis.expr import operations as ibis_ops
 from ibis.expr import types as ir
-from ibis.expr.operations.relations import Relation
+from ibis.expr.operations.relations import Field, Relation
 from ibis.expr.schema import Schema
+from returns.maybe import Maybe, Nothing, Some
+from returns.result import Success, safe
+from toolz import curry
+
+from . import projection_utils
+from .compile_all import compile_grouped_with_all
+from .graph_utils import walk_nodes
+from .measure_scope import (
+    AggregationExpr,
+    AllOf,
+    BinOp,
+    ColumnScope,
+    MeasureRef,
+    MeasureScope,
+)
+from .nested_access import NestedAccessMarker
 
 if TYPE_CHECKING:
     from .expr import (
@@ -30,10 +49,6 @@ def _semantic_table(*args, **kwargs) -> SemanticTable:
     from .expr import SemanticModel
 
     return SemanticModel(*args, **kwargs)
-
-
-def _unwrap_semantic_table(other: Any) -> Any:
-    return methodcaller("op")(other) if hasattr(other, "op") and callable(other.op) else other
 
 
 def _unwrap(wrapped: Any) -> Any:
@@ -74,8 +89,6 @@ def _get_merged_fields(all_roots: list, field_type: str) -> dict:
 
 
 def _collect_measure_refs(expr, refs_out: set):
-    from .measure_scope import AllOf, BinOp, MeasureRef
-
     if isinstance(expr, MeasureRef):
         refs_out.add(expr.name)
     elif isinstance(expr, AllOf):
@@ -101,6 +114,7 @@ class _CallableWrapper:
         return self._fn(*args, **kwargs)
 
     def __hash__(self):
+        # should this be dask.base.tokenize()?
         return hash(id(self._fn))
 
     @property
@@ -113,58 +127,47 @@ def _ensure_wrapped(fn: Any) -> _CallableWrapper:
     return fn if isinstance(fn, _CallableWrapper) else _CallableWrapper(fn)
 
 
-def _infer_locality(fn: Callable, table: Any) -> tuple[str | None, tuple[str, ...]]:
-    """Infer locality from the table's unnest operations.
+def _infer_unnest(fn: Callable, table: Any) -> tuple[str, ...]:
+    """Infer required unnest operations from the table.
 
     Examples:
-        to_semantic_table(tbl).with_measures(...) -> (None, ())  # Session level
-        to_semantic_table(tbl).unnest("hits").with_measures(...) -> ("hits", ("hits",))
-        unnested.unnest("product").with_measures(...) -> ("product", ("product",))
+        to_semantic_table(tbl).with_measures(...) -> ()  # Session level
+        to_semantic_table(tbl).unnest("hits").with_measures(...) -> ("hits",)
+        unnested.unnest("product").with_measures(...) -> ("product",)
     """
     from .expr import SemanticUnnest
 
     if isinstance(table, SemanticUnnest):
         op = table.op()
-        if hasattr(op, "column"):
-            locality = op.column  # e.g., "hits"
-            requires_unnest = (op.column,)
-            return (locality, requires_unnest)
+        # SemanticUnnestOp always has column attribute
+        return (op.column,)
 
-    return (None, ())
+    return ()
 
 
-def _extract_measure_metadata(fn_or_expr: Any) -> tuple[Any, str | None, str | None, tuple]:
+def _extract_measure_metadata(fn_or_expr: Any) -> tuple[Any, str | None, tuple]:
     """Extract metadata from various measure representations."""
     if isinstance(fn_or_expr, dict):
         return (
             fn_or_expr["expr"],
             fn_or_expr.get("description"),
-            fn_or_expr.get("locality"),
             tuple(fn_or_expr.get("requires_unnest", [])),
         )
     elif isinstance(fn_or_expr, Measure):
         return (
             fn_or_expr.expr,
             fn_or_expr.description,
-            fn_or_expr.locality,
             fn_or_expr.requires_unnest,
         )
     else:
-        return (fn_or_expr, None, None, ())
+        return (fn_or_expr, None, ())
 
 
 def _is_calculated_measure(val: Any) -> bool:
-    from .measure_scope import AllOf, BinOp, MeasureRef
-
     return isinstance(val, MeasureRef | AllOf | BinOp | int | float)
 
 
 def _matches_aggregation_pattern(measure_expr, agg_expr, tbl):
-    from returns.result import Success
-    from toolz import curry
-
-    from .measure_scope import AggregationExpr, ColumnScope
-
     if not isinstance(agg_expr, AggregationExpr):
         return Success(False)
 
@@ -182,10 +185,10 @@ def _matches_aggregation_pattern(measure_expr, agg_expr, tbl):
 
     @curry
     def has_matching_operation(agg_expr, result):
-        """Check if the operation matches the expected aggregation."""
-        if not hasattr(result, "op"):
-            return False
+        """Check if the operation matches the expected aggregation.
 
+        All our supported aggregations (Sum, Mean, Count, Min, Max) are ibis operations.
+        """
         op_name = type(result.op()).__name__.lower()
         expected_op = "avg" if agg_expr.operation.lower() == "mean" else agg_expr.operation.lower()
 
@@ -193,41 +196,22 @@ def _matches_aggregation_pattern(measure_expr, agg_expr, tbl):
 
     @curry
     def has_matching_column(agg_expr, result):
-        """Check if the column matches the expected column."""
-        if not hasattr(result, "op"):
-            return False
+        """Check if result's operation references the expected column.
 
+        All supported aggregation operations (Sum, Mean, Count, Min, Max) have:
+        - args[0]: Field operation with .name attribute
+        - args[1]: Optional where clause (typically None)
+        """
         op = result.op()
-        if not hasattr(op, "args") or len(op.args) == 0:
+
+        if not isinstance(op.args[0], Field):
             return False
 
-        first_arg = op.args[0]
-        if not hasattr(first_arg, "__class__"):
-            return False
-
-        arg_name = type(first_arg).__name__
-        if "Field" not in arg_name and "Column" not in arg_name:
-            return False
-
-        # Try direct name attribute
-        if hasattr(first_arg, "name"):
-            return first_arg.name == agg_expr.column
-
-        # Try extracting from args
-        if hasattr(first_arg, "args") and len(first_arg.args) > 1:
-            field_name = first_arg.args[1]
-            # Skip if it's a type, not a name
-            if hasattr(field_name, "__class__") and type(field_name).__name__ == "str":
-                return False
-            return field_name == agg_expr.column
-
-        return False
+        return op.args[0].name == agg_expr.column
 
     def matches_pattern(result):
         """Check if result matches both operation and column."""
         return has_matching_operation(agg_expr, result) and has_matching_column(agg_expr, result)
-
-    from returns.result import safe
 
     return safe(lambda: evaluate_in_scope(tbl, measure_expr))().map(matches_pattern)
 
@@ -237,28 +221,20 @@ def _find_matching_measure(agg_expr, known_measures: dict, tbl):
 
     Returns Maybe[str] using functional patterns.
     """
-    from returns.maybe import Nothing, Some
-    from toolz import curry
-
-    from .measure_scope import AggregationExpr
-
     if not isinstance(agg_expr, AggregationExpr):
         return Nothing
 
     @curry
-    def is_valid_measure(measure_obj):
-        """Check if object has expr attribute (is a Measure)."""
-        return hasattr(measure_obj, "expr")
-
-    @curry
     def matches_pattern(agg_expr, tbl, measure_obj):
-        """Check if measure matches the aggregation pattern."""
+        """Check if measure matches the aggregation pattern.
+
+        All measure_obj values are Measure instances with an expr attribute.
+        """
         result = _matches_aggregation_pattern(measure_obj.expr, agg_expr, tbl)
         return result.value_or(False)
 
-    # Find first measure that matches the pattern
     for measure_name, measure_obj in known_measures.items():
-        if is_valid_measure(measure_obj) and matches_pattern(agg_expr, tbl, measure_obj):
+        if matches_pattern(agg_expr, tbl, measure_obj):
             return Some(measure_name)
 
     return Nothing
@@ -267,16 +243,10 @@ def _find_matching_measure(agg_expr, known_measures: dict, tbl):
 def _make_base_measure(
     expr: Any,
     description: str | None,
-    locality: str | None,
     requires_unnest: tuple,
 ) -> Measure:
     """Create a base measure with proper callable wrapping using functional patterns."""
-    from returns.maybe import Maybe
-    from toolz import curry
 
-    from .measure_scope import AggregationExpr, ColumnScope
-
-    # Functional mapping of aggregation operations to ibis column methods
     @curry
     def apply_aggregation(operation: str, column):
         """Apply aggregation operation to a column using functional dispatch."""
@@ -310,20 +280,16 @@ def _make_base_measure(
 
     def convert_aggregation_expr(t, agg_expr: AggregationExpr):
         """Convert AggregationExpr to ibis expression."""
-        # First, perform the aggregation
         if agg_expr.operation == "count":
-            # Count operates on the table, not a specific column
             result = t.count()
         else:
             result = apply_aggregation(agg_expr.operation, t[agg_expr.column])
 
-        # Then, apply any post-aggregation operations (e.g., .epoch_seconds())
         for method_name, args, kwargs in agg_expr.post_ops:
             result = getattr(result, method_name)(*args, **kwargs)
 
         return result
 
-    # Handle AggregationExpr passed directly (e.g., from _.count())
     if isinstance(expr, AggregationExpr):
 
         def wrapped_expr(t):
@@ -333,7 +299,6 @@ def _make_base_measure(
         return Measure(
             expr=wrapped_expr,
             description=description,
-            locality=locality,
             requires_unnest=requires_unnest,
         )
 
@@ -344,7 +309,6 @@ def _make_base_measure(
             scope = ColumnScope(_tbl=t)
             result = evaluate_expr(expr, scope)
 
-            # Convert AggregationExpr to actual ibis expression
             if isinstance(result, AggregationExpr):
                 return convert_aggregation_expr(t, result)
             return result
@@ -352,65 +316,19 @@ def _make_base_measure(
         return Measure(
             expr=wrapped_expr,
             description=description,
-            locality=locality,
             requires_unnest=requires_unnest,
         )
     else:
         return Measure(
             expr=lambda t, fn=expr: evaluate_expr(fn, ColumnScope(_tbl=t)),
             description=description,
-            locality=locality,
             requires_unnest=requires_unnest,
         )
 
 
-def _check_op_for_window(op, depth=0):
-    """Recursively check an operation node for window functions."""
-    if op is None or depth > 20:  # Prevent infinite recursion
-        return False
-
-    # Skip primitive types and common non-operation types
-    if isinstance(op, str | int | float | bool | type(None)):
-        return False
-
-    op_name = type(op).__name__
-
-    # Check if this is a window operation
-    if "Window" in op_name or "AnalyticOp" in op_name:
-        return True
-
-    # Only recurse into ibis operation objects (they have __module__ containing 'ibis')
-    if (
-        hasattr(op, "__class__")
-        and hasattr(op.__class__, "__module__")
-        and "ibis" not in op.__class__.__module__
-    ):
-        return False
-
-    # Recursively check args
-    if hasattr(op, "args"):
-        for arg in op.args:
-            if _check_op_for_window(arg, depth + 1):
-                return True
-
-    return False
-
-
-def _has_window_function(expr, depth=0):
-    """Check if an ibis expression contains window functions."""
-    if not hasattr(expr, "op"):
-        return False
-    try:
-        return _check_op_for_window(expr.op(), depth)
-    except Exception:
-        return False
-
-
 def _classify_measure(fn_or_expr: Any, scope: Any) -> tuple[str, Any]:
     """Classify measure as 'calc' or 'base' with appropriate handling."""
-    from returns.result import Success, safe
-
-    expr, description, locality, requires_unnest = _extract_measure_metadata(fn_or_expr)
+    expr, description, requires_unnest = _extract_measure_metadata(fn_or_expr)
 
     resolved = safe(lambda: _resolve_expr(expr, scope))().map(
         lambda val: ("calc", val) if _is_calculated_measure(val) else None
@@ -419,16 +337,13 @@ def _classify_measure(fn_or_expr: Any, scope: Any) -> tuple[str, Any]:
     if isinstance(resolved, Success) and resolved.unwrap() is not None:
         return resolved.unwrap()
 
-    if locality is None and callable(expr):
-        table = getattr(scope, "tbl", None)
-        if table is None:
-            table = getattr(scope, "_tbl", None)
-        if table is not None:
-            inferred_locality, inferred_unnest = _infer_locality(expr, table)
-            locality = locality or inferred_locality
-            requires_unnest = requires_unnest or inferred_unnest
+    if not requires_unnest and callable(expr):
+        # All scopes (MeasureScope, ColumnScope) have tbl attribute
+        table = scope.tbl
+        inferred_unnest = _infer_unnest(expr, table)
+        requires_unnest = requires_unnest or inferred_unnest
 
-    return ("base", _make_base_measure(expr, description, locality, requires_unnest))
+    return ("base", _make_base_measure(expr, description, requires_unnest))
 
 
 def _build_json_definition(
@@ -474,11 +389,15 @@ class Dimension:
 class Measure:
     expr: Callable[[ir.Table], ir.Value] | Deferred
     description: str | None = None
-    locality: str | None = None  # Internal: "session", "hit", "product", etc.
     requires_unnest: tuple[str, ...] = ()  # Internal: Arrays that must be unnested
 
     def __call__(self, table: ir.Table) -> ir.Value:
         return self.expr.resolve(table) if isinstance(self.expr, Deferred) else self.expr(table)
+
+    @property
+    def locality(self) -> str | None:
+        """Derive locality from requires_unnest (most nested level)."""
+        return self.requires_unnest[-1] if self.requires_unnest else None
 
     def to_json(self) -> Mapping[str, Any]:
         base = {"description": self.description}
@@ -489,7 +408,7 @@ class Measure:
         return base
 
     def __hash__(self) -> int:
-        return hash((self.description, self.locality, self.requires_unnest))
+        return hash((self.description, self.requires_unnest))
 
 
 class SemanticTableOp(Relation):
@@ -600,6 +519,94 @@ class SemanticFilterOp(Relation):
         return base_tbl.filter(pred)
 
 
+def _classify_fields(
+    fields: tuple[str, ...],
+    dimensions: dict,
+    measures: dict,
+) -> tuple[list[str], list[str], list[str]]:
+    """Classify fields into dimensions, measures, and raw columns."""
+    dims = [f for f in fields if f in dimensions]
+    meas = [f for f in fields if f in measures]
+    raw = [f for f in fields if f not in dimensions and f not in measures]
+    return dims, meas, raw
+
+
+def _process_nested_access_marker(
+    marker: NestedAccessMarker,
+    name: str,
+    tbl: ir.Table,
+) -> tuple[ir.Table, ir.Value]:
+    """Process a NestedAccessMarker to unnest and build aggregation expression."""
+    unnested = tbl
+    for array_col in marker.array_path:
+        if array_col in unnested.columns:
+            unnested = unnested.unnest(array_col)
+
+    if marker.operation == "count":
+        return unnested, unnested.count().name(name)
+
+    # Build expression accessing nested fields
+    expr = getattr(unnested, marker.array_path[0])
+    for field_name in marker.field_path:
+        expr = getattr(expr, field_name)
+
+    # Apply aggregation
+    if marker.operation in ("sum", "mean", "min", "max", "nunique"):
+        agg_fn = getattr(expr, marker.operation)
+        return unnested, agg_fn().name(name)
+
+    raise ValueError(f"Unknown operation: {marker.operation}")
+
+
+def _evaluate_measures_with_unnesting(
+    measure_names: list[str],
+    measures: dict,
+    tbl: ir.Table,
+) -> dict:
+    """Evaluate measures and apply automatic unnesting if needed.
+
+    Returns dict with:
+        - table: potentially unnested table
+        - measure_exprs: list of evaluated measure expressions
+        - needs_unnesting: whether unnesting occurred
+    """
+    meas_exprs = []
+    current_tbl = tbl
+    needs_unnesting = False
+
+    for name in measure_names:
+        result = measures[name](tbl)
+
+        if isinstance(result, NestedAccessMarker):
+            current_tbl, meas_expr = _process_nested_access_marker(result, name, current_tbl)
+            meas_exprs.append(meas_expr)
+            needs_unnesting = True
+        else:
+            meas_exprs.append(result.name(name))
+
+    return {
+        "table": current_tbl,
+        "measure_exprs": meas_exprs,
+        "needs_unnesting": needs_unnesting,
+    }
+
+
+def _build_select_or_aggregate(
+    tbl: ir.Table,
+    dim_exprs: list,
+    meas_exprs: list,
+    raw_exprs: list,
+) -> ir.Table:
+    """Build appropriate select/aggregate based on what expressions exist."""
+    if meas_exprs and dim_exprs:
+        return tbl.group_by(dim_exprs).aggregate(meas_exprs)
+    if meas_exprs:
+        return tbl.aggregate(meas_exprs)
+    if dim_exprs or raw_exprs:
+        return tbl.select(dim_exprs + raw_exprs)
+    return tbl
+
+
 class SemanticProjectOp(Relation):
     source: Relation
     fields: tuple[str, ...]
@@ -619,8 +626,6 @@ class SemanticProjectOp(Relation):
         return Schema({k: v.dtype for k, v in self.values.items()})
 
     def to_ibis(self):
-        from .nested_access import NestedAccessMarker
-
         all_roots = _find_all_root_models(self.source)
         tbl = _to_ibis(self.source)
 
@@ -630,65 +635,26 @@ class SemanticProjectOp(Relation):
         merged_dimensions = _get_merged_fields(all_roots, "dimensions")
         merged_measures = _get_merged_fields(all_roots, "measures")
 
-        dims = [f for f in self.fields if f in merged_dimensions]
-        meas = [f for f in self.fields if f in merged_measures]
-        raw_fields = [
-            f for f in self.fields if f not in merged_dimensions and f not in merged_measures
-        ]
+        dims, meas, raw_fields = _classify_fields(self.fields, merged_dimensions, merged_measures)
 
-        dim_exprs = [merged_dimensions[name](tbl).name(name) for name in dims]
+        # Evaluate measures and handle automatic unnesting
+        meas_result = _evaluate_measures_with_unnesting(meas, merged_measures, tbl)
 
-        # Evaluate measures, checking for NestedAccessMarkers (experimental feature)
-        meas_exprs = []
-        unnested_tbl = tbl
-        needs_unnesting = False
-
-        for name in meas:
-            result = merged_measures[name](tbl)
-            if isinstance(result, NestedAccessMarker):
-                # Apply automatic unnesting
-                for array_col in result.array_path:
-                    if array_col in unnested_tbl.columns:
-                        unnested_tbl = unnested_tbl.unnest(array_col)
-                        needs_unnesting = True
-
-                # Build expression accessing nested fields
-                if result.field_path:
-                    expr = getattr(unnested_tbl, result.array_path[0])
-                    for field in result.field_path:
-                        expr = getattr(expr, field)
-                else:
-                    expr = unnested_tbl
-
-                # Apply aggregation
-                if result.operation == "count":
-                    meas_exprs.append(unnested_tbl.count().name(name))
-                elif result.operation in ("sum", "mean", "min", "max", "nunique"):
-                    agg_fn = getattr(expr, result.operation)
-                    meas_exprs.append(agg_fn().name(name))
-                else:
-                    raise ValueError(f"Unknown operation: {result.operation}")
-            else:
-                meas_exprs.append(result.name(name))
-
-        # Use unnested table if needed
-        active_tbl = unnested_tbl if needs_unnesting else tbl
+        active_tbl = meas_result["table"]
+        meas_exprs = meas_result["measure_exprs"]
+        needs_unnesting = meas_result["needs_unnesting"]
 
         # Re-evaluate dimensions on unnested table if needed
-        if needs_unnesting and dim_exprs:
-            dim_exprs = [merged_dimensions[name](active_tbl).name(name) for name in dims]
-
-        raw_exprs = [getattr(active_tbl, name) for name in raw_fields if hasattr(active_tbl, name)]
-
-        return (
-            active_tbl.group_by(dim_exprs).aggregate(meas_exprs)
-            if meas_exprs and dim_exprs
-            else active_tbl.aggregate(meas_exprs)
-            if meas_exprs
-            else active_tbl.select(dim_exprs + raw_exprs)
-            if dim_exprs or raw_exprs
-            else active_tbl
+        dim_exprs = (
+            [merged_dimensions[name](active_tbl).name(name) for name in dims]
+            if needs_unnesting
+            else [merged_dimensions[name](tbl).name(name) for name in dims]
         )
+
+        # Get raw columns that still exist after unnesting
+        raw_exprs = [getattr(active_tbl, name) for name in raw_fields if name in active_tbl.columns]
+
+        return _build_select_or_aggregate(active_tbl, dim_exprs, meas_exprs, raw_exprs)
 
 
 class SemanticGroupByOp(Relation):
@@ -708,6 +674,150 @@ class SemanticGroupByOp(Relation):
 
     def to_ibis(self):
         return _to_ibis(self.source)
+
+
+@frozen
+class _MeasureSpec:
+    name: str
+    kind: str  # 'agg' or 'calc'
+    value: Any
+
+
+@frozen
+class _AggregationPlan:
+    agg_specs: FrozenDict[str, Callable]
+    calc_specs: FrozenDict[str, Any]
+    requested_measures: tuple[str, ...]
+    group_by_cols: tuple[str, ...]
+
+
+def _resolve_aggregation_exprs(
+    expr: Any,
+    merged_base_measures: dict,
+    merged_calc_measures: dict,
+    tbl: ir.Table,
+) -> Any:
+    @curry
+    def find_in_calc_measures(expr, calc_measures):
+        for calc_name, calc_expr in calc_measures.items():
+            if isinstance(calc_expr, AggregationExpr) and (
+                calc_expr.column == expr.column and calc_expr.operation == expr.operation
+            ):
+                return Some(calc_name)
+        return Nothing
+
+    def resolve_aggregation(agg_expr):
+        matched = _find_matching_measure(agg_expr, merged_base_measures, tbl)
+        return matched.map(MeasureRef).value_or(
+            find_in_calc_measures(agg_expr, merged_calc_measures).map(MeasureRef).value_or(agg_expr)
+        )
+
+    if isinstance(expr, AggregationExpr):
+        return resolve_aggregation(expr)
+    elif isinstance(expr, BinOp):
+        return BinOp(
+            op=expr.op,
+            left=_resolve_aggregation_exprs(
+                expr.left, merged_base_measures, merged_calc_measures, tbl
+            ),
+            right=_resolve_aggregation_exprs(
+                expr.right, merged_base_measures, merged_calc_measures, tbl
+            ),
+        )
+    elif isinstance(expr, AllOf) and isinstance(expr.ref, AggregationExpr):
+        return AllOf(resolve_aggregation(expr.ref))
+    else:
+        return expr
+
+
+def _create_measure_spec(
+    name: str,
+    fn_wrapped: Any,
+    scope: Any,
+    is_post_agg: bool,
+    merged_base_measures: dict,
+    merged_calc_measures: dict,
+    tbl: ir.Table,
+) -> _MeasureSpec:
+    fn = _unwrap(fn_wrapped)
+    val = _resolve_expr(fn, scope)
+    val = _resolve_aggregation_exprs(val, merged_base_measures, merged_calc_measures, tbl)
+
+    if is_post_agg:
+        return _MeasureSpec(name=name, kind="agg", value=fn)
+
+    if isinstance(val, MeasureRef):
+        ref_name = val.name
+        if ref_name in merged_calc_measures:
+            calc_expr = merged_calc_measures[ref_name]
+            resolved = _resolve_aggregation_exprs(
+                calc_expr, merged_base_measures, merged_calc_measures, tbl
+            )
+            return _MeasureSpec(name=name, kind="calc", value=resolved)
+        elif ref_name in merged_base_measures:
+            return _MeasureSpec(name=name, kind="agg", value=merged_base_measures[ref_name])
+        else:
+            return _MeasureSpec(name=name, kind="calc", value=val)
+
+    if isinstance(val, AllOf | BinOp | int | float):
+        return _MeasureSpec(name=name, kind="calc", value=val)
+
+    return _MeasureSpec(name=name, kind="agg", value=fn)
+
+
+def _make_agg_callable(measure: Any) -> Callable:
+    if isinstance(measure, Deferred):
+        return lambda t: measure.resolve(ColumnScope(_tbl=t))
+    elif callable(measure):
+        return lambda t: measure(ColumnScope(_tbl=t))
+    else:
+        return lambda t: measure(t)
+
+
+def _collect_all_measure_refs(calc_exprs) -> frozenset[str]:
+    all_refs = set()
+    for expr in calc_exprs:
+        _collect_measure_refs(expr, all_refs)
+    return frozenset(all_refs)
+
+
+def _build_aggregation_plan(
+    aggs: dict,
+    keys: tuple,
+    scope: Any,
+    is_post_agg: bool,
+    merged_base_measures: dict,
+    merged_calc_measures: dict,
+    tbl: ir.Table,
+) -> _AggregationPlan:
+    specs = [
+        _create_measure_spec(
+            name, fn, scope, is_post_agg, merged_base_measures, merged_calc_measures, tbl
+        )
+        for name, fn in aggs.items()
+    ]
+
+    agg_specs_list = [s for s in specs if s.kind == "agg"]
+    calc_specs_list = [s for s in specs if s.kind == "calc"]
+
+    agg_specs = FrozenDict({s.name: _make_agg_callable(s.value) for s in agg_specs_list})
+    calc_specs = FrozenDict({s.name: s.value for s in calc_specs_list})
+
+    referenced = _collect_all_measure_refs(calc_specs.values())
+    additional_aggs = {
+        ref: _make_agg_callable(merged_base_measures[ref])
+        for ref in referenced
+        if ref not in agg_specs and ref in merged_base_measures
+    }
+
+    final_agg_specs = FrozenDict({**agg_specs, **additional_aggs})
+
+    return _AggregationPlan(
+        agg_specs=final_agg_specs,
+        calc_specs=calc_specs,
+        requested_measures=tuple(aggs.keys()),
+        group_by_cols=tuple(keys),
+    )
 
 
 class SemanticAggregateOp(Relation):
@@ -738,16 +848,13 @@ class SemanticAggregateOp(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        # Find all root models to handle joined tables properly
         all_roots = _find_all_root_models(self.source)
 
-        # Use centralized prefixing logic
         merged_dimensions = _merge_fields_with_prefixing(
             all_roots,
             lambda root: root.get_dimensions(),
         )
 
-        # Use the actual source table (which could be a join) as base_tbl
         base_tbl = self.source.to_expr()
 
         vals: dict[str, Any] = {}
@@ -779,26 +886,22 @@ class SemanticAggregateOp(Relation):
         Returns:
             Dict mapping table names to sets of required column names.
         """
-        from . import projection_utils
-
         all_roots = _find_all_root_models(self.source)
         merged_dimensions = _get_merged_fields(all_roots, "dimensions")
 
-        # Get base table for column extraction
         base_tbl = (
             self.source.to_expr() if hasattr(self.source, "to_expr") else _to_ibis(self.source)
         )
 
-        # Get table names
         table_names = []
         for root in all_roots:
             if root.name:
                 table_names.append(root.name)
-            elif hasattr(root, "_source_join") and root._source_join is not None:
+            elif root._source_join is not None:
+                # All roots are SemanticTableOp with _source_join attribute
                 join_roots = _find_all_root_models(root._source_join)
                 table_names.extend([r.name for r in join_roots if r.name])
 
-        # Extract requirements from keys using TableRequirements
         key_requirements = projection_utils.extract_requirements_from_keys(
             keys=list(self.keys),
             dimensions=merged_dimensions,
@@ -806,59 +909,50 @@ class SemanticAggregateOp(Relation):
             table_names=table_names,
         )
 
-        # Extract requirements from measures using TableRequirements
         measure_requirements = projection_utils.extract_requirements_from_measures(
             measures={name: _unwrap(fn) for name, fn in self.aggs.items()},
             table=base_tbl,
             table_names=table_names,
         )
 
-        # Merge requirements (immutable operation)
         combined = key_requirements.merge(measure_requirements)
 
-        # Merge with source requirements if available
         if hasattr(self.source, "required_columns"):
             source_reqs = projection_utils.TableRequirements.from_dict(self.source.required_columns)
             combined = combined.merge(source_reqs)
 
-        # Convert to mutable dict for API compatibility
         return combined.to_dict()
 
     def to_ibis(self):
-        from .compile_all import compile_grouped_with_all
-        from .measure_scope import AllOf, BinOp, ColumnScope, MeasureRef, MeasureScope
-
         all_roots = _find_all_root_models(self.source)
 
-        # Check if there's a join anywhere in the operation tree
         def find_join_in_tree(node):
-            """Find a SemanticJoinOp in the operation tree."""
+            """Find a SemanticJoinOp in the operation tree.
+
+            All Relation subclasses have source attribute except leaf operations.
+            """
             if isinstance(node, SemanticJoinOp):
                 return node
-            if hasattr(node, "source") and node.source is not None:
+            if isinstance(node, SemanticTableOp):
+                # Leaf operations - no source to traverse
+                return None
+            if node.source is not None:
                 return find_join_in_tree(node.source)
             return None
 
-        # Apply projection pushdown if there's a join in the tree
         join_op = find_join_in_tree(self.source)
 
-        # Also check if a grouped table wraps a join
         if join_op is None and isinstance(self.source, SemanticGroupByOp):
             grouped_source = self.source.source
-            if isinstance(grouped_source, SemanticTableOp) and hasattr(
-                grouped_source, "_source_join"
-            ):
+            if isinstance(grouped_source, SemanticTableOp):
+                # SemanticTableOp always has _source_join attribute
                 join_op = grouped_source._source_join
 
         if join_op is not None:
-            # Use intrinsic required_columns property from this aggregate's group_by keys and measures
-            # Pass to join, which will use its own required_columns property and merge with parent
             tbl = join_op.to_ibis(parent_requirements=self.required_columns)
         else:
             tbl = _to_ibis(self.source)
 
-        # Check if we're aggregating after a prior aggregation (post-aggregation context)
-        # This happens when SemanticMutateOp comes after a SemanticAggregateOp
         def has_prior_aggregate(node):
             """Recursively check if there's a SemanticAggregateOp before any mutate."""
             if isinstance(node, SemanticAggregateOp):
@@ -867,6 +961,8 @@ class SemanticAggregateOp(Relation):
                 return has_prior_aggregate(node.source)
             if isinstance(node, SemanticGroupByOp):
                 return has_prior_aggregate(node.source)
+            if isinstance(node, SemanticTableOp | SemanticJoinOp):
+                return False
             if hasattr(node, "source"):
                 return has_prior_aggregate(node.source)
             return False
@@ -880,127 +976,35 @@ class SemanticAggregateOp(Relation):
         dim_mutations = {k: merged_dimensions[k](tbl) for k in self.keys if k in merged_dimensions}
         tbl = tbl.mutate(**dim_mutations) if dim_mutations else tbl
 
-        # Use ColumnScope for post-aggregation, MeasureScope otherwise
-        if is_post_agg:
-            scope = ColumnScope(_tbl=tbl)
-        else:
-            all_measure_names = list(merged_base_measures.keys()) + list(
-                merged_calc_measures.keys(),
-            )
-            scope = MeasureScope(_tbl=tbl, _known=all_measure_names)
-
-        def _resolve_aggregation_exprs(expr):
-            """Recursively resolve AggregationExpr to MeasureRef if a matching measure exists.
-
-            Uses functional composition with Option monads for cleaner control flow.
-            """
-            from toolz import curry
-
-            from .measure_scope import AggregationExpr, BinOp
-
-            @curry
-            def find_in_calc_measures(expr, calc_measures):
-                """Find matching AggregationExpr in calc measures."""
-                from returns.maybe import Nothing, Some
-
-                for calc_name, calc_expr in calc_measures.items():
-                    if isinstance(calc_expr, AggregationExpr) and (
-                        calc_expr.column == expr.column and calc_expr.operation == expr.operation
-                    ):
-                        return Some(calc_name)
-                return Nothing
-
-            def resolve_aggregation(agg_expr):
-                """Resolve an AggregationExpr to a MeasureRef or keep as-is."""
-                # Try base measures first, then calc measures
-                matched = _find_matching_measure(agg_expr, merged_base_measures, tbl)
-
-                return matched.map(MeasureRef).value_or(
-                    find_in_calc_measures(agg_expr, merged_calc_measures)
-                    .map(MeasureRef)
-                    .value_or(agg_expr)
-                )
-
-            if isinstance(expr, AggregationExpr):
-                return resolve_aggregation(expr)
-            elif isinstance(expr, BinOp):
-                # Recursively resolve in binary operations
-                return BinOp(
-                    op=expr.op,
-                    left=_resolve_aggregation_exprs(expr.left),
-                    right=_resolve_aggregation_exprs(expr.right),
-                )
-            elif isinstance(expr, AllOf):
-                # Recursively resolve the reference
-                if isinstance(expr.ref, AggregationExpr):
-                    resolved_ref = resolve_aggregation(expr.ref)
-                    return AllOf(resolved_ref)
-                return expr
-            else:
-                return expr
-
-        agg_specs = {}
-        calc_specs = {}
-
-        for name, fn_wrapped in self.aggs.items():
-            fn = _unwrap(fn_wrapped)
-            val = _resolve_expr(fn, scope)
-
-            # Try to resolve any AggregationExpr to existing measures
-            val = _resolve_aggregation_exprs(val)
-
-            # In post-aggregation context, treat all expressions as regular aggregations
-            if is_post_agg:
-                agg_specs[name] = lambda t, f=fn: (
-                    f.resolve(ColumnScope(_tbl=t))
-                    if isinstance(f, Deferred)
-                    else f(ColumnScope(_tbl=t))
-                )
-            elif isinstance(val, MeasureRef):
-                ref_name = val.name
-                if ref_name in merged_calc_measures:
-                    # Resolve any AggregationExpr in the calc measure
-                    calc_expr = merged_calc_measures[ref_name]
-                    calc_specs[name] = _resolve_aggregation_exprs(calc_expr)
-                elif ref_name in merged_base_measures:
-                    measure_obj = merged_base_measures[ref_name]
-                    agg_specs[name] = lambda t, m=measure_obj: m(t)
-                else:
-                    calc_specs[name] = val
-            elif isinstance(val, AllOf | BinOp | int | float):
-                calc_specs[name] = val
-            else:
-                agg_specs[name] = lambda t, f=fn: (
-                    f.resolve(ColumnScope(_tbl=t))
-                    if isinstance(f, Deferred)
-                    else f(ColumnScope(_tbl=t))
-                )
-
-        referenced_measures = set()
-        for calc_expr in calc_specs.values():
-            _collect_measure_refs(calc_expr, referenced_measures)
-
-        for ref_name in referenced_measures:
-            if ref_name not in agg_specs and ref_name in merged_base_measures:
-                measure_obj = merged_base_measures[ref_name]
-                agg_specs[ref_name] = lambda t, m=measure_obj: m(t)
-
-        requested_measure_names = list(self.aggs.keys())
-        by_cols = list(self.keys)
-
-        return (
-            compile_grouped_with_all(
-                tbl,
-                by_cols,
-                agg_specs,
-                calc_specs,
-                requested_measures=requested_measure_names,
-            )
-            if calc_specs or by_cols
-            else tbl.aggregate(
-                {name: agg_fn(tbl) for name, agg_fn in agg_specs.items()},
+        scope = (
+            ColumnScope(_tbl=tbl)
+            if is_post_agg
+            else MeasureScope(
+                _tbl=tbl,
+                _known=list(merged_base_measures.keys()) + list(merged_calc_measures.keys()),
             )
         )
+
+        plan = _build_aggregation_plan(
+            aggs=self.aggs,
+            keys=self.keys,
+            scope=scope,
+            is_post_agg=is_post_agg,
+            merged_base_measures=merged_base_measures,
+            merged_calc_measures=merged_calc_measures,
+            tbl=tbl,
+        )
+
+        if plan.calc_specs or plan.group_by_cols:
+            return compile_grouped_with_all(
+                tbl,
+                list(plan.group_by_cols),
+                dict(plan.agg_specs),
+                dict(plan.calc_specs),
+                requested_measures=list(plan.requested_measures),
+            )
+        else:
+            return tbl.aggregate({name: fn(tbl) for name, fn in plan.agg_specs.items()})
 
     def __repr__(self) -> str:
         keys_str = ", ".join(repr(k) for k in self.keys)
@@ -1047,48 +1051,7 @@ class SemanticMutateOp(Relation):
     def schema(self) -> Schema:
         return self.source.schema
 
-    def get_required_columns(self) -> dict[str, set[str]]:
-        """Extract column requirements from mutate operations."""
-        from . import projection_utils
-
-        all_roots = _find_all_root_models(self.source)
-        table_names = [root.name for root in all_roots if root.name]
-
-        base_tbl = (
-            self.source.to_expr() if hasattr(self.source, "to_expr") else _to_ibis(self.source)
-        )
-
-        from returns.result import safe
-
-        def process_mutation(
-            reqs: projection_utils.TableRequirements, fn_wrapped: Any
-        ) -> projection_utils.TableRequirements:
-            """Process single mutation, extracting column requirements."""
-            return (
-                safe(lambda: _unwrap(fn_wrapped))()
-                .bind(lambda fn: projection_utils.extract_columns_from_callable(fn, base_tbl))
-                .map(
-                    lambda cols: projection_utils._apply_requirements_to_tables(
-                        reqs, table_names, cols
-                    )
-                    if cols
-                    else reqs
-                )
-                .value_or(
-                    projection_utils.include_all_columns_for_table(reqs, base_tbl, table_names[0])
-                    if table_names
-                    else reqs
-                )
-            )
-
-        requirements = reduce(
-            process_mutation, self.post.values(), projection_utils.TableRequirements.empty()
-        )
-        return requirements.to_dict()
-
     def to_ibis(self):
-        from .measure_scope import MeasureScope
-
         agg_tbl = _to_ibis(self.source)
 
         # Process mutations incrementally so each can reference previous ones
@@ -1144,7 +1107,8 @@ class SemanticUnnestOp(Relation):
             col_expr = unnested_tbl[column_name]
             col_type = col_expr.type()
 
-            if hasattr(col_type, "fields") and col_type.fields:
+            # Only Struct types have fields to unpack
+            if isinstance(col_type, dt.Struct) and col_type.fields:
                 struct_fields = build_struct_fields(col_expr, col_type)
                 return unnested_tbl.select(unnested_tbl, **struct_fields)
 
@@ -1263,8 +1227,6 @@ class SemanticJoinOp(Relation):
         )
 
     def with_measures(self, **meas) -> SemanticTable:
-        from .measure_scope import MeasureScope
-
         joined_tbl = self.to_ibis()
         all_known = (
             list(self.get_measures().keys())
@@ -1308,7 +1270,7 @@ class SemanticJoinOp(Relation):
     ) -> SemanticJoinOp:
         return SemanticJoinOp(
             left=self,
-            right=_unwrap_semantic_table(other),
+            right=other.op(),
             on=on,
             how=how,
         )
@@ -1321,7 +1283,7 @@ class SemanticJoinOp(Relation):
     ) -> SemanticJoinOp:
         return SemanticJoinOp(
             left=self,
-            right=_unwrap_semantic_table(other),
+            right=other.op(),
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
             how="inner",
         )
@@ -1334,7 +1296,7 @@ class SemanticJoinOp(Relation):
     ) -> SemanticJoinOp:
         return SemanticJoinOp(
             left=self,
-            right=_unwrap_semantic_table(other),
+            right=other.op(),
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
             how="left",
         )
@@ -1352,11 +1314,7 @@ class SemanticJoinOp(Relation):
 
         # Handle ibis selectors
         processed_selector = selector
-        if (
-            selector is not None
-            and hasattr(selector, "__class__")
-            and "ibis.selectors" in str(type(selector).__module__)
-        ):
+        if selector is not None and "ibis.selectors" in str(type(selector).__module__):
             # Handle s.all() - select all columns
             if type(selector).__name__ == "AllColumns":
                 processed_selector = None
@@ -1377,14 +1335,14 @@ class SemanticJoinOp(Relation):
         if isinstance(self.left, SemanticJoinOp):
             tables |= self.left._collect_leaf_table_names()
         else:
-            left_name = self.left.name if hasattr(self.left, "name") else None
+            left_name = getattr(self.left, "name", None)
             if left_name:
                 tables.add(left_name)
 
         if isinstance(self.right, SemanticJoinOp):
             tables |= self.right._collect_leaf_table_names()
         else:
-            right_name = self.right.name if hasattr(self.right, "name") else None
+            right_name = getattr(self.right, "name", None)
             if right_name:
                 tables.add(right_name)
 
@@ -1417,8 +1375,6 @@ class SemanticJoinOp(Relation):
         Returns:
             Dict mapping table names to sets of required column names.
         """
-        from . import projection_utils
-
         # Start with parent requirements using immutable TableRequirements
         requirements = projection_utils.TableRequirements.from_dict(
             parent_requirements if parent_requirements else {}
@@ -1431,7 +1387,7 @@ class SemanticJoinOp(Relation):
         def collect_leaf_tables(node):
             if isinstance(node, SemanticJoinOp):
                 return collect_leaf_tables(node.left) + collect_leaf_tables(node.right)
-            table_name = node.name if hasattr(node, "name") else None
+            table_name = getattr(node, "name", None)
             return [(table_name, _to_ibis(node))] if table_name else []
 
         leaf_tables = collect_leaf_tables(self)
@@ -1455,7 +1411,8 @@ class SemanticJoinOp(Relation):
         for table_name, table_ibis in leaf_tables:
             if table_name in measures_by_table:
                 for measure_obj in measures_by_table[table_name].values():
-                    measure_fn = measure_obj.expr if hasattr(measure_obj, "expr") else measure_obj
+                    # All measure_obj values are Measure instances with expr attribute
+                    measure_fn = measure_obj.expr
                     if callable(measure_fn):
                         cols = projection_utils.extract_columns_from_callable_safe(
                             measure_fn, table_ibis
@@ -1488,7 +1445,7 @@ class SemanticJoinOp(Relation):
                             if leaf_table and col in _to_ibis(leaf_table).columns:
                                 requirements = requirements.add_columns(leaf_name, {col})
                 else:
-                    left_name = self.left.name if hasattr(self.left, "name") else None
+                    left_name = getattr(self.left, "name", None)
                     if left_name:
                         requirements = requirements.add_columns(
                             left_name, join_keys_result.left_columns
@@ -1501,7 +1458,7 @@ class SemanticJoinOp(Relation):
                             if leaf_table and col in _to_ibis(leaf_table).columns:
                                 requirements = requirements.add_columns(leaf_name, {col})
                 else:
-                    right_name = self.right.name if hasattr(self.right, "name") else None
+                    right_name = getattr(self.right, "name", None)
                     if right_name:
                         requirements = requirements.add_columns(
                             right_name, join_keys_result.right_columns
@@ -1516,7 +1473,7 @@ class SemanticJoinOp(Relation):
             if result is not None:
                 return result
         else:
-            left_name = join_op.left.name if hasattr(join_op.left, "name") else None
+            left_name = getattr(join_op.left, "name", None)
             if left_name == target_name:
                 return join_op.left
 
@@ -1525,7 +1482,7 @@ class SemanticJoinOp(Relation):
             if result is not None:
                 return result
         else:
-            right_name = join_op.right.name if hasattr(join_op.right, "name") else None
+            right_name = getattr(join_op.right, "name", None)
             if right_name == target_name:
                 return join_op.right
 
@@ -1572,7 +1529,7 @@ class SemanticJoinOp(Relation):
                 # Add join keys to the appropriate leaf tables
                 if not isinstance(self.left, SemanticJoinOp):
                     # Left is a leaf table
-                    left_name = self.left.name if hasattr(self.left, "name") else None
+                    left_name = getattr(self.left, "name", None)
                     if left_name:
                         existing = join_columns.get(left_name, set())
                         join_columns[left_name] = existing | join_keys.left_columns
@@ -1595,7 +1552,7 @@ class SemanticJoinOp(Relation):
 
                 if not isinstance(self.right, SemanticJoinOp):
                     # Right is a leaf table
-                    right_name = self.right.name if hasattr(self.right, "name") else None
+                    right_name = getattr(self.right, "name", None)
                     if right_name:
                         existing = join_columns.get(right_name, set())
                         join_columns[right_name] = existing | join_keys.right_columns
@@ -1680,7 +1637,7 @@ class SemanticJoinOp(Relation):
                                     augmented_requirements[leaf_name] = existing | {col}
                 else:
                     # Left is a leaf table
-                    left_name = self.left.name if hasattr(self.left, "name") else None
+                    left_name = getattr(self.left, "name", None)
                     if left_name:
                         existing = augmented_requirements.get(left_name, set())
                         augmented_requirements[left_name] = existing | join_keys_result.left_columns
@@ -1697,7 +1654,7 @@ class SemanticJoinOp(Relation):
                                     augmented_requirements[leaf_name] = existing | {col}
                 else:
                     # Right is a leaf table
-                    right_name = self.right.name if hasattr(self.right, "name") else None
+                    right_name = getattr(self.right, "name", None)
                     if right_name:
                         existing = augmented_requirements.get(right_name, set())
                         augmented_requirements[right_name] = (
@@ -1709,7 +1666,7 @@ class SemanticJoinOp(Relation):
                     left_tbl = self.left.to_ibis(parent_requirements=augmented_requirements)
                 else:
                     left_tbl = _to_ibis(self.left)
-                    left_name = self.left.name if hasattr(self.left, "name") else None
+                    left_name = getattr(self.left, "name", None)
                     if left_name and left_name in augmented_requirements:
                         left_cols = augmented_requirements[left_name]
                         if left_cols and left_cols != set(left_tbl.columns):
@@ -1721,7 +1678,7 @@ class SemanticJoinOp(Relation):
                     right_tbl = self.right.to_ibis(parent_requirements=augmented_requirements)
                 else:
                     right_tbl = _to_ibis(self.right)
-                    right_name = self.right.name if hasattr(self.right, "name") else None
+                    right_name = getattr(self.right, "name", None)
                     if right_name and right_name in augmented_requirements:
                         right_cols = augmented_requirements[right_name]
                         if right_cols and right_cols != set(right_tbl.columns):
@@ -1754,8 +1711,6 @@ class SemanticJoinOp(Relation):
         return self.to_ibis().compile(**kwargs)
 
     def sql(self, **kwargs):
-        import ibis
-
         return ibis.to_sql(self.to_ibis(), **kwargs)
 
     def __getitem__(self, key):
@@ -1823,13 +1778,8 @@ class SemanticOrderByOp(Relation):
 
         def resolve_order_key(key):
             if isinstance(key, str):
-                return (
-                    tbl[key]
-                    if key in tbl.columns
-                    else getattr(tbl, key)
-                    if hasattr(tbl, key)
-                    else key
-                )
+                # First try column access, then fallback to attribute (for computed columns)
+                return tbl[key] if key in tbl.columns else getattr(tbl, key, key)
             elif isinstance(key, _CallableWrapper):
                 unwrapped = _unwrap(key)
                 return _resolve_expr(unwrapped, tbl)
@@ -1892,8 +1842,6 @@ def _get_weight_expr(
     all_roots: list,
     is_string: bool,
 ) -> Any:
-    import ibis
-
     if not by_measure:
         return ibis._.count()
 
@@ -1911,8 +1859,6 @@ def _build_string_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
-    import ibis
-
     return (
         base_tbl.group_by(field_expr.name("value"))
         .aggregate(weight=weight_expr)
@@ -1934,8 +1880,6 @@ def _build_numeric_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
-    import ibis
-
     return (
         base_tbl.select(field_expr.name("value"))
         .filter(ibis._["value"].notnull())
@@ -1974,8 +1918,6 @@ def _get_fields_to_index(
     merged_dimensions: dict,
     base_tbl: ir.Table,
 ) -> tuple[str, ...]:
-    import ibis.selectors as s
-
     # Handle None as "all fields"
     if selector is None:
         selector = s.all()
@@ -2034,8 +1976,6 @@ class SemanticIndexOp(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        import ibis
-
         return FrozenOrderedDict(
             {
                 "fieldName": ibis.literal("").op(),
@@ -2059,8 +1999,6 @@ class SemanticIndexOp(Relation):
         )
 
     def to_ibis(self):
-        import ibis
-
         all_roots = _find_all_root_models(self.source)
         base_tbl = (
             _to_ibis(self.source).limit(self.sample) if self.sample else _to_ibis(self.source)
@@ -2148,8 +2086,6 @@ class SemanticIndexOp(Relation):
         return self.to_ibis().compile(**kwargs)
 
     def sql(self, **kwargs):
-        import ibis
-
         return ibis.to_sql(self.to_ibis(), **kwargs)
 
     def __getitem__(self, key):
@@ -2221,8 +2157,6 @@ def _update_measure_refs_in_calc(expr, prefix_map: dict[str, str]):
     Returns:
         Updated expression with prefixed MeasureRef names
     """
-    from .measure_scope import AllOf, BinOp, MeasureRef
-
     if isinstance(expr, MeasureRef):
         # Update the measure reference name if it's in the map
         new_name = prefix_map.get(expr.name, expr.name)
@@ -2572,10 +2506,6 @@ def _extract_requirements_from_keys(
     table: ir.Table,
 ) -> TableColumnRequirements:
     """Extract column requirements from group-by keys using graph traversal."""
-    from ibis.expr import operations as ibis_ops
-
-    from .graph_utils import walk_nodes
-
     requirements = TableColumnRequirements()
 
     for key in keys:
@@ -2628,10 +2558,6 @@ def _extract_requirements_from_measures(
     table: ir.Table,
 ) -> TableColumnRequirements:
     """Extract column requirements from measure aggregations using graph traversal."""
-    from ibis.expr import operations as ibis_ops
-
-    from .graph_utils import walk_nodes
-
     requirements = TableColumnRequirements()
 
     for measure_name, measure_fn in aggs.items():

@@ -129,7 +129,7 @@ def include_all_columns_for_table(
     return requirements.add_columns(table_name, all_cols)
 
 
-def _apply_requirements_to_tables(
+def apply_requirements_to_tables(
     requirements: TableRequirements,
     table_names: list[str],
     cols: frozenset[str],
@@ -180,9 +180,7 @@ def extract_requirements_from_measures(
         return (
             extract_columns_from_callable(measure_fn, table)
             .map(
-                lambda cols: _apply_requirements_to_tables(reqs, table_names, cols)
-                if cols
-                else reqs
+                lambda cols: apply_requirements_to_tables(reqs, table_names, cols) if cols else reqs
             )
             .value_or(reqs)
         )
@@ -212,7 +210,7 @@ def _extract_requirement_for_key(
         if isinstance(result, Success):
             cols = result.unwrap() & available_cols
             if cols:
-                return _apply_requirements_to_tables(current_reqs, table_names, cols)
+                return apply_requirements_to_tables(current_reqs, table_names, cols)
         return current_reqs
 
     # If not a dimension and we have a table prefix, assume col_name is a direct column reference
@@ -221,7 +219,7 @@ def _extract_requirement_for_key(
 
     # Check if key is directly available as a column
     if key in available_cols:
-        return _apply_requirements_to_tables(current_reqs, table_names, frozenset([key]))
+        return apply_requirements_to_tables(current_reqs, table_names, frozenset([key]))
 
     return current_reqs
 

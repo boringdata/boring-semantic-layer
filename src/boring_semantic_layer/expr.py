@@ -689,11 +689,11 @@ class SemanticAggregate(SemanticTable):
         how: str = "inner",
     ) -> SemanticJoinOp:
         """Join with another semantic table."""
-        from .ops import SemanticJoinOp, _unwrap_semantic_table
+        from .ops import SemanticJoinOp
 
         return SemanticJoinOp(
             left=self.op(),
-            right=_unwrap_semantic_table(other),
+            right=other.op(),
             on=on,
             how=how,
         )
@@ -705,11 +705,11 @@ class SemanticAggregate(SemanticTable):
         right_on: str,
     ) -> SemanticJoinOp:
         """Join with a one-to-one relationship."""
-        from .ops import SemanticJoinOp, _unwrap_semantic_table
+        from .ops import SemanticJoinOp
 
         return SemanticJoinOp(
             left=self.op(),
-            right=_unwrap_semantic_table(other),
+            right=other.op(),
             on=lambda left, right: left[left_on] == right[right_on],
             how="inner",
         )
@@ -721,11 +721,11 @@ class SemanticAggregate(SemanticTable):
         right_on: str,
     ) -> SemanticJoinOp:
         """Join with a one-to-many relationship."""
-        from .ops import SemanticJoinOp, _unwrap_semantic_table
+        from .ops import SemanticJoinOp
 
         return SemanticJoinOp(
             left=self.op(),
-            right=_unwrap_semantic_table(other),
+            right=other.op(),
             on=lambda left, right: left[left_on] == right[right_on],
             how="left",
         )
