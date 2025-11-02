@@ -280,11 +280,27 @@ def _prepare_plotly_data_and_params(query_expr, chart_type: str) -> tuple:
     measures = list(query_expr.measures)
     time_dimension = query_expr.model.time_dimension
 
+    # Workaround for Plotly/Kaleido datetime rendering bug:
+    # Convert datetime columns to ISO format strings to ensure proper rendering in PNG/SVG exports
+    # The interactive HTML/JSON outputs work fine, but static image exports have issues with datetime64
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].dt.strftime("%Y-%m-%d %H:%M:%S")
+            # If all times are midnight, strip the time part for cleaner labels
+            if df[col].str.endswith(" 00:00:00").all():
+                df[col] = df[col].str.replace(" 00:00:00", "")
+
     # Handle data sorting for line charts to avoid zigzag connections
     if chart_type == "line" and dimensions:
         if time_dimension and time_dimension in dimensions:
             # Sort by time dimension for temporal data
-            df = df.sort_values(by=time_dimension)
+            # If there are multiple dimensions, sort by all of them to ensure
+            # proper line ordering (e.g., first by time, then by category)
+            sort_cols = [time_dimension]
+            non_time_dims = [d for d in dimensions if d != time_dimension]
+            if non_time_dims:
+                sort_cols.extend(non_time_dims)
+            df = df.sort_values(by=sort_cols)
         elif query_expr.order_by:
             # Query already applied order_by, but when switching chart types
             # we might need to re-sort for proper line connections
@@ -392,14 +408,20 @@ def chart(
     """
     from .ops import _find_all_root_models, _get_merged_fields
 
-    # Get dimensions and measures
-    dimensions = list(semantic_aggregate.keys)
-    measures = list(semantic_aggregate.aggs.keys())
+    # Extract dimensions and measures from the operation chain
+    # The semantic_aggregate might be wrapped by limit/order_by/mutate operations,
+    # so walk back to find the SemanticAggregateOp (has both keys and aggs).
+    aggregate_op = semantic_aggregate.op()
+    while hasattr(aggregate_op, "source") and not hasattr(aggregate_op, "aggs"):
+        aggregate_op = aggregate_op.source
+
+    dimensions = list(aggregate_op.keys)
+    measures = list(aggregate_op.aggs.keys())
 
     # Try to detect time dimension from source
     time_dimension = None
     time_grain = None
-    all_roots = _find_all_root_models(semantic_aggregate.source)
+    all_roots = _find_all_root_models(aggregate_op.source)
     if all_roots:
         dims_dict = _get_merged_fields(all_roots, "dimensions")
         for dim_name in dimensions:
@@ -412,28 +434,9 @@ def chart(
     if backend == "altair":
         import altair as alt
 
-        from .expr import SemanticAggregate
-
-        # Execute query to get data
-        # If semantic_aggregate is an Op, wrap it in a SemanticAggregate expression
-        if (
-            hasattr(semantic_aggregate, "keys")
-            and hasattr(semantic_aggregate, "aggs")
-            and hasattr(semantic_aggregate, "source")
-        ):
-            # It's a SemanticAggregateOp, wrap it properly
-            semantic_aggregate_expr = SemanticAggregate(
-                source=semantic_aggregate.source,
-                keys=semantic_aggregate.keys,
-                aggs=dict(semantic_aggregate.aggs),
-                nested_columns=list(semantic_aggregate.nested_columns)
-                if hasattr(semantic_aggregate, "nested_columns")
-                else None,
-            )
-        else:
-            # It's already an expression
-            semantic_aggregate_expr = semantic_aggregate
-        df = semantic_aggregate_expr.execute()
+        # Execute query to get data - the expression includes full chain
+        # with limit, order_by, and other transformations
+        df = semantic_aggregate.execute()
 
         # Sanitize column names to avoid Vega-Lite issues with dotted field names
         # This is necessary because Vega-Lite transforms (like fold) don't handle
@@ -506,9 +509,18 @@ def chart(
             try:
                 import io
 
-                buffer = io.BytesIO()
-                chart_obj.save(buffer, format=format)
-                return buffer.getvalue()
+                if format == "svg":
+                    # SVG is returned as a string by Altair
+                    import io
+
+                    buffer = io.StringIO()
+                    chart_obj.save(buffer, format=format)
+                    return buffer.getvalue().encode("utf-8")
+                else:
+                    # PNG is returned as bytes
+                    buffer = io.BytesIO()
+                    chart_obj.save(buffer, format=format)
+                    return buffer.getvalue()
             except Exception as e:
                 raise ImportError(
                     f"{format} export requires additional dependencies: {e}. "
@@ -531,28 +543,9 @@ def chart(
         if spec and "chart_type" in spec:
             chart_type = spec["chart_type"]
 
-        # Execute query and prepare parameters
-        from .expr import SemanticAggregate
-
-        # If semantic_aggregate is an Op, wrap it in a SemanticAggregate expression
-        if (
-            hasattr(semantic_aggregate, "keys")
-            and hasattr(semantic_aggregate, "aggs")
-            and hasattr(semantic_aggregate, "source")
-        ):
-            # It's a SemanticAggregateOp, wrap it properly
-            semantic_aggregate_expr = SemanticAggregate(
-                source=semantic_aggregate.source,
-                keys=semantic_aggregate.keys,
-                aggs=dict(semantic_aggregate.aggs),
-                nested_columns=list(semantic_aggregate.nested_columns)
-                if hasattr(semantic_aggregate, "nested_columns")
-                else None,
-            )
-        else:
-            # It's already an expression
-            semantic_aggregate_expr = semantic_aggregate
-        df = semantic_aggregate_expr.execute()
+        # Execute query to get data - the expression includes full chain
+        # with limit, order_by, and other transformations
+        df = semantic_aggregate.execute()
 
         # Create a minimal query expression object for _prepare_plotly_data_and_params
         class QueryExpr:

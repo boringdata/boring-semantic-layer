@@ -112,6 +112,8 @@ exceptiongroup==1.3.0
     #   pytest
 executing==2.2.1
     # via stack-data
+fastjsonschema==2.21.2
+    # via nbformat
 fastmcp==2.12.5
     # via boring-semantic-layer
 filelock==3.18.0
@@ -207,6 +209,7 @@ jsonschema==4.24.0
     # via
     #   altair
     #   mcp
+    #   nbformat
     #   openapi-core
     #   openapi-schema-validator
     #   openapi-spec-validator
@@ -218,6 +221,8 @@ jsonschema-specifications==2025.4.1
     # via
     #   jsonschema
     #   openapi-schema-validator
+jupyter-core==5.9.1
+    # via nbformat
 kaleido==1.0.0
     # via boring-semantic-layer
 lazy-object-proxy==1.12.0
@@ -250,6 +255,8 @@ narwhals==1.45.0
     # via
     #   altair
     #   plotly
+nbformat==5.10.4
+    # via boring-semantic-layer
 nodeenv==1.9.1
     # via pre-commit
 numpy==2.2.6 ; python_full_version < '3.11'
@@ -334,6 +341,7 @@ pexpect==4.9.0 ; sys_platform != 'emscripten' and sys_platform != 'win32'
     # via ipython
 platformdirs==4.3.8
     # via
+    #   jupyter-core
     #   snowflake-connector-python
     #   virtualenv
 plotly==6.3.0
@@ -529,7 +537,9 @@ toolz==1.0.0
 traitlets==5.14.3
     # via
     #   ipython
+    #   jupyter-core
     #   matplotlib-inline
+    #   nbformat
 typing-extensions==4.14.0
     # via
     #   altair
@@ -574,6 +584,8 @@ uvicorn==0.37.0 ; sys_platform != 'emscripten'
     # via mcp
 virtualenv==20.31.2
     # via pre-commit
+vl-convert-python==1.8.0
+    # via boring-semantic-layer
 wcwidth==0.2.14
     # via prompt-toolkit
 werkzeug==3.1.1

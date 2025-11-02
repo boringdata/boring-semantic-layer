@@ -287,6 +287,24 @@ class TestTimeDimensions:
                 time_grain="TIME_GRAIN_DAY",
             ).execute()
 
+    def test_time_range_without_time_dimension_fails(self, flights_data):
+        """Test that time_range without a time dimension raises a clear error."""
+        st = (
+            to_semantic_table(flights_data, "flights")
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(total_passengers=lambda t: t.passengers.sum())
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="time_range filter requires a time dimension in the query dimensions",
+        ):
+            st.query(
+                dimensions=["carrier"],
+                measures=["total_passengers"],
+                time_range={"start": "2024-01-01", "end": "2024-12-31"},
+            )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

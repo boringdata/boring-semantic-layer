@@ -375,14 +375,20 @@ def query(
             raise ValueError("time_range must be a dict with 'start' and 'end' keys")
 
         time_dim_name = _find_time_dimension(result, dimensions)
-        if time_dim_name:
-            filters.append(
-                _make_time_range_filter(
-                    time_dim_name,
-                    time_range["start"],
-                    time_range["end"],
-                ),
+        if not time_dim_name:
+            raise ValueError(
+                "time_range filter requires a time dimension in the query dimensions. "
+                f"Available dimensions: {list(dimensions)}. "
+                "Mark a dimension as a time dimension using: "
+                ".with_dimensions(dim_name={'expr': lambda t: t.column, 'is_time_dimension': True})"
             )
+        filters.append(
+            _make_time_range_filter(
+                time_dim_name,
+                time_range["start"],
+                time_range["end"],
+            ),
+        )
 
     # Step 1: Handle time grain transformations
     if time_grain:

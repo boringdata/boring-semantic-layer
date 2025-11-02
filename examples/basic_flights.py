@@ -13,13 +13,30 @@ def main():
     con = ibis.duckdb.connect(":memory:")
     flights_tbl = con.read_parquet(f"{BASE_URL}/flights.parquet")
 
-    flights = to_semantic_table(flights_tbl, name="flights").with_measures(
-        flight_count=lambda t: t.count(),
-        total_distance=lambda t: t.distance.sum(),
-        avg_distance=lambda t: t.distance.mean(),
-        max_distance=lambda t: t.distance.max(),
-        min_distance=lambda t: t.distance.min(),
+    flights = (
+        to_semantic_table(flights_tbl, name="flights")
+        .with_dimensions(
+            origin=lambda t: t.origin,
+            destination=lambda t: t.destination,
+            carrier=lambda t: t.carrier,
+            arr_time={
+                "expr": lambda t: t.arr_time,
+                "is_time_dimension": True,
+                "smallest_time_grain": "day",
+            },
+        )
+        .with_measures(
+            flight_count=lambda t: t.count(),
+            total_distance=lambda t: t.distance.sum(),
+            avg_distance=lambda t: t.distance.mean(),
+            max_distance=lambda t: t.distance.max(),
+            min_distance=lambda t: t.distance.min(),
+        )
     )
+
+    # Export for use in notebooks
+    flights_sm = flights
+    globals()["flights_sm"] = flights_sm
 
     result = flights.group_by("origin").aggregate("flight_count").limit(10).execute()
     print("\nFlight counts by origin:")

@@ -244,6 +244,77 @@ class TestChartFieldNameSanitization:
         assert "carriers.name" not in first_row
 
 
+class TestChartFormats:
+    """Test chart output formats (PNG, SVG, JSON)."""
+
+    def test_chart_png_format_altair(self, flights_model):
+        """Test PNG export with Altair backend."""
+        result = flights_model.group_by("carrier").aggregate("flight_count")
+        png_bytes = result.chart(backend="altair", format="png")
+
+        # Verify we got bytes back
+        assert isinstance(png_bytes, bytes)
+        # PNG files start with this signature
+        assert png_bytes[:8] == b"\x89PNG\r\n\x1a\n"
+
+    def test_chart_svg_format_altair(self, flights_model):
+        """Test SVG export with Altair backend."""
+        result = flights_model.group_by("carrier").aggregate("flight_count")
+        svg_bytes = result.chart(backend="altair", format="svg")
+
+        # Verify we got bytes back
+        assert isinstance(svg_bytes, bytes)
+        # SVG files are XML, should contain <svg
+        assert b"<svg" in svg_bytes
+
+    def test_chart_json_format_altair(self, flights_model):
+        """Test JSON export with Altair backend."""
+        result = flights_model.group_by("carrier").aggregate("flight_count")
+        json_spec = result.chart(backend="altair", format="json")
+
+        # Verify we got a dict back
+        assert isinstance(json_spec, dict)
+        # Should have Vega-Lite schema
+        assert "$schema" in json_spec
+        assert "vega-lite" in json_spec["$schema"]
+
+    def test_chart_png_format_plotly(self, flights_model):
+        """Test PNG export with Plotly backend."""
+        result = flights_model.group_by("carrier").aggregate("flight_count")
+        png_bytes = result.chart(backend="plotly", format="png")
+
+        # Verify we got bytes back
+        assert isinstance(png_bytes, bytes)
+        # PNG files start with this signature
+        assert png_bytes[:8] == b"\x89PNG\r\n\x1a\n"
+
+    def test_chart_json_format_plotly(self, flights_model):
+        """Test JSON export with Plotly backend."""
+        result = flights_model.group_by("carrier").aggregate("flight_count")
+        json_spec = result.chart(backend="plotly", format="json")
+
+        # Verify we got a JSON string back
+        assert isinstance(json_spec, str)
+        # Should be valid JSON with Plotly structure
+        import json
+
+        parsed = json.loads(json_spec)
+        assert "data" in parsed
+
+    def test_chart_json_roundtrip_plotly(self, flights_model):
+        """Test JSON export/import roundtrip with Plotly."""
+        import plotly.io
+
+        result = flights_model.group_by("carrier").aggregate("flight_count")
+        json_spec = result.chart(backend="plotly", format="json")
+
+        # Verify we can reconstruct the figure from JSON
+        fig = plotly.io.from_json(json_spec)
+        assert fig is not None
+        assert hasattr(fig, "data")
+        assert len(fig.data) > 0
+
+
 class TestChartWithFilters:
     """Test chart generation with filtered data."""
 

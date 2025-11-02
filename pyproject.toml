@@ -19,8 +19,8 @@ license-files = [
 [project.optional-dependencies]
 examples = ["ibis-framework[duckdb]>=10.6.0", "xorq", "duckdb<1.4"]
 xorq = ["xorq"]
-viz-altair = ["altair>=5.0.0"]
-viz-plotly = ["plotly>=6.3.0", "kaleido"]
+viz-altair = ["altair>=5.0.0", "vl-convert-python>=1.0.0"]
+viz-plotly = ["plotly>=6.3.0", "kaleido", "nbformat>=4.2.0"]
 dev = [
     "boring-semantic-layer[fastmcp,examples,xorq,viz-altair,viz-plotly]",
     "ruff>=0.6.7",
