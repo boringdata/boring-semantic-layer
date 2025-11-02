@@ -90,7 +90,7 @@ class TestAltairChart:
     def test_manual_chart_type(self, flights_model):
         """Test manual chart type override."""
         result = flights_model.group_by("carrier").aggregate("flight_count")
-        chart = result.chart(backend="altair", chart_type="line")
+        chart = result.chart(backend="altair", spec={"mark": "line"})
 
         assert chart is not None
         import altair as alt
@@ -159,7 +159,7 @@ class TestPlotlyChart:
     def test_manual_chart_type(self, flights_model):
         """Test manual chart type override with Plotly."""
         result = flights_model.group_by("carrier").aggregate("flight_count")
-        chart = result.chart(backend="plotly", chart_type="scatter")
+        chart = result.chart(backend="plotly", spec={"chart_type": "scatter"})
 
         assert chart is not None
         import plotly.graph_objects as go
