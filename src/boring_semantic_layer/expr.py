@@ -1,120 +1,84 @@
-"""Expression wrappers providing user-facing API.
-
-Following Ibis patterns, Expressions are user-facing wrappers around Operations.
-Operations (in ops.py) are internal IR with strict types.
-Expressions provide flexible APIs and handle type transformations.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from functools import reduce
 from operator import attrgetter
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+import ibis
 from ibis.common.collections import FrozenDict
 from ibis.expr import types as ir
+from ibis.expr.types import Table
+from ibis.expr.types.groupby import GroupedTable
+from returns.result import Success, safe
 
-from .ops import Dimension, Measure, SemanticTableOp
-
-if TYPE_CHECKING:
-    from .ops import SemanticJoinOp
+from .chart import chart as create_chart
+from .measure_scope import AggregationExpr, MeasureScope
+from .ops import (
+    Dimension,
+    Measure,
+    SemanticAggregateOp,
+    SemanticFilterOp,
+    SemanticGroupByOp,
+    SemanticIndexOp,
+    SemanticJoinOp,
+    SemanticLimitOp,
+    SemanticMutateOp,
+    SemanticOrderByOp,
+    SemanticProjectOp,
+    SemanticTableOp,
+    SemanticUnnestOp,
+    _classify_measure,
+    _find_all_root_models,
+    _get_merged_fields,
+)
+from .query import query as build_query
 
 
 def to_ibis(expr):
-    """Convert semantic expression or operation to Ibis expression.
-
-    This is the top-level conversion function matching ibis.to_sql() style.
-    Works with both Expression and Operation objects.
-
-    Args:
-        expr: SemanticTable expression or Semantic operation
-
-    Returns:
-        Ibis Table expression
-
-    Examples:
-        >>> result = flights.group_by("carrier").aggregate("flight_count")
-        >>> ibis_expr = to_ibis(result)
-        >>> df = ibis_expr.execute()
-    """
-    # If it's an Expression, get its operation
-    if hasattr(expr, "op"):
+    if isinstance(expr, SemanticTable):
         return expr.op().to_ibis()
-    # If it's an Operation, call its to_ibis method
-    elif hasattr(expr, "to_ibis"):
-        return expr.to_ibis()
-    else:
-        raise TypeError(f"Cannot convert {type(expr)} to Ibis expression")
+
+    result = safe(lambda: expr.to_ibis())()
+    if isinstance(result, Success):
+        return result.unwrap()
+
+    raise TypeError(f"Cannot convert {type(expr)} to Ibis expression")
 
 
 class SemanticTable(ir.Table):
-    """Base class for semantic tables with common fluent API methods.
-
-    This provides the shared interface for all semantic tables including
-    filter, group_by, order_by, limit, and other fluent methods.
-    """
-
     def filter(self, predicate: Callable) -> SemanticFilter:
-        """Apply a filter predicate."""
         return SemanticFilter(source=self.op(), predicate=predicate)
 
     def group_by(self, *keys: str):
-        """Group by dimensions."""
         return SemanticGroupBy(source=self.op(), keys=keys)
 
     def mutate(self, **post) -> SemanticMutate:
-        """Add or update columns."""
         return SemanticMutate(source=self.op(), post=post)
 
     def order_by(self, *keys: str | ir.Value | Callable):
-        """Order by fields."""
         return SemanticOrderBy(source=self.op(), keys=keys)
 
     def limit(self, n: int, offset: int = 0):
-        """Limit results."""
         return SemanticLimit(source=self.op(), n=n, offset=offset)
 
     def unnest(self, column: str) -> SemanticUnnest:
-        """Unnest an array column, expanding rows.
-
-        This is useful for working with nested data structures like Google Analytics
-        sessions with nested hits, where you want to expand the array into separate rows.
-
-        Args:
-            column: Name of the array column to unnest
-
-        Returns:
-            SemanticUnnest expression with the array expanded into rows
-
-        Example:
-            >>> ga_sessions = to_semantic_table(ga_raw, name="ga")
-            >>> ga_with_hits = ga_sessions.unnest("hits")
-            >>> # Now each hit becomes its own row
-        """
         return SemanticUnnest(source=self.op(), column=column)
 
     def pipe(self, func, *args, **kwargs):
-        """Apply a function to self."""
         return func(self, *args, **kwargs)
 
     def execute(self):
-        """Execute via to_ibis() to ensure proper lowering."""
         return to_ibis(self).execute()
 
     def compile(self, **kwargs):
-        """Compile to SQL via to_ibis()."""
         return to_ibis(self).compile(**kwargs)
 
     def sql(self, **kwargs):
-        """Generate SQL string via ibis.to_sql()."""
-        import ibis
-
         return ibis.to_sql(to_ibis(self), **kwargs)
 
 
 def _create_dimension(expr: Dimension | Callable | dict) -> Dimension:
-    """Transform various input types to Dimension."""
     if isinstance(expr, Dimension):
         return expr
     if isinstance(expr, dict):
@@ -128,28 +92,41 @@ def _create_dimension(expr: Dimension | Callable | dict) -> Dimension:
 
 
 def _derive_name(table: Any) -> str | None:
-    """Derive table name from table expression."""
-    from returns.result import safe
+    expr = safe(lambda: table.to_expr())().value_or(table)
+    return safe(lambda: expr.get_name())().value_or(None)
 
-    result = safe(lambda: (table.to_expr() if hasattr(table, "to_expr") else table))().bind(
-        lambda t: safe(lambda: t.get_name() if hasattr(t, "get_name") else None)()
+
+def _build_semantic_model_from_roots(
+    ibis_table: ir.Table,
+    all_roots: tuple,
+    field_filter: set | None = None,
+) -> SemanticModel:
+    if not all_roots:
+        return SemanticModel(
+            table=ibis_table,
+            dimensions={},
+            measures={},
+            calc_measures={},
+        )
+
+    all_dims = _get_merged_fields(all_roots, "dimensions")
+    all_measures = _get_merged_fields(all_roots, "measures")
+    all_calc = _get_merged_fields(all_roots, "calc_measures")
+
+    if field_filter is not None:
+        all_dims = {k: v for k, v in all_dims.items() if k in field_filter}
+        all_measures = {k: v for k, v in all_measures.items() if k in field_filter}
+        all_calc = {k: v for k, v in all_calc.items() if k in field_filter}
+
+    return SemanticModel(
+        table=ibis_table,
+        dimensions=all_dims,
+        measures=all_measures,
+        calc_measures=all_calc,
     )
-    return result.value_or(None)
 
 
 class SemanticModel(SemanticTable):
-    """User-facing semantic model with dimensions and measures.
-
-    This is an Expression wrapper around SemanticTableOp. It provides:
-    - Flexible input types (Callable, dict, Dimension)
-    - User-facing methods (with_dimensions, with_measures, etc.)
-    - Type transformations from flexible inputs to strict Operation types
-    - Full Ibis Table API (execute, compile, etc.) inherited from SemanticTable
-
-    The underlying Operation (SemanticTableOp) is the internal IR with strict,
-    concrete types.
-    """
-
     def __init__(
         self,
         table: Any,
@@ -157,19 +134,8 @@ class SemanticModel(SemanticTable):
         measures: Mapping[str, Measure | Callable] | None = None,
         calc_measures: Mapping[str, Any] | None = None,
         name: str | None = None,
-        _source_join: Any | None = None,  # Internal: track source join for optimization
+        _source_join: Any | None = None,
     ) -> None:
-        """Create a semantic table with dimensions and measures.
-
-        Args:
-            table: Underlying Ibis table or Relation
-            dimensions: Dimension definitions (Dimension, Callable, or dict)
-            measures: Measure definitions (Measure or Callable)
-            calc_measures: Calculated measure expressions
-            name: Optional table name
-            _source_join: Internal parameter to track source join operation
-        """
-        # Transform flexible inputs to strict types
         dims = FrozenDict(
             {dim_name: _create_dimension(dim) for dim_name, dim in (dimensions or {}).items()},
         )
@@ -186,23 +152,18 @@ class SemanticModel(SemanticTable):
         calc_meas = FrozenDict(calc_measures or {})
 
         derived_name = name or _derive_name(table)
-        # Store table expression directly (no .op() conversion)
-        # This avoids redundant .op() → .to_expr() roundtrips
 
-        # Create the Operation with strict types
         op = SemanticTableOp(
-            table=table,  # Pass expression as-is
+            table=table,
             dimensions=dims,
             measures=meas,
             calc_measures=calc_meas,
             name=derived_name,
-            _source_join=_source_join,  # Pass through for optimization
+            _source_join=_source_join,
         )
 
-        # Initialize parent Table class with our operation
         super().__init__(op)
 
-    # Note: .op() is inherited from ir.Table parent class
     @property
     def values(self):
         return self.op().values
@@ -225,43 +186,34 @@ class SemanticModel(SemanticTable):
 
     @property
     def dimensions(self):
-        """Get tuple of dimension names."""
         return self.op().dimensions
 
     def get_dimensions(self):
-        """Get dictionary of dimensions with metadata."""
         return self.op().get_dimensions()
 
     def get_measures(self):
-        """Get dictionary of base measures with metadata."""
         return self.op().get_measures()
 
     def get_calculated_measures(self):
-        """Get dictionary of calculated measures with metadata."""
         return self.op().get_calculated_measures()
 
     @property
     def _dims(self):
-        """Internal: Forward to Operation._dims (dict of Dimension objects)."""
         return self.op()._dims
 
     @property
     def _base_measures(self):
-        """Internal: Forward to Operation._base_measures."""
         return self.op()._base_measures
 
     @property
     def _calc_measures(self):
-        """Internal: Forward to Operation._calc_measures."""
         return self.op()._calc_measures
 
     @property
     def table(self):
         return self.op().table
 
-    # User-facing methods
     def with_dimensions(self, **dims) -> SemanticModel:
-        """Add or update dimensions."""
         return SemanticModel(
             table=self.op().table,
             dimensions={**self.get_dimensions(), **dims},
@@ -271,10 +223,6 @@ class SemanticModel(SemanticTable):
         )
 
     def with_measures(self, **meas) -> SemanticModel:
-        """Add or update measures."""
-        from .measure_scope import MeasureScope
-        from .ops import _classify_measure
-
         new_base_meas = dict(self.get_measures())
         new_calc_meas = dict(self.get_calculated_measures())
 
@@ -302,16 +250,10 @@ class SemanticModel(SemanticTable):
         on: Callable[[Any, Any], ir.BooleanValue] | None = None,
         how: str = "inner",
     ):
-        """Join with another semantic table."""
-        from .ops import SemanticJoinOp
-
         other_op = other.op() if isinstance(other, SemanticModel) else other
         return SemanticJoinOp(left=self.op(), right=other_op, on=on, how=how)
 
     def join_one(self, other: SemanticModel, left_on: str, right_on: str):
-        """Inner join one-to-one or many-to-one."""
-        from .ops import SemanticJoinOp
-
         other_op = other.op() if isinstance(other, SemanticModel) else other
         return SemanticJoinOp(
             left=self.op(),
@@ -321,9 +263,6 @@ class SemanticModel(SemanticTable):
         )
 
     def join_many(self, other: SemanticModel, left_on: str, right_on: str):
-        """Left join one-to-many."""
-        from .ops import SemanticJoinOp
-
         other_op = other.op() if isinstance(other, SemanticModel) else other
         return SemanticJoinOp(
             left=self.op(),
@@ -333,9 +272,6 @@ class SemanticModel(SemanticTable):
         )
 
     def join_cross(self, other: SemanticModel):
-        """Cross join."""
-        from .ops import SemanticJoinOp
-
         other_op = other.op() if isinstance(other, SemanticModel) else other
         return SemanticJoinOp(left=self.op(), right=other_op, on=None, how="cross")
 
@@ -345,37 +281,12 @@ class SemanticModel(SemanticTable):
         by: str | None = None,
         sample: int | None = None,
     ):
-        """Create an index for search/discovery.
-
-        Args:
-            selector: Dimension selector - can be:
-                - None: select all dimensions
-                - str: select single dimension
-                - list[str]: select multiple dimensions
-                - Callable: custom selector function
-                - ibis selector (s.all(), s.cols(), etc.): ibis column selector
-            by: Optional dimension to group by
-            sample: Optional number of rows to sample
-        """
-
-        from .ops import SemanticIndexOp
-
-        # Handle ibis selectors
         processed_selector = selector
-        if (
-            selector is not None
-            and hasattr(selector, "__class__")
-            and "ibis.selectors" in str(type(selector).__module__)
-        ):
-            # Handle s.all() - select all columns
+        if selector is not None and "ibis.selectors" in str(type(selector).__module__):
             if type(selector).__name__ == "AllColumns":
                 processed_selector = None
-            # Handle s.cols() - select specific columns
             elif type(selector).__name__ == "Cols":
-                # Extract column names from the Cols selector
-                # Convert to list (frozenset -> list) for consistency
                 processed_selector = sorted(selector.names)
-            # For other selectors, keep as-is
             else:
                 processed_selector = selector
 
@@ -387,15 +298,12 @@ class SemanticModel(SemanticTable):
         )
 
     def to_ibis(self):
-        """Convert to Ibis expression."""
         return self.op().to_ibis()
 
     def as_expr(self):
-        """Return self as expression."""
         return self
 
     def __getitem__(self, key):
-        """Get dimension or measure by name."""
         dims_dict = self.get_dimensions()
         if key in dims_dict:
             return dims_dict[key]
@@ -422,22 +330,6 @@ class SemanticModel(SemanticTable):
         time_grain: str | None = None,
         time_range: dict[str, str] | None = None,
     ):
-        """Query using parameter-based interface.
-
-        Args:
-            dimensions: List of dimension names to group by
-            measures: List of measure names to aggregate
-            filters: List of filters (dict, str, callable, or Filter objects)
-            order_by: List of (field, direction) tuples
-            limit: Maximum number of rows to return
-            time_grain: Optional time grain (e.g., "TIME_GRAIN_MONTH")
-            time_range: Optional time range with 'start' and 'end' keys
-
-        Returns:
-            SemanticAggregate or SemanticTable ready for execution
-        """
-        from .query import query as build_query
-
         return build_query(
             semantic_table=self,
             dimensions=dimensions,
@@ -449,15 +341,9 @@ class SemanticModel(SemanticTable):
             time_range=time_range,
         )
 
-    # __repr__ inherited from ir.Table, uses custom formatter registered in convert.py
-
 
 class SemanticFilter(SemanticTable):
-    """User-facing filter expression wrapping SemanticFilterOp Operation."""
-
     def __init__(self, source: SemanticTableOp, predicate: Callable) -> None:
-        from .ops import SemanticFilterOp
-
         op = SemanticFilterOp(source=source, predicate=predicate)
         super().__init__(op)
 
@@ -478,32 +364,12 @@ class SemanticFilter(SemanticTable):
         return self.op().schema
 
     def as_table(self) -> SemanticModel:
-        from .ops import _find_all_root_models, _get_merged_fields
-
         all_roots = _find_all_root_models(self.op().source)
-        return (
-            SemanticModel(
-                table=self.op().to_ibis(),
-                dimensions=_get_merged_fields(all_roots, "dimensions"),
-                measures=_get_merged_fields(all_roots, "measures"),
-                calc_measures=_get_merged_fields(all_roots, "calc_measures"),
-            )
-            if all_roots
-            else SemanticModel(
-                table=self.op().to_ibis(),
-                dimensions={},
-                measures={},
-                calc_measures={},
-            )
-        )
+        return _build_semantic_model_from_roots(self.op().to_ibis(), all_roots)
 
 
 class SemanticGroupBy(SemanticTable):
-    """User-facing group by expression wrapping SemanticGroupByOp Operation."""
-
     def __init__(self, source: SemanticTableOp, keys: tuple[str, ...]) -> None:
-        from .ops import SemanticGroupByOp
-
         op = SemanticGroupByOp(source=source, keys=keys)
         super().__init__(op)
 
@@ -529,15 +395,6 @@ class SemanticGroupBy(SemanticTable):
         nest: dict[str, Callable] | None = None,
         **aliased,
     ):
-        """Aggregate measures over grouped dimensions.
-
-        Args:
-            *measure_names: Measure names to aggregate
-            nest: Dict mapping nest name to lambda that specifies columns to collect:
-                  - Lambda with group_by: nest={"data": lambda t: t.group_by(["code", "elevation"])}
-                  - Lambda with select: nest={"data": lambda t: t.select("code", "elevation")}
-            **aliased: Additional aggregations with custom names
-        """
         aggs = {}
         for item in measure_names:
             if isinstance(item, str):
@@ -549,11 +406,7 @@ class SemanticGroupBy(SemanticTable):
                     f"measure_names must be strings or callables, got {type(item)}",
                 )
 
-        # Wrap AggregationExpr in callables
-        from .measure_scope import AggregationExpr
-
         def wrap_aggregation_expr(expr):
-            """Wrap AggregationExpr in a callable for inline aggregates."""
             if isinstance(expr, AggregationExpr):
 
                 def wrapped(t):
@@ -568,39 +421,25 @@ class SemanticGroupBy(SemanticTable):
         aggs.update(aliased)
 
         if nest:
-            import ibis
-            from ibis.expr.types import Table
-            from ibis.expr.types.groupby import GroupedTable
 
             def make_nest_agg(fn):
-                """Create a nested aggregation that collects rows as structs.
-
-                Functional approach: Use pattern-based dispatch with early returns
-                to handle different result types from the nest lambda.
-                """
-
                 def build_struct_dict(columns, source_tbl):
-                    """Pure function: build struct dict from column names."""
                     return {col: source_tbl[col] for col in columns}
 
                 def collect_struct(struct_dict):
-                    """Pure function: create and collect struct from dict."""
                     return ibis.struct(struct_dict).collect()
 
                 def handle_grouped_table(result, ibis_tbl):
-                    """Handle GroupedTable: extract group columns and create struct."""
                     group_cols = tuple(map(attrgetter("name"), result.groupings))
                     return collect_struct(build_struct_dict(group_cols, ibis_tbl))
 
                 def handle_table(result, ibis_tbl):
-                    """Handle Table/Selection: extract all columns and create struct."""
                     return collect_struct(build_struct_dict(result.columns, ibis_tbl))
 
                 def nest_agg(ibis_tbl):
-                    """Apply nest function and dispatch based on result type."""
                     result = fn(ibis_tbl)
 
-                    if hasattr(result, "to_ibis"):
+                    if isinstance(result, SemanticTable):
                         return to_ibis(result)
 
                     if isinstance(result, GroupedTable):
@@ -631,8 +470,6 @@ class SemanticGroupBy(SemanticTable):
 
 
 class SemanticAggregate(SemanticTable):
-    """User-facing aggregate expression wrapping SemanticAggregateOp Operation."""
-
     def __init__(
         self,
         source: SemanticTableOp,
@@ -640,8 +477,6 @@ class SemanticAggregate(SemanticTable):
         aggs: dict[str, Any],
         nested_columns: list[str] | None = None,
     ) -> None:
-        from .ops import SemanticAggregateOp
-
         op = SemanticAggregateOp(
             source=source,
             keys=keys,
@@ -679,7 +514,6 @@ class SemanticAggregate(SemanticTable):
         return self.op().nested_columns
 
     def mutate(self, **post) -> SemanticMutate:
-        """Add or update columns after aggregation."""
         return SemanticMutate(source=self.op(), post=post)
 
     def join(
@@ -688,9 +522,6 @@ class SemanticAggregate(SemanticTable):
         on: Callable[[Any, Any], ir.BooleanValue] | None = None,
         how: str = "inner",
     ) -> SemanticJoinOp:
-        """Join with another semantic table."""
-        from .ops import SemanticJoinOp
-
         return SemanticJoinOp(
             left=self.op(),
             right=other.op(),
@@ -704,9 +535,6 @@ class SemanticAggregate(SemanticTable):
         left_on: str,
         right_on: str,
     ) -> SemanticJoinOp:
-        """Join with a one-to-one relationship."""
-        from .ops import SemanticJoinOp
-
         return SemanticJoinOp(
             left=self.op(),
             right=other.op(),
@@ -720,9 +548,6 @@ class SemanticAggregate(SemanticTable):
         left_on: str,
         right_on: str,
     ) -> SemanticJoinOp:
-        """Join with a one-to-many relationship."""
-        from .ops import SemanticJoinOp
-
         return SemanticJoinOp(
             left=self.op(),
             right=other.op(),
@@ -731,7 +556,6 @@ class SemanticAggregate(SemanticTable):
         )
 
     def as_table(self) -> SemanticModel:
-        """Convert to SemanticModel with no semantic metadata (columns are materialized)."""
         return SemanticModel(
             table=self.op().to_ibis(),
             dimensions={},
@@ -745,29 +569,33 @@ class SemanticAggregate(SemanticTable):
         backend: str = "altair",
         format: str = "static",
     ):
-        """Create a chart from the aggregate.
+        chart_obj = create_chart(self.op(), spec=spec, backend=backend)
 
-        Args:
-            spec: Optional chart specification dict (backend-specific format)
-            backend: Visualization backend ("altair" or "plotly")
-            format: Output format ("static", "json", "interactive", "png", "svg")
-
-        Returns:
-            Chart object or specification in requested format
-        """
-        from .chart import chart as create_chart
-
-        return create_chart(self, spec=spec, backend=backend, format=format)
+        if format in ("static", "interactive"):
+            return chart_obj
+        elif format == "json":
+            return chart_obj.to_dict()
+        elif format == "png":
+            if backend == "altair":
+                return chart_obj.to_png()
+            else:
+                return chart_obj.to_image(format="png")
+        elif format == "svg":
+            if backend == "altair":
+                return chart_obj.to_svg()
+            else:
+                return chart_obj.to_image(format="svg")
+        else:
+            raise ValueError(
+                f"Unsupported format: {format}. "
+                "Supported: 'static', 'interactive', 'json', 'png', 'svg'"
+            )
 
 
 class SemanticOrderBy(SemanticTable):
-    """User-facing order by expression wrapping SemanticOrderByOp Operation."""
-
     def __init__(
         self, source: SemanticTableOp, keys: tuple[str | ir.Value | Callable, ...]
     ) -> None:
-        from .ops import SemanticOrderByOp
-
         op = SemanticOrderByOp(source=source, keys=keys)
         super().__init__(op)
 
@@ -788,24 +616,8 @@ class SemanticOrderBy(SemanticTable):
         return self.op().schema
 
     def as_table(self) -> SemanticModel:
-        """Convert to SemanticModel, preserving semantic metadata from source."""
-        from .ops import _find_all_root_models, _get_merged_fields
-
         all_roots = _find_all_root_models(self.source)
-        if all_roots:
-            return SemanticModel(
-                table=self.op().to_ibis(),
-                dimensions=_get_merged_fields(all_roots, "dimensions"),
-                measures=_get_merged_fields(all_roots, "measures"),
-                calc_measures=_get_merged_fields(all_roots, "calc_measures"),
-            )
-        else:
-            return SemanticModel(
-                table=self.op().to_ibis(),
-                dimensions={},
-                measures={},
-                calc_measures={},
-            )
+        return _build_semantic_model_from_roots(self.op().to_ibis(), all_roots)
 
     def chart(
         self,
@@ -813,19 +625,37 @@ class SemanticOrderBy(SemanticTable):
         backend: str = "altair",
         format: str = "static",
     ):
-        """Create a chart from the ordered aggregate."""
-        from .chart import chart as create_chart
+        source = self.source
+        while not isinstance(source, SemanticAggregateOp):
+            if isinstance(source, SemanticTableOp | SemanticJoinOp):
+                raise ValueError("Cannot create chart: no aggregate found in query chain")
+            source = source.source
 
-        # Pass the expression to preserve order_by in the chart
-        return create_chart(self, spec=spec, backend=backend, format=format)
+        chart_obj = create_chart(source, spec=spec, backend=backend)
+
+        if format in ("static", "interactive"):
+            return chart_obj
+        elif format == "json":
+            return chart_obj.to_dict()
+        elif format == "png":
+            if backend == "altair":
+                return chart_obj.to_png()
+            else:
+                return chart_obj.to_image(format="png")
+        elif format == "svg":
+            if backend == "altair":
+                return chart_obj.to_svg()
+            else:
+                return chart_obj.to_image(format="svg")
+        else:
+            raise ValueError(
+                f"Unsupported format: {format}. "
+                "Supported: 'static', 'interactive', 'json', 'png', 'svg'"
+            )
 
 
 class SemanticLimit(SemanticTable):
-    """User-facing limit expression wrapping SemanticLimitOp Operation."""
-
     def __init__(self, source: SemanticTableOp, n: int, offset: int = 0) -> None:
-        from .ops import SemanticLimitOp
-
         op = SemanticLimitOp(source=source, n=n, offset=offset)
         super().__init__(op)
 
@@ -850,24 +680,8 @@ class SemanticLimit(SemanticTable):
         return self.op().schema
 
     def as_table(self) -> SemanticModel:
-        """Convert to SemanticModel, preserving semantic metadata from source."""
-        from .ops import _find_all_root_models, _get_merged_fields
-
         all_roots = _find_all_root_models(self.source)
-        if all_roots:
-            return SemanticModel(
-                table=self.op().to_ibis(),
-                dimensions=_get_merged_fields(all_roots, "dimensions"),
-                measures=_get_merged_fields(all_roots, "measures"),
-                calc_measures=_get_merged_fields(all_roots, "calc_measures"),
-            )
-        else:
-            return SemanticModel(
-                table=self.op().to_ibis(),
-                dimensions={},
-                measures={},
-                calc_measures={},
-            )
+        return _build_semantic_model_from_roots(self.op().to_ibis(), all_roots)
 
     def chart(
         self,
@@ -875,19 +689,37 @@ class SemanticLimit(SemanticTable):
         backend: str = "altair",
         format: str = "static",
     ):
-        """Create a chart from the limited aggregate."""
-        from .chart import chart as create_chart
+        source = self.source
+        while not isinstance(source, SemanticAggregateOp):
+            if isinstance(source, SemanticTableOp | SemanticJoinOp):
+                raise ValueError("Cannot create chart: no aggregate found in query chain")
+            source = source.source
 
-        # Pass the expression to preserve limit in the chart
-        return create_chart(self, spec=spec, backend=backend, format=format)
+        chart_obj = create_chart(source, spec=spec, backend=backend)
+
+        if format in ("static", "interactive"):
+            return chart_obj
+        elif format == "json":
+            return chart_obj.to_dict()
+        elif format == "png":
+            if backend == "altair":
+                return chart_obj.to_png()
+            else:
+                return chart_obj.to_image(format="png")
+        elif format == "svg":
+            if backend == "altair":
+                return chart_obj.to_svg()
+            else:
+                return chart_obj.to_image(format="svg")
+        else:
+            raise ValueError(
+                f"Unsupported format: {format}. "
+                "Supported: 'static', 'interactive', 'json', 'png', 'svg'"
+            )
 
 
 class SemanticUnnest(SemanticTable):
-    """User-facing unnest expression wrapping SemanticUnnestOp Operation."""
-
     def __init__(self, source: SemanticTableOp, column: str) -> None:
-        from .ops import SemanticUnnestOp
-
         op = SemanticUnnestOp(source=source, column=column)
         super().__init__(op)
 
@@ -908,29 +740,10 @@ class SemanticUnnest(SemanticTable):
         return self.op().schema
 
     def as_table(self) -> SemanticModel:
-        """Convert to SemanticModel, preserving semantic metadata from source."""
-        from .ops import _find_all_root_models, _get_merged_fields
-
         all_roots = _find_all_root_models(self.source)
-        if all_roots:
-            return SemanticModel(
-                table=self.op().to_ibis(),
-                dimensions=_get_merged_fields(all_roots, "dimensions"),
-                measures=_get_merged_fields(all_roots, "measures"),
-                calc_measures=_get_merged_fields(all_roots, "calc_measures"),
-            )
-        else:
-            return SemanticModel(
-                table=self.op().to_ibis(),
-                dimensions={},
-                measures={},
-                calc_measures={},
-            )
+        return _build_semantic_model_from_roots(self.op().to_ibis(), all_roots)
 
     def with_dimensions(self, **dims) -> SemanticModel:
-        """Add or update dimensions on the unnested table."""
-        from .ops import _find_all_root_models, _get_merged_fields
-
         all_roots = _find_all_root_models(self.source)
         existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
         existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
@@ -944,16 +757,11 @@ class SemanticUnnest(SemanticTable):
         )
 
     def with_measures(self, **meas) -> SemanticModel:
-        """Add or update measures on the unnested table."""
-        from .measure_scope import MeasureScope
-        from .ops import _classify_measure, _find_all_root_models, _get_merged_fields
-
         all_roots = _find_all_root_models(self.source)
         existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
         existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
         existing_calc = _get_merged_fields(all_roots, "calc_measures") if all_roots else {}
 
-        # Process new measures through _classify_measure to extract metadata
         new_base_meas = dict(existing_meas)
         new_calc_meas = dict(existing_calc)
 
@@ -975,11 +783,7 @@ class SemanticUnnest(SemanticTable):
 
 
 class SemanticMutate(SemanticTable):
-    """User-facing mutate expression wrapping SemanticMutateOp Operation."""
-
     def __init__(self, source: SemanticTableOp, post: dict[str, Any] | None = None) -> None:
-        from .ops import SemanticMutateOp
-
         op = SemanticMutateOp(source=source, post=post)
         super().__init__(op)
 
@@ -1004,13 +808,9 @@ class SemanticMutate(SemanticTable):
         return self.op().nested_columns
 
     def mutate(self, **post) -> SemanticMutate:
-        """Add or update columns (supports chaining)."""
         return SemanticMutate(source=self.op(), post=post)
 
     def with_dimensions(self, **dims) -> SemanticModel:
-        """Add or update dimensions after mutation."""
-        from .ops import _find_all_root_models, _get_merged_fields
-
         all_roots = _find_all_root_models(self.source)
         existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
         existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
@@ -1024,16 +824,11 @@ class SemanticMutate(SemanticTable):
         )
 
     def with_measures(self, **meas) -> SemanticModel:
-        """Add or update measures after mutation."""
-        from .measure_scope import MeasureScope
-        from .ops import _classify_measure, _find_all_root_models, _get_merged_fields
-
         all_roots = _find_all_root_models(self.source)
         existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
         existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
         existing_calc = _get_merged_fields(all_roots, "calc_measures") if all_roots else {}
 
-        # Process new measures through _classify_measure to extract metadata
         new_base_meas = dict(existing_meas)
         new_calc_meas = dict(existing_calc)
 
@@ -1054,14 +849,6 @@ class SemanticMutate(SemanticTable):
         )
 
     def group_by(self, *keys: str) -> SemanticGroupBy:
-        """Group by dimensions after mutation (enables re-aggregation).
-
-        Automatically unnests any nested columns from prior aggregations.
-        Uses reduce to fold unnest operations for functional composition.
-        """
-        from .ops import SemanticUnnestOp
-
-        # Functional: fold over nested columns to build unnest operation chain
         source_with_unnests = reduce(
             lambda src, col: SemanticUnnestOp(source=src, column=col),
             self.nested_columns,
@@ -1076,14 +863,35 @@ class SemanticMutate(SemanticTable):
         backend: str = "altair",
         format: str = "static",
     ):
-        """Create a chart from the mutated aggregate."""
-        from .chart import chart as create_chart
+        source = self.source
+        while not isinstance(source, SemanticAggregateOp):
+            if isinstance(source, SemanticTableOp | SemanticJoinOp):
+                raise ValueError("Cannot create chart: no aggregate found in query chain")
+            source = source.source
 
-        # Pass the expression to preserve mutations in the chart
-        return create_chart(self, spec=spec, backend=backend, format=format)
+        chart_obj = create_chart(source, spec=spec, backend=backend)
+
+        if format in ("static", "interactive"):
+            return chart_obj
+        elif format == "json":
+            return chart_obj.to_dict()
+        elif format == "png":
+            if backend == "altair":
+                return chart_obj.to_png()
+            else:
+                return chart_obj.to_image(format="png")
+        elif format == "svg":
+            if backend == "altair":
+                return chart_obj.to_svg()
+            else:
+                return chart_obj.to_image(format="svg")
+        else:
+            raise ValueError(
+                f"Unsupported format: {format}. "
+                "Supported: 'static', 'interactive', 'json', 'png', 'svg'"
+            )
 
     def as_table(self) -> SemanticModel:
-        """Convert to SemanticModel with no semantic metadata (columns are materialized)."""
         return SemanticModel(
             table=self.op().to_ibis(),
             dimensions={},
@@ -1093,11 +901,7 @@ class SemanticMutate(SemanticTable):
 
 
 class SemanticProject(SemanticTable):
-    """User-facing project expression wrapping SemanticProjectOp Operation."""
-
     def __init__(self, source: SemanticTableOp, fields: tuple[str, ...]) -> None:
-        from .ops import SemanticProjectOp
-
         op = SemanticProjectOp(source=source, fields=fields)
         super().__init__(op)
 
@@ -1118,36 +922,7 @@ class SemanticProject(SemanticTable):
         return self.op().schema
 
     def as_table(self) -> SemanticModel:
-        """Convert to SemanticModel, preserving only projected fields' metadata."""
-        from .ops import _find_all_root_models, _get_merged_fields
-
         all_roots = _find_all_root_models(self.source)
-
-        if all_roots:
-            # Get all available semantic metadata
-            all_dims = _get_merged_fields(all_roots, "dimensions")
-            all_measures = _get_merged_fields(all_roots, "measures")
-            all_calc_measures = _get_merged_fields(all_roots, "calc_measures")
-
-            # Filter to only include projected fields
-            projected_fields = set(self.fields)
-            filtered_dims = {k: v for k, v in all_dims.items() if k in projected_fields}
-            filtered_measures = {k: v for k, v in all_measures.items() if k in projected_fields}
-            filtered_calc_measures = {
-                k: v for k, v in all_calc_measures.items() if k in projected_fields
-            }
-
-            return SemanticModel(
-                table=self.op().to_ibis(),
-                dimensions=filtered_dims,
-                measures=filtered_measures,
-                calc_measures=filtered_calc_measures,
-            )
-        else:
-            # No semantic metadata in source
-            return SemanticModel(
-                table=self.op().to_ibis(),
-                dimensions={},
-                measures={},
-                calc_measures={},
-            )
+        return _build_semantic_model_from_roots(
+            self.op().to_ibis(), all_roots, field_filter=set(self.fields)
+        )
