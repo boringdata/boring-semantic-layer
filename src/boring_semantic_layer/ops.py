@@ -1006,14 +1006,6 @@ class SemanticAggregateOp(Relation):
         else:
             return tbl.aggregate({name: fn(tbl) for name, fn in plan.agg_specs.items()})
 
-    def __repr__(self) -> str:
-        keys_str = ", ".join(repr(k) for k in self.keys)
-        aggs = list(self.aggs.keys())
-        aggs_str = ", ".join(aggs[:5])
-        if len(aggs) > 5:
-            aggs_str += f", ... ({len(aggs)} total)"
-        return f"SemanticAggregateOp(by=[{keys_str}], aggs=[{aggs_str}])"
-
 
 class SemanticMutateOp(Relation):
     source: Relation
@@ -1063,13 +1055,6 @@ class SemanticMutateOp(Relation):
             current_tbl = current_tbl.mutate([new_col])
 
         return current_tbl
-
-    def __repr__(self) -> str:
-        cols = list(self.post.keys())
-        cols_str = ", ".join(cols[:5])
-        if len(cols) > 5:
-            cols_str += f", ... ({len(cols)} total)"
-        return f"SemanticMutate(cols=[{cols_str}])"
 
 
 class SemanticUnnestOp(Relation):
@@ -1125,9 +1110,6 @@ class SemanticUnnestOp(Relation):
             raise ValueError(f"Failed to unnest column '{self.column}': {e}") from e
 
         return unpack_struct_if_needed(unnested, self.column)
-
-    def __repr__(self) -> str:
-        return f"SemanticUnnest(column={self.column!r})"
 
 
 class SemanticJoinOp(Relation):
@@ -1742,12 +1724,6 @@ class SemanticJoinOp(Relation):
             calc_measures=self.get_calculated_measures(),
         )
 
-    def __repr__(self) -> str:
-        left_name = getattr(self.left, "name", None) or "<expr>"
-        right_name = getattr(self.right, "name", None) or "<expr>"
-        on_str = "<function>" if self.on else "cross"
-        return f"SemanticJoinOp(left={left_name!r}, right={right_name!r}, how={self.how!r}, on={on_str})"
-
 
 class SemanticOrderByOp(Relation):
     source: Relation
@@ -1786,17 +1762,6 @@ class SemanticOrderByOp(Relation):
             return key
 
         return tbl.order_by([resolve_order_key(key) for key in self.keys])
-
-    def __repr__(self) -> str:
-        keys_list = []
-        for k in list(self.keys)[:3]:
-            if isinstance(k, str):
-                keys_list.append(repr(k))
-            else:
-                keys_list.append("<expr>")
-        if len(self.keys) > 3:
-            keys_list.append(f"... ({len(self.keys)} total)")
-        return f"SemanticOrderBy(keys=[{', '.join(keys_list)}])"
 
 
 class SemanticLimitOp(Relation):
@@ -2093,28 +2058,6 @@ class SemanticIndexOp(Relation):
 
     def pipe(self, func, *args, **kwargs):
         return func(self, *args, **kwargs)
-
-    def __repr__(self) -> str:
-        parts = []
-        if self.selector is not None:
-            # Try to show selector repr, fallback to generic
-            try:
-                selector_repr = repr(self.selector)
-                # If it's too long, truncate
-                if len(selector_repr) > 50:
-                    selector_repr = selector_repr[:47] + "..."
-                parts.append(f"selector={selector_repr}")
-            except Exception:
-                parts.append("selector=<selector>")
-        else:
-            parts.append("selector=all()")
-
-        if self.by:
-            parts.append(f"by={self.by!r}")
-        if self.sample:
-            parts.append(f"sample={self.sample}")
-
-        return f"SemanticIndexOp({', '.join(parts)})"
 
 
 def _find_root_model(node: Any) -> SemanticTableOp | None:
