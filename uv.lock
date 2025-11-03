@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -210,7 +210,7 @@ requires-dist = [
     { name = "boring-semantic-layer", extras = ["fastmcp", "examples", "xorq", "viz-altair", "viz-plotly"], marker = "extra == 'dev'" },
     { name = "duckdb", marker = "extra == 'examples'", specifier = "<1.4" },
     { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=2.12.4" },
-    { name = "ibis-framework" },
+    { name = "ibis-framework", specifier = ">=11.0.0" },
     { name = "ibis-framework", extras = ["duckdb"], marker = "extra == 'examples'", specifier = ">=10.6.0" },
     { name = "kaleido", marker = "extra == 'viz-plotly'" },
     { name = "malloy", marker = "extra == 'dev'", specifier = ">=0.1.0" },

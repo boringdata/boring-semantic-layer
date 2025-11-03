@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "attrs>=25.3.0",
-    "ibis-framework", # required to install ibis-framework with no backend
+    "ibis-framework>=11.0.0", # required to install ibis-framework with no backend
     "packaging",
     "returns>=0.26.0",
 ]
