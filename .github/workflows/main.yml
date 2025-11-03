@@ -75,13 +75,46 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-  # Release to PyPI (only on GitHub release) - TESTING: also runs on bslv2
-  release-pypi:
-    name: Release to PyPI
+  # Test release process (no environment protection, no actual publishing)
+  test-release:
+    name: Test Release
     if: |
-      github.event_name == 'release' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/bslv2') ||
       (github.event_name == 'pull_request' && github.head_ref == 'bslv2')
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Build package
+        run: uv build
+
+      - name: Test wheel installation
+        run: |
+          uv pip install --system dist/*.whl
+          uv run pytest tests
+
+      - name: Verify package contents
+        run: |
+          uv run python -c "import boring_semantic_layer; print(f'Version: {boring_semantic_layer.__version__}')"
+          ls -lh dist/
+
+  # Release to PyPI (only on GitHub release)
+  release-pypi:
+    name: Release to PyPI
+    if: github.event_name == 'release'
     needs: test
     runs-on: ubuntu-latest
     environment:
@@ -111,6 +144,5 @@ jobs:
           uv pip install --system dist/*.whl
           uv run pytest tests
 
-      # Commented out for testing
-      # - name: Publish to PyPI
-      #   run: uv publish --trusted-publishing always
+      - name: Publish to PyPI
+        run: uv publish --trusted-publishing always
