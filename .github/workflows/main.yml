@@ -51,20 +51,15 @@ jobs:
         run: make check
 
       - name: Upload docs artifact
-        if: |
-          (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bslv2')) ||
-          (github.event_name == 'pull_request' && github.head_ref == 'bslv2')
+        if: github.event_name == 'release'
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./docs/dist
 
-  # Deploy docs to GitHub Pages (on push to main/bslv2 or on release)
+  # Deploy docs to GitHub Pages (only on release - keep docs in sync with PyPI package)
   deploy-docs:
     name: Deploy Docs
-    if: |
-      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bslv2')) ||
-      (github.event_name == 'pull_request' && github.head_ref == 'bslv2') ||
-      github.event_name == 'release'
+    if: github.event_name == 'release'
     needs: test
     runs-on: ubuntu-latest
     environment:
