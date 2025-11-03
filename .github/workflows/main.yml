@@ -109,6 +109,11 @@ jobs:
           echo "Wheel contents:"
           unzip -l dist/*.whl | head -30
 
+      - name: Cleanup temporary artifacts
+        if: always()
+        run: |
+          rm -rf test_env dist
+
   # Release to PyPI (only on GitHub release)
   release-pypi:
     name: Release to PyPI
@@ -148,3 +153,8 @@ jobs:
 
       - name: Publish to PyPI
         run: uv publish --trusted-publishing always
+
+      - name: Cleanup temporary artifacts
+        if: always()
+        run: |
+          rm -rf test_env dist
