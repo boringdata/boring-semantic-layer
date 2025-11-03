@@ -2,9 +2,9 @@ name: CI/CD
 
 on:
   push:
-    branches: [main, bslv2]
+    branches: [main]
   pull_request:
-    branches: [main, bslv2]
+    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
