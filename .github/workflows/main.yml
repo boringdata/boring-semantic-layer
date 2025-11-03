@@ -51,7 +51,9 @@ jobs:
         run: make check
 
       - name: Upload docs artifact
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bslv2')
+        if: |
+          (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bslv2')) ||
+          (github.event_name == 'pull_request' && github.head_ref == 'bslv2')
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./docs/dist
@@ -59,7 +61,10 @@ jobs:
   # Deploy docs to GitHub Pages (on push to main/bslv2 or on release)
   deploy-docs:
     name: Deploy Docs
-    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bslv2')) || github.event_name == 'release'
+    if: |
+      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bslv2')) ||
+      (github.event_name == 'pull_request' && github.head_ref == 'bslv2') ||
+      github.event_name == 'release'
     needs: test
     runs-on: ubuntu-latest
     environment:
@@ -73,7 +78,10 @@ jobs:
   # Release to PyPI (only on GitHub release) - TESTING: also runs on bslv2
   release-pypi:
     name: Release to PyPI
-    if: github.event_name == 'release' || github.ref == 'refs/heads/bslv2'
+    if: |
+      github.event_name == 'release' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/bslv2') ||
+      (github.event_name == 'pull_request' && github.head_ref == 'bslv2')
     needs: test
     runs-on: ubuntu-latest
     environment:
