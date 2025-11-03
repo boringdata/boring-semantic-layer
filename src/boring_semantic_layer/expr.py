@@ -569,27 +569,7 @@ class SemanticAggregate(SemanticTable):
         backend: str = "altair",
         format: str = "static",
     ):
-        chart_obj = create_chart(self.op(), spec=spec, backend=backend)
-
-        if format in ("static", "interactive"):
-            return chart_obj
-        elif format == "json":
-            return chart_obj.to_dict()
-        elif format == "png":
-            if backend == "altair":
-                return chart_obj.to_png()
-            else:
-                return chart_obj.to_image(format="png")
-        elif format == "svg":
-            if backend == "altair":
-                return chart_obj.to_svg()
-            else:
-                return chart_obj.to_image(format="svg")
-        else:
-            raise ValueError(
-                f"Unsupported format: {format}. "
-                "Supported: 'static', 'interactive', 'json', 'png', 'svg'"
-            )
+        return create_chart(self, spec=spec, backend=backend, format=format)
 
 
 class SemanticOrderBy(SemanticTable):
@@ -625,33 +605,9 @@ class SemanticOrderBy(SemanticTable):
         backend: str = "altair",
         format: str = "static",
     ):
-        source = self.source
-        while not isinstance(source, SemanticAggregateOp):
-            if isinstance(source, SemanticTableOp | SemanticJoinOp):
-                raise ValueError("Cannot create chart: no aggregate found in query chain")
-            source = source.source
-
-        chart_obj = create_chart(source, spec=spec, backend=backend)
-
-        if format in ("static", "interactive"):
-            return chart_obj
-        elif format == "json":
-            return chart_obj.to_dict()
-        elif format == "png":
-            if backend == "altair":
-                return chart_obj.to_png()
-            else:
-                return chart_obj.to_image(format="png")
-        elif format == "svg":
-            if backend == "altair":
-                return chart_obj.to_svg()
-            else:
-                return chart_obj.to_image(format="svg")
-        else:
-            raise ValueError(
-                f"Unsupported format: {format}. "
-                "Supported: 'static', 'interactive', 'json', 'png', 'svg'"
-            )
+        """Create a chart from the ordered aggregate."""
+        # Pass the expression to preserve order_by in the chart
+        return create_chart(self, spec=spec, backend=backend, format=format)
 
 
 class SemanticLimit(SemanticTable):
@@ -689,33 +645,9 @@ class SemanticLimit(SemanticTable):
         backend: str = "altair",
         format: str = "static",
     ):
-        source = self.source
-        while not isinstance(source, SemanticAggregateOp):
-            if isinstance(source, SemanticTableOp | SemanticJoinOp):
-                raise ValueError("Cannot create chart: no aggregate found in query chain")
-            source = source.source
-
-        chart_obj = create_chart(source, spec=spec, backend=backend)
-
-        if format in ("static", "interactive"):
-            return chart_obj
-        elif format == "json":
-            return chart_obj.to_dict()
-        elif format == "png":
-            if backend == "altair":
-                return chart_obj.to_png()
-            else:
-                return chart_obj.to_image(format="png")
-        elif format == "svg":
-            if backend == "altair":
-                return chart_obj.to_svg()
-            else:
-                return chart_obj.to_image(format="svg")
-        else:
-            raise ValueError(
-                f"Unsupported format: {format}. "
-                "Supported: 'static', 'interactive', 'json', 'png', 'svg'"
-            )
+        """Create a chart from the limited aggregate."""
+        # Pass the expression to preserve limit in the chart
+        return create_chart(self, spec=spec, backend=backend, format=format)
 
 
 class SemanticUnnest(SemanticTable):
@@ -863,33 +795,9 @@ class SemanticMutate(SemanticTable):
         backend: str = "altair",
         format: str = "static",
     ):
-        source = self.source
-        while not isinstance(source, SemanticAggregateOp):
-            if isinstance(source, SemanticTableOp | SemanticJoinOp):
-                raise ValueError("Cannot create chart: no aggregate found in query chain")
-            source = source.source
-
-        chart_obj = create_chart(source, spec=spec, backend=backend)
-
-        if format in ("static", "interactive"):
-            return chart_obj
-        elif format == "json":
-            return chart_obj.to_dict()
-        elif format == "png":
-            if backend == "altair":
-                return chart_obj.to_png()
-            else:
-                return chart_obj.to_image(format="png")
-        elif format == "svg":
-            if backend == "altair":
-                return chart_obj.to_svg()
-            else:
-                return chart_obj.to_image(format="svg")
-        else:
-            raise ValueError(
-                f"Unsupported format: {format}. "
-                "Supported: 'static', 'interactive', 'json', 'png', 'svg'"
-            )
+        """Create a chart from the mutated aggregate."""
+        # Pass the expression to preserve mutations in the chart
+        return create_chart(self, spec=spec, backend=backend, format=format)
 
     def as_table(self) -> SemanticModel:
         return SemanticModel(
