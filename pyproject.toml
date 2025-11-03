@@ -47,6 +47,7 @@ markers = [
 [dependency-groups]
 dev = [
     "ipython>=8.37.0",
+    "xorq>=0.3.2",
 ]
 
 [tool.ruff]
