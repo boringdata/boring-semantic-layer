@@ -8,6 +8,7 @@ dependencies = [
     "attrs>=25.3.0",
     "ibis-framework>=11.0.0", # required to install ibis-framework with no backend
     "packaging",
+    "pyyaml>=6.0",
     "returns>=0.26.0",
 ]
 urls = { Homepage = "https://github.com/boringdata/boring-semantic-layer/tree/main" }

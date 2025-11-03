@@ -457,6 +457,7 @@ pywin32-ctypes==0.2.3 ; sys_platform == 'win32'
     # via keyring
 pyyaml==6.0.3
     # via
+    #   boring-semantic-layer
     #   dask
     #   envyaml
     #   jsonschema-path
