@@ -196,7 +196,7 @@ flights_with_origin = flights.join_one(airports, left_on="origin", right_on="cod
 
 # Index across the join
 result = (
-    flights_with_origin.index(lambda t: [t.carrier, t.airports__state])
+    flights_with_origin.index(["flights.carrier", "airports.state"])
     .order_by(lambda t: t.weight.desc())
     .limit(10)
 )
@@ -205,7 +205,7 @@ result = (
 <bslquery code-block="query_index_joins"></bslquery>
 
 <note type="warning">
-When referencing dimensions from joined tables in the index, use double underscores: `airports__state` instead of `airports.state`.
+When referencing dimensions from joined tables in the index, use dot notation with table name prefix: `"airports.state"` instead of just `"state"`.
 </note>
 
 ## Use Cases
@@ -227,7 +227,7 @@ When referencing dimensions from joined tables in the index, use double undersco
 - Filter by `fieldType` to focus on strings or numbers
 - Use `by="measure_name"` to weight by custom measures instead of counts
 - Add `sample=N` to analyze large datasets quickly
-- The index works across joins - use `table__field` syntax for joined dimensions
+- The index works across joins - use `"table.field"` syntax for joined dimensions
 - Perfect for building autocomplete, search, and data profiling features
 
 ## Next Steps
