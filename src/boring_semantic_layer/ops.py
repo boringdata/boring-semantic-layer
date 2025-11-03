@@ -2000,6 +2000,14 @@ class SemanticIndexOp(Relation):
             },
         )
 
+    @property
+    def keys(self) -> tuple[str, ...]:
+        return ("fieldValue", "fieldName", "fieldPath", "fieldType")
+
+    @property
+    def aggs(self) -> dict[str, Any]:
+        return {"weight": lambda t: t.weight}
+
     def to_ibis(self):
         all_roots = _find_all_root_models(self.source)
         base_tbl = (

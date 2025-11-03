@@ -397,6 +397,51 @@ class SemanticJoin(SemanticTable):
     def get_calculated_measures(self):
         return self.op().get_calculated_measures()
 
+    def index(
+        self,
+        selector: str | list[str] | Callable | None = None,
+        by: str | None = None,
+        sample: int | None = None,
+    ):
+        processed_selector = selector
+        if selector is not None and "ibis.selectors" in str(type(selector).__module__):
+            if type(selector).__name__ == "AllColumns":
+                processed_selector = None
+            elif type(selector).__name__ == "Cols":
+                processed_selector = sorted(selector.names)
+            else:
+                processed_selector = selector
+
+        return SemanticIndexOp(
+            source=self.op(),
+            selector=processed_selector,
+            by=by,
+            sample=sample,
+        )
+
+    def to_ibis(self):
+        return self.op().to_ibis()
+
+    def as_expr(self):
+        return self
+
+    def __getitem__(self, key):
+        dims_dict = self.get_dimensions()
+        if key in dims_dict:
+            return dims_dict[key]
+
+        meas_dict = self.get_measures()
+        if key in meas_dict:
+            return meas_dict[key]
+
+        calc_meas_dict = self.get_calculated_measures()
+        if key in calc_meas_dict:
+            return calc_meas_dict[key]
+
+        raise KeyError(
+            f"'{key}' not found in dimensions, measures, or calculated measures",
+        )
+
     @property
     def dimensions(self):
         return self.op().dimensions
