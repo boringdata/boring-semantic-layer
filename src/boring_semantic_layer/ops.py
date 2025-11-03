@@ -991,6 +991,20 @@ class SemanticAggregateOp(Relation):
                 return find_join_in_tree(node.source)
             return None
 
+        def has_filter_after_join(node):
+            """Check if there's a filter operation between here and the join.
+
+            This prevents us from skipping filters when we optimize by jumping
+            directly to the join for projection pushdown.
+            """
+            if isinstance(node, SemanticFilterOp):
+                return True
+            if isinstance(node, SemanticJoinOp | SemanticTableOp):
+                return False
+            if hasattr(node, "source") and node.source is not None:
+                return has_filter_after_join(node.source)
+            return False
+
         join_op = find_join_in_tree(self.source)
 
         if join_op is None and isinstance(self.source, SemanticGroupByOp):
@@ -999,7 +1013,9 @@ class SemanticAggregateOp(Relation):
                 # SemanticTableOp always has _source_join attribute
                 join_op = grouped_source._source_join
 
-        if join_op is not None:
+        # Only use the join optimization if there are no filters after the join
+        # Otherwise we'd skip the filter operations
+        if join_op is not None and not has_filter_after_join(self.source):
             tbl = join_op.to_ibis(parent_requirements=self.required_columns)
         else:
             tbl = _to_ibis(self.source)

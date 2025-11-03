@@ -72,3 +72,79 @@ def test_bracket_filter_after_join_and_aggregate():
 
     df = final.filter(lambda t: t["orders.region"] == "North").execute()
     assert df.shape[0] == 2
+
+
+def test_filter_before_aggregation_on_joined_table():
+    """
+    Test that filters applied before aggregation work correctly on joined tables.
+
+    This is the critical test case that was missing - it tests:
+    join → filter → group_by → aggregate
+
+    This pattern exposed a bug where SemanticAggregateOp.to_ibis() would skip
+    directly to the join for projection pushdown, bypassing the filter.
+    """
+    orders_df = pd.DataFrame(
+        {
+            "order_id": [1, 2, 3, 4, 5],
+            "customer_id": [101, 102, 101, 103, 102],
+            "amount": [100, 200, 150, 300, 250],
+        },
+    )
+    customers_df = pd.DataFrame(
+        {
+            "customer_id": [101, 102, 103],
+            "name": ["Alice", "Bob", "Charlie"],
+            "country": ["US", "UK", "US"],
+        },
+    )
+
+    con = ibis.duckdb.connect(":memory:")
+    orders_tbl = con.create_table("orders", orders_df, overwrite=True)
+    customers_tbl = con.create_table("customers", customers_df, overwrite=True)
+
+    orders_sm = (
+        to_semantic_table(orders_tbl, name="orders")
+        .with_dimensions(
+            order_id=lambda t: t.order_id,
+            customer_id=lambda t: t.customer_id,
+        )
+        .with_measures(
+            total_amount=lambda t: t.amount.sum(),
+            order_count=lambda t: t.count(),
+        )
+    )
+
+    customers_sm = (
+        to_semantic_table(customers_tbl, name="customers")
+        .with_dimensions(
+            customer_id=lambda t: t.customer_id,
+            name=lambda t: t.name,
+            country=lambda t: t.country,
+        )
+        .with_measures(customer_count=lambda t: t.count())
+    )
+
+    # Join orders with customers
+    joined = join_one(orders_sm, customers_sm, "customer_id", "customer_id")
+
+    # Filter THEN aggregate - this is the critical pattern that was broken
+    filtered = joined.filter(lambda t: t.country == "US")
+    aggregated = aggregate_(
+        group_by_(filtered, "customers.name"),
+        lambda t: t["total_amount"],
+    )
+
+    result = aggregated.execute()
+
+    # Should only include US customers (Alice and Charlie), not Bob (UK)
+    assert len(result) == 2
+    assert set(result["customers.name"]) == {"Alice", "Charlie"}
+
+    # Verify the amounts are correct
+    # Note: aggregate_() with callable creates a generated column name
+    measure_col = [col for col in result.columns if col != "customers.name"][0]
+    alice_total = result[result["customers.name"] == "Alice"][measure_col].iloc[0]
+    charlie_total = result[result["customers.name"] == "Charlie"][measure_col].iloc[0]
+    assert alice_total == 250  # Orders 1 + 3
+    assert charlie_total == 300  # Order 4

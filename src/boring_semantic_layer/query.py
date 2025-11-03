@@ -202,10 +202,16 @@ class Filter:
             raise ValueError("Filter must be a dict, string, or callable")
 
     def _get_field_expr(self, field: str) -> Any:
-        """Get field expression using ibis._ for unbound reference."""
+        """Get field expression using ibis._ for unbound reference.
+
+        For prefixed fields (e.g., 'customers.country'), use only the field name
+        since joined tables flatten the columns to the top level.
+        """
         if "." in field:
-            table_name, field_name = field.split(".", 1)
-            return getattr(getattr(ibis._, table_name), field_name)
+            # Extract just the field name, ignoring the table prefix
+            # e.g., 'customers.country' -> 'country'
+            _table_name, field_name = field.split(".", 1)
+            return getattr(ibis._, field_name)
         return getattr(ibis._, field)
 
     def _parse_json_filter(self, filter_obj: FrozenDict) -> Any:

@@ -369,3 +369,142 @@ class TestChartWithFilters:
         import plotly.graph_objects as go
 
         assert isinstance(chart, go.Figure)
+
+
+class TestFilterOperators:
+    """Test new filter operators: eq, equals, ilike, not ilike."""
+
+    @pytest.fixture(scope="class")
+    def operator_model(self, con):
+        """Create a model for testing filter operators."""
+        df = pd.DataFrame(
+            {
+                "name": ["Alice", "Bob", "charlie", "DAVID", "Eve"],
+                "email": [
+                    "alice@example.com",
+                    "bob@test.org",
+                    "charlie@example.com",
+                    "david@TEST.ORG",
+                    "eve@example.com",
+                ],
+                "value": [10, 20, 30, 40, 50],
+            }
+        )
+
+        tbl = con.create_table("test_operators", df, overwrite=True)
+
+        return (
+            to_semantic_table(tbl, name="test_operators")
+            .with_dimensions(
+                name=lambda t: t.name,
+                email=lambda t: t.email,
+            )
+            .with_measures(
+                sum_value=lambda t: t.value.sum(),
+                count=lambda t: t.count(),
+            )
+        )
+
+    def test_eq_operator(self, operator_model):
+        """Test 'eq' operator (should work same as '=')."""
+        result = (
+            operator_model.query(
+                dimensions=["name"],
+                measures=["sum_value"],
+                filters=[{"field": "name", "operator": "eq", "value": "Alice"}],
+            )
+            .execute()
+            .reset_index(drop=True)
+        )
+
+        expected = pd.DataFrame({"name": ["Alice"], "sum_value": [10]})
+        pd.testing.assert_frame_equal(result, expected)
+
+    def test_equals_operator(self, operator_model):
+        """Test 'equals' operator (should work same as '=')."""
+        result = (
+            operator_model.query(
+                dimensions=["name"],
+                measures=["sum_value"],
+                filters=[{"field": "name", "operator": "equals", "value": "Bob"}],
+            )
+            .execute()
+            .reset_index(drop=True)
+        )
+
+        expected = pd.DataFrame({"name": ["Bob"], "sum_value": [20]})
+        pd.testing.assert_frame_equal(result, expected)
+
+    def test_ilike_operator(self, operator_model):
+        """Test 'ilike' operator (case-insensitive LIKE)."""
+        # Should match alice, Alice (case insensitive 'a')
+        result = (
+            operator_model.query(
+                dimensions=["name"],
+                measures=["sum_value"],
+                filters=[{"field": "name", "operator": "ilike", "value": "%a%"}],
+            )
+            .execute()
+            .reset_index(drop=True)
+            .sort_values("name")
+            .reset_index(drop=True)
+        )
+
+        expected = pd.DataFrame({"name": ["Alice", "DAVID", "charlie"], "sum_value": [10, 40, 30]})
+        pd.testing.assert_frame_equal(result, expected)
+
+    def test_not_ilike_operator(self, operator_model):
+        """Test 'not ilike' operator."""
+        # Should exclude names containing 'e' (case insensitive): Alice, charlie, Eve
+        result = (
+            operator_model.query(
+                dimensions=["name"],
+                measures=["sum_value"],
+                filters=[{"field": "name", "operator": "not ilike", "value": "%e%"}],
+            )
+            .execute()
+            .reset_index(drop=True)
+            .sort_values("name")
+            .reset_index(drop=True)
+        )
+
+        expected = pd.DataFrame({"name": ["Bob", "DAVID"], "sum_value": [20, 40]})
+        pd.testing.assert_frame_equal(result, expected)
+
+    def test_operators_in_compound_filters(self, operator_model):
+        """Test new operators work in compound AND/OR filters."""
+        # Test with AND: email contains example AND name equals Alice
+        result = (
+            operator_model.query(
+                dimensions=["name"],
+                measures=["sum_value"],
+                filters=[
+                    {"field": "email", "operator": "ilike", "value": "%example%"},
+                    {"field": "name", "operator": "equals", "value": "Alice"},
+                ],
+            )
+            .execute()
+            .reset_index(drop=True)
+        )
+
+        expected = pd.DataFrame({"name": ["Alice"], "sum_value": [10]})
+        pd.testing.assert_frame_equal(result, expected)
+
+    @pytest.mark.parametrize(
+        "operator,expected_count",
+        [
+            ("=", 1),
+            ("eq", 1),
+            ("equals", 1),
+        ],
+    )
+    def test_equality_operators_equivalence(self, operator_model, operator, expected_count):
+        """Test that =, eq, and equals all produce the same results."""
+        result = operator_model.query(
+            dimensions=["name"],
+            measures=["count"],
+            filters=[{"field": "name", "operator": operator, "value": "Bob"}],
+        ).execute()
+
+        assert len(result) == expected_count
+        assert result["count"].sum() == 1
