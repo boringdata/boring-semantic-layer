@@ -249,31 +249,47 @@ class SemanticModel(SemanticTable):
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | None = None,
         how: str = "inner",
-    ):
-        other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoinOp(left=self.op(), right=other_op, on=on, how=how)
-
-    def join_one(self, other: SemanticModel, left_on: str, right_on: str):
-        other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoinOp(
+    ) -> SemanticJoin:
+        return SemanticJoin(
             left=self.op(),
-            right=other_op,
+            right=other.op() if isinstance(other, SemanticModel) else other,
+            on=on,
+            how=how,
+        )
+
+    def join_one(
+        self,
+        other: SemanticModel,
+        left_on: str,
+        right_on: str,
+    ) -> SemanticJoin:
+        return SemanticJoin(
+            left=self.op(),
+            right=other.op() if isinstance(other, SemanticModel) else other,
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
             how="inner",
         )
 
-    def join_many(self, other: SemanticModel, left_on: str, right_on: str):
-        other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoinOp(
+    def join_many(
+        self,
+        other: SemanticModel,
+        left_on: str,
+        right_on: str,
+    ) -> SemanticJoin:
+        return SemanticJoin(
             left=self.op(),
-            right=other_op,
+            right=other.op() if isinstance(other, SemanticModel) else other,
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
             how="left",
         )
 
-    def join_cross(self, other: SemanticModel):
-        other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoinOp(left=self.op(), right=other_op, on=None, how="cross")
+    def join_cross(self, other: SemanticModel) -> SemanticJoin:
+        return SemanticJoin(
+            left=self.op(),
+            right=other.op() if isinstance(other, SemanticModel) else other,
+            on=None,
+            how="cross",
+        )
 
     def index(
         self,
@@ -340,6 +356,203 @@ class SemanticModel(SemanticTable):
             time_grain=time_grain,
             time_range=time_range,
         )
+
+
+class SemanticJoin(SemanticTable):
+    def __init__(
+        self,
+        left: SemanticTableOp,
+        right: SemanticTableOp,
+        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
+        how: str = "inner",
+    ) -> None:
+        op = SemanticJoinOp(left=left, right=right, on=on, how=how)
+        super().__init__(op)
+
+    @property
+    def left(self):
+        return self.op().left
+
+    @property
+    def right(self):
+        return self.op().right
+
+    @property
+    def on(self):
+        return self.op().on
+
+    @property
+    def how(self):
+        return self.op().how
+
+    @property
+    def values(self):
+        return self.op().values
+
+    @property
+    def schema(self):
+        return self.op().schema
+
+    @property
+    def name(self):
+        return getattr(self.op(), "name", None)
+
+    @property
+    def table(self):
+        return self.op().to_ibis()
+
+    def get_dimensions(self):
+        return self.op().get_dimensions()
+
+    def get_measures(self):
+        return self.op().get_measures()
+
+    def get_calculated_measures(self):
+        return self.op().get_calculated_measures()
+
+    @property
+    def dimensions(self):
+        return self.op().dimensions
+
+    @property
+    def measures(self):
+        return self.op().measures
+
+    @property
+    def _dims(self):
+        return self.op()._dims
+
+    @property
+    def _base_measures(self):
+        return self.op()._base_measures
+
+    @property
+    def _calc_measures(self):
+        return self.op()._calc_measures
+
+    @property
+    def calc_measures(self):
+        return self.op().calc_measures
+
+    @property
+    def json_definition(self):
+        return self.op().json_definition
+
+    def query(
+        self,
+        dimensions: list[str] | None = None,
+        measures: list[str] | None = None,
+        filters: dict[str, Any] | None = None,
+        order_by: list[str] | None = None,
+        limit: int | None = None,
+        time_grain: str | None = None,
+        time_range: dict[str, str] | None = None,
+    ):
+        return build_query(
+            semantic_table=self,
+            dimensions=dimensions,
+            measures=measures,
+            filters=filters,
+            order_by=order_by,
+            limit=limit,
+            time_grain=time_grain,
+            time_range=time_range,
+        )
+
+    def as_table(self) -> SemanticModel:
+        all_roots = _find_all_root_models(self.op())
+        return _build_semantic_model_from_roots(self.op().to_ibis(), all_roots)
+
+    def with_dimensions(self, **dims) -> SemanticModel:
+        all_roots = _find_all_root_models(self.op())
+        existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
+        existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
+        existing_calc = _get_merged_fields(all_roots, "calc_measures") if all_roots else {}
+
+        return SemanticModel(
+            table=self,
+            dimensions={**existing_dims, **dims},
+            measures=existing_meas,
+            calc_measures=existing_calc,
+        )
+
+    def with_measures(self, **meas) -> SemanticModel:
+        all_roots = _find_all_root_models(self.op())
+        existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
+        existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
+        existing_calc = _get_merged_fields(all_roots, "calc_measures") if all_roots else {}
+
+        new_base_meas = dict(existing_meas)
+        new_calc_meas = dict(existing_calc)
+
+        all_measure_names = (
+            tuple(new_base_meas.keys()) + tuple(new_calc_meas.keys()) + tuple(meas.keys())
+        )
+        scope = MeasureScope(_tbl=self, _known=all_measure_names)
+
+        for name, fn_or_expr in meas.items():
+            kind, value = _classify_measure(fn_or_expr, scope)
+            (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
+
+        return SemanticModel(
+            table=self,
+            dimensions=existing_dims,
+            measures=new_base_meas,
+            calc_measures=new_calc_meas,
+        )
+
+    def join(
+        self,
+        other: SemanticModel,
+        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
+        how: str = "inner",
+    ) -> SemanticJoin:
+        return SemanticJoin(
+            left=self.op(),
+            right=other.op() if isinstance(other, SemanticModel) else other,
+            on=on,
+            how=how,
+        )
+
+    def join_one(
+        self,
+        other: SemanticModel,
+        left_on: str,
+        right_on: str,
+    ) -> SemanticJoin:
+        return SemanticJoin(
+            left=self.op(),
+            right=other.op() if isinstance(other, SemanticModel) else other,
+            on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
+            how="inner",
+        )
+
+    def join_many(
+        self,
+        other: SemanticModel,
+        left_on: str,
+        right_on: str,
+    ) -> SemanticJoin:
+        return SemanticJoin(
+            left=self.op(),
+            right=other.op() if isinstance(other, SemanticModel) else other,
+            on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
+            how="left",
+        )
+
+    def join_cross(self, other: SemanticModel) -> SemanticJoin:
+        return SemanticJoin(
+            left=self.op(),
+            right=other.op() if isinstance(other, SemanticModel) else other,
+            on=None,
+            how="cross",
+        )
+
+    def group_by(self, *keys: str):
+        return self.op().group_by(*keys)
+
+    def filter(self, predicate: Callable):
+        return self.op().filter(predicate)
 
 
 class SemanticFilter(SemanticTable):

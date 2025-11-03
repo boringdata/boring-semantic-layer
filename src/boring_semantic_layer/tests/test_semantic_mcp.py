@@ -314,5 +314,160 @@ class TestQueryModel:
             assert result.content[0].text is not None
 
 
+class TestJoinedModels:
+    """Test MCP with joined semantic models."""
+
+    @pytest.fixture(scope="class")
+    def joined_models(self, con):
+        """Create joined semantic model for testing."""
+        # Create sample data
+        flights_df = pd.DataFrame(
+            {
+                "origin": ["JFK", "LAX", "ORD"] * 10,
+                "carrier": ["AA", "UA", "DL"] * 10,
+                "flight_date": pd.date_range("2024-01-01", periods=30, freq="D"),
+            },
+        )
+
+        carriers_df = pd.DataFrame(
+            {
+                "code": ["AA", "UA", "DL"],
+                "name": ["American", "United", "Delta"],
+            },
+        )
+
+        flights_tbl = con.create_table("flights_joined", flights_df, overwrite=True)
+        carriers_tbl = con.create_table("carriers_joined", carriers_df, overwrite=True)
+
+        # Define carriers semantic table
+        carriers = (
+            to_semantic_table(carriers_tbl, name="carriers")
+            .with_dimensions(
+                code={
+                    "expr": lambda t: t.code,
+                    "description": "Carrier code",
+                },
+                name={
+                    "expr": lambda t: t.name,
+                    "description": "Full carrier name",
+                },
+            )
+            .with_measures(
+                carrier_count={
+                    "expr": lambda t: t.count(),
+                    "description": "Total number of carriers",
+                }
+            )
+        )
+
+        # Define flights semantic table with join to carriers
+        flights = (
+            to_semantic_table(flights_tbl, name="flights")
+            .with_dimensions(
+                origin={
+                    "expr": lambda t: t.origin,
+                    "description": "Origin airport code",
+                },
+                carrier={
+                    "expr": lambda t: t.carrier,
+                    "description": "Carrier code",
+                },
+                flight_date={
+                    "expr": lambda t: t.flight_date,
+                    "description": "Flight date",
+                    "is_time_dimension": True,
+                    "smallest_time_grain": "day",
+                },
+            )
+            .with_measures(
+                flight_count={
+                    "expr": lambda t: t.count(),
+                    "description": "Total number of flights",
+                },
+            )
+            .join_one(carriers, left_on="carrier", right_on="code")
+        )
+
+        return {"flights": flights, "carriers": carriers}
+
+    @pytest.mark.asyncio
+    async def test_get_model_joined(self, joined_models):
+        """Test get_model on a joined semantic table."""
+        mcp = MCPSemanticModel(models=joined_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool("get_model", {"model_name": "flights"})
+            model_info = json.loads(result.content[0].text)
+
+            # Check that joined model has metadata from both sides (with prefixes)
+            assert "flights.origin" in model_info["dimensions"]
+            assert "flights.carrier" in model_info["dimensions"]
+            assert "flights.flight_date" in model_info["dimensions"]
+
+            # Check prefixed dimensions from joined table
+            assert "carriers.code" in model_info["dimensions"]
+            assert "carriers.name" in model_info["dimensions"]
+
+            # Check measures (with prefixes)
+            assert "flights.flight_count" in model_info["measures"]
+            assert "carriers.carrier_count" in model_info["measures"]
+
+    @pytest.mark.asyncio
+    async def test_query_joined_model(self, joined_models):
+        """Test querying a joined semantic model."""
+        mcp = MCPSemanticModel(models=joined_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "query_model",
+                {
+                    "model_name": "flights",
+                    "dimensions": ["carriers.name"],
+                    "measures": ["flight_count"],
+                },
+            )
+
+            data = json.loads(result.content[0].text)
+            assert len(data) > 0
+            assert "carriers.name" in data[0]
+            assert "flight_count" in data[0]
+
+    @pytest.mark.asyncio
+    async def test_query_joined_with_time_grain(self, joined_models):
+        """Test querying joined model with time grain."""
+        mcp = MCPSemanticModel(models=joined_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "query_model",
+                {
+                    "model_name": "flights",
+                    "dimensions": ["flight_date", "carriers.name"],
+                    "measures": ["flight_count"],
+                    "time_grain": "TIME_GRAIN_MONTH",
+                },
+            )
+
+            data = json.loads(result.content[0].text)
+            assert len(data) > 0
+            assert "flight_date" in data[0]
+            assert "carriers.name" in data[0]
+            assert "flight_count" in data[0]
+
+    @pytest.mark.asyncio
+    async def test_get_time_range_joined(self, joined_models):
+        """Test get_time_range on a joined model."""
+        mcp = MCPSemanticModel(models=joined_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool("get_time_range", {"model_name": "flights"})
+            time_range = json.loads(result.content[0].text)
+
+            assert "start" in time_range
+            assert "end" in time_range
+            assert time_range["start"].startswith("2024-01-01")
+            assert time_range["end"].startswith("2024-01-30")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

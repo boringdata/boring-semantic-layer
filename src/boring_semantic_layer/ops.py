@@ -1199,6 +1199,37 @@ class SemanticJoinOp(Relation):
     def json_definition(self) -> Mapping[str, Any]:
         return _build_json_definition(self.get_dimensions(), self.get_measures(), None)
 
+    @property
+    def name(self) -> str | None:
+        return None
+
+    @property
+    def table(self):
+        return self.to_ibis()
+
+    def query(
+        self,
+        dimensions: Sequence[str] | None = None,
+        measures: Sequence[str] | None = None,
+        filters: list | None = None,
+        order_by: Sequence[tuple[str, str]] | None = None,
+        limit: int | None = None,
+        time_grain: str | None = None,
+        time_range: dict[str, str] | None = None,
+    ):
+        from .query import query as build_query
+
+        return build_query(
+            semantic_table=self,
+            dimensions=dimensions,
+            measures=measures,
+            filters=filters,
+            order_by=order_by,
+            limit=limit,
+            time_grain=time_grain,
+            time_range=time_range,
+        )
+
     def with_dimensions(self, **dims) -> SemanticTable:
         return _semantic_table(
             table=self.to_ibis(),
@@ -1249,8 +1280,10 @@ class SemanticJoinOp(Relation):
         other: SemanticTable,
         on: Callable[[Any, Any], ir.BooleanValue] | None = None,
         how: str = "inner",
-    ) -> SemanticJoinOp:
-        return SemanticJoinOp(
+    ):
+        from .expr import SemanticJoin
+
+        return SemanticJoin(
             left=self,
             right=other.op(),
             on=on,
@@ -1262,8 +1295,10 @@ class SemanticJoinOp(Relation):
         other: SemanticTable,
         left_on: str,
         right_on: str,
-    ) -> SemanticJoinOp:
-        return SemanticJoinOp(
+    ):
+        from .expr import SemanticJoin
+
+        return SemanticJoin(
             left=self,
             right=other.op(),
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
@@ -1275,8 +1310,10 @@ class SemanticJoinOp(Relation):
         other: SemanticTable,
         left_on: str,
         right_on: str,
-    ) -> SemanticJoinOp:
-        return SemanticJoinOp(
+    ):
+        from .expr import SemanticJoin
+
+        return SemanticJoin(
             left=self,
             right=other.op(),
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
