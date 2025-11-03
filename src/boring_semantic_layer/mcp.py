@@ -16,7 +16,7 @@ class MCPSemanticModel(FastMCP):
     - list_models: list all model names
     - get_model: get model metadata (dimensions, measures, time dimensions)
     - get_time_range: get available time range for time dimensions
-    - query_model: execute queries with time_grain and time_range support
+    - query_model: execute queries with time_grain, time_range, and chart_spec support
     """
 
     def __init__(
@@ -103,6 +103,7 @@ class MCPSemanticModel(FastMCP):
             limit: int | None = None,
             time_grain: str | None = None,
             time_range: Mapping[str, str] | None = None,
+            chart_spec: Mapping[str, Any] | None = None,
         ) -> str:
             """
             Query a semantic model with support for filters and time dimensions.
@@ -116,17 +117,22 @@ class MCPSemanticModel(FastMCP):
                 limit: Maximum number of rows to return
                 time_grain: Optional time grain (e.g., "TIME_GRAIN_MONTH")
                 time_range: Optional time range with 'start' and 'end' keys
+                chart_spec: Optional chart specification dict. When provided, returns both data and chart.
+                           Format: {"backend": "altair"|"plotly", "spec": {...}, "format": "json"|"static"}
 
             Returns:
-                Query results as JSON string
+                When chart_spec is None: Query results as JSON string ({"records": [...]})
+                When chart_spec is provided: JSON with both records and chart ({"records": [...], "chart": {...}})
             """
+            import json
+
             if model_name not in self.models:
                 raise ValueError(f"Model {model_name} not found")
 
             model = self.models[model_name]
 
             # Execute query using the query interface
-            result = model.query(
+            query_result = model.query(
                 dimensions=dimensions,
                 measures=measures,
                 filters=filters or [],
@@ -134,10 +140,46 @@ class MCPSemanticModel(FastMCP):
                 limit=limit,
                 time_grain=time_grain,
                 time_range=time_range,
-            ).execute()
+            )
 
-            # Format as JSON
-            return result.to_json(orient="records", date_format="iso")
+            # Get the data
+            result_df = query_result.execute()
+            records = json.loads(result_df.to_json(orient="records", date_format="iso"))
+
+            # If chart_spec is not provided, return only records
+            if chart_spec is None:
+                return json.dumps({"records": records})
+
+            # Generate chart if chart_spec is provided
+            backend = chart_spec.get("backend", "altair")
+            spec = chart_spec.get("spec")
+            format_type = chart_spec.get("format", "json")
+
+            chart_result = query_result.chart(spec=spec, backend=backend, format=format_type)
+
+            # For JSON format, extract the spec
+            if format_type == "json":
+                if backend == "altair":
+                    chart_data = chart_result
+                else:  # plotly returns JSON string, need to parse it
+                    chart_data = (
+                        json.loads(chart_result) if isinstance(chart_result, str) else chart_result
+                    )
+
+                return json.dumps({"records": records, "chart": chart_data})
+            else:
+                # For other formats (static, interactive), we can't serialize directly
+                # Return a message indicating the chart type
+                return json.dumps(
+                    {
+                        "records": records,
+                        "chart": {
+                            "backend": backend,
+                            "format": format_type,
+                            "message": f"Chart generated as {format_type} format. Use format='json' for serializable output.",
+                        },
+                    }
+                )
 
 
 def create_mcp_server(

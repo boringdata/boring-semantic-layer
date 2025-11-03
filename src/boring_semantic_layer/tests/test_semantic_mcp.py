@@ -313,6 +313,133 @@ class TestQueryModel:
 
             assert result.content[0].text is not None
 
+    @pytest.mark.asyncio
+    async def test_query_without_chart_spec_returns_records_only(self, sample_models):
+        """Test query without chart_spec returns only records in new format."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "query_model",
+                {
+                    "model_name": "flights",
+                    "dimensions": ["carrier"],
+                    "measures": ["flight_count"],
+                },
+            )
+
+            data = json.loads(result.content[0].text)
+            assert "records" in data
+            assert "chart" not in data
+            assert isinstance(data["records"], list)
+            assert len(data["records"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_query_with_chart_spec_altair_json(self, sample_models):
+        """Test query with chart_spec returns both records and chart (Altair)."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "query_model",
+                {
+                    "model_name": "flights",
+                    "dimensions": ["carrier"],
+                    "measures": ["flight_count"],
+                    "chart_spec": {
+                        "backend": "altair",
+                        "format": "json",
+                    },
+                },
+            )
+
+            data = json.loads(result.content[0].text)
+            assert "records" in data
+            assert "chart" in data
+            assert isinstance(data["records"], list)
+            assert isinstance(data["chart"], dict)
+            # Altair JSON spec should have basic Vega-Lite structure
+            assert "$schema" in data["chart"] or "mark" in data["chart"]
+
+    @pytest.mark.asyncio
+    async def test_query_with_chart_spec_plotly_json(self, sample_models):
+        """Test query with chart_spec returns both records and chart (Plotly)."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "query_model",
+                {
+                    "model_name": "flights",
+                    "dimensions": ["carrier"],
+                    "measures": ["flight_count"],
+                    "chart_spec": {
+                        "backend": "plotly",
+                        "format": "json",
+                    },
+                },
+            )
+
+            data = json.loads(result.content[0].text)
+            assert "records" in data
+            assert "chart" in data
+            assert isinstance(data["records"], list)
+            assert isinstance(data["chart"], dict)
+            # Plotly JSON spec should have data and layout
+            assert "data" in data["chart"] or "layout" in data["chart"]
+
+    @pytest.mark.asyncio
+    async def test_query_with_chart_spec_custom_spec(self, sample_models):
+        """Test query with custom chart spec."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "query_model",
+                {
+                    "model_name": "flights",
+                    "dimensions": ["carrier"],
+                    "measures": ["flight_count"],
+                    "chart_spec": {
+                        "backend": "altair",
+                        "spec": {"mark": "line", "title": "Custom Chart"},
+                        "format": "json",
+                    },
+                },
+            )
+
+            data = json.loads(result.content[0].text)
+            assert "records" in data
+            assert "chart" in data
+            assert isinstance(data["chart"], dict)
+            # Check that custom spec was applied - mark type should be line
+            assert data["chart"].get("mark", {}).get("type") == "line"
+
+    @pytest.mark.asyncio
+    async def test_query_with_chart_spec_non_json_format(self, sample_models):
+        """Test query with chart_spec using non-JSON format returns message."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "query_model",
+                {
+                    "model_name": "flights",
+                    "dimensions": ["carrier"],
+                    "measures": ["flight_count"],
+                    "chart_spec": {
+                        "backend": "altair",
+                        "format": "static",
+                    },
+                },
+            )
+
+            data = json.loads(result.content[0].text)
+            assert "records" in data
+            assert "chart" in data
+            assert "message" in data["chart"]
+            assert "Use format='json'" in data["chart"]["message"]
+
 
 class TestJoinedModels:
     """Test MCP with joined semantic models."""
@@ -428,9 +555,11 @@ class TestJoinedModels:
             )
 
             data = json.loads(result.content[0].text)
-            assert len(data) > 0
-            assert "carriers.name" in data[0]
-            assert "flight_count" in data[0]
+            assert "records" in data
+            records = data["records"]
+            assert len(records) > 0
+            assert "carriers.name" in records[0]
+            assert "flight_count" in records[0]
 
     @pytest.mark.asyncio
     async def test_query_joined_with_time_grain(self, joined_models):
@@ -449,10 +578,12 @@ class TestJoinedModels:
             )
 
             data = json.loads(result.content[0].text)
-            assert len(data) > 0
-            assert "flight_date" in data[0]
-            assert "carriers.name" in data[0]
-            assert "flight_count" in data[0]
+            assert "records" in data
+            records = data["records"]
+            assert len(records) > 0
+            assert "flight_date" in records[0]
+            assert "carriers.name" in records[0]
+            assert "flight_count" in records[0]
 
     @pytest.mark.asyncio
     async def test_get_time_range_joined(self, joined_models):
