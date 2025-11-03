@@ -68,6 +68,10 @@ class SemanticTable(ir.Table):
     def pipe(self, func, *args, **kwargs):
         return func(self, *args, **kwargs)
 
+    def to_ibis(self):
+        """Convert to Ibis expression."""
+        return self.op().to_ibis()
+
     def execute(self):
         return to_ibis(self).execute()
 
@@ -464,41 +468,40 @@ class SemanticJoin(SemanticTable):
         return _build_semantic_model_from_roots(self.op().to_ibis(), all_roots)
 
     def with_dimensions(self, **dims) -> SemanticModel:
-        all_roots = _find_all_root_models(self.op())
-        existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
-        existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
-        existing_calc = _get_merged_fields(all_roots, "calc_measures") if all_roots else {}
-
+        """Add or update dimensions."""
         return SemanticModel(
-            table=self,
-            dimensions={**existing_dims, **dims},
-            measures=existing_meas,
-            calc_measures=existing_calc,
+            table=self.op().to_ibis(),
+            dimensions={**self.get_dimensions(), **dims},
+            measures=self.get_measures(),
+            calc_measures=self.get_calculated_measures(),
         )
 
     def with_measures(self, **meas) -> SemanticModel:
-        all_roots = _find_all_root_models(self.op())
-        existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
-        existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
-        existing_calc = _get_merged_fields(all_roots, "calc_measures") if all_roots else {}
+        from .measure_scope import MeasureScope
+        from .ops import _classify_measure
 
-        new_base_meas = dict(existing_meas)
-        new_calc_meas = dict(existing_calc)
-
-        all_measure_names = (
-            tuple(new_base_meas.keys()) + tuple(new_calc_meas.keys()) + tuple(meas.keys())
+        joined_tbl = self.op().to_ibis()
+        all_known = (
+            list(self.get_measures().keys())
+            + list(self.get_calculated_measures().keys())
+            + list(meas.keys())
         )
-        scope = MeasureScope(_tbl=self, _known=all_measure_names)
+        scope = MeasureScope(_tbl=joined_tbl, _known=all_known)
 
+        new_base, new_calc = (
+            dict(self.get_measures()),
+            dict(self.get_calculated_measures()),
+        )
         for name, fn_or_expr in meas.items():
             kind, value = _classify_measure(fn_or_expr, scope)
-            (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
+            (new_calc if kind == "calc" else new_base)[name] = value
 
         return SemanticModel(
-            table=self,
-            dimensions=existing_dims,
-            measures=new_base_meas,
-            calc_measures=new_calc_meas,
+            table=joined_tbl,
+            dimensions=self.get_dimensions(),
+            measures=new_base,
+            calc_measures=new_calc,
+            _source_join=self.op(),  # Pass join reference for projection pushdown
         )
 
     def join(
@@ -611,7 +614,7 @@ class SemanticGroupBy(SemanticTable):
         aggs = {}
         for item in measure_names:
             if isinstance(item, str):
-                aggs[item] = lambda t, n=item: getattr(t, n)
+                aggs[item] = lambda t, n=item: t[n]
             elif callable(item):
                 aggs[f"_measure_{id(item)}"] = item
             else:
@@ -734,8 +737,8 @@ class SemanticAggregate(SemanticTable):
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | None = None,
         how: str = "inner",
-    ) -> SemanticJoinOp:
-        return SemanticJoinOp(
+    ) -> SemanticJoin:
+        return SemanticJoin(
             left=self.op(),
             right=other.op(),
             on=on,
@@ -747,8 +750,8 @@ class SemanticAggregate(SemanticTable):
         other: SemanticModel,
         left_on: str,
         right_on: str,
-    ) -> SemanticJoinOp:
-        return SemanticJoinOp(
+    ) -> SemanticJoin:
+        return SemanticJoin(
             left=self.op(),
             right=other.op(),
             on=lambda left, right: left[left_on] == right[right_on],
@@ -760,8 +763,8 @@ class SemanticAggregate(SemanticTable):
         other: SemanticModel,
         left_on: str,
         right_on: str,
-    ) -> SemanticJoinOp:
-        return SemanticJoinOp(
+    ) -> SemanticJoin:
+        return SemanticJoin(
             left=self.op(),
             right=other.op(),
             on=lambda left, right: left[left_on] == right[right_on],

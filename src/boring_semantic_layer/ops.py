@@ -415,6 +415,8 @@ class SemanticTableOp(Relation):
     """Relation with semantic metadata (dimensions and measures).
 
     Stores ir.Table expression directly to avoid .op() → .to_expr() conversions.
+
+    Note: Also accepts xorq's vendored ibis tables to support optional xorq integration.
     """
 
     table: ir.Table
@@ -423,6 +425,55 @@ class SemanticTableOp(Relation):
     calc_measures: FrozenDict[str, Any]
     name: str | None = None
     _source_join: Any = None  # Track if this wraps a join (SemanticJoinOp) for optimization
+
+    def __init__(
+        self,
+        table: ir.Table,
+        dimensions: dict[str, Dimension] | FrozenDict[str, Dimension],
+        measures: dict[str, Measure] | FrozenDict[str, Measure],
+        calc_measures: dict[str, Any] | FrozenDict[str, Any],
+        name: str | None = None,
+        _source_join: Any = None,
+    ) -> None:
+        # Accept both regular ibis and xorq's vendored ibis tables
+        # Use object.__setattr__ to bypass type validation for xorq tables
+        table_module = type(table).__module__
+        if table_module.startswith("xorq.vendor.ibis"):
+            # Bypass validation for xorq's vendored ibis tables
+            object.__setattr__(self, "table", table)
+            object.__setattr__(
+                self,
+                "dimensions",
+                FrozenDict(dimensions) if not isinstance(dimensions, FrozenDict) else dimensions,
+            )
+            object.__setattr__(
+                self,
+                "measures",
+                FrozenDict(measures) if not isinstance(measures, FrozenDict) else measures,
+            )
+            object.__setattr__(
+                self,
+                "calc_measures",
+                FrozenDict(calc_measures)
+                if not isinstance(calc_measures, FrozenDict)
+                else calc_measures,
+            )
+            object.__setattr__(self, "name", name)
+            object.__setattr__(self, "_source_join", _source_join)
+        else:
+            # Use normal initialization for regular ibis tables
+            super().__init__(
+                table=table,
+                dimensions=FrozenDict(dimensions)
+                if not isinstance(dimensions, FrozenDict)
+                else dimensions,
+                measures=FrozenDict(measures) if not isinstance(measures, FrozenDict) else measures,
+                calc_measures=FrozenDict(calc_measures)
+                if not isinstance(calc_measures, FrozenDict)
+                else calc_measures,
+                name=name,
+                _source_join=_source_join,
+            )
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -1201,10 +1252,13 @@ class SemanticJoinOp(Relation):
 
     @property
     def name(self) -> str | None:
+        """Get name of joined model (or None for anonymous joins)."""
+        # Joins are typically anonymous unless explicitly named via as_table()
         return None
 
     @property
     def table(self):
+        """Get the underlying Ibis table expression."""
         return self.to_ibis()
 
     def query(
@@ -1217,6 +1271,20 @@ class SemanticJoinOp(Relation):
         time_grain: str | None = None,
         time_range: dict[str, str] | None = None,
     ):
+        """Query using parameter-based interface.
+
+        Args:
+            dimensions: List of dimension names to group by
+            measures: List of measure names to aggregate
+            filters: List of filters (dict, str, callable, or Filter objects)
+            order_by: List of (field, direction) tuples
+            limit: Maximum number of rows to return
+            time_grain: Optional time grain (e.g., "TIME_GRAIN_MONTH")
+            time_range: Optional time range with 'start' and 'end' keys
+
+        Returns:
+            SemanticAggregate or SemanticTable ready for execution
+        """
         from .query import query as build_query
 
         return build_query(
