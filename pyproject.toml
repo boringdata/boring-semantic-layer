@@ -47,6 +47,7 @@ markers = [
 [dependency-groups]
 dev = [
     "ipython>=8.37.0",
+    "xorq>=0.3.1",
 ]
 
 [tool.ruff]
@@ -82,3 +83,6 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["boring_semantic_layer"]
+
+[tool.uv.sources]
+xorq = {path = "wheels/xorq-0.3.1-py3-none-any.whl"}
