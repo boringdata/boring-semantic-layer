@@ -1,0 +1,878 @@
+{
+  "markdown": "# Bucketing with 'Other'\n\nLimit displayed group-by values while consolidating remaining items into an 'Other' category. This pattern maintains focus on top-performing segments while capturing complete data and handling long-tail distributions.\n\n## Overview\n\nThe bucketing with 'Other' pattern allows you to:\n\n- Focus on top N items while grouping the rest as 'Other'\n- Use window functions to rank and identify top performers\n- Create custom ranges for continuous values (e.g., age groups, price tiers)\n- Consolidate low-frequency items into an \"Other\" category\n- Maintain analytical clarity by reducing dimensional cardinality\n\n## Setup\n\nLet's create customer data with ages and purchase amounts:\n\n```setup_raw_data\nimport ibis\nfrom ibis import _\nfrom boring_semantic_layer import to_semantic_table\n\n# Create customer transaction data\ncustomer_data = ibis.memtable({\n    \"customer_id\": list(range(1, 21)),\n    \"age\": [22, 28, 35, 42, 19, 55, 31, 67, 24, 38, 45, 29, 51, 33, 61, 26, 48, 36, 58, 41],\n    \"purchase_amount\": [45, 120, 250, 180, 35, 520, 95, 850, 65, 310, 190, 78, 420, 145, 680, 88, 275, 165, 590, 225],\n    \"product_category\": [\"Electronics\", \"Clothing\", \"Electronics\", \"Home\", \"Clothing\", \"Electronics\",\n                        \"Clothing\", \"Electronics\", \"Clothing\", \"Home\", \"Electronics\", \"Clothing\",\n                        \"Home\", \"Clothing\", \"Electronics\", \"Clothing\", \"Home\", \"Electronics\", \"Electronics\", \"Home\"]\n})\n```\n\n<collapsedcodeblock code-block=\"setup_raw_data\" title=\"Setup: Create Raw Customer Data\"></collapsedcodeblock>\n\nNow create a semantic table with dimensions and measures:\n\n```semantic_table_def\nfrom boring_semantic_layer import to_semantic_table\n\ncustomer_st = (\n    to_semantic_table(customer_data, name=\"customers\")\n    .with_dimensions(\n        customer_id=lambda t: t.customer_id,\n        age=lambda t: t.age,\n        product_category=lambda t: t.product_category\n    )\n    .with_measures(\n        customer_count=lambda t: t.count(),\n        total_revenue=lambda t: t.purchase_amount.sum(),\n        avg_purchase=lambda t: t.purchase_amount.mean().round(2)\n    )\n)\n```\n\n<collapsedcodeblock code-block=\"semantic_table_def\" title=\"Setup: Define Semantic Table\"></collapsedcodeblock>\n\n## Top Categories with 'Other'\n\nThe most common bucketing pattern: show top N items by a metric, consolidate the rest as 'Other'. This uses a two-stage approach with window functions to rank items.\n\n```query_top_categories\nfrom ibis import _\n\n# Two-stage pipeline: rank then consolidate\nresult = (\n    customer_st\n    .group_by(\"product_category\")\n    .aggregate(\"total_revenue\", \"customer_count\")\n    .mutate(\n        # Rank categories by revenue\n        rank=lambda t: ibis.row_number().over(\n            ibis.window(order_by=t.total_revenue.desc())\n        )\n    )\n    .mutate(\n        # Replace non-top categories with \"Other\"\n        category_display=lambda t: ibis.cases(\n            (t.rank <= 2, t.product_category),\n            else_=\"Other\"\n        ),\n        # Keep original revenue for sorting (only for top categories)\n        sort_value=lambda t: ibis.cases(\n            (t.rank <= 2, t.total_revenue),\n            else_=0\n        )\n    )\n    .group_by(\"category_display\")\n    .aggregate(\n        revenue=lambda t: t.total_revenue.sum(),\n        customers=lambda t: t.customer_count.sum(),\n        sort_helper=lambda t: t.sort_value.max()\n    )\n    .mutate(\n        avg_per_customer=lambda t: (t.revenue / t.customers).round(2)\n    )\n    .order_by(_.sort_helper.desc())\n)\n```\n\n<bslquery code-block=\"query_top_categories\"></bslquery>\n\n<note type=\"info\">\nThe window function `row_number()` ranks categories by revenue. Non-top items are marked with `is_other`, then consolidated into a single 'Other' category. The `sort_helper` field ensures top categories appear first, sorted by their original revenue, with 'Other' at the end.\n</note>\n\n## Age Range Bucketing\n\nCreate age buckets using case expressions:\n\n```query_age_buckets\nfrom ibis import _\nresult = (\n    customer_st\n    .group_by(\"customer_id\", \"age\", \"product_category\")\n    .aggregate(\"total_revenue\")\n    .mutate(\n        age_group=lambda t: ibis.cases(\n            (t.age < 25, \"18-24\"),\n            (t.age < 35, \"25-34\"),\n            (t.age < 45, \"35-44\"),\n            (t.age < 55, \"45-54\"),\n            else_=\"55+\"\n        )\n    )\n    .group_by(\"age_group\")\n    .aggregate(\n        customers=lambda t: t.count(),\n        revenue=lambda t: t.total_revenue.sum()\n    )\n    .order_by(_.age_group)\n)\n```\n\n<bslquery code-block=\"query_age_buckets\" />\n\n## Purchase Amount Tiers\n\nCategorize purchases into value tiers:\n\n```query_purchase_tiers\nfrom ibis import _\nresult = (\n    customer_st\n    .group_by(\"customer_id\")\n    .aggregate(\"total_revenue\")\n    .mutate(\n        tier=lambda t: ibis.cases(\n            (t.total_revenue < 100, \"Small ($0-99)\"),\n            (t.total_revenue < 250, \"Medium ($100-249)\"),\n            (t.total_revenue < 500, \"Large ($250-499)\"),\n            else_=\"Premium ($500+)\"\n        )\n    )\n    .group_by(\"tier\")\n    .aggregate(\n        customer_count=lambda t: t.count(),\n        total_value=lambda t: t.total_revenue.sum(),\n        avg_value=lambda t: t.total_revenue.mean().round(2)\n    )\n    .order_by(_.total_value.desc())\n)\n```\n\n<bslquery code-block=\"query_purchase_tiers\" />\n\n## Threshold-Based 'Other' Category\n\nInstead of ranking, you can consolidate categories based on a threshold (e.g., minimum customer count):\n\n```query_with_other\nfrom ibis import _\n\nresult = (\n    customer_st\n    .group_by(\"product_category\")\n    .aggregate(\"total_revenue\", \"customer_count\")\n    .mutate(\n        # Mark categories with less than 5 customers as \"Other\"\n        category_grouped=lambda t: ibis.cases(\n            (t.customer_count >= 5, t.product_category),\n            else_=\"Other\"\n        )\n    )\n    .group_by(\"category_grouped\")\n    .aggregate(\n        customers=lambda t: t.customer_count.sum(),\n        revenue=lambda t: t.total_revenue.sum()\n    )\n    .mutate(\n        avg_per_customer=lambda t: (t.revenue / t.customers).round(2)\n    )\n    .order_by(_.revenue.desc())\n)\n```\n\n<bslquery code-block=\"query_with_other\"></bslquery>\n\n<note type=\"info\">\nThis approach uses a fixed threshold rather than ranking. Categories with fewer than 5 customers are consolidated into 'Other'. This is simpler but less dynamic than the window function approach.\n</note>\n\n## Combined Bucketing\n\nCombine age groups and purchase tiers for multi-dimensional segmentation:\n\n```query_combined_buckets\nfrom ibis import _\nresult = (\n    customer_st\n    .group_by(\"customer_id\", \"age\")\n    .aggregate(\"total_revenue\")\n    .mutate(\n        age_group=lambda t: ibis.cases(\n            (t.age < 30, \"Young (18-29)\"),\n            (t.age < 50, \"Middle (30-49)\"),\n            else_=\"Senior (50+)\"\n        ),\n        value_tier=lambda t: ibis.cases(\n            (t.total_revenue < 150, \"Low Value\"),\n            (t.total_revenue < 350, \"Mid Value\"),\n            else_=\"High Value\"\n        )\n    )\n    .group_by(\"age_group\", \"value_tier\")\n    .aggregate(\n        customers=lambda t: t.count(),\n        revenue=lambda t: t.total_revenue.sum()\n    )\n    .order_by(_.age_group, _.revenue.desc())\n)\n```\n\n<bslquery code-block=\"query_combined_buckets\" />\n\n## Use Cases\n\n**Focus on Top Performers**: Show top 10 products by revenue, consolidate the rest as 'Other' to highlight key items while maintaining complete totals.\n\n**Long-Tail Distribution Management**: In e-commerce, display top categories while grouping niche categories as 'Other' to simplify reporting and dashboards.\n\n**Threshold-Based Filtering**: Consolidate low-volume customer segments (< 100 customers) into 'Other' to focus on statistically significant groups.\n\n**Age and Value Segmentation**: Create meaningful customer segments by combining age ranges (Young, Middle, Senior) with purchase tiers (Low, Mid, High).\n\n## Key Takeaways\n\n- Use window functions like `row_number()` to rank items for dynamic top-N selection\n- Two-stage pattern: rank first, then consolidate and re-aggregate\n- `ibis.cases((condition, value), ..., else_=default)` provides flexible bucketing logic\n- Threshold-based 'Other' works well when you have a clear cutoff value\n- Sort helper fields ensure 'Other' appears at the end of results\n- 'Other' category maintains complete data while reducing cardinality\n\n## Next Steps\n\n- Learn about [Sessionized Data](/advanced/sessionized) for time-based grouping\n- Explore [Indexing](/advanced/indexing) for baseline comparisons\n",
+  "queries": {
+    "setup_raw_data": {
+      "code": "import ibis\nfrom ibis import _\nfrom boring_semantic_layer import to_semantic_table\n\n# Create customer transaction data\ncustomer_data = ibis.memtable({\n    \"customer_id\": list(range(1, 21)),\n    \"age\": [22, 28, 35, 42, 19, 55, 31, 67, 24, 38, 45, 29, 51, 33, 61, 26, 48, 36, 58, 41],\n    \"purchase_amount\": [45, 120, 250, 180, 35, 520, 95, 850, 65, 310, 190, 78, 420, 145, 680, 88, 275, 165, 590, 225],\n    \"product_category\": [\"Electronics\", \"Clothing\", \"Electronics\", \"Home\", \"Clothing\", \"Electronics\",\n                        \"Clothing\", \"Electronics\", \"Clothing\", \"Home\", \"Electronics\", \"Clothing\",\n                        \"Home\", \"Clothing\", \"Electronics\", \"Clothing\", \"Home\", \"Electronics\", \"Electronics\", \"Home\"]\n})",
+      "sql": "Error generating SQL: Table.sql() missing 1 required positional argument: 'query'",
+      "plan": "InMemoryTable\n  data:\n    PandasDataFrameProxy:\n          customer_id  age  purchase_amount product_category\n      0             1   22               45      Electronics\n      1             2   28              120         Clothing\n      2             3   35              250      Electronics\n      3             4   42              180             Home\n      4             5   19               35         Clothing\n      5             6   55              520      Electronics\n      6             7   31               95         Clothing\n      7             8   67              850      Electronics\n      8             9   24               65         Clothing\n      9            10   38              310             Home\n      10           11   45              190      Electronics\n      11           12   29               78         Clothing\n      12           13   51              420             Home\n      13           14   33              145         Clothing\n      14           15   61              680      Electronics\n      15           16   26               88         Clothing\n      16           17   48              275             Home\n      17           18   36              165      Electronics\n      18           19   58              590      Electronics\n      19           20   41              225             Home",
+      "table": {
+        "columns": [
+          "customer_id",
+          "age",
+          "purchase_amount",
+          "product_category"
+        ],
+        "data": [
+          [
+            1,
+            22,
+            45,
+            "Electronics"
+          ],
+          [
+            2,
+            28,
+            120,
+            "Clothing"
+          ],
+          [
+            3,
+            35,
+            250,
+            "Electronics"
+          ],
+          [
+            4,
+            42,
+            180,
+            "Home"
+          ],
+          [
+            5,
+            19,
+            35,
+            "Clothing"
+          ],
+          [
+            6,
+            55,
+            520,
+            "Electronics"
+          ],
+          [
+            7,
+            31,
+            95,
+            "Clothing"
+          ],
+          [
+            8,
+            67,
+            850,
+            "Electronics"
+          ],
+          [
+            9,
+            24,
+            65,
+            "Clothing"
+          ],
+          [
+            10,
+            38,
+            310,
+            "Home"
+          ],
+          [
+            11,
+            45,
+            190,
+            "Electronics"
+          ],
+          [
+            12,
+            29,
+            78,
+            "Clothing"
+          ],
+          [
+            13,
+            51,
+            420,
+            "Home"
+          ],
+          [
+            14,
+            33,
+            145,
+            "Clothing"
+          ],
+          [
+            15,
+            61,
+            680,
+            "Electronics"
+          ],
+          [
+            16,
+            26,
+            88,
+            "Clothing"
+          ],
+          [
+            17,
+            48,
+            275,
+            "Home"
+          ],
+          [
+            18,
+            36,
+            165,
+            "Electronics"
+          ],
+          [
+            19,
+            58,
+            590,
+            "Electronics"
+          ],
+          [
+            20,
+            41,
+            225,
+            "Home"
+          ]
+        ]
+      }
+    },
+    "semantic_table_def": {
+      "code": "from boring_semantic_layer import to_semantic_table\n\ncustomer_st = (\n    to_semantic_table(customer_data, name=\"customers\")\n    .with_dimensions(\n        customer_id=lambda t: t.customer_id,\n        age=lambda t: t.age,\n        product_category=lambda t: t.product_category\n    )\n    .with_measures(\n        customer_count=lambda t: t.count(),\n        total_revenue=lambda t: t.purchase_amount.sum(),\n        avg_purchase=lambda t: t.purchase_amount.mean().round(2)\n    )\n)",
+      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_iiy3fnohxngybofrki6t5sodey\"",
+      "plan": "SemanticTableOp[customers]\n  3 dimensions: customer_id, age, product_category\n  3 measures: customer_count, total_revenue, avg_purchase",
+      "table": {
+        "columns": [
+          "customer_id",
+          "age",
+          "purchase_amount",
+          "product_category"
+        ],
+        "data": [
+          [
+            1,
+            22,
+            45,
+            "Electronics"
+          ],
+          [
+            2,
+            28,
+            120,
+            "Clothing"
+          ],
+          [
+            3,
+            35,
+            250,
+            "Electronics"
+          ],
+          [
+            4,
+            42,
+            180,
+            "Home"
+          ],
+          [
+            5,
+            19,
+            35,
+            "Clothing"
+          ],
+          [
+            6,
+            55,
+            520,
+            "Electronics"
+          ],
+          [
+            7,
+            31,
+            95,
+            "Clothing"
+          ],
+          [
+            8,
+            67,
+            850,
+            "Electronics"
+          ],
+          [
+            9,
+            24,
+            65,
+            "Clothing"
+          ],
+          [
+            10,
+            38,
+            310,
+            "Home"
+          ],
+          [
+            11,
+            45,
+            190,
+            "Electronics"
+          ],
+          [
+            12,
+            29,
+            78,
+            "Clothing"
+          ],
+          [
+            13,
+            51,
+            420,
+            "Home"
+          ],
+          [
+            14,
+            33,
+            145,
+            "Clothing"
+          ],
+          [
+            15,
+            61,
+            680,
+            "Electronics"
+          ],
+          [
+            16,
+            26,
+            88,
+            "Clothing"
+          ],
+          [
+            17,
+            48,
+            275,
+            "Home"
+          ],
+          [
+            18,
+            36,
+            165,
+            "Electronics"
+          ],
+          [
+            19,
+            58,
+            590,
+            "Electronics"
+          ],
+          [
+            20,
+            41,
+            225,
+            "Home"
+          ]
+        ]
+      }
+    },
+    "query_top_categories": {
+      "code": "from ibis import _\n\n# Two-stage pipeline: rank then consolidate\nresult = (\n    customer_st\n    .group_by(\"product_category\")\n    .aggregate(\"total_revenue\", \"customer_count\")\n    .mutate(\n        # Rank categories by revenue\n        rank=lambda t: ibis.row_number().over(\n            ibis.window(order_by=t.total_revenue.desc())\n        )\n    )\n    .mutate(\n        # Replace non-top categories with \"Other\"\n        category_display=lambda t: ibis.cases(\n            (t.rank <= 2, t.product_category),\n            else_=\"Other\"\n        ),\n        # Keep original revenue for sorting (only for top categories)\n        sort_value=lambda t: ibis.cases(\n            (t.rank <= 2, t.total_revenue),\n            else_=0\n        )\n    )\n    .group_by(\"category_display\")\n    .aggregate(\n        revenue=lambda t: t.total_revenue.sum(),\n        customers=lambda t: t.customer_count.sum(),\n        sort_helper=lambda t: t.sort_value.max()\n    )\n    .mutate(\n        avg_per_customer=lambda t: (t.revenue / t.customers).round(2)\n    )\n    .order_by(_.sort_helper.desc())\n)",
+      "sql": "SELECT\n  \"t6\".\"category_display\",\n  \"t6\".\"revenue\",\n  \"t6\".\"customers\",\n  \"t6\".\"sort_helper\",\n  CAST(ROUND(\"t6\".\"revenue\" / \"t6\".\"customers\", 2) AS DOUBLE) AS \"avg_per_customer\"\nFROM (\n  SELECT\n    \"t5\".\"category_display\",\n    SUM(\"t5\".\"total_revenue\") AS \"revenue\",\n    SUM(\"t5\".\"customer_count\") AS \"customers\",\n    MAX(\"t5\".\"sort_value\") AS \"sort_helper\"\n  FROM (\n    SELECT\n      \"t4\".\"product_category\",\n      \"t4\".\"total_revenue\",\n      \"t4\".\"customer_count\",\n      \"t4\".\"rank\",\n      CASE WHEN \"t4\".\"rank\" <= 2 THEN \"t4\".\"product_category\" ELSE 'Other' END AS \"category_display\",\n      CASE WHEN \"t4\".\"rank\" <= 2 THEN \"t4\".\"total_revenue\" ELSE 0 END AS \"sort_value\"\n    FROM (\n      SELECT\n        \"t3\".\"product_category\",\n        \"t3\".\"total_revenue\",\n        \"t3\".\"customer_count\",\n        ROW_NUMBER() OVER (ORDER BY \"t3\".\"total_revenue\" DESC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) - 1 AS \"rank\"\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            \"t1\".\"product_category\",\n            SUM(\"t1\".\"purchase_amount\") AS \"total_revenue\",\n            COUNT(*) AS \"customer_count\"\n          FROM (\n            SELECT\n              *\n            FROM \"ibis_pandas_memtable_iiy3fnohxngybofrki6t5sodey\" AS \"t0\"\n          ) AS \"t1\"\n          GROUP BY\n            1\n        ) AS \"t2\"\n      ) AS \"t3\"\n    ) AS \"t4\"\n  ) AS \"t5\"\n  GROUP BY\n    1\n) AS \"t6\"\nORDER BY\n  \"t6\".\"sort_helper\" DESC",
+      "plan": "r0 := SemanticTableOp[customers]\n  3 dimensions: customer_id, age, product_category\n  3 measures: customer_count, total_revenue, avg_purchase\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['product_category']\n  inherited dimensions: 3\n  inherited measures: 3\n\nr2 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['product_category']\n  aggs: [total_revenue, customer_count]\n\nr3 := SemanticMutateOp\n  source: SemanticAggregateOp\n  columns: [rank]\n\nr4 := SemanticMutateOp\n  source: SemanticMutateOp\n  columns: [category_display, sort_value]\n\nr5 := SemanticGroupByOp\n  source: SemanticMutateOp\n  keys: ['category_display']\n\nr6 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['category_display']\n  aggs: [revenue, customers, sort_helper]\n\nr7 := SemanticMutateOp\n  source: SemanticAggregateOp\n  columns: [avg_per_customer]\n\nSemanticOrderByOp\n  source: SemanticMutateOp\n  keys: [<expr>]",
+      "table": {
+        "columns": [
+          "category_display",
+          "revenue",
+          "customers",
+          "sort_helper",
+          "avg_per_customer"
+        ],
+        "data": [
+          [
+            "Electronics",
+            3290,
+            8,
+            3290,
+            411.25
+          ],
+          [
+            "Home",
+            1410,
+            5,
+            1410,
+            282.0
+          ],
+          [
+            "Clothing",
+            626,
+            7,
+            626,
+            89.43
+          ]
+        ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-b34aa10ea2bd6c4c98a384fc24280cb3"
+          },
+          "mark": {
+            "type": "bar"
+          },
+          "encoding": {
+            "color": {
+              "field": "measure",
+              "type": "nominal"
+            },
+            "tooltip": [
+              {
+                "field": "category_display",
+                "type": "nominal"
+              },
+              {
+                "field": "measure",
+                "type": "nominal"
+              },
+              {
+                "field": "value",
+                "type": "quantitative"
+              }
+            ],
+            "x": {
+              "field": "category_display",
+              "sort": null,
+              "type": "ordinal"
+            },
+            "xOffset": {
+              "field": "measure"
+            },
+            "y": {
+              "field": "value",
+              "type": "quantitative"
+            }
+          },
+          "height": 400,
+          "transform": [
+            {
+              "fold": [
+                "revenue",
+                "customers",
+                "sort_helper"
+              ],
+              "as": [
+                "measure",
+                "value"
+              ]
+            }
+          ],
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-b34aa10ea2bd6c4c98a384fc24280cb3": [
+              {
+                "category_display": "Electronics",
+                "revenue": 3290,
+                "customers": 8,
+                "sort_helper": 3290,
+                "avg_per_customer": 411.25
+              },
+              {
+                "category_display": "Home",
+                "revenue": 1410,
+                "customers": 5,
+                "sort_helper": 1410,
+                "avg_per_customer": 282.0
+              },
+              {
+                "category_display": "Clothing",
+                "revenue": 626,
+                "customers": 7,
+                "sort_helper": 626,
+                "avg_per_customer": 89.43
+              }
+            ]
+          }
+        }
+      }
+    },
+    "query_age_buckets": {
+      "code": "from ibis import _\nresult = (\n    customer_st\n    .group_by(\"customer_id\", \"age\", \"product_category\")\n    .aggregate(\"total_revenue\")\n    .mutate(\n        age_group=lambda t: ibis.cases(\n            (t.age < 25, \"18-24\"),\n            (t.age < 35, \"25-34\"),\n            (t.age < 45, \"35-44\"),\n            (t.age < 55, \"45-54\"),\n            else_=\"55+\"\n        )\n    )\n    .group_by(\"age_group\")\n    .aggregate(\n        customers=lambda t: t.count(),\n        revenue=lambda t: t.total_revenue.sum()\n    )\n    .order_by(_.age_group)\n)",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t3\".\"age_group\",\n    COUNT(*) AS \"customers\",\n    SUM(\"t3\".\"total_revenue\") AS \"revenue\"\n  FROM (\n    SELECT\n      \"t2\".\"customer_id\",\n      \"t2\".\"age\",\n      \"t2\".\"product_category\",\n      \"t2\".\"total_revenue\",\n      CASE\n        WHEN \"t2\".\"age\" < 25\n        THEN '18-24'\n        WHEN \"t2\".\"age\" < 35\n        THEN '25-34'\n        WHEN \"t2\".\"age\" < 45\n        THEN '35-44'\n        WHEN \"t2\".\"age\" < 55\n        THEN '45-54'\n        ELSE '55+'\n      END AS \"age_group\"\n    FROM (\n      SELECT\n        \"t1\".\"customer_id\",\n        \"t1\".\"age\",\n        \"t1\".\"product_category\",\n        SUM(\"t1\".\"purchase_amount\") AS \"total_revenue\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_iiy3fnohxngybofrki6t5sodey\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1,\n        2,\n        3\n    ) AS \"t2\"\n  ) AS \"t3\"\n  GROUP BY\n    1\n) AS \"t4\"\nORDER BY\n  \"t4\".\"age_group\" ASC",
+      "plan": "r0 := SemanticTableOp[customers]\n  3 dimensions: customer_id, age, product_category\n  3 measures: customer_count, total_revenue, avg_purchase\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['customer_id', 'age', 'product_category']\n  inherited dimensions: 3\n  inherited measures: 3\n\nr2 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['customer_id', 'age', 'product_category']\n  aggs: [total_revenue]\n\nr3 := SemanticMutateOp\n  source: SemanticAggregateOp\n  columns: [age_group]\n\nr4 := SemanticGroupByOp\n  source: SemanticMutateOp\n  keys: ['age_group']\n\nr5 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['age_group']\n  aggs: [customers, revenue]\n\nSemanticOrderByOp\n  source: SemanticAggregateOp\n  keys: [<expr>]",
+      "table": {
+        "columns": [
+          "age_group",
+          "customers",
+          "revenue"
+        ],
+        "data": [
+          [
+            "18-24",
+            3,
+            145
+          ],
+          [
+            "25-34",
+            5,
+            526
+          ],
+          [
+            "35-44",
+            5,
+            1130
+          ],
+          [
+            "45-54",
+            3,
+            885
+          ],
+          [
+            "55+",
+            4,
+            2640
+          ]
+        ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-9ea38b7e3ee45e5a0a5c2b768afb1e75"
+          },
+          "mark": {
+            "type": "bar"
+          },
+          "encoding": {
+            "color": {
+              "field": "measure",
+              "type": "nominal"
+            },
+            "tooltip": [
+              {
+                "field": "age_group",
+                "type": "nominal"
+              },
+              {
+                "field": "measure",
+                "type": "nominal"
+              },
+              {
+                "field": "value",
+                "type": "quantitative"
+              }
+            ],
+            "x": {
+              "field": "age_group",
+              "sort": null,
+              "type": "ordinal"
+            },
+            "xOffset": {
+              "field": "measure"
+            },
+            "y": {
+              "field": "value",
+              "type": "quantitative"
+            }
+          },
+          "height": 400,
+          "transform": [
+            {
+              "fold": [
+                "customers",
+                "revenue"
+              ],
+              "as": [
+                "measure",
+                "value"
+              ]
+            }
+          ],
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-9ea38b7e3ee45e5a0a5c2b768afb1e75": [
+              {
+                "age_group": "18-24",
+                "customers": 3,
+                "revenue": 145
+              },
+              {
+                "age_group": "25-34",
+                "customers": 5,
+                "revenue": 526
+              },
+              {
+                "age_group": "35-44",
+                "customers": 5,
+                "revenue": 1130
+              },
+              {
+                "age_group": "45-54",
+                "customers": 3,
+                "revenue": 885
+              },
+              {
+                "age_group": "55+",
+                "customers": 4,
+                "revenue": 2640
+              }
+            ]
+          }
+        }
+      }
+    },
+    "query_purchase_tiers": {
+      "code": "from ibis import _\nresult = (\n    customer_st\n    .group_by(\"customer_id\")\n    .aggregate(\"total_revenue\")\n    .mutate(\n        tier=lambda t: ibis.cases(\n            (t.total_revenue < 100, \"Small ($0-99)\"),\n            (t.total_revenue < 250, \"Medium ($100-249)\"),\n            (t.total_revenue < 500, \"Large ($250-499)\"),\n            else_=\"Premium ($500+)\"\n        )\n    )\n    .group_by(\"tier\")\n    .aggregate(\n        customer_count=lambda t: t.count(),\n        total_value=lambda t: t.total_revenue.sum(),\n        avg_value=lambda t: t.total_revenue.mean().round(2)\n    )\n    .order_by(_.total_value.desc())\n)",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t3\".\"tier\",\n    COUNT(*) AS \"customer_count\",\n    SUM(\"t3\".\"total_revenue\") AS \"total_value\",\n    CAST(ROUND(AVG(\"t3\".\"total_revenue\"), 2) AS DOUBLE) AS \"avg_value\"\n  FROM (\n    SELECT\n      \"t2\".\"customer_id\",\n      \"t2\".\"total_revenue\",\n      CASE\n        WHEN \"t2\".\"total_revenue\" < 100\n        THEN 'Small ($0-99)'\n        WHEN \"t2\".\"total_revenue\" < 250\n        THEN 'Medium ($100-249)'\n        WHEN \"t2\".\"total_revenue\" < 500\n        THEN 'Large ($250-499)'\n        ELSE 'Premium ($500+)'\n      END AS \"tier\"\n    FROM (\n      SELECT\n        \"t1\".\"customer_id\",\n        SUM(\"t1\".\"purchase_amount\") AS \"total_revenue\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_iiy3fnohxngybofrki6t5sodey\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1\n    ) AS \"t2\"\n  ) AS \"t3\"\n  GROUP BY\n    1\n) AS \"t4\"\nORDER BY\n  \"t4\".\"total_value\" DESC",
+      "plan": "r0 := SemanticTableOp[customers]\n  3 dimensions: customer_id, age, product_category\n  3 measures: customer_count, total_revenue, avg_purchase\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['customer_id']\n  inherited dimensions: 3\n  inherited measures: 3\n\nr2 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['customer_id']\n  aggs: [total_revenue]\n\nr3 := SemanticMutateOp\n  source: SemanticAggregateOp\n  columns: [tier]\n\nr4 := SemanticGroupByOp\n  source: SemanticMutateOp\n  keys: ['tier']\n\nr5 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['tier']\n  aggs: [customer_count, total_value, avg_value]\n\nSemanticOrderByOp\n  source: SemanticAggregateOp\n  keys: [<expr>]",
+      "table": {
+        "columns": [
+          "tier",
+          "customer_count",
+          "total_value",
+          "avg_value"
+        ],
+        "data": [
+          [
+            "Premium ($500+)",
+            4,
+            2640,
+            660.0
+          ],
+          [
+            "Large ($250-499)",
+            4,
+            1255,
+            313.75
+          ],
+          [
+            "Medium ($100-249)",
+            6,
+            1025,
+            170.83
+          ],
+          [
+            "Small ($0-99)",
+            6,
+            406,
+            67.67
+          ]
+        ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-5b19223277d622765747f08ab007e836"
+          },
+          "mark": {
+            "type": "bar"
+          },
+          "encoding": {
+            "color": {
+              "field": "measure",
+              "type": "nominal"
+            },
+            "tooltip": [
+              {
+                "field": "tier",
+                "type": "nominal"
+              },
+              {
+                "field": "measure",
+                "type": "nominal"
+              },
+              {
+                "field": "value",
+                "type": "quantitative"
+              }
+            ],
+            "x": {
+              "field": "tier",
+              "sort": null,
+              "type": "ordinal"
+            },
+            "xOffset": {
+              "field": "measure"
+            },
+            "y": {
+              "field": "value",
+              "type": "quantitative"
+            }
+          },
+          "height": 400,
+          "transform": [
+            {
+              "fold": [
+                "customer_count",
+                "total_value",
+                "avg_value"
+              ],
+              "as": [
+                "measure",
+                "value"
+              ]
+            }
+          ],
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-5b19223277d622765747f08ab007e836": [
+              {
+                "tier": "Premium ($500+)",
+                "customer_count": 4,
+                "total_value": 2640,
+                "avg_value": 660.0
+              },
+              {
+                "tier": "Large ($250-499)",
+                "customer_count": 4,
+                "total_value": 1255,
+                "avg_value": 313.75
+              },
+              {
+                "tier": "Medium ($100-249)",
+                "customer_count": 6,
+                "total_value": 1025,
+                "avg_value": 170.83
+              },
+              {
+                "tier": "Small ($0-99)",
+                "customer_count": 6,
+                "total_value": 406,
+                "avg_value": 67.67
+              }
+            ]
+          }
+        }
+      }
+    },
+    "query_with_other": {
+      "code": "from ibis import _\n\nresult = (\n    customer_st\n    .group_by(\"product_category\")\n    .aggregate(\"total_revenue\", \"customer_count\")\n    .mutate(\n        # Mark categories with less than 5 customers as \"Other\"\n        category_grouped=lambda t: ibis.cases(\n            (t.customer_count >= 5, t.product_category),\n            else_=\"Other\"\n        )\n    )\n    .group_by(\"category_grouped\")\n    .aggregate(\n        customers=lambda t: t.customer_count.sum(),\n        revenue=lambda t: t.total_revenue.sum()\n    )\n    .mutate(\n        avg_per_customer=lambda t: (t.revenue / t.customers).round(2)\n    )\n    .order_by(_.revenue.desc())\n)",
+      "sql": "SELECT\n  \"t4\".\"category_grouped\",\n  \"t4\".\"customers\",\n  \"t4\".\"revenue\",\n  CAST(ROUND(\"t4\".\"revenue\" / \"t4\".\"customers\", 2) AS DOUBLE) AS \"avg_per_customer\"\nFROM (\n  SELECT\n    \"t3\".\"category_grouped\",\n    SUM(\"t3\".\"customer_count\") AS \"customers\",\n    SUM(\"t3\".\"total_revenue\") AS \"revenue\"\n  FROM (\n    SELECT\n      \"t2\".\"product_category\",\n      \"t2\".\"total_revenue\",\n      \"t2\".\"customer_count\",\n      CASE WHEN \"t2\".\"customer_count\" >= 5 THEN \"t2\".\"product_category\" ELSE 'Other' END AS \"category_grouped\"\n    FROM (\n      SELECT\n        \"t1\".\"product_category\",\n        SUM(\"t1\".\"purchase_amount\") AS \"total_revenue\",\n        COUNT(*) AS \"customer_count\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_iiy3fnohxngybofrki6t5sodey\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1\n    ) AS \"t2\"\n  ) AS \"t3\"\n  GROUP BY\n    1\n) AS \"t4\"\nORDER BY\n  \"t4\".\"revenue\" DESC",
+      "plan": "r0 := SemanticTableOp[customers]\n  3 dimensions: customer_id, age, product_category\n  3 measures: customer_count, total_revenue, avg_purchase\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['product_category']\n  inherited dimensions: 3\n  inherited measures: 3\n\nr2 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['product_category']\n  aggs: [total_revenue, customer_count]\n\nr3 := SemanticMutateOp\n  source: SemanticAggregateOp\n  columns: [category_grouped]\n\nr4 := SemanticGroupByOp\n  source: SemanticMutateOp\n  keys: ['category_grouped']\n\nr5 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['category_grouped']\n  aggs: [customers, revenue]\n\nr6 := SemanticMutateOp\n  source: SemanticAggregateOp\n  columns: [avg_per_customer]\n\nSemanticOrderByOp\n  source: SemanticMutateOp\n  keys: [<expr>]",
+      "table": {
+        "columns": [
+          "category_grouped",
+          "customers",
+          "revenue",
+          "avg_per_customer"
+        ],
+        "data": [
+          [
+            "Electronics",
+            8,
+            3290,
+            411.25
+          ],
+          [
+            "Home",
+            5,
+            1410,
+            282.0
+          ],
+          [
+            "Clothing",
+            7,
+            626,
+            89.43
+          ]
+        ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-672fb2ae3a4b91770da80afa9d478b5e"
+          },
+          "mark": {
+            "type": "bar"
+          },
+          "encoding": {
+            "color": {
+              "field": "measure",
+              "type": "nominal"
+            },
+            "tooltip": [
+              {
+                "field": "category_grouped",
+                "type": "nominal"
+              },
+              {
+                "field": "measure",
+                "type": "nominal"
+              },
+              {
+                "field": "value",
+                "type": "quantitative"
+              }
+            ],
+            "x": {
+              "field": "category_grouped",
+              "sort": null,
+              "type": "ordinal"
+            },
+            "xOffset": {
+              "field": "measure"
+            },
+            "y": {
+              "field": "value",
+              "type": "quantitative"
+            }
+          },
+          "height": 400,
+          "transform": [
+            {
+              "fold": [
+                "customers",
+                "revenue"
+              ],
+              "as": [
+                "measure",
+                "value"
+              ]
+            }
+          ],
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-672fb2ae3a4b91770da80afa9d478b5e": [
+              {
+                "category_grouped": "Electronics",
+                "customers": 8,
+                "revenue": 3290,
+                "avg_per_customer": 411.25
+              },
+              {
+                "category_grouped": "Home",
+                "customers": 5,
+                "revenue": 1410,
+                "avg_per_customer": 282.0
+              },
+              {
+                "category_grouped": "Clothing",
+                "customers": 7,
+                "revenue": 626,
+                "avg_per_customer": 89.43
+              }
+            ]
+          }
+        }
+      }
+    },
+    "query_combined_buckets": {
+      "code": "from ibis import _\nresult = (\n    customer_st\n    .group_by(\"customer_id\", \"age\")\n    .aggregate(\"total_revenue\")\n    .mutate(\n        age_group=lambda t: ibis.cases(\n            (t.age < 30, \"Young (18-29)\"),\n            (t.age < 50, \"Middle (30-49)\"),\n            else_=\"Senior (50+)\"\n        ),\n        value_tier=lambda t: ibis.cases(\n            (t.total_revenue < 150, \"Low Value\"),\n            (t.total_revenue < 350, \"Mid Value\"),\n            else_=\"High Value\"\n        )\n    )\n    .group_by(\"age_group\", \"value_tier\")\n    .aggregate(\n        customers=lambda t: t.count(),\n        revenue=lambda t: t.total_revenue.sum()\n    )\n    .order_by(_.age_group, _.revenue.desc())\n)",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t3\".\"age_group\",\n    \"t3\".\"value_tier\",\n    COUNT(*) AS \"customers\",\n    SUM(\"t3\".\"total_revenue\") AS \"revenue\"\n  FROM (\n    SELECT\n      \"t2\".\"customer_id\",\n      \"t2\".\"age\",\n      \"t2\".\"total_revenue\",\n      CASE\n        WHEN \"t2\".\"age\" < 30\n        THEN 'Young (18-29)'\n        WHEN \"t2\".\"age\" < 50\n        THEN 'Middle (30-49)'\n        ELSE 'Senior (50+)'\n      END AS \"age_group\",\n      CASE\n        WHEN \"t2\".\"total_revenue\" < 150\n        THEN 'Low Value'\n        WHEN \"t2\".\"total_revenue\" < 350\n        THEN 'Mid Value'\n        ELSE 'High Value'\n      END AS \"value_tier\"\n    FROM (\n      SELECT\n        \"t1\".\"customer_id\",\n        \"t1\".\"age\",\n        SUM(\"t1\".\"purchase_amount\") AS \"total_revenue\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_iiy3fnohxngybofrki6t5sodey\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1,\n        2\n    ) AS \"t2\"\n  ) AS \"t3\"\n  GROUP BY\n    1,\n    2\n) AS \"t4\"\nORDER BY\n  \"t4\".\"age_group\" ASC,\n  \"t4\".\"revenue\" DESC",
+      "plan": "r0 := SemanticTableOp[customers]\n  3 dimensions: customer_id, age, product_category\n  3 measures: customer_count, total_revenue, avg_purchase\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['customer_id', 'age']\n  inherited dimensions: 3\n  inherited measures: 3\n\nr2 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['customer_id', 'age']\n  aggs: [total_revenue]\n\nr3 := SemanticMutateOp\n  source: SemanticAggregateOp\n  columns: [age_group, value_tier]\n\nr4 := SemanticGroupByOp\n  source: SemanticMutateOp\n  keys: ['age_group', 'value_tier']\n\nr5 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['age_group', 'value_tier']\n  aggs: [customers, revenue]\n\nSemanticOrderByOp\n  source: SemanticAggregateOp\n  keys: [<expr>, <expr>]",
+      "table": {
+        "columns": [
+          "age_group",
+          "value_tier",
+          "customers",
+          "revenue"
+        ],
+        "data": [
+          [
+            "Middle (30-49)",
+            "Mid Value",
+            7,
+            1595
+          ],
+          [
+            "Middle (30-49)",
+            "Low Value",
+            2,
+            240
+          ],
+          [
+            "Senior (50+)",
+            "High Value",
+            5,
+            3060
+          ],
+          [
+            "Young (18-29)",
+            "Low Value",
+            6,
+            431
+          ]
+        ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-e53063265ad8373a4153f3a953d1706f"
+          },
+          "mark": {
+            "type": "text"
+          },
+          "encoding": {
+            "text": {
+              "value": "Complex query - consider custom visualization"
+            }
+          },
+          "height": 400,
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-e53063265ad8373a4153f3a953d1706f": [
+              {
+                "age_group": "Middle (30-49)",
+                "value_tier": "Mid Value",
+                "customers": 7,
+                "revenue": 1595
+              },
+              {
+                "age_group": "Middle (30-49)",
+                "value_tier": "Low Value",
+                "customers": 2,
+                "revenue": 240
+              },
+              {
+                "age_group": "Senior (50+)",
+                "value_tier": "High Value",
+                "customers": 5,
+                "revenue": 3060
+              },
+              {
+                "age_group": "Young (18-29)",
+                "value_tier": "Low Value",
+                "customers": 6,
+                "revenue": 431
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "files": {}
+}

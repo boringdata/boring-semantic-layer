@@ -1,0 +1,608 @@
+{
+  "markdown": "# Percentage of Total\n\nCalculate percentages relative to total values across different dimensions. Use this pattern when you need to understand market share, contribution ratios, or what proportion each segment represents of the whole.\n\n## Overview\n\nThe percentage of total pattern allows you to:\n\n- Define percentage measures using the `.all()` method\n- Calculate individual segment values as percentages of the grand total\n- Maintain dimensional breakdowns while computing percentage contributions\n- Support multiple aggregation functions (sum, count, average)\n\n## Setup\n\nLet's use the flights dataset with carrier information to demonstrate market share calculations:\n\n```setup_data\nimport ibis\nfrom ibis import _\nfrom boring_semantic_layer import to_semantic_table\n\n# Create synthetic flights data with carrier information\nflights_data = ibis.memtable({\n    \"flight_id\": list(range(1, 51)),\n    \"carrier\": [\"AA\", \"UA\", \"DL\", \"WN\", \"B6\"] * 10,\n    \"nickname\": [\"American Airlines\", \"United Airlines\", \"Delta Air Lines\",\n                 \"Southwest Airlines\", \"JetBlue Airways\"] * 10,\n    \"origin\": [\"JFK\", \"LAX\", \"ORD\", \"ATL\", \"DFW\"] * 10,\n    \"distance\": [2475, 1745, 733, 946, 1383, 2475, 1745, 733, 946, 1383,\n                 2475, 1745, 733, 946, 1383, 2475, 1745, 733, 946, 1383,\n                 2475, 1745, 733, 946, 1383, 2475, 1745, 733, 946, 1383,\n                 2475, 1745, 733, 946, 1383, 2475, 1745, 733, 946, 1383,\n                 2475, 1745, 733, 946, 1383, 2475, 1745, 733, 946, 1383]\n})\n\n# Create semantic table with measures including percentage calculations\nflights = (\n    to_semantic_table(flights_data, name=\"flights\")\n    .with_measures(\n        flight_count=lambda t: t.count(),\n        total_distance=lambda t: t.distance.sum(),\n    )\n    .with_measures(\n        market_share=lambda t: t.flight_count / t.all(t.flight_count) * 100,\n        distance_share=lambda t: t.total_distance / t.all(t.total_distance) * 100,\n    )\n)\n```\n\n<collapsedcodeblock code-block=\"setup_data\" title=\"Setup: Create Flights and Carriers Data\"></collapsedcodeblock>\n\n<note type=\"info\">\nThe `.all()` method calculates the grand total across all groups, allowing you to define percentage measures directly in the semantic table. This is more elegant than using window functions in post-processing.\n</note>\n\n## Market Share by Carrier\n\nCalculate each carrier's percentage of total flights:\n\n```query_market_share\nfrom ibis import _\n\nresult = (\n    flights.group_by(\"nickname\")\n    .aggregate(\"flight_count\", \"market_share\")\n    .order_by(_.market_share.desc())\n    .limit(10)\n)\n```\n\n<bslquery code-block=\"query_market_share\"></bslquery>\n\n## Market Share by Origin and Carrier\n\nCalculate market share broken down by both origin airport and carrier:\n\n```query_market_share_by_origin\nfrom ibis import _\n\nresult = (\n    flights.group_by(\"origin\", \"nickname\")\n    .aggregate(\"flight_count\", \"market_share\")\n    .order_by(_.market_share.desc())\n    .limit(15)\n)\n```\n\n<bslquery code-block=\"query_market_share_by_origin\"></bslquery>\n\n## Use Cases\n\n**Market Share Analysis**: Calculate each carrier's, product's, or region's share of total volume.\n\n**Traffic Distribution**: Determine what percentage of total website visits or conversions come from each source.\n\n**Resource Allocation**: Understand how resources (budget, time, capacity) are distributed as percentages of the total.\n\n## Key Takeaways\n\n- Define percentage measures using `.all()` to reference the grand total\n- The `.all(measure)` method calculates the total across all groups\n- Percentage measures work seamlessly across different dimensional breakdowns\n- More elegant than post-processing with window functions\n\n## Next Steps\n\n- Learn about [Nested Subtotals](/advanced/nested-subtotals) for hierarchical aggregations\n- Explore [Bucketing](/advanced/bucketing) to group continuous values\n",
+  "queries": {
+    "setup_data": {
+      "code": "import ibis\nfrom ibis import _\nfrom boring_semantic_layer import to_semantic_table\n\n# Create synthetic flights data with carrier information\nflights_data = ibis.memtable({\n    \"flight_id\": list(range(1, 51)),\n    \"carrier\": [\"AA\", \"UA\", \"DL\", \"WN\", \"B6\"] * 10,\n    \"nickname\": [\"American Airlines\", \"United Airlines\", \"Delta Air Lines\",\n                 \"Southwest Airlines\", \"JetBlue Airways\"] * 10,\n    \"origin\": [\"JFK\", \"LAX\", \"ORD\", \"ATL\", \"DFW\"] * 10,\n    \"distance\": [2475, 1745, 733, 946, 1383, 2475, 1745, 733, 946, 1383,\n                 2475, 1745, 733, 946, 1383, 2475, 1745, 733, 946, 1383,\n                 2475, 1745, 733, 946, 1383, 2475, 1745, 733, 946, 1383,\n                 2475, 1745, 733, 946, 1383, 2475, 1745, 733, 946, 1383,\n                 2475, 1745, 733, 946, 1383, 2475, 1745, 733, 946, 1383]\n})\n\n# Create semantic table with measures including percentage calculations\nflights = (\n    to_semantic_table(flights_data, name=\"flights\")\n    .with_measures(\n        flight_count=lambda t: t.count(),\n        total_distance=lambda t: t.distance.sum(),\n    )\n    .with_measures(\n        market_share=lambda t: t.flight_count / t.all(t.flight_count) * 100,\n        distance_share=lambda t: t.total_distance / t.all(t.total_distance) * 100,\n    )\n)",
+      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_hw3hpsualrfxxi352ymuhwhdgm\"",
+      "plan": "SemanticTableOp[flights]\n  4 measures: flight_count, total_distance, market_share, ...",
+      "table": {
+        "columns": [
+          "flight_id",
+          "carrier",
+          "nickname",
+          "origin",
+          "distance"
+        ],
+        "data": [
+          [
+            1,
+            "AA",
+            "American Airlines",
+            "JFK",
+            2475
+          ],
+          [
+            2,
+            "UA",
+            "United Airlines",
+            "LAX",
+            1745
+          ],
+          [
+            3,
+            "DL",
+            "Delta Air Lines",
+            "ORD",
+            733
+          ],
+          [
+            4,
+            "WN",
+            "Southwest Airlines",
+            "ATL",
+            946
+          ],
+          [
+            5,
+            "B6",
+            "JetBlue Airways",
+            "DFW",
+            1383
+          ],
+          [
+            6,
+            "AA",
+            "American Airlines",
+            "JFK",
+            2475
+          ],
+          [
+            7,
+            "UA",
+            "United Airlines",
+            "LAX",
+            1745
+          ],
+          [
+            8,
+            "DL",
+            "Delta Air Lines",
+            "ORD",
+            733
+          ],
+          [
+            9,
+            "WN",
+            "Southwest Airlines",
+            "ATL",
+            946
+          ],
+          [
+            10,
+            "B6",
+            "JetBlue Airways",
+            "DFW",
+            1383
+          ],
+          [
+            11,
+            "AA",
+            "American Airlines",
+            "JFK",
+            2475
+          ],
+          [
+            12,
+            "UA",
+            "United Airlines",
+            "LAX",
+            1745
+          ],
+          [
+            13,
+            "DL",
+            "Delta Air Lines",
+            "ORD",
+            733
+          ],
+          [
+            14,
+            "WN",
+            "Southwest Airlines",
+            "ATL",
+            946
+          ],
+          [
+            15,
+            "B6",
+            "JetBlue Airways",
+            "DFW",
+            1383
+          ],
+          [
+            16,
+            "AA",
+            "American Airlines",
+            "JFK",
+            2475
+          ],
+          [
+            17,
+            "UA",
+            "United Airlines",
+            "LAX",
+            1745
+          ],
+          [
+            18,
+            "DL",
+            "Delta Air Lines",
+            "ORD",
+            733
+          ],
+          [
+            19,
+            "WN",
+            "Southwest Airlines",
+            "ATL",
+            946
+          ],
+          [
+            20,
+            "B6",
+            "JetBlue Airways",
+            "DFW",
+            1383
+          ],
+          [
+            21,
+            "AA",
+            "American Airlines",
+            "JFK",
+            2475
+          ],
+          [
+            22,
+            "UA",
+            "United Airlines",
+            "LAX",
+            1745
+          ],
+          [
+            23,
+            "DL",
+            "Delta Air Lines",
+            "ORD",
+            733
+          ],
+          [
+            24,
+            "WN",
+            "Southwest Airlines",
+            "ATL",
+            946
+          ],
+          [
+            25,
+            "B6",
+            "JetBlue Airways",
+            "DFW",
+            1383
+          ],
+          [
+            26,
+            "AA",
+            "American Airlines",
+            "JFK",
+            2475
+          ],
+          [
+            27,
+            "UA",
+            "United Airlines",
+            "LAX",
+            1745
+          ],
+          [
+            28,
+            "DL",
+            "Delta Air Lines",
+            "ORD",
+            733
+          ],
+          [
+            29,
+            "WN",
+            "Southwest Airlines",
+            "ATL",
+            946
+          ],
+          [
+            30,
+            "B6",
+            "JetBlue Airways",
+            "DFW",
+            1383
+          ],
+          [
+            31,
+            "AA",
+            "American Airlines",
+            "JFK",
+            2475
+          ],
+          [
+            32,
+            "UA",
+            "United Airlines",
+            "LAX",
+            1745
+          ],
+          [
+            33,
+            "DL",
+            "Delta Air Lines",
+            "ORD",
+            733
+          ],
+          [
+            34,
+            "WN",
+            "Southwest Airlines",
+            "ATL",
+            946
+          ],
+          [
+            35,
+            "B6",
+            "JetBlue Airways",
+            "DFW",
+            1383
+          ],
+          [
+            36,
+            "AA",
+            "American Airlines",
+            "JFK",
+            2475
+          ],
+          [
+            37,
+            "UA",
+            "United Airlines",
+            "LAX",
+            1745
+          ],
+          [
+            38,
+            "DL",
+            "Delta Air Lines",
+            "ORD",
+            733
+          ],
+          [
+            39,
+            "WN",
+            "Southwest Airlines",
+            "ATL",
+            946
+          ],
+          [
+            40,
+            "B6",
+            "JetBlue Airways",
+            "DFW",
+            1383
+          ],
+          [
+            41,
+            "AA",
+            "American Airlines",
+            "JFK",
+            2475
+          ],
+          [
+            42,
+            "UA",
+            "United Airlines",
+            "LAX",
+            1745
+          ],
+          [
+            43,
+            "DL",
+            "Delta Air Lines",
+            "ORD",
+            733
+          ],
+          [
+            44,
+            "WN",
+            "Southwest Airlines",
+            "ATL",
+            946
+          ],
+          [
+            45,
+            "B6",
+            "JetBlue Airways",
+            "DFW",
+            1383
+          ],
+          [
+            46,
+            "AA",
+            "American Airlines",
+            "JFK",
+            2475
+          ],
+          [
+            47,
+            "UA",
+            "United Airlines",
+            "LAX",
+            1745
+          ],
+          [
+            48,
+            "DL",
+            "Delta Air Lines",
+            "ORD",
+            733
+          ],
+          [
+            49,
+            "WN",
+            "Southwest Airlines",
+            "ATL",
+            946
+          ],
+          [
+            50,
+            "B6",
+            "JetBlue Airways",
+            "DFW",
+            1383
+          ]
+        ]
+      }
+    },
+    "query_market_share": {
+      "code": "from ibis import _\n\nresult = (\n    flights.group_by(\"nickname\")\n    .aggregate(\"flight_count\", \"market_share\")\n    .order_by(_.market_share.desc())\n    .limit(10)\n)",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t5\".\"nickname\",\n    \"t5\".\"flight_count\",\n    (\n      CAST(\"t5\".\"flight_count\" AS DOUBLE) / CAST(\"t5\".\"flight_count_right\" AS DOUBLE)\n    ) * 100 AS \"market_share\"\n  FROM (\n    SELECT\n      \"t3\".\"nickname\",\n      \"t3\".\"flight_count\",\n      \"t4\".\"flight_count\" AS \"flight_count_right\"\n    FROM (\n      SELECT\n        \"t0\".\"nickname\",\n        COUNT(*) AS \"flight_count\"\n      FROM \"ibis_pandas_memtable_hw3hpsualrfxxi352ymuhwhdgm\" AS \"t0\"\n      GROUP BY\n        1\n    ) AS \"t3\"\n    CROSS JOIN (\n      SELECT\n        COUNT(*) AS \"flight_count\"\n      FROM \"ibis_pandas_memtable_hw3hpsualrfxxi352ymuhwhdgm\" AS \"t0\"\n    ) AS \"t4\"\n  ) AS \"t5\"\n) AS \"t6\"\nORDER BY\n  \"t6\".\"market_share\" DESC\nLIMIT 10",
+      "plan": "r0 := SemanticTableOp[flights]\n  4 measures: flight_count, total_distance, market_share, ...\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['nickname']\n  inherited measures: 4\n\nr2 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['nickname']\n  aggs: [flight_count, market_share]\n\nr3 := SemanticOrderByOp\n  source: SemanticAggregateOp\n  keys: [<expr>]\n\nSemanticLimitOp\n  source: SemanticOrderByOp\n  n: 10",
+      "table": {
+        "columns": [
+          "nickname",
+          "flight_count",
+          "market_share"
+        ],
+        "data": [
+          [
+            "JetBlue Airways",
+            10,
+            20.0
+          ],
+          [
+            "Southwest Airlines",
+            10,
+            20.0
+          ],
+          [
+            "United Airlines",
+            10,
+            20.0
+          ],
+          [
+            "Delta Air Lines",
+            10,
+            20.0
+          ],
+          [
+            "American Airlines",
+            10,
+            20.0
+          ]
+        ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-2cc736cf652c48d35a0fa58ad700d86e"
+          },
+          "mark": {
+            "type": "bar"
+          },
+          "encoding": {
+            "color": {
+              "field": "measure",
+              "type": "nominal"
+            },
+            "tooltip": [
+              {
+                "field": "nickname",
+                "type": "nominal"
+              },
+              {
+                "field": "measure",
+                "type": "nominal"
+              },
+              {
+                "field": "value",
+                "type": "quantitative"
+              }
+            ],
+            "x": {
+              "field": "nickname",
+              "sort": null,
+              "type": "ordinal"
+            },
+            "xOffset": {
+              "field": "measure"
+            },
+            "y": {
+              "field": "value",
+              "type": "quantitative"
+            }
+          },
+          "height": 400,
+          "transform": [
+            {
+              "fold": [
+                "flight_count",
+                "market_share"
+              ],
+              "as": [
+                "measure",
+                "value"
+              ]
+            }
+          ],
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-2cc736cf652c48d35a0fa58ad700d86e": [
+              {
+                "nickname": "JetBlue Airways",
+                "flight_count": 10,
+                "market_share": 20.0
+              },
+              {
+                "nickname": "American Airlines",
+                "flight_count": 10,
+                "market_share": 20.0
+              },
+              {
+                "nickname": "Delta Air Lines",
+                "flight_count": 10,
+                "market_share": 20.0
+              },
+              {
+                "nickname": "Southwest Airlines",
+                "flight_count": 10,
+                "market_share": 20.0
+              },
+              {
+                "nickname": "United Airlines",
+                "flight_count": 10,
+                "market_share": 20.0
+              }
+            ]
+          }
+        }
+      }
+    },
+    "query_market_share_by_origin": {
+      "code": "from ibis import _\n\nresult = (\n    flights.group_by(\"origin\", \"nickname\")\n    .aggregate(\"flight_count\", \"market_share\")\n    .order_by(_.market_share.desc())\n    .limit(15)\n)",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t5\".\"origin\",\n    \"t5\".\"nickname\",\n    \"t5\".\"flight_count\",\n    (\n      CAST(\"t5\".\"flight_count\" AS DOUBLE) / CAST(\"t5\".\"flight_count_right\" AS DOUBLE)\n    ) * 100 AS \"market_share\"\n  FROM (\n    SELECT\n      \"t3\".\"origin\",\n      \"t3\".\"nickname\",\n      \"t3\".\"flight_count\",\n      \"t4\".\"flight_count\" AS \"flight_count_right\"\n    FROM (\n      SELECT\n        \"t0\".\"origin\",\n        \"t0\".\"nickname\",\n        COUNT(*) AS \"flight_count\"\n      FROM \"ibis_pandas_memtable_hw3hpsualrfxxi352ymuhwhdgm\" AS \"t0\"\n      GROUP BY\n        1,\n        2\n    ) AS \"t3\"\n    CROSS JOIN (\n      SELECT\n        COUNT(*) AS \"flight_count\"\n      FROM \"ibis_pandas_memtable_hw3hpsualrfxxi352ymuhwhdgm\" AS \"t0\"\n    ) AS \"t4\"\n  ) AS \"t5\"\n) AS \"t6\"\nORDER BY\n  \"t6\".\"market_share\" DESC\nLIMIT 15",
+      "plan": "r0 := SemanticTableOp[flights]\n  4 measures: flight_count, total_distance, market_share, ...\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['origin', 'nickname']\n  inherited measures: 4\n\nr2 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['origin', 'nickname']\n  aggs: [flight_count, market_share]\n\nr3 := SemanticOrderByOp\n  source: SemanticAggregateOp\n  keys: [<expr>]\n\nSemanticLimitOp\n  source: SemanticOrderByOp\n  n: 15",
+      "table": {
+        "columns": [
+          "origin",
+          "nickname",
+          "flight_count",
+          "market_share"
+        ],
+        "data": [
+          [
+            "ORD",
+            "Delta Air Lines",
+            10,
+            20.0
+          ],
+          [
+            "JFK",
+            "American Airlines",
+            10,
+            20.0
+          ],
+          [
+            "DFW",
+            "JetBlue Airways",
+            10,
+            20.0
+          ],
+          [
+            "LAX",
+            "United Airlines",
+            10,
+            20.0
+          ],
+          [
+            "ATL",
+            "Southwest Airlines",
+            10,
+            20.0
+          ]
+        ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-0bab07e5089a0f0cd1683d70b65b3b05"
+          },
+          "mark": {
+            "type": "text"
+          },
+          "encoding": {
+            "text": {
+              "value": "Complex query - consider custom visualization"
+            }
+          },
+          "height": 400,
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-0bab07e5089a0f0cd1683d70b65b3b05": [
+              {
+                "origin": "LAX",
+                "nickname": "United Airlines",
+                "flight_count": 10,
+                "market_share": 20.0
+              },
+              {
+                "origin": "JFK",
+                "nickname": "American Airlines",
+                "flight_count": 10,
+                "market_share": 20.0
+              },
+              {
+                "origin": "ORD",
+                "nickname": "Delta Air Lines",
+                "flight_count": 10,
+                "market_share": 20.0
+              },
+              {
+                "origin": "ATL",
+                "nickname": "Southwest Airlines",
+                "flight_count": 10,
+                "market_share": 20.0
+              },
+              {
+                "origin": "DFW",
+                "nickname": "JetBlue Airways",
+                "flight_count": 10,
+                "market_share": 20.0
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "files": {}
+}

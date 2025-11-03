@@ -1,15 +1,16 @@
+#!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#     "boring-semantic-layer[fastmcp] >= 0.1.1"
+#     "boring-semantic-layer[fastmcp] >= 0.2.0"
 # ]
 # ///
 """
-Example: Cohort Analysis with SemanticModel for Orders and Customers
+Example: Cohort Analysis with SemanticTable for Orders and Customers (BSL v2)
 
-This example demonstrates how to use SemanticModel to analyze customer cohorts
-using orders.csv and customers.csv data. It shows how to define semantic models
-with joins to analyze customer behavior, order patterns, and regional analysis.
+This example demonstrates how to use to_semantic_table to analyze customer cohorts
+using orders and customers data. It shows how to define semantic models with joins
+to analyze customer behavior, order patterns, and regional analysis.
 
 Tables:
 
@@ -25,15 +26,24 @@ Orders table:
 - product_count
 
 The example shows how to query customer and order data with joins for cohort analysis.
+
+Usage:
+    Add to your MCP configuration file:
+    {
+        "mcpServers": {
+            "cohort-semantic-layer": {
+                "command": "uv",
+                "args": ["--directory", "/path/to/boring-semantic-layer/examples", "run", "example_mcp_cohort.py"]
+            }
+        }
+    }
 """
 
 import ibis
-from boring_semantic_layer.semantic_model import SemanticModel, Join
-from boring_semantic_layer import MCPSemanticModel
+from boring_semantic_layer import MCPSemanticModel, to_semantic_table
 
 # Create a DuckDB connection for in-memory table creation
 con = ibis.duckdb.connect()
-
 
 BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
 customers_tbl = con.read_parquet(f"{BASE_URL}/cohort_customers.parquet")
@@ -47,15 +57,15 @@ orders_tbl = con.create_table("orders_tbl", orders_tbl)
 # First, create a table with customer first order dates (cohort definition)
 cohort_base_query = """
     WITH customer_cohorts AS (
-        SELECT 
+        SELECT
             customer_id,
             MIN(CAST(order_date AS DATE)) as first_order_date,
             DATE_TRUNC('month', MIN(CAST(order_date AS DATE))) as cohort_month
-        FROM orders_tbl 
+        FROM orders_tbl
         GROUP BY customer_id
     ),
     cohort_data AS (
-        SELECT 
+        SELECT
             cc.customer_id,
             cc.cohort_month,
             cc.first_order_date,
@@ -69,13 +79,13 @@ cohort_base_query = """
         WHERE DATEDIFF('month', cc.cohort_month, DATE_TRUNC('month', CAST(o.order_date AS DATE))) BETWEEN 0 AND 5
     ),
     cohort_sizes AS (
-        SELECT 
+        SELECT
             cohort_month,
             COUNT(DISTINCT customer_id) as cohort_size
         FROM customer_cohorts
         GROUP BY cohort_month
     )
-    SELECT 
+    SELECT
         cd.customer_id,
         cd.order_id,
         cd.order_date,
@@ -91,101 +101,141 @@ cohort_base_query = """
 
 cohort_tbl = con.sql(cohort_base_query)
 
-
-# Define the customers semantic model
-# - Primary key: customer_id
-# - Dimensions: customer_id, country_name
-# - Measures: customer_count (total number of customers)
-customers_model = SemanticModel(
-    name="customers",
-    table=customers_tbl,
-    dimensions={
-        "customer_id": lambda t: t.customer_id,
-        "country_name": lambda t: t.country_name,
-    },
-    measures={
-        "customer_count": lambda t: t.customer_id.count(),
-    },
-    primary_key="customer_id",
+# Define the customers semantic table
+customers_model = (
+    to_semantic_table(customers_tbl, name="customers")
+    .with_dimensions(
+        customer_id={
+            "expr": lambda t: t.customer_id,
+            "description": "Unique customer identifier",
+        },
+        country_name={
+            "expr": lambda t: t.country_name,
+            "description": "Customer's country name",
+        },
+    )
+    .with_measures(
+        customer_count={
+            "expr": lambda t: t.customer_id.count(),
+            "description": "Total number of customers",
+        }
+    )
 )
 
-# Define the orders semantic model
-# - Primary key: order_id
-# - Dimensions: order_id, order_date, customer_id
-# - Time dimension: order_date for cohort analysis
-# - Measures: order_count, total_revenue, avg_order_value, total_products
-# - Joins: one-to-one join to customers on customer_id
-orders_model = SemanticModel(
-    name="orders",
-    table=orders_tbl,
-    dimensions={
-        "order_id": lambda t: t.order_id,
-        "order_date": lambda t: t.order_date,
-        "customer_id": lambda t: t.customer_id,
-    },
-    time_dimension="order_date",
-    smallest_time_grain="TIME_GRAIN_DAY",
-    measures={
-        "order_count": lambda t: t.order_id.count(),
-        "total_revenue": lambda t: t.order_amount.sum(),
-        "avg_order_value": lambda t: t.order_amount.mean(),
-        "total_products": lambda t: t.product_count.sum(),
-        "avg_products_per_order": lambda t: t.product_count.mean(),
-    },
-    joins={
-        "customers": Join.one(
-            alias="customers",
-            model=customers_model,
-            with_=lambda left: left.customer_id,
-        ),
-    },
-    primary_key="order_id",
+# Define the orders semantic table with join to customers
+orders_model = (
+    to_semantic_table(orders_tbl, name="orders")
+    .with_dimensions(
+        order_id={
+            "expr": lambda t: t.order_id,
+            "description": "Unique order identifier",
+        },
+        order_date={
+            "expr": lambda t: t.order_date,
+            "description": "Date the order was placed",
+            "is_time_dimension": True,
+            "smallest_time_grain": "TIME_GRAIN_DAY",
+        },
+        customer_id={
+            "expr": lambda t: t.customer_id,
+            "description": "Customer who placed the order",
+        },
+    )
+    .with_measures(
+        order_count={
+            "expr": lambda t: t.order_id.count(),
+            "description": "Total number of orders",
+        },
+        total_revenue={
+            "expr": lambda t: t.order_amount.sum(),
+            "description": "Total revenue from orders",
+        },
+        avg_order_value={
+            "expr": lambda t: t.order_amount.mean(),
+            "description": "Average order value",
+        },
+        total_products={
+            "expr": lambda t: t.product_count.sum(),
+            "description": "Total number of products sold",
+        },
+        avg_products_per_order={
+            "expr": lambda t: t.product_count.mean(),
+            "description": "Average products per order",
+        },
+    )
+    .join_one(customers_model, left_on="customer_id", right_on="customer_id")
 )
 
-
-# Define the cohort semantic model
-# - Dimensions: cohort_month, cohort_period (month_1, month_2, etc.), period_number
-# - Measures: total_revenue, total_product, avg_order_value, churn percentage
-cohort_model = SemanticModel(
-    name="cohorts",
-    table=cohort_tbl,
-    dimensions={
-        "cohort_month": lambda t: t.cohort_month,
-        "cohort_period": lambda t: t.cohort_period,
-        "period_number": lambda t: t.period_number,
-    },
-    time_dimension="cohort_month",
-    smallest_time_grain="TIME_GRAIN_MONTH",
-    measures={
-        "total_revenue": lambda t: t.order_amount.sum(),
-        "total_product": lambda t: t.product_count.sum(),
-        "avg_order_value": lambda t: t.order_amount.mean(),
-        "active_customers": lambda t: t.customer_id.nunique(),
-        "initial_cohort_size": lambda t: t.cohort_size.max(),
-        "retention_rate": lambda t: (
-            t.customer_id.nunique().cast("float")
-            / t.cohort_size.max().cast("float")
-            * 100
-        ),
-        "churn_rate": lambda t: (
-            100
-            - (
+# Define the cohort semantic table
+cohort_model = (
+    to_semantic_table(cohort_tbl, name="cohorts")
+    .with_dimensions(
+        cohort_month={
+            "expr": lambda t: t.cohort_month,
+            "description": "Month when the customer made their first purchase",
+            "is_time_dimension": True,
+            "smallest_time_grain": "TIME_GRAIN_MONTH",
+        },
+        cohort_period={
+            "expr": lambda t: t.cohort_period,
+            "description": "Cohort period label (month_1, month_2, etc.)",
+        },
+        period_number={
+            "expr": lambda t: t.period_number,
+            "description": "Numeric period number (1, 2, 3, etc.)",
+        },
+    )
+    .with_measures(
+        total_revenue={
+            "expr": lambda t: t.order_amount.sum(),
+            "description": "Total revenue for the cohort period",
+        },
+        total_product={
+            "expr": lambda t: t.product_count.sum(),
+            "description": "Total products sold in the cohort period",
+        },
+        avg_order_value={
+            "expr": lambda t: t.order_amount.mean(),
+            "description": "Average order value in the cohort period",
+        },
+        active_customers={
+            "expr": lambda t: t.customer_id.nunique(),
+            "description": "Number of active customers in the period",
+        },
+        initial_cohort_size={
+            "expr": lambda t: t.cohort_size.max(),
+            "description": "Initial size of the cohort",
+        },
+        retention_rate={
+            "expr": lambda t: (
                 t.customer_id.nunique().cast("float")
                 / t.cohort_size.max().cast("float")
                 * 100
-            )
-        ),
-    },
+            ),
+            "description": "Percentage of customers retained from initial cohort",
+        },
+        churn_rate={
+            "expr": lambda t: (
+                100
+                - (
+                    t.customer_id.nunique().cast("float")
+                    / t.cohort_size.max().cast("float")
+                    * 100
+                )
+            ),
+            "description": "Percentage of customers churned from initial cohort",
+        },
+    )
 )
 
-
+# Create MCP server
 server = MCPSemanticModel(
     models={
         "customers": customers_model,
         "orders": orders_model,
         "cohorts": cohort_model,
     },
-    name="Cohort Data Semantic Layer Server",
+    name="Cohort Data Semantic Layer Server (BSL v2)",
 )
 
 if __name__ == "__main__":

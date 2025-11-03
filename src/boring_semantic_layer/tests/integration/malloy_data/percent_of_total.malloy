@@ -1,0 +1,49 @@
+source: flights is duckdb.table('https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/flights.parquet') extend {
+  join_one: carriers is duckdb.table('https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/carriers.parquet') on carrier = carriers.code
+  measure: flight_count is count()
+}
+
+# Query 1: Basic all() function
+query: query_1 is flights -> {
+  group_by: carriers.nickname
+  aggregate:
+    flight_count
+    all_flights is all(flight_count)
+  order_by: flight_count desc
+  limit: 2
+}
+
+# Query 2: Percent calculation
+query: query_2 is flights -> {
+  group_by: carriers.nickname
+  aggregate:
+    flight_count
+    percent_of_flights is flight_count / all(flight_count)
+  order_by: flight_count desc
+  limit: 5
+}
+
+# Query 3: Complex partitioned aggregations
+query: query_3 is flights -> {
+  group_by: carriers.nickname, destination, origin
+  aggregate:
+    flight_count
+    flights_by_this_carrier is all(flight_count, nickname)
+    flights_to_this_destination is all(flight_count, destination)
+    flights_by_this_origin is all(flight_count, origin)
+    flights_on_this_route is exclude(flight_count, nickname)
+  order_by: nickname, destination, origin
+  limit: 20
+}
+
+# Query 4: Multiple percent calculations
+query: query_4 is flights -> {
+  group_by: carriers.nickname, destination, origin
+  aggregate:
+    flight_count
+    `carrier as a percent of all flights` is all(flight_count, nickname) / all(flight_count)
+    `destination as a percent of all flights` is all(flight_count, destination) / all(flight_count)
+    `origin as a percent of all flights` is all(flight_count, origin) / all(flight_count)
+    `carriers as a percentage of route` is flight_count / exclude(flight_count, nickname)
+  order_by: nickname, destination, origin
+}

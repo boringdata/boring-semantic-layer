@@ -1,0 +1,150 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main, bslv2]
+  pull_request:
+    branches: [main, bslv2]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
+
+jobs:
+  # Run tests, examples, and build docs
+  test:
+    name: Test & Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          uv sync --all-extras
+          cd docs && npm ci
+
+      - name: Run all checks (tests + examples + docs build)
+        run: make check
+
+      - name: Upload docs artifact
+        if: github.event_name == 'release'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./docs/dist
+
+  # Deploy docs to GitHub Pages (only on release - keep docs in sync with PyPI package)
+  deploy-docs:
+    name: Deploy Docs
+    if: github.event_name == 'release'
+    needs: test
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # Test release process (no environment protection, no actual publishing)
+  test-release:
+    name: Test Release
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/bslv2') ||
+      (github.event_name == 'pull_request' && github.head_ref == 'bslv2')
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Build package
+        run: uv build
+
+      - name: Test wheel installation
+        run: |
+          python -m venv test_env
+          test_env/bin/pip install dist/*.whl
+          test_env/bin/python -c "import boring_semantic_layer; print('✓ Successfully imported boring-semantic-layer')"
+
+      - name: Verify package contents
+        run: |
+          echo "Package contents:"
+          ls -lh dist/
+          echo "Wheel contents:"
+          unzip -l dist/*.whl | head -30
+
+  # Release to PyPI (only on GitHub release)
+  release-pypi:
+    name: Release to PyPI
+    if: github.event_name == 'release'
+    needs: test
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Build package
+        run: uv build
+
+      - name: Test wheel installation in clean environment
+        run: |
+          python -m venv test_env
+          test_env/bin/pip install dist/*.whl
+          test_env/bin/python -c "import boring_semantic_layer; print('✓ Successfully imported boring-semantic-layer')"
+
+      - name: Run tests with installed package
+        run: uv run pytest tests
+
+      - name: Publish to PyPI
+        run: uv publish --trusted-publishing always

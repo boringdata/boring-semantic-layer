@@ -327,7 +327,11 @@
         );
 
         # Build virtual environment, with local packages being editable.
-        virtualenv = editablePythonSet.mkVirtualEnv "boring-semantic-layer-dev-env" workspace.deps.all;
+        virtualenv = (editablePythonSet.mkVirtualEnv "boring-semantic-layer-dev-env" workspace.deps.all)
+          .overrideAttrs (old: {
+            # Skip tests directories to avoid file collisions in dependencies (e.g., conftest.py)
+            venvSkip = old.venvSkip ++ [ "**/tests/**" ];
+          });
       in
         pkgs.mkShell {
           packages = [

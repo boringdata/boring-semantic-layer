@@ -1,16 +1,38 @@
 """
+Chart functionality for semantic API.
+
 Auto-detect Altair chart specifications based on query dimensions and measures.
+Provides chart() method for SemanticAggregate results.
 """
 
-from typing import Any, Dict, List, Optional
+from collections.abc import Sequence
+from typing import Any
+
+from ibis.common.collections import FrozenDict
+
+
+def _sanitize_field_name(field: str) -> str:
+    """
+    Sanitize field names for Vega-Lite compatibility.
+
+    Vega-Lite interprets dots as nested field accessors, which causes issues
+    with transforms like fold. Replace dots with underscores to avoid this.
+
+    Args:
+        field: Field name that may contain dots
+
+    Returns:
+        Sanitized field name safe for Vega-Lite
+    """
+    return field.replace(".", "_")
 
 
 def _detect_altair_spec(
-    dimensions: List[str],
-    measures: List[str],
-    time_dimension: Optional[str] = None,
-    time_grain: Optional[str] = None,
-) -> Dict[str, Any]:
+    dimensions: Sequence[str],
+    measures: Sequence[str],
+    time_dimension: str | None = None,
+    time_grain: str | None = None,
+) -> FrozenDict:
     """
     Detect an appropriate chart type and return an Altair specification.
 
@@ -174,7 +196,7 @@ def _detect_altair_spec(
     return {
         "mark": "text",
         "encoding": {
-            "text": {"value": "Complex query - consider custom visualization"}
+            "text": {"value": "Complex query - consider custom visualization"},
         },
     }
 
@@ -183,7 +205,9 @@ def _detect_altair_spec(
 
 
 def _detect_plotly_chart_type(
-    dimensions: List[str], measures: List[str], time_dimension: Optional[str] = None
+    dimensions: Sequence[str],
+    measures: Sequence[str],
+    time_dimension: str | None = None,
 ) -> str:
     """
     Auto-detect appropriate chart type based on query structure for Plotly backend.
@@ -256,11 +280,27 @@ def _prepare_plotly_data_and_params(query_expr, chart_type: str) -> tuple:
     measures = list(query_expr.measures)
     time_dimension = query_expr.model.time_dimension
 
+    # Workaround for Plotly/Kaleido datetime rendering bug:
+    # Convert datetime columns to ISO format strings to ensure proper rendering in PNG/SVG exports
+    # The interactive HTML/JSON outputs work fine, but static image exports have issues with datetime64
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].dt.strftime("%Y-%m-%d %H:%M:%S")
+            # If all times are midnight, strip the time part for cleaner labels
+            if df[col].str.endswith(" 00:00:00").all():
+                df[col] = df[col].str.replace(" 00:00:00", "")
+
     # Handle data sorting for line charts to avoid zigzag connections
     if chart_type == "line" and dimensions:
         if time_dimension and time_dimension in dimensions:
             # Sort by time dimension for temporal data
-            df = df.sort_values(by=time_dimension)
+            # If there are multiple dimensions, sort by all of them to ensure
+            # proper line ordering (e.g., first by time, then by category)
+            sort_cols = [time_dimension]
+            non_time_dims = [d for d in dimensions if d != time_dimension]
+            if non_time_dims:
+                sort_cols.extend(non_time_dims)
+            df = df.sort_values(by=sort_cols)
         elif query_expr.order_by:
             # Query already applied order_by, but when switching chart types
             # we might need to re-sort for proper line connections
@@ -307,7 +347,9 @@ def _prepare_plotly_data_and_params(query_expr, chart_type: str) -> tuple:
             # Use pivot table to create proper heatmap matrix with NaN for missing values
 
             pivot_df = df.pivot(
-                index=dimensions[1], columns=dimensions[0], values=measures[0]
+                index=dimensions[1],
+                columns=dimensions[0],
+                values=measures[0],
             )
 
             # For go.Heatmap, we need to pass the matrix directly, not through px parameters
@@ -321,3 +363,246 @@ def _prepare_plotly_data_and_params(query_expr, chart_type: str) -> tuple:
             df = pivot_df
 
     return df, base_params
+
+
+def chart(
+    semantic_aggregate: Any,
+    spec: dict[str, Any] | None = None,
+    backend: str = "altair",
+    format: str = "static",
+):
+    """
+    Generate a chart visualization for semantic aggregate query results.
+
+    Args:
+        semantic_aggregate: The SemanticAggregate object to visualize
+        spec: Optional chart specification dict (backend-specific format).
+              If partial spec is provided (e.g., only "mark" or only "encoding"),
+              missing parts will be auto-detected and merged.
+        backend: Visualization backend ("altair" or "plotly")
+        format: Output format ("static", "interactive", "json", "png", "svg")
+
+    Returns:
+        Chart object (altair.Chart or plotly Figure) or formatted output
+
+    Examples:
+        # Auto-detect chart type with Altair
+        result = flights.group_by("carrier").aggregate("flight_count")
+        chart(result)
+
+        # Use Plotly backend
+        result = flights.group_by("dep_month").aggregate("flight_count")
+        chart(result, backend="plotly")
+
+        # Custom mark with auto-detected encoding
+        result = flights.group_by("carrier").aggregate("flight_count")
+        chart(result, spec={"mark": "line"})
+
+        # Custom encoding with auto-detected mark
+        result = flights.group_by("carrier").aggregate("flight_count")
+        chart(result, spec={"encoding": {"color": {"field": "carrier"}}})
+
+        # Export as JSON
+        result = flights.group_by("carrier").aggregate("flight_count")
+        chart(result, format="json")
+    """
+    from .ops import _find_all_root_models, _get_merged_fields
+
+    # Extract dimensions and measures from the operation chain
+    # The semantic_aggregate might be wrapped by limit/order_by/mutate operations,
+    # so walk back to find the SemanticAggregateOp (has both keys and aggs).
+    aggregate_op = semantic_aggregate.op()
+    while hasattr(aggregate_op, "source") and not hasattr(aggregate_op, "aggs"):
+        aggregate_op = aggregate_op.source
+
+    dimensions = list(aggregate_op.keys)
+    measures = list(aggregate_op.aggs.keys())
+
+    # Try to detect time dimension from source
+    time_dimension = None
+    time_grain = None
+    all_roots = _find_all_root_models(aggregate_op.source)
+    if all_roots:
+        dims_dict = _get_merged_fields(all_roots, "dimensions")
+        for dim_name in dimensions:
+            if dim_name in dims_dict:
+                dim_obj = dims_dict[dim_name]
+                if hasattr(dim_obj, "is_time_dimension") and dim_obj.is_time_dimension:
+                    time_dimension = dim_name
+                    break
+
+    if backend == "altair":
+        import altair as alt
+
+        # Execute query to get data - the expression includes full chain
+        # with limit, order_by, and other transformations
+        df = semantic_aggregate.execute()
+
+        # Sanitize column names to avoid Vega-Lite issues with dotted field names
+        # This is necessary because Vega-Lite transforms (like fold) don't handle
+        # dotted field names correctly - they interpret dots as nested accessors
+        column_mapping = {col: _sanitize_field_name(col) for col in df.columns}
+        df = df.rename(columns=column_mapping)
+
+        # Update dimensions and measures to use sanitized names
+        sanitized_dimensions = [_sanitize_field_name(d) for d in dimensions]
+        sanitized_measures = [_sanitize_field_name(m) for m in measures]
+        sanitized_time_dimension = _sanitize_field_name(time_dimension) if time_dimension else None
+
+        # Always start with auto-detected spec as base
+        base_spec = _detect_altair_spec(
+            sanitized_dimensions,
+            sanitized_measures,
+            sanitized_time_dimension,
+            time_grain,
+        )
+
+        # Merge with custom spec if provided
+        if spec is None:
+            spec = base_spec
+        else:
+            # Intelligent merging: fill in missing parts with auto-detected values
+            if "mark" not in spec:
+                spec["mark"] = base_spec.get("mark", "point")
+
+            if "encoding" not in spec:
+                spec["encoding"] = base_spec.get("encoding", {})
+
+            if "transform" not in spec:
+                spec["transform"] = base_spec.get("transform", [])
+
+        # Create and return Altair chart
+        chart_obj = alt.Chart(df)
+
+        # Apply mark type
+        mark = spec.get("mark")
+        if isinstance(mark, str):
+            chart_obj = getattr(chart_obj, f"mark_{mark}")()
+        elif isinstance(mark, dict):
+            mark_type = mark.get("type", "bar")
+            chart_obj = getattr(chart_obj, f"mark_{mark_type}")(
+                **{k: v for k, v in mark.items() if k != "type"},
+            )
+
+        # Apply encoding
+        encoding = spec.get("encoding", {})
+        if encoding:
+            chart_obj = chart_obj.encode(**encoding)
+
+        # Apply transform if present
+        if "transform" in spec:
+            for transform in spec["transform"]:
+                if "fold" in transform:
+                    chart_obj = chart_obj.transform_fold(
+                        transform["fold"],
+                        as_=transform.get("as", ["key", "value"]),
+                    )
+
+        # Handle different output formats
+        if format == "static":
+            return chart_obj
+        elif format == "interactive":
+            return chart_obj.interactive()
+        elif format == "json":
+            return chart_obj.to_dict()
+        elif format in ["png", "svg"]:
+            try:
+                import io
+
+                if format == "svg":
+                    # SVG is returned as a string by Altair
+                    import io
+
+                    buffer = io.StringIO()
+                    chart_obj.save(buffer, format=format)
+                    return buffer.getvalue().encode("utf-8")
+                else:
+                    # PNG is returned as bytes
+                    buffer = io.BytesIO()
+                    chart_obj.save(buffer, format=format)
+                    return buffer.getvalue()
+            except Exception as e:
+                raise ImportError(
+                    f"{format} export requires additional dependencies: {e}. "
+                    "Install with: pip install 'altair[all]' or pip install vl-convert-python"
+                ) from e
+        else:
+            raise ValueError(
+                f"Unsupported format: {format}. "
+                "Supported formats: 'static', 'interactive', 'json', 'png', 'svg'"
+            )
+
+    elif backend == "plotly":
+        import plotly.express as px
+        import plotly.graph_objects as go
+
+        # Auto-detect chart type if not provided in spec
+        chart_type = _detect_plotly_chart_type(dimensions, measures, time_dimension)
+
+        # Override with spec if provided
+        if spec and "chart_type" in spec:
+            chart_type = spec["chart_type"]
+
+        # Execute query to get data - the expression includes full chain
+        # with limit, order_by, and other transformations
+        df = semantic_aggregate.execute()
+
+        # Create a minimal query expression object for _prepare_plotly_data_and_params
+        class QueryExpr:
+            def __init__(self, dimensions, measures, time_dimension, df):
+                self.dimensions = dimensions
+                self.measures = measures
+                self.df = df
+
+                class Model:
+                    pass
+
+                self.model = Model()
+                self.model.time_dimension = time_dimension
+                self.order_by = None
+
+            def execute(self):
+                return self.df
+
+        query_expr = QueryExpr(dimensions, measures, time_dimension, df)
+        df, base_params = _prepare_plotly_data_and_params(query_expr, chart_type)
+
+        # Create chart based on type
+        if chart_type == "bar":
+            fig = px.bar(**base_params)
+        elif chart_type == "line":
+            fig = px.line(**base_params)
+        elif chart_type == "scatter":
+            fig = px.scatter(**base_params)
+        elif chart_type == "heatmap":
+            fig = go.Figure(data=go.Heatmap(**base_params))
+        elif chart_type == "indicator":
+            value = df[measures[0]].iloc[0] if measures else 0
+            fig = go.Figure(go.Indicator(mode="number", value=value))
+        else:
+            # Default to table
+            fig = go.Figure(
+                data=[
+                    go.Table(
+                        header=dict(values=list(df.columns)),
+                        cells=dict(values=[df[col] for col in df.columns]),
+                    ),
+                ],
+            )
+
+        # Handle different output formats
+        if format == "static" or format == "interactive":
+            return fig
+        elif format == "json":
+            import plotly.io
+
+            return plotly.io.to_json(fig)
+        elif format in ["png", "svg"]:
+            return fig.to_image(format=format)
+        else:
+            raise ValueError(
+                f"Unsupported format: {format}. "
+                "Supported formats: 'static', 'interactive', 'json', 'png', 'svg'"
+            )
+    else:
+        raise ValueError(f"Unsupported backend: {backend}. Use 'altair' or 'plotly'")

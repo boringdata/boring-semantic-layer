@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Boring Semantic Layer - Lightweight Ibis-powered Semantic Layer</title>
+    <meta name="description" content="A lightweight semantic layer built on Ibis. Define your data once, query it anywhere. Perfect for connecting LLMs to structured data." />
+    <meta name="author" content="boringdata & xorq-labs" />
+    <meta name="keywords" content="semantic layer, ibis, data modeling, MCP, LLM, SQL, DuckDB, BigQuery, Snowflake" />
+
+    <meta property="og:title" content="Boring Semantic Layer - Lightweight Ibis-powered Semantic Layer" />
+    <meta property="og:description" content="A lightweight semantic layer built on Ibis. Define your data once, query it anywhere." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://boringdata.github.io/boring-semantic-layer/og-image.svg" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Boring Semantic Layer" />
+    <meta name="twitter:description" content="A lightweight semantic layer built on Ibis. Perfect for connecting LLMs to structured data." />
+    <meta name="twitter:image" content="https://boringdata.github.io/boring-semantic-layer/og-image.svg" />
+
+    <link rel="canonical" href="https://boringdata.github.io/boring-semantic-layer/" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <!-- Marimo Islands -->
+    <script type="module" src="https://cdn.jsdelivr.net/npm/@marimo-team/islands@0.10.14/dist/main.js"></script>
+
+    <!-- Single Page Apps for GitHub Pages -->
+    <!-- This script checks for a redirect and restores the original URL -->
+    <script>
+      (function(l) {
+        if (l.search[1] === '/' ) {
+          var decoded = l.search.slice(1).split('&').map(function(s) {
+            return s.replace(/~and~/g, '&')
+          }).join('?');
+          window.history.replaceState(null, null,
+              l.pathname.slice(0, -1) + decoded + l.hash
+          );
+        }
+      }(window.location))
+    </script>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
