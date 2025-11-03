@@ -73,7 +73,7 @@ Understand how joins work correctly with aggregations (Malloy-style "foreign sum
 Master the "bucketing with OTHER" pattern for clean reports and visualizations:
 - Show top N items individually, group rest as 'OTHER'
 - Use `ibis.rank()` with window functions for rankings
-- Use `ibis.case()` for bucketing logic
+- Use `ibis.cases()` for bucketing logic
 - Drop to ibis level with `.to_ibis()` for second aggregation
 - Top N per group (e.g., top 3 states per facility type)
 - Dynamic thresholds (e.g., states covering 80% of total)

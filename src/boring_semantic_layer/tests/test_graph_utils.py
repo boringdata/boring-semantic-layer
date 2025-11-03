@@ -16,7 +16,7 @@ from boring_semantic_layer.ops import Dimension, Measure
 
 def test_bfs_and_gen_children_of_simple_expr():
     # Build a simple aggregation expression
-    t = ibis.memtable({"x": [1, 2, 3]}, name="t")
+    t = ibis.memtable({"x": [1, 2, 3]})
     expr = t.group_by("x").aggregate(sum_x=t.x.sum())
 
     # BFS should map each Node to its children
@@ -33,7 +33,7 @@ def test_bfs_and_gen_children_of_simple_expr():
 
 
 def test_walk_nodes_finds_aggregation():
-    t = ibis.memtable({"x": [1, 2, 3]}, name="t")
+    t = ibis.memtable({"x": [1, 2, 3]})
     expr = t.group_by("x").aggregate(sum_x=t.x.sum())
 
     # walk_nodes should find the aggregation op
@@ -54,14 +54,14 @@ def test_replace_nodes_identity_replacer_leaves_expr_unchanged():
 
 
 def test_find_dimensions_and_measures_no_semantic_table():
-    t = ibis.memtable({"x": [1, 2, 3]}, name="t")
+    t = ibis.memtable({"x": [1, 2, 3]})
     dims, meas = find_dimensions_and_measures(t)
     assert dims == {}
     assert meas == {}
 
 
 def test_find_dimensions_and_measures_semantic_table():
-    t = ibis.memtable({"x": [1, 2, 3]}, name="t")
+    t = ibis.memtable({"x": [1, 2, 3]})
     dims_defs = {"x": Dimension(expr=lambda tbl: tbl.x, description="dim x")}
     meas_defs = {
         "sum_x": Measure(expr=lambda tbl: tbl.x.sum(), description="measure sum_x"),
