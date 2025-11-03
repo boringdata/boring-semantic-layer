@@ -103,12 +103,14 @@ jobs:
         run: |
           python -m venv test_env
           test_env/bin/pip install dist/*.whl
-          test_env/bin/python -c "import boring_semantic_layer; print(f'Successfully imported boring-semantic-layer v{boring_semantic_layer.__version__}')"
+          test_env/bin/python -c "import boring_semantic_layer; print('✓ Successfully imported boring-semantic-layer')"
 
       - name: Verify package contents
         run: |
-          uv run python -c "import boring_semantic_layer; print(f'Version: {boring_semantic_layer.__version__}')"
+          echo "Package contents:"
           ls -lh dist/
+          echo "Wheel contents:"
+          unzip -l dist/*.whl | head -30
 
   # Release to PyPI (only on GitHub release)
   release-pypi:
@@ -142,7 +144,7 @@ jobs:
         run: |
           python -m venv test_env
           test_env/bin/pip install dist/*.whl
-          test_env/bin/python -c "import boring_semantic_layer; print(f'Successfully imported boring-semantic-layer v{boring_semantic_layer.__version__}')"
+          test_env/bin/python -c "import boring_semantic_layer; print('✓ Successfully imported boring-semantic-layer')"
 
       - name: Run tests with installed package
         run: uv run pytest tests
