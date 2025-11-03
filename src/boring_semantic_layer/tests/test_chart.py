@@ -355,3 +355,17 @@ class TestChartWithFilters:
         import altair as alt
 
         assert isinstance(chart, alt.Chart)
+
+    def test_chart_with_mutate(self, flights_model):
+        """Test chart generation after mutate operation."""
+        result = (
+            flights_model.group_by("carrier")
+            .aggregate("flight_count", "total_distance")
+            .mutate(avg_distance_per_flight=lambda t: t.total_distance / t.flight_count)
+        )
+        chart = result.chart(backend="plotly")
+
+        assert chart is not None
+        import plotly.graph_objects as go
+
+        assert isinstance(chart, go.Figure)

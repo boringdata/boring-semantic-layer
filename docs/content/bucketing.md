@@ -76,15 +76,15 @@ result = (
     )
     .mutate(
         # Replace non-top categories with "Other"
-        category_display=lambda t: ibis.case()
-            .when(t.rank <= 2, t.product_category)
-            .else_("Other")
-            .end(),
+        category_display=lambda t: ibis.cases(
+            (t.rank <= 2, t.product_category),
+            else_="Other"
+        ),
         # Keep original revenue for sorting (only for top categories)
-        sort_value=lambda t: ibis.case()
-            .when(t.rank <= 2, t.total_revenue)
-            .else_(0)
-            .end()
+        sort_value=lambda t: ibis.cases(
+            (t.rank <= 2, t.total_revenue),
+            else_=0
+        )
     )
     .group_by("category_display")
     .aggregate(
@@ -116,13 +116,13 @@ result = (
     .group_by("customer_id", "age", "product_category")
     .aggregate("total_revenue")
     .mutate(
-        age_group=lambda t: ibis.case()
-            .when(t.age < 25, "18-24")
-            .when(t.age < 35, "25-34")
-            .when(t.age < 45, "35-44")
-            .when(t.age < 55, "45-54")
-            .else_("55+")
-            .end()
+        age_group=lambda t: ibis.cases(
+            (t.age < 25, "18-24"),
+            (t.age < 35, "25-34"),
+            (t.age < 45, "35-44"),
+            (t.age < 55, "45-54"),
+            else_="55+"
+        )
     )
     .group_by("age_group")
     .aggregate(
@@ -146,12 +146,12 @@ result = (
     .group_by("customer_id")
     .aggregate("total_revenue")
     .mutate(
-        tier=lambda t: ibis.case()
-            .when(t.total_revenue < 100, "Small ($0-99)")
-            .when(t.total_revenue < 250, "Medium ($100-249)")
-            .when(t.total_revenue < 500, "Large ($250-499)")
-            .else_("Premium ($500+)")
-            .end()
+        tier=lambda t: ibis.cases(
+            (t.total_revenue < 100, "Small ($0-99)"),
+            (t.total_revenue < 250, "Medium ($100-249)"),
+            (t.total_revenue < 500, "Large ($250-499)"),
+            else_="Premium ($500+)"
+        )
     )
     .group_by("tier")
     .aggregate(
@@ -178,10 +178,10 @@ result = (
     .aggregate("total_revenue", "customer_count")
     .mutate(
         # Mark categories with less than 5 customers as "Other"
-        category_grouped=lambda t: ibis.case()
-            .when(t.customer_count >= 5, t.product_category)
-            .else_("Other")
-            .end()
+        category_grouped=lambda t: ibis.cases(
+            (t.customer_count >= 5, t.product_category),
+            else_="Other"
+        )
     )
     .group_by("category_grouped")
     .aggregate(
@@ -212,16 +212,16 @@ result = (
     .group_by("customer_id", "age")
     .aggregate("total_revenue")
     .mutate(
-        age_group=lambda t: ibis.case()
-            .when(t.age < 30, "Young (18-29)")
-            .when(t.age < 50, "Middle (30-49)")
-            .else_("Senior (50+)")
-            .end(),
-        value_tier=lambda t: ibis.case()
-            .when(t.total_revenue < 150, "Low Value")
-            .when(t.total_revenue < 350, "Mid Value")
-            .else_("High Value")
-            .end()
+        age_group=lambda t: ibis.cases(
+            (t.age < 30, "Young (18-29)"),
+            (t.age < 50, "Middle (30-49)"),
+            else_="Senior (50+)"
+        ),
+        value_tier=lambda t: ibis.cases(
+            (t.total_revenue < 150, "Low Value"),
+            (t.total_revenue < 350, "Mid Value"),
+            else_="High Value"
+        )
     )
     .group_by("age_group", "value_tier")
     .aggregate(
@@ -248,7 +248,7 @@ result = (
 
 - Use window functions like `row_number()` to rank items for dynamic top-N selection
 - Two-stage pattern: rank first, then consolidate and re-aggregate
-- `ibis.case().when()...else_().end()` provides flexible bucketing logic
+- `ibis.cases((condition, value), ..., else_=default)` provides flexible bucketing logic
 - Threshold-based 'Other' works well when you have a clear cutoff value
 - Sort helper fields ensure 'Other' appears at the end of results
 - 'Other' category maintains complete data while reducing cardinality

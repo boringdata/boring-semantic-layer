@@ -722,6 +722,187 @@ class TestJoinOneMethod:
         assert "customers.customer_count" in executed.columns
 
 
+class TestChainedJoinsProjection:
+    """Test that projection pushdown works correctly with chained joins."""
+
+    def test_chained_joins_projection_pushdown(self, ecommerce_tables):
+        """Test that only required columns are selected in chained joins."""
+        orders_tbl = ecommerce_tables["orders"]
+        customers_tbl = ecommerce_tables["customers"]
+        order_items_tbl = ecommerce_tables["order_items"]
+
+        # Add extra columns to test projection pushdown
+        # Use different names to avoid collisions across tables
+        orders_extra = orders_tbl.mutate(
+            orders_extra1=1, orders_extra2=2, orders_extra3=3, orders_extra4=4, orders_extra5=5
+        )
+        customers_extra = customers_tbl.mutate(cust_extra1=10, cust_extra2=20, cust_extra3=30)
+        items_extra = order_items_tbl.mutate(
+            item_extra1=100, item_extra2=200, item_extra3=300, item_extra4=400
+        )
+
+        # Create semantic tables with only specific dimensions/measures
+        orders_st = (
+            to_semantic_table(orders_extra, "orders")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                order_id=lambda t: t.order_id,
+            )
+            .with_measures(revenue=lambda t: t.total_amount.sum())
+        )
+
+        customers_st = (
+            to_semantic_table(customers_extra, "customers")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                country=lambda t: t.country,
+            )
+            .with_measures(customer_count=lambda t: t.count())
+        )
+
+        items_st = (
+            to_semantic_table(items_extra, "items")
+            .with_dimensions(order_id=lambda t: t.order_id)
+            .with_measures(quantity_sold=lambda t: t.quantity.sum())
+        )
+
+        # Chain joins: orders -> customers -> items
+        joined = orders_st.join(
+            customers_st,
+            on=lambda o, c: o.customer_id == c.customer_id,
+        ).join(items_st, on=lambda oc, i: oc.order_id == i.order_id)
+
+        # Query that only needs country and revenue
+        result = joined.group_by("customers.country").aggregate("orders.revenue")
+        # Verify the query still works
+        df = result.execute()
+        assert "customers.country" in df.columns
+        assert "orders.revenue" in df.columns
+
+    def test_chained_joins_with_all_tables_measures(self, ecommerce_tables):
+        """Test chained joins when we need measures from all three tables."""
+        orders_tbl = ecommerce_tables["orders"]
+        customers_tbl = ecommerce_tables["customers"]
+        order_items_tbl = ecommerce_tables["order_items"]
+
+        # Add extra columns with unique names to avoid collisions
+        orders_extra = orders_tbl.mutate(orders_extra1=1, orders_extra2=2)
+        customers_extra = customers_tbl.mutate(cust_extra1=10, cust_extra2=20)
+        items_extra = order_items_tbl.mutate(item_extra1=100, item_extra2=200)
+
+        orders_st = (
+            to_semantic_table(orders_extra, "orders")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                order_id=lambda t: t.order_id,
+            )
+            .with_measures(revenue=lambda t: t.total_amount.sum())
+        )
+
+        customers_st = (
+            to_semantic_table(customers_extra, "customers")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                country=lambda t: t.country,
+            )
+            .with_measures(customer_count=lambda t: t.count())
+        )
+
+        items_st = (
+            to_semantic_table(items_extra, "items")
+            .with_dimensions(order_id=lambda t: t.order_id)
+            .with_measures(
+                quantity_sold=lambda t: t.quantity.sum(),
+                item_revenue=lambda t: t.price.sum(),
+            )
+        )
+
+        # Chain joins
+        joined = orders_st.join(
+            customers_st,
+            on=lambda o, c: o.customer_id == c.customer_id,
+        ).join(items_st, on=lambda oc, i: oc.order_id == i.order_id)
+
+        # Query all measures from all tables
+        result = joined.group_by("customers.country").aggregate(
+            "orders.revenue",
+            "customers.customer_count",
+            "items.item_revenue",
+        )
+
+        # Verify query works
+        df = result.execute()
+        assert all(
+            col in df.columns
+            for col in [
+                "customers.country",
+                "orders.revenue",
+                "customers.customer_count",
+                "items.item_revenue",
+            ]
+        )
+
+    def test_deeply_nested_chained_joins(self, con):
+        """Test projection with 4-way chained joins."""
+        # Create a chain: A -> B -> C -> D
+        df_a = pd.DataFrame(
+            {"a_id": [1, 2], "b_id": [10, 20], "a_val": [100, 200], "extra_a": [1, 2]}
+        )
+        df_b = pd.DataFrame(
+            {"b_id": [10, 20], "c_id": [30, 40], "b_val": [300, 400], "extra_b": [3, 4]}
+        )
+        df_c = pd.DataFrame(
+            {"c_id": [30, 40], "d_id": [50, 60], "c_val": [500, 600], "extra_c": [5, 6]}
+        )
+        df_d = pd.DataFrame({"d_id": [50, 60], "d_val": [700, 800], "extra_d": [7, 8]})
+
+        tbl_a = con.create_table("tbl_a", df_a)
+        tbl_b = con.create_table("tbl_b", df_b)
+        tbl_c = con.create_table("tbl_c", df_c)
+        tbl_d = con.create_table("tbl_d", df_d)
+
+        st_a = (
+            to_semantic_table(tbl_a, "a")
+            .with_dimensions(a_id=lambda t: t.a_id, b_id=lambda t: t.b_id)
+            .with_measures(a_sum=lambda t: t.a_val.sum())
+        )
+
+        st_b = (
+            to_semantic_table(tbl_b, "b")
+            .with_dimensions(b_id=lambda t: t.b_id, c_id=lambda t: t.c_id)
+            .with_measures(b_sum=lambda t: t.b_val.sum())
+        )
+
+        st_c = (
+            to_semantic_table(tbl_c, "c")
+            .with_dimensions(c_id=lambda t: t.c_id, d_id=lambda t: t.d_id)
+            .with_measures(c_sum=lambda t: t.c_val.sum())
+        )
+
+        st_d = (
+            to_semantic_table(tbl_d, "d")
+            .with_dimensions(d_id=lambda t: t.d_id)
+            .with_measures(d_sum=lambda t: t.d_val.sum())
+        )
+
+        # Chain all four tables: A -> B -> C -> D
+        joined = (
+            st_a.join(st_b, on=lambda a, b: a.b_id == b.b_id)
+            .join(st_c, on=lambda ab, c: ab.c_id == c.c_id)
+            .join(st_d, on=lambda abc, d: abc.d_id == d.d_id)
+        )
+
+        # Query only needs measures from first and last table
+        all_dims = list(joined._dims.keys())
+        a_id_dim = [d for d in all_dims if "a_id" in d][0]
+
+        result = joined.group_by(a_id_dim).aggregate("a.a_sum", "d.d_sum")
+
+        # Verify query executes correctly
+        df = result.execute()
+        assert len(df) > 0
+
+
 class TestEdgeCases:
     """Test edge cases and potential error scenarios."""
 

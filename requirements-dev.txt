@@ -16,11 +16,11 @@ asn1crypto==1.5.1
     # via snowflake-connector-python
 asttokens==3.0.0
     # via stack-data
-atpublic==6.0.1
+atpublic==6.0.2
     # via
     #   ibis-framework
     #   xorq
-attrs==25.3.0
+attrs==25.4.0
     # via
     #   boring-semantic-layer
     #   cyclopts
@@ -29,40 +29,50 @@ attrs==25.3.0
     #   xorq
 authlib==1.6.5
     # via fastmcp
+backports-asyncio-runner==1.2.0 ; python_full_version < '3.11'
+    # via pytest-asyncio
+backports-tarfile==1.2.0 ; python_full_version < '3.12'
+    # via jaraco-context
+beartype==0.22.5
+    # via
+    #   py-key-value-aio
+    #   py-key-value-shared
 beniget==0.4.2.post1 ; sys_platform == 'darwin'
     # via pythran
-boto3==1.40.27
+boto3==1.40.64
     # via snowflake-connector-python
-botocore==1.40.27
+botocore==1.40.64
     # via
     #   boto3
     #   s3transfer
     #   snowflake-connector-python
-cachetools==5.5.2
-    # via google-auth
-certifi==2025.6.15
+cachetools==6.2.1
+    # via
+    #   google-auth
+    #   py-key-value-aio
+certifi==2025.10.5
     # via
     #   httpcore
     #   httpx
     #   requests
     #   snowflake-connector-python
-cffi==1.17.1 ; platform_python_implementation != 'PyPy'
+cffi==2.0.0 ; platform_python_implementation != 'PyPy'
     # via cryptography
 cfgv==3.4.0
     # via pre-commit
-charset-normalizer==3.4.2
+charset-normalizer==3.4.4
     # via
     #   requests
     #   snowflake-connector-python
-choreographer==1.0.10
+choreographer==1.2.0
     # via kaleido
-cityhash==0.4.8 ; python_full_version < '4'
+cityhash==0.4.10 ; python_full_version < '4'
     # via xorq
 click==8.3.0 ; python_full_version < '4' or sys_platform != 'emscripten'
     # via
     #   dask
     #   uvicorn
-cloudpickle==3.1.1
+cloudpickle==3.1.2
     # via
     #   dask
     #   xorq
@@ -71,19 +81,23 @@ colorama==0.4.6 ; sys_platform == 'win32'
     #   click
     #   ipython
     #   pytest
-cryptography==45.0.7
+cryptography==46.0.3
     # via
     #   authlib
+    #   pyjwt
     #   pyopenssl
+    #   secretstorage
     #   snowflake-connector-python
     #   xorq
-cyclopts==4.0.0
+cyclopts==4.2.1
     # via fastmcp
 dask==2025.1.0 ; python_full_version < '4'
     # via xorq
 decorator==5.2.1
     # via ipython
-distlib==0.3.9
+diskcache==5.6.3
+    # via py-key-value-aio
+distlib==0.4.0
     # via virtualenv
 dnspython==2.8.0
     # via email-validator
@@ -91,7 +105,7 @@ docstring-parser==0.17.0
     # via cyclopts
 docutils==0.22.2
     # via rich-rst
-duckdb==1.3.1
+duckdb==1.3.2
     # via
     #   boring-semantic-layer
     #   ibis-framework
@@ -110,13 +124,13 @@ executing==2.2.1
     # via stack-data
 fastjsonschema==2.21.2
     # via nbformat
-fastmcp==2.12.5
+fastmcp==2.13.0.2
     # via boring-semantic-layer
-filelock==3.18.0
+filelock==3.20.0
     # via
     #   snowflake-connector-python
     #   virtualenv
-fsspec==2025.5.1 ; python_full_version < '4'
+fsspec==2025.10.0 ; python_full_version < '4'
     # via dask
 gast==0.6.0 ; sys_platform == 'darwin'
     # via
@@ -124,35 +138,35 @@ gast==0.6.0 ; sys_platform == 'darwin'
     #   pythran
 geoarrow-types==0.3.0 ; python_full_version < '4'
     # via xorq
-google-api-core==2.25.1
+google-api-core==2.28.1
     # via
     #   google-cloud-bigquery
     #   google-cloud-core
-google-auth==2.40.3
+google-auth==2.42.1
     # via
     #   google-api-core
     #   google-cloud-bigquery
     #   google-cloud-core
-google-cloud-bigquery==3.37.0
+google-cloud-bigquery==3.38.0
     # via malloy
-google-cloud-core==2.4.3
+google-cloud-core==2.5.0
     # via google-cloud-bigquery
 google-crc32c==1.7.1
     # via google-resumable-media
 google-resumable-media==2.7.2
     # via google-cloud-bigquery
-googleapis-common-protos==1.70.0
+googleapis-common-protos==1.71.0
     # via
     #   google-api-core
     #   grpcio-status
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
-grpcio==1.73.0
+grpcio==1.76.0
     # via
     #   google-api-core
     #   grpcio-status
     #   opentelemetry-exporter-otlp-proto-grpc
-grpcio-status==1.62.3
+grpcio-status==1.76.0
     # via google-api-core
 h11==0.16.0
     # via
@@ -164,84 +178,86 @@ httpx==0.28.1
     # via
     #   fastmcp
     #   mcp
-httpx-sse==0.4.2
+httpx-sse==0.4.3
     # via mcp
-ibis-framework==10.6.0
+ibis-framework==11.0.0
     # via boring-semantic-layer
-identify==2.6.12
+identify==2.6.15
     # via pre-commit
-idna==3.10
+idna==3.11
     # via
     #   anyio
     #   email-validator
     #   httpx
     #   requests
     #   snowflake-connector-python
-importlib-metadata==8.0.0
+importlib-metadata==8.7.0
     # via
     #   dask
+    #   keyring
     #   opentelemetry-api
-iniconfig==2.1.0
+iniconfig==2.3.0
     # via pytest
 ipython==8.37.0 ; python_full_version < '3.11'
 ipython==9.6.0 ; python_full_version >= '3.11'
 ipython-pygments-lexers==1.1.1 ; python_full_version >= '3.11'
     # via ipython
-isodate==0.7.2
-    # via openapi-core
+jaraco-classes==3.4.0
+    # via keyring
+jaraco-context==6.0.1
+    # via keyring
+jaraco-functools==4.3.0
+    # via keyring
 jedi==0.19.2
     # via ipython
+jeepney==0.9.0 ; sys_platform == 'linux'
+    # via
+    #   keyring
+    #   secretstorage
 jinja2==3.1.6
     # via altair
 jmespath==1.0.1
     # via
     #   boto3
     #   botocore
-jsonschema==4.24.0
+jsonschema==4.25.1
     # via
     #   altair
     #   mcp
     #   nbformat
-    #   openapi-core
-    #   openapi-schema-validator
-    #   openapi-spec-validator
 jsonschema-path==0.3.4
-    # via
-    #   openapi-core
-    #   openapi-spec-validator
-jsonschema-specifications==2025.4.1
-    # via
-    #   jsonschema
-    #   openapi-schema-validator
+    # via fastmcp
+jsonschema-specifications==2025.9.1
+    # via jsonschema
 jupyter-core==5.9.1
     # via nbformat
-kaleido==1.0.0
+kaleido==1.1.0
     # via boring-semantic-layer
-lazy-object-proxy==1.12.0
-    # via openapi-spec-validator
+keyring==25.6.0
+    # via py-key-value-aio
 locket==1.0.0 ; python_full_version < '4'
     # via partd
-logistro==1.1.0
+logistro==2.0.1
     # via
     #   choreographer
     #   kaleido
 malloy==2024.1096
     # via boring-semantic-layer
-markdown-it-py==3.0.0
+markdown-it-py==4.0.0
     # via rich
-markupsafe==3.0.2
-    # via
-    #   jinja2
-    #   werkzeug
+markupsafe==3.0.3
+    # via jinja2
 matplotlib-inline==0.2.1
     # via ipython
-mcp==1.16.0
+mcp==1.20.0
     # via fastmcp
 mdurl==0.1.2
     # via markdown-it-py
 more-itertools==10.8.0
-    # via openapi-core
-narwhals==1.45.0
+    # via
+    #   jaraco-classes
+    #   jaraco-functools
+narwhals==2.10.1
     # via
     #   altair
     #   plotly
@@ -254,21 +270,13 @@ numpy==2.2.6 ; python_full_version < '3.11'
     #   ibis-framework
     #   pandas
     #   pythran
-numpy==2.3.1 ; python_full_version >= '3.11'
+numpy==2.3.4 ; python_full_version >= '3.11'
     # via
     #   ibis-framework
     #   pandas
     #   pythran
-openapi-core==0.19.5
-    # via fastmcp
 openapi-pydantic==0.5.1
     # via fastmcp
-openapi-schema-validator==0.6.3
-    # via
-    #   openapi-core
-    #   openapi-spec-validator
-openapi-spec-validator==0.7.2
-    # via openapi-core
 opentelemetry-api==1.38.0
     # via
     #   opentelemetry-exporter-otlp-proto-grpc
@@ -301,7 +309,7 @@ opentelemetry-sdk==1.38.0
     #   xorq
 opentelemetry-semantic-conventions==0.59b0
     # via opentelemetry-sdk
-orjson==3.11.3
+orjson==3.11.4
     # via kaleido
 packaging==25.0
     # via
@@ -314,16 +322,14 @@ packaging==25.0
     #   plotly
     #   pytest
     #   snowflake-connector-python
-pandas==2.3.0
+pandas==2.3.3
     # via
     #   boring-semantic-layer
     #   ibis-framework
     #   xorq
-parse==1.20.2
-    # via openapi-core
 parso==0.8.5
     # via jedi
-parsy==2.1
+parsy==2.2
     # via
     #   ibis-framework
     #   xorq
@@ -331,20 +337,23 @@ partd==1.4.2 ; python_full_version < '4'
     # via dask
 pathable==0.4.4
     # via jsonschema-path
+pathvalidate==3.3.1
+    # via py-key-value-aio
 pexpect==4.9.0 ; sys_platform != 'emscripten' and sys_platform != 'win32'
     # via ipython
-platformdirs==4.3.8
+platformdirs==4.5.0
     # via
+    #   fastmcp
     #   jupyter-core
     #   snowflake-connector-python
     #   virtualenv
-plotly==6.3.0
+plotly==6.3.1
     # via boring-semantic-layer
 pluggy==1.6.0
     # via pytest
 ply==3.11 ; sys_platform == 'darwin'
     # via pythran
-pre-commit==4.2.0
+pre-commit==4.3.0
     # via boring-semantic-layer
 prometheus-client==0.23.1
     # via
@@ -365,7 +374,11 @@ ptyprocess==0.7.0 ; sys_platform != 'emscripten' and sys_platform != 'win32'
     # via pexpect
 pure-eval==0.2.3
     # via stack-data
-pyarrow==20.0.0
+py-key-value-aio==0.2.8
+    # via fastmcp
+py-key-value-shared==0.2.8
+    # via py-key-value-aio
+pyarrow==21.0.0
     # via
     #   ibis-framework
     #   xorq
@@ -380,15 +393,15 @@ pyasn1==0.6.1
     #   rsa
 pyasn1-modules==0.4.2
     # via google-auth
-pycparser==2.23 ; platform_python_implementation != 'PyPy'
+pycparser==2.23 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
     # via cffi
-pydantic==2.11.7
+pydantic==2.12.3
     # via
     #   fastmcp
     #   mcp
     #   openapi-pydantic
     #   pydantic-settings
-pydantic-core==2.33.2
+pydantic-core==2.41.4
     # via pydantic
 pydantic-settings==2.11.0
     # via mcp
@@ -399,20 +412,25 @@ pygments==2.19.2
     #   pytest
     #   rich
 pyjwt==2.10.1
-    # via snowflake-connector-python
-pyopenssl==25.1.0
+    # via
+    #   mcp
+    #   snowflake-connector-python
+pyopenssl==25.3.0
     # via snowflake-connector-python
 pyperclip==1.11.0
     # via fastmcp
-pytest==8.4.1
+pytest==8.4.2
     # via
     #   boring-semantic-layer
     #   pytest-asyncio
     #   pytest-mock
-pytest-asyncio==1.0.0
+    #   pytest-timeout
+pytest-asyncio==1.2.0
     # via boring-semantic-layer
-pytest-mock==3.14.1 ; python_full_version < '4'
+pytest-mock==3.15.1 ; python_full_version < '4'
     # via xorq
+pytest-timeout==2.4.0
+    # via kaleido
 python-dateutil==2.9.0.post0
     # via
     #   botocore
@@ -420,7 +438,7 @@ python-dateutil==2.9.0.post0
     #   ibis-framework
     #   pandas
     #   xorq
-python-dotenv==1.1.1
+python-dotenv==1.2.1
     # via
     #   fastmcp
     #   pydantic-settings
@@ -435,8 +453,11 @@ pytz==2025.2
     #   xorq
 pywin32==311 ; sys_platform == 'win32'
     # via mcp
-pyyaml==6.0.2
+pywin32-ctypes==0.2.3 ; sys_platform == 'win32'
+    # via keyring
+pyyaml==6.0.3
     # via
+    #   boring-semantic-layer
     #   dask
     #   envyaml
     #   jsonschema-path
@@ -447,7 +468,7 @@ referencing==0.36.2
     #   jsonschema
     #   jsonschema-path
     #   jsonschema-specifications
-requests==2.32.4
+requests==2.32.5
     # via
     #   google-api-core
     #   google-cloud-bigquery
@@ -456,9 +477,7 @@ requests==2.32.4
     #   snowflake-connector-python
 returns==0.26.0
     # via boring-semantic-layer
-rfc3339-validator==0.1.4
-    # via openapi-schema-validator
-rich==13.9.4
+rich==14.2.0
     # via
     #   cyclopts
     #   fastmcp
@@ -467,24 +486,24 @@ rich==13.9.4
     #   xorq
 rich-rst==1.3.2
     # via cyclopts
-rpds-py==0.26.0
+rpds-py==0.28.0
     # via
     #   jsonschema
     #   referencing
 rsa==4.9.1
     # via google-auth
-ruff==0.12.0
+ruff==0.14.3
     # via boring-semantic-layer
 s3transfer==0.14.0
     # via boto3
+secretstorage==3.4.0 ; sys_platform == 'linux'
+    # via keyring
 setuptools==80.9.0 ; sys_platform == 'darwin'
     # via pythran
-simplejson==3.20.1
+simplejson==3.20.2
     # via choreographer
 six==1.17.0
-    # via
-    #   python-dateutil
-    #   rfc3339-validator
+    # via python-dateutil
 sniffio==1.3.1
     # via anyio
 snowflake-connector-python==4.0.0
@@ -495,23 +514,23 @@ sqlglot==25.20.2
     # via
     #   ibis-framework
     #   xorq
-sse-starlette==3.0.2
+sse-starlette==3.0.3
     # via mcp
 stack-data==0.6.3
     # via ipython
-starlette==0.48.0
+starlette==0.50.0
     # via mcp
 strenum==0.4.15 ; python_full_version < '3.11'
     # via xorq
-structlog==25.4.0 ; python_full_version < '4'
+structlog==25.5.0 ; python_full_version < '4'
     # via xorq
-tomli==2.2.1 ; python_full_version < '3.11'
+tomli==2.3.0 ; python_full_version < '3.11'
     # via
     #   cyclopts
     #   pytest
 tomlkit==0.13.3
     # via snowflake-connector-python
-toolz==1.0.0
+toolz==1.1.0
     # via
     #   dask
     #   ibis-framework
@@ -523,33 +542,36 @@ traitlets==5.14.3
     #   jupyter-core
     #   matplotlib-inline
     #   nbformat
-typing-extensions==4.14.0
+typing-extensions==4.15.0
     # via
     #   altair
     #   anyio
+    #   cryptography
     #   cyclopts
     #   exceptiongroup
+    #   grpcio
     #   ibis-framework
     #   ipython
-    #   openapi-core
     #   opentelemetry-api
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
+    #   py-key-value-shared
     #   pydantic
     #   pydantic-core
     #   pyopenssl
+    #   pytest-asyncio
     #   referencing
     #   returns
-    #   rich
     #   snowflake-connector-python
     #   starlette
     #   structlog
     #   typing-inspection
     #   uvicorn
+    #   virtualenv
     #   xorq
-typing-inspection==0.4.1
+typing-inspection==0.4.2
     # via
     #   pydantic
     #   pydantic-settings
@@ -564,16 +586,16 @@ urllib3==2.5.0
     #   requests
 uv==0.9.7
     # via xorq
-uvicorn==0.37.0 ; sys_platform != 'emscripten'
+uvicorn==0.38.0 ; sys_platform != 'emscripten'
     # via mcp
-virtualenv==20.31.2
+virtualenv==20.35.4
     # via pre-commit
 vl-convert-python==1.8.0
     # via boring-semantic-layer
 wcwidth==0.2.14
     # via prompt-toolkit
-werkzeug==3.1.1
-    # via openapi-core
+websockets==15.0.1
+    # via fastmcp
 xorq==0.3.2
     # via boring-semantic-layer
 xorq-datafusion==0.2.4

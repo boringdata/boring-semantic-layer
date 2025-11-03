@@ -68,6 +68,9 @@ class SemanticTable(ir.Table):
     def pipe(self, func, *args, **kwargs):
         return func(self, *args, **kwargs)
 
+    def to_ibis(self):
+        return self.op().to_ibis()
+
     def execute(self):
         return to_ibis(self).execute()
 
@@ -249,31 +252,31 @@ class SemanticModel(SemanticTable):
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | None = None,
         how: str = "inner",
-    ):
+    ) -> SemanticJoin:
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoinOp(left=self.op(), right=other_op, on=on, how=how)
+        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how)
 
-    def join_one(self, other: SemanticModel, left_on: str, right_on: str):
+    def join_one(self, other: SemanticModel, left_on: str, right_on: str) -> SemanticJoin:
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoinOp(
+        return SemanticJoin(
             left=self.op(),
             right=other_op,
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
             how="inner",
         )
 
-    def join_many(self, other: SemanticModel, left_on: str, right_on: str):
+    def join_many(self, other: SemanticModel, left_on: str, right_on: str) -> SemanticJoin:
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoinOp(
+        return SemanticJoin(
             left=self.op(),
             right=other_op,
             on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
             how="left",
         )
 
-    def join_cross(self, other: SemanticModel):
+    def join_cross(self, other: SemanticModel) -> SemanticJoin:
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoinOp(left=self.op(), right=other_op, on=None, how="cross")
+        return SemanticJoin(left=self.op(), right=other_op, on=None, how="cross")
 
     def index(
         self,
@@ -342,6 +345,248 @@ class SemanticModel(SemanticTable):
         )
 
 
+class SemanticJoin(SemanticTable):
+    def __init__(
+        self,
+        left: SemanticTableOp,
+        right: SemanticTableOp,
+        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
+        how: str = "inner",
+    ) -> None:
+        op = SemanticJoinOp(left=left, right=right, on=on, how=how)
+        super().__init__(op)
+
+    @property
+    def left(self):
+        return self.op().left
+
+    @property
+    def right(self):
+        return self.op().right
+
+    @property
+    def on(self):
+        return self.op().on
+
+    @property
+    def how(self):
+        return self.op().how
+
+    @property
+    def values(self):
+        return self.op().values
+
+    @property
+    def schema(self):
+        return self.op().schema
+
+    @property
+    def name(self):
+        return getattr(self.op(), "name", None)
+
+    @property
+    def table(self):
+        return self.op().to_ibis()
+
+    def get_dimensions(self):
+        return self.op().get_dimensions()
+
+    def get_measures(self):
+        return self.op().get_measures()
+
+    def get_calculated_measures(self):
+        return self.op().get_calculated_measures()
+
+    def index(
+        self,
+        selector: str | list[str] | Callable | None = None,
+        by: str | None = None,
+        sample: int | None = None,
+    ):
+        processed_selector = selector
+        if selector is not None and "ibis.selectors" in str(type(selector).__module__):
+            if type(selector).__name__ == "AllColumns":
+                processed_selector = None
+            elif type(selector).__name__ == "Cols":
+                processed_selector = sorted(selector.names)
+            else:
+                processed_selector = selector
+
+        return SemanticIndexOp(
+            source=self.op(),
+            selector=processed_selector,
+            by=by,
+            sample=sample,
+        )
+
+    def to_ibis(self):
+        return self.op().to_ibis()
+
+    def as_expr(self):
+        return self
+
+    def __getitem__(self, key):
+        dims_dict = self.get_dimensions()
+        if key in dims_dict:
+            return dims_dict[key]
+
+        meas_dict = self.get_measures()
+        if key in meas_dict:
+            return meas_dict[key]
+
+        calc_meas_dict = self.get_calculated_measures()
+        if key in calc_meas_dict:
+            return calc_meas_dict[key]
+
+        raise KeyError(
+            f"'{key}' not found in dimensions, measures, or calculated measures",
+        )
+
+    @property
+    def dimensions(self):
+        return self.op().dimensions
+
+    @property
+    def measures(self):
+        return self.op().measures
+
+    @property
+    def _dims(self):
+        return self.op()._dims
+
+    @property
+    def _base_measures(self):
+        return self.op()._base_measures
+
+    @property
+    def _calc_measures(self):
+        return self.op()._calc_measures
+
+    @property
+    def calc_measures(self):
+        return self.op().calc_measures
+
+    @property
+    def json_definition(self):
+        return self.op().json_definition
+
+    def query(
+        self,
+        dimensions: list[str] | None = None,
+        measures: list[str] | None = None,
+        filters: dict[str, Any] | None = None,
+        order_by: list[str] | None = None,
+        limit: int | None = None,
+        time_grain: str | None = None,
+        time_range: dict[str, str] | None = None,
+    ):
+        return build_query(
+            semantic_table=self,
+            dimensions=dimensions,
+            measures=measures,
+            filters=filters,
+            order_by=order_by,
+            limit=limit,
+            time_grain=time_grain,
+            time_range=time_range,
+        )
+
+    def as_table(self) -> SemanticModel:
+        all_roots = _find_all_root_models(self.op())
+        return _build_semantic_model_from_roots(self.op().to_ibis(), all_roots)
+
+    def with_dimensions(self, **dims) -> SemanticModel:
+        """Add or update dimensions."""
+        return SemanticModel(
+            table=self.op().to_ibis(),
+            dimensions={**self.get_dimensions(), **dims},
+            measures=self.get_measures(),
+            calc_measures=self.get_calculated_measures(),
+            _source_join=self.op(),  # Pass join reference for projection pushdown
+        )
+
+    def with_measures(self, **meas) -> SemanticModel:
+        from .measure_scope import MeasureScope
+        from .ops import _classify_measure
+
+        joined_tbl = self.op().to_ibis()
+        all_known = (
+            list(self.get_measures().keys())
+            + list(self.get_calculated_measures().keys())
+            + list(meas.keys())
+        )
+        scope = MeasureScope(_tbl=joined_tbl, _known=all_known)
+
+        new_base, new_calc = (
+            dict(self.get_measures()),
+            dict(self.get_calculated_measures()),
+        )
+        for name, fn_or_expr in meas.items():
+            kind, value = _classify_measure(fn_or_expr, scope)
+            (new_calc if kind == "calc" else new_base)[name] = value
+
+        return SemanticModel(
+            table=joined_tbl,
+            dimensions=self.get_dimensions(),
+            measures=new_base,
+            calc_measures=new_calc,
+            _source_join=self.op(),  # Pass join reference for projection pushdown
+        )
+
+    def join(
+        self,
+        other: SemanticModel,
+        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
+        how: str = "inner",
+    ) -> SemanticJoin:
+        return SemanticJoin(
+            left=self.op(),
+            right=other.op() if isinstance(other, SemanticModel) else other,
+            on=on,
+            how=how,
+        )
+
+    def join_one(
+        self,
+        other: SemanticModel,
+        left_on: str,
+        right_on: str,
+    ) -> SemanticJoin:
+        return SemanticJoin(
+            left=self.op(),
+            right=other.op() if isinstance(other, SemanticModel) else other,
+            on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
+            how="inner",
+        )
+
+    def join_many(
+        self,
+        other: SemanticModel,
+        left_on: str,
+        right_on: str,
+    ) -> SemanticJoin:
+        return SemanticJoin(
+            left=self.op(),
+            right=other.op() if isinstance(other, SemanticModel) else other,
+            on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
+            how="left",
+        )
+
+    def join_cross(self, other: SemanticModel) -> SemanticJoin:
+        return SemanticJoin(
+            left=self.op(),
+            right=other.op() if isinstance(other, SemanticModel) else other,
+            on=None,
+            how="cross",
+        )
+
+    def group_by(self, *keys: str):
+        return self.op().group_by(*keys)
+
+    def filter(self, predicate: Callable):
+        return self.op().filter(predicate)
+
+
 class SemanticFilter(SemanticTable):
     def __init__(self, source: SemanticTableOp, predicate: Callable) -> None:
         op = SemanticFilterOp(source=source, predicate=predicate)
@@ -398,7 +643,7 @@ class SemanticGroupBy(SemanticTable):
         aggs = {}
         for item in measure_names:
             if isinstance(item, str):
-                aggs[item] = lambda t, n=item: getattr(t, n)
+                aggs[item] = lambda t, n=item: t[n]
             elif callable(item):
                 aggs[f"_measure_{id(item)}"] = item
             else:
@@ -521,8 +766,8 @@ class SemanticAggregate(SemanticTable):
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | None = None,
         how: str = "inner",
-    ) -> SemanticJoinOp:
-        return SemanticJoinOp(
+    ) -> SemanticJoin:
+        return SemanticJoin(
             left=self.op(),
             right=other.op(),
             on=on,
@@ -534,8 +779,8 @@ class SemanticAggregate(SemanticTable):
         other: SemanticModel,
         left_on: str,
         right_on: str,
-    ) -> SemanticJoinOp:
-        return SemanticJoinOp(
+    ) -> SemanticJoin:
+        return SemanticJoin(
             left=self.op(),
             right=other.op(),
             on=lambda left, right: left[left_on] == right[right_on],
@@ -547,8 +792,8 @@ class SemanticAggregate(SemanticTable):
         other: SemanticModel,
         left_on: str,
         right_on: str,
-    ) -> SemanticJoinOp:
-        return SemanticJoinOp(
+    ) -> SemanticJoin:
+        return SemanticJoin(
             left=self.op(),
             right=other.op(),
             on=lambda left, right: left[left_on] == right[right_on],
@@ -569,27 +814,7 @@ class SemanticAggregate(SemanticTable):
         backend: str = "altair",
         format: str = "static",
     ):
-        chart_obj = create_chart(self.op(), spec=spec, backend=backend)
-
-        if format in ("static", "interactive"):
-            return chart_obj
-        elif format == "json":
-            return chart_obj.to_dict()
-        elif format == "png":
-            if backend == "altair":
-                return chart_obj.to_png()
-            else:
-                return chart_obj.to_image(format="png")
-        elif format == "svg":
-            if backend == "altair":
-                return chart_obj.to_svg()
-            else:
-                return chart_obj.to_image(format="svg")
-        else:
-            raise ValueError(
-                f"Unsupported format: {format}. "
-                "Supported: 'static', 'interactive', 'json', 'png', 'svg'"
-            )
+        return create_chart(self, spec=spec, backend=backend, format=format)
 
 
 class SemanticOrderBy(SemanticTable):
@@ -625,33 +850,9 @@ class SemanticOrderBy(SemanticTable):
         backend: str = "altair",
         format: str = "static",
     ):
-        source = self.source
-        while not isinstance(source, SemanticAggregateOp):
-            if isinstance(source, SemanticTableOp | SemanticJoinOp):
-                raise ValueError("Cannot create chart: no aggregate found in query chain")
-            source = source.source
-
-        chart_obj = create_chart(source, spec=spec, backend=backend)
-
-        if format in ("static", "interactive"):
-            return chart_obj
-        elif format == "json":
-            return chart_obj.to_dict()
-        elif format == "png":
-            if backend == "altair":
-                return chart_obj.to_png()
-            else:
-                return chart_obj.to_image(format="png")
-        elif format == "svg":
-            if backend == "altair":
-                return chart_obj.to_svg()
-            else:
-                return chart_obj.to_image(format="svg")
-        else:
-            raise ValueError(
-                f"Unsupported format: {format}. "
-                "Supported: 'static', 'interactive', 'json', 'png', 'svg'"
-            )
+        """Create a chart from the ordered aggregate."""
+        # Pass the expression to preserve order_by in the chart
+        return create_chart(self, spec=spec, backend=backend, format=format)
 
 
 class SemanticLimit(SemanticTable):
@@ -689,33 +890,9 @@ class SemanticLimit(SemanticTable):
         backend: str = "altair",
         format: str = "static",
     ):
-        source = self.source
-        while not isinstance(source, SemanticAggregateOp):
-            if isinstance(source, SemanticTableOp | SemanticJoinOp):
-                raise ValueError("Cannot create chart: no aggregate found in query chain")
-            source = source.source
-
-        chart_obj = create_chart(source, spec=spec, backend=backend)
-
-        if format in ("static", "interactive"):
-            return chart_obj
-        elif format == "json":
-            return chart_obj.to_dict()
-        elif format == "png":
-            if backend == "altair":
-                return chart_obj.to_png()
-            else:
-                return chart_obj.to_image(format="png")
-        elif format == "svg":
-            if backend == "altair":
-                return chart_obj.to_svg()
-            else:
-                return chart_obj.to_image(format="svg")
-        else:
-            raise ValueError(
-                f"Unsupported format: {format}. "
-                "Supported: 'static', 'interactive', 'json', 'png', 'svg'"
-            )
+        """Create a chart from the limited aggregate."""
+        # Pass the expression to preserve limit in the chart
+        return create_chart(self, spec=spec, backend=backend, format=format)
 
 
 class SemanticUnnest(SemanticTable):
@@ -863,33 +1040,9 @@ class SemanticMutate(SemanticTable):
         backend: str = "altair",
         format: str = "static",
     ):
-        source = self.source
-        while not isinstance(source, SemanticAggregateOp):
-            if isinstance(source, SemanticTableOp | SemanticJoinOp):
-                raise ValueError("Cannot create chart: no aggregate found in query chain")
-            source = source.source
-
-        chart_obj = create_chart(source, spec=spec, backend=backend)
-
-        if format in ("static", "interactive"):
-            return chart_obj
-        elif format == "json":
-            return chart_obj.to_dict()
-        elif format == "png":
-            if backend == "altair":
-                return chart_obj.to_png()
-            else:
-                return chart_obj.to_image(format="png")
-        elif format == "svg":
-            if backend == "altair":
-                return chart_obj.to_svg()
-            else:
-                return chart_obj.to_image(format="svg")
-        else:
-            raise ValueError(
-                f"Unsupported format: {format}. "
-                "Supported: 'static', 'interactive', 'json', 'png', 'svg'"
-            )
+        """Create a chart from the mutated aggregate."""
+        # Pass the expression to preserve mutations in the chart
+        return create_chart(self, spec=spec, backend=backend, format=format)
 
     def as_table(self) -> SemanticModel:
         return SemanticModel(

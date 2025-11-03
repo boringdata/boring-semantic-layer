@@ -335,11 +335,11 @@ result = (
     .aggregate("flight_count", "total_distance")
     .mutate(
         avg_distance_per_flight=lambda t: t.total_distance / t.flight_count,
-        flight_category=lambda t: ibis.case()
-            .when(t.flight_count >= 3, "high")
-            .when(t.flight_count >= 2, "medium")
-            .else_("low")
-            .end()
+        flight_category=lambda t: ibis.cases(
+            (t.flight_count >= 3, "high"),
+            (t.flight_count >= 2, "medium"),
+            else_="low"
+        )
     )
 )
 ```

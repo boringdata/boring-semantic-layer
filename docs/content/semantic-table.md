@@ -121,27 +121,26 @@ For more examples, see the [Percent of Total pattern](/advanced/percentage-total
 
 Join semantic tables together to query across relationships. Joins allow you to combine data from multiple semantic tables and access dimensions and measures across all joined tables.
 
-Why Semantic Joins?
+**What Makes Semantic Joins Different?**
 
-Instead of just using SQL join types (`LEFT`, `INNER`, etc.), BSL offers relationship-based joins that capture the **meaning** of your data connections:
+Semantic joins explicitly capture the **relationship type** between tables, rather than just specifying SQL join mechanics:
 
-**Traditional SQL Approach:**
+**SQL Joins:**
 ```python
-# Which join type? LEFT or INNER? Why?
-flights.join(carriers, condition, how="left")  # unclear intent
+# Specifies HOW to join (LEFT/INNER), but not the relationship
+flights.join(carriers, condition, how="left")
 ```
 
-**BSL Semantic Approach:**
+**Semantic Joins:**
 ```python
-# Clear intent: one carrier has many flights
+# Specifies the relationship: one carrier has many flights
 flights.join_many(carriers, left_on="carrier", right_on="code")
 ```
 
-**Benefits:**
-- **Self-documenting**: `join_many()` tells you it's a one-to-many relationship
-- **Clearer intent**: The method name describes the data relationship, not just SQL mechanics
-- **Safer defaults**: Each method uses the appropriate join type for that relationship
-- **Better tooling**: IDEs and AI assistants understand your data model semantics
+**What You Get:**
+- **Explicit relationships**: `join_many()` documents that this is a one-to-many relationship
+- **Table hierarchy information**: The method name describes how tables relate to each other
+- **Richer metadata**: Makes the data model structure explicit for documentation and tooling
 
 <note type="info">
 After joining, dimensions and measures are prefixed with table names (e.g., `flights.origin`, `carriers.name`) to avoid naming conflicts.
