@@ -1,15 +1,11 @@
 # Boring Semantic Layer (BSL)
 
-**A lightweight, Ibis-powered semantic layer that makes your data queryable by both humans and AI.**
+The Boring Semantic Layer (BSL) is a lightweight semantic layer based on [Ibis](https://ibis-project.org/).
 
-BSL lets you define your data model once - dimensions, measures, and relationships - then query it with a simple, fluent API. Built on [Ibis](https://ibis-project.org/), it works with any database that Ibis supports (DuckDB, Snowflake, BigQuery, PostgreSQL, and more).
-
-## Why BSL?
-
-- **Define once, query anywhere**: Create semantic tables that abstract away SQL complexity
-- **Built for AI agents**: Native [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) support lets LLMs query your data directly
-- **Pure Python**: No DSL to learn - just Python and Ibis expressions
-- **Instant visualization**: Built-in charting with Altair and Plotly backends
+**Key Features:**
+- **Lightweight**: `pip install boring-semantic-layer`
+- **Ibis-powered**: Built on top of [Ibis](https://ibis-project.org/), supporting any database engine that Ibis integrates with (DuckDB, Snowflake, BigQuery, PostgreSQL, and more)
+- **MCP-friendly**: Perfect for connecting LLMs to structured data sources
 
 ## Quick Start
 
@@ -17,25 +13,33 @@ BSL lets you define your data model once - dimensions, measures, and relationshi
 pip install 'boring-semantic-layer[examples]'
 ```
 
+**1. Define your ibis input table**
+
 ```python
 import ibis
-from boring_semantic_layer import to_semantic_table
 
-# 1. Define your semantic model
+# Create a simple in-memory table
+flights_tbl = ibis.memtable({
+    "origin": ["JFK", "LAX", "JFK", "ORD", "LAX"],
+    "carrier": ["AA", "UA", "AA", "UA", "AA"]
+})
+```
+
+**2. Define a semantic table**
+
+```python
+from boring_semantic_layer import to_semantic_table
 flights = (
     to_semantic_table(flights_tbl, name="flights")
     .with_dimensions(origin=lambda t: t.origin)
     .with_measures(flight_count=lambda t: t.count())
 )
-
-# 2. Query it
-result = flights.group_by("origin").aggregate("flight_count").execute()
 ```
 
-## Installation
+**3. Query it**
 
-```bash
-pip install boring-semantic-layer
+```python
+result_df = flights.group_by("origin").aggregate("flight_count").execute()
 ```
 
 ---
