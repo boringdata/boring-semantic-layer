@@ -146,6 +146,17 @@ flights.join_many(carriers, left_on="carrier", right_on="code")
 After joining, dimensions and measures are prefixed with table names (e.g., `flights.origin`, `carriers.name`) to avoid naming conflicts.
 </note>
 
+<note type="warning">
+**Joining the same table multiple times?** If you need to join to the same source table via different foreign keys (e.g., pickup and dropoff locations), you must use `.view()` to create distinct table references:
+
+```python
+# Create distinct references when joining same table twice
+pickup_locs = to_semantic_table(locs_tbl.view(), "pickup_locs")
+dropoff_locs = to_semantic_table(locs_tbl.view(), "dropoff_locs")
+```
+
+Without `.view()`, you'll encounter an `IbisInputError: Ambiguous field reference` error. 
+</note>
 
 Let's get some additional data:
 
