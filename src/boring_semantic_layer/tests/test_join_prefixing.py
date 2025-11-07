@@ -1040,8 +1040,13 @@ class TestRenamedDimensions:
             .with_measures(revenue=lambda t: t.amount.sum())
         )
 
-        # This should work - dimension names should be resolved
-        joined = orders.join_one(customers, left_on="customer_id", right_on="customer_id")
+        # Using dimension name should raise helpful error during execution (issue #43)
+        joined_bad = orders.join_one(customers, left_on="customer_id", right_on="customer_id")
+        with pytest.raises(ValueError, match="customer_id.*dimension.*column.*issue #43"):
+            joined_bad.execute()
+
+        # Using column name should work
+        joined = orders.join_one(customers, left_on="customer_id", right_on="cust_id")
         result = joined.group_by("customers.name").aggregate("orders.revenue").execute()
 
         assert len(result) == 2
@@ -1077,8 +1082,13 @@ class TestRenamedDimensions:
             .with_measures(order_count=lambda t: t.count())
         )
 
-        # This should work - dimension names should be resolved
-        joined = customers.join_many(orders, left_on="customer_id", right_on="customer_id")
+        # Using dimension name should raise helpful error during execution (issue #43)
+        joined_bad = customers.join_many(orders, left_on="customer_id", right_on="customer_id")
+        with pytest.raises(ValueError, match="customer_id.*dimension.*column.*issue #43"):
+            joined_bad.execute()
+
+        # Using column name should work
+        joined = customers.join_many(orders, left_on="cust_id", right_on="customer_id")
         result = joined.group_by("customers.customer_id").aggregate("orders.order_count").execute()
 
         assert len(result) == 2
@@ -1115,13 +1125,72 @@ class TestRenamedDimensions:
             .with_measures(revenue=lambda t: t.amount.sum())
         )
 
-        # This should work - dimension names should be resolved via _Resolver
+        # Flexible join() also fails - _Resolver doesn't have dimension mappings (issue #43)
         joined = orders.join(customers, on=lambda o, c: o.customer_id == c.customer_id)
-        result = joined.group_by("customers.name").aggregate("orders.revenue").execute()
+        with pytest.raises(AttributeError, match="customer_id"):
+            joined.group_by("customers.name").aggregate("orders.revenue").execute()
+
+        # Using column name should work
+        joined_good = orders.join(customers, on=lambda o, c: o.customer_id == c.cust_id)
+        result = joined_good.group_by("customers.name").aggregate("orders.revenue").execute()
 
         assert len(result) == 2
         assert "customers.name" in result.columns
         assert "orders.revenue" in result.columns
+
+    def test_join_dimension_matching_column_name(self, con):
+        """Test that joining on a dimension name that matches column name works."""
+        import pandas as pd
+
+        from boring_semantic_layer import to_semantic_table
+
+        # Both tables have column 'customer_id'
+        customers_df = pd.DataFrame(
+            {
+                "customer_id": [1, 2, 3],
+                "name": ["Alice", "Bob", "Charlie"],
+            }
+        )
+        orders_df = pd.DataFrame(
+            {
+                "order_id": [1, 2, 3],
+                "customer_id": [1, 2, 1],
+                "amount": [100, 200, 150],
+            }
+        )
+
+        customers_tbl = con.create_table("customers_match", customers_df, overwrite=True)
+        orders_tbl = con.create_table("orders_match", orders_df, overwrite=True)
+
+        # Both define dimension 'customer_id' that maps to column 'customer_id'
+        customers = to_semantic_table(customers_tbl, "customers").with_dimensions(
+            customer_id=lambda t: t.customer_id,  # Dimension matches column
+        )
+        orders = (
+            to_semantic_table(orders_tbl, "orders")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,  # Dimension matches column
+            )
+            .with_measures(revenue=lambda t: t.amount.sum())
+        )
+
+        # This should work - dimension name exists AND column name exists
+        joined = orders.join_one(customers, left_on="customer_id", right_on="customer_id")
+
+        # First verify the join executed without error (no ValueError about dimensions)
+        # This confirms that when dimension name = column name, it works
+        result = joined.execute()
+
+        # Verify the join worked correctly
+        assert len(result) == 3  # 3 orders
+        assert "customer_id" in result.columns
+        assert "name" in result.columns  # From customers
+        assert "amount" in result.columns  # From orders
+
+        # Verify data integrity - Alice (customer_id=1) has 2 orders
+        alice_orders = result[result["name"] == "Alice"]
+        assert len(alice_orders) == 2
+        assert alice_orders["amount"].sum() == 250  # 100 + 150
 
 
 if __name__ == "__main__":
