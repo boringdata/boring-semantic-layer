@@ -602,3 +602,106 @@ class TestJoinedModels:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestDescriptionSupport:
+    """Test description support in MCP."""
+
+    @pytest.mark.asyncio
+    async def test_mcp_base_model_with_description(self, con):
+        """Test that MCP get_model includes description for base models."""
+        flights_data = pd.DataFrame(
+            {"carrier": ["AA", "UA"], "distance": [100, 200]},
+        )
+        flights_tbl = con.create_table("flights", flights_data, overwrite=True)
+
+        flights = (
+            to_semantic_table(
+                flights_tbl,
+                name="flights",
+                description="Flight departure data",
+            )
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(total_distance=lambda t: t.distance.sum())
+        )
+
+        mcp = MCPSemanticModel(models={"flights": flights})
+
+        async with Client(mcp) as client:
+            result = await client.call_tool("get_model", {"model_name": "flights"})
+            model_info = json.loads(result.content[0].text)
+
+            assert "description" in model_info
+            assert model_info["description"] == "Flight departure data"
+
+    @pytest.mark.asyncio
+    async def test_mcp_base_model_without_description(self, con):
+        """Test that MCP get_model works when description is not provided."""
+        flights_data = pd.DataFrame(
+            {"carrier": ["AA", "UA"], "distance": [100, 200]},
+        )
+        flights_tbl = con.create_table("flights", flights_data, overwrite=True)
+
+        flights = (
+            to_semantic_table(flights_tbl, name="flights")
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(total_distance=lambda t: t.distance.sum())
+        )
+
+        mcp = MCPSemanticModel(models={"flights": flights})
+
+        async with Client(mcp) as client:
+            result = await client.call_tool("get_model", {"model_name": "flights"})
+            model_info = json.loads(result.content[0].text)
+
+            assert "description" not in model_info
+
+    @pytest.mark.asyncio
+    async def test_mcp_joined_model_concatenates_descriptions(self, con):
+        """Test that MCP constructs description for joined models."""
+        flights_data = pd.DataFrame(
+            {"carrier": ["AA", "UA"], "distance": [100, 200]},
+        )
+        carriers_data = pd.DataFrame(
+            {"code": ["AA", "UA"], "name": ["American", "United"]},
+        )
+        flights_tbl = con.create_table("flights", flights_data, overwrite=True)
+        carriers_tbl = con.create_table("carriers", carriers_data, overwrite=True)
+
+        flights = (
+            to_semantic_table(
+                flights_tbl,
+                name="flights",
+                description="Flight departure data",
+            )
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(total_distance=lambda t: t.distance.sum())
+        )
+
+        carriers = (
+            to_semantic_table(
+                carriers_tbl,
+                name="carriers",
+                description="Airline carrier information",
+            )
+            .with_dimensions(code=lambda t: t.code, name=lambda t: t.name)
+            .with_measures(carrier_count=lambda t: t.count())
+        )
+
+        flights_with_carriers = flights.join_one(carriers, left_on="carrier", right_on="code")
+
+        mcp = MCPSemanticModel(models={"flights_with_carriers": flights_with_carriers})
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "get_model",
+                {"model_name": "flights_with_carriers"},
+            )
+            model_info = json.loads(result.content[0].text)
+
+            assert "description" in model_info
+            assert "flights" in model_info["description"]
+            assert "Flight departure data" in model_info["description"]
+            assert "carriers" in model_info["description"]
+            assert "Airline carrier information" in model_info["description"]
+            assert "Joined model combining" in model_info["description"]
