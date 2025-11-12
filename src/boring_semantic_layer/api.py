@@ -15,12 +15,15 @@ if TYPE_CHECKING:
 from .expr import SemanticModel
 
 
-def to_semantic_table(ibis_table: ir.Table, name: str | None = None) -> SemanticModel:
+def to_semantic_table(
+    ibis_table: ir.Table, name: str | None = None, description: str | None = None
+) -> SemanticModel:
     """Create a SemanticModel from an Ibis table.
 
     Args:
         ibis_table: An Ibis table expression
         name: Optional name for the semantic table
+        description: Optional description for the semantic table
 
     Returns:
         A new SemanticModel wrapping the table
@@ -31,6 +34,7 @@ def to_semantic_table(ibis_table: ir.Table, name: str | None = None) -> Semantic
         measures=None,
         calc_measures=None,
         name=name,
+        description=description,
     )
 
 
