@@ -250,7 +250,80 @@ mcp_server = MCPSemanticModel(
 )
 ```
 
-### 3. Structure Your Data Logically
+### 3. Define Time Dimensions for MCP Time-Series Queries
+
+When exposing models through MCP, you need to explicitly define time dimensions to enable LLMs to query time ranges and perform time-based aggregations. This is specific to MCP—when using BSL's fluent API directly, you can simply use Ibis functions like `.year()` and `.month()`.
+
+To define a time dimension, set `is_time_dimension=True` and specify the `smallest_time_grain`:
+
+```python
+from boring_semantic_layer.semantic_api import to_semantic_table
+
+flights = (
+    to_semantic_table(flights_data, name="flights")
+    .with_dimensions(
+        arr_time={
+            "expr": lambda t: t.arr_time,
+            "description": "Arrival time of the flight",
+            "is_time_dimension": True,
+            "smallest_time_grain": "TIME_GRAIN_SECOND",
+        },
+        origin={
+            "expr": lambda t: t.origin,
+            "description": "Origin airport code"
+        },
+    )
+    .with_measures(
+        flight_count={
+            "expr": lambda t: t.count(),
+            "description": "Total number of flights"
+        }
+    )
+)
+```
+
+**Available time grains:**
+- `TIME_GRAIN_SECOND` - For second-level precision
+- `TIME_GRAIN_MINUTE` - For minute-level precision
+- `TIME_GRAIN_HOUR` - For hourly data
+- `TIME_GRAIN_DAY` - For daily data
+- `TIME_GRAIN_WEEK` - For weekly data
+- `TIME_GRAIN_MONTH` - For monthly data
+- `TIME_GRAIN_QUARTER` - For quarterly data
+- `TIME_GRAIN_YEAR` - For yearly data
+
+<note type="info">
+If you define multiple time dimensions in your model, the `.query()` method and MCP tools will use the first time dimension that appears in your query's dimensions list.
+</note>
+
+**Example time-based queries:**
+
+With time dimensions defined, you can use the `.query()` method with time ranges and grains:
+
+```python
+# Query with a specific time range
+result = flights.query(
+    dimensions=["origin"],
+    measures=["flight_count"],
+    time_range={"start": "2024-01-01", "end": "2024-12-31"}
+)
+
+# Query with time grain aggregation
+result = flights.query(
+    dimensions=["arr_time"],
+    measures=["flight_count"],
+    time_grain="TIME_GRAIN_MONTH"
+)
+```
+
+LLMs can then perform similar queries through MCP:
+```
+> "What's the time range available in the flights data?"
+> "Show me flights from January 2024"
+> "Give me monthly flight counts for the last year"
+```
+
+### 4. Structure Your Data Logically
 
 Organize related dimensions and measures together, and use joins to connect related models:
 
