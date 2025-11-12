@@ -347,6 +347,8 @@ platformdirs==4.5.0
     #   jupyter-core
     #   snowflake-connector-python
     #   virtualenv
+plotext==5.3.2
+    # via boring-semantic-layer
 plotly==6.3.1
     # via boring-semantic-layer
 pluggy==1.6.0
@@ -512,6 +514,7 @@ sortedcontainers==2.4.0
     # via snowflake-connector-python
 sqlglot==25.20.2
     # via
+    #   boring-semantic-layer
     #   ibis-framework
     #   xorq
 sse-starlette==3.0.3
