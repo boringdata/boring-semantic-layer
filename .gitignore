@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*pyc
+**__pycache__**
 
 # C extensions
 *.so
@@ -9,6 +11,7 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+builds/
 develop-eggs/
 dist/
 downloads/
@@ -97,12 +100,14 @@ celerybeat.pid
 
 # Environments
 .env
+.envrc.secrets
 .venv
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+.direnv/*
 
 # Spyder project settings
 .spyderproject
@@ -124,7 +129,9 @@ dmypy.json
 
 # IDEs
 .vscode/
+.vscode/*
 .idea/
+.cursor/*
 *.swp
 *.swo
 *~
@@ -134,3 +141,10 @@ dmypy.json
 
 # Archived documentation
 docs-archive/
+docs-archive*
+
+# Project specific
+archives/**
+malloy-samples/
+tasks/**
+**node_modules**

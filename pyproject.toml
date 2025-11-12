@@ -22,6 +22,9 @@ examples = ["ibis-framework[duckdb]>=10.6.0", "xorq", "duckdb<1.4"]
 xorq = ["xorq"]
 viz-altair = ["altair>=5.0.0", "vl-convert-python>=1.0.0"]
 viz-plotly = ["plotly>=6.3.0", "kaleido", "nbformat>=4.2.0"]
+viz-plotext = ["plotext>=5.0.0"]
+sql = ["sqlglot>=25.0.0"]
+cli = ["boring-semantic-layer[sql,viz-plotext]"]
 dev = [
     "boring-semantic-layer[fastmcp,examples,xorq,viz-altair,viz-plotly]",
     "ruff>=0.6.7",
@@ -35,6 +38,9 @@ dev = [
 fastmcp = [
     "fastmcp>=2.12.4",
 ]
+
+[project.scripts]
+bsl = "boring_semantic_layer.__main__:main"
 
 [build-system]
 requires = ["hatchling"]

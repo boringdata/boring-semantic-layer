@@ -219,6 +219,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+cli = [
+    { name = "plotext" },
+    { name = "sqlglot" },
+]
 dev = [
     { name = "altair" },
     { name = "duckdb" },
@@ -245,9 +249,15 @@ examples = [
 fastmcp = [
     { name = "fastmcp" },
 ]
+sql = [
+    { name = "sqlglot" },
+]
 viz-altair = [
     { name = "altair" },
     { name = "vl-convert-python" },
+]
+viz-plotext = [
+    { name = "plotext" },
 ]
 viz-plotly = [
     { name = "kaleido" },
@@ -271,6 +281,7 @@ requires-dist = [
     { name = "altair", marker = "extra == 'viz-altair'", specifier = ">=5.0.0" },
     { name = "attrs", specifier = ">=25.3.0" },
     { name = "boring-semantic-layer", extras = ["fastmcp", "examples", "xorq", "viz-altair", "viz-plotly"], marker = "extra == 'dev'" },
+    { name = "boring-semantic-layer", extras = ["sql", "viz-plotext"], marker = "extra == 'cli'" },
     { name = "duckdb", marker = "extra == 'examples'", specifier = "<1.4" },
     { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=2.12.4" },
     { name = "ibis-framework", specifier = ">=11.0.0" },
@@ -280,6 +291,7 @@ requires-dist = [
     { name = "nbformat", marker = "extra == 'viz-plotly'", specifier = ">=4.2.0" },
     { name = "packaging" },
     { name = "pandas", marker = "extra == 'dev'", specifier = ">=2.3.0" },
+    { name = "plotext", marker = "extra == 'viz-plotext'", specifier = ">=5.0.0" },
     { name = "plotly", marker = "extra == 'viz-plotly'", specifier = ">=6.3.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.2.0" },
     { name = "pytest", marker = "extra == 'dev'" },
@@ -287,12 +299,13 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "returns", specifier = ">=0.26.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.7" },
+    { name = "sqlglot", marker = "extra == 'sql'", specifier = ">=25.0.0" },
     { name = "urllib3", marker = "extra == 'dev'", specifier = ">=2.2.3" },
     { name = "vl-convert-python", marker = "extra == 'viz-altair'", specifier = ">=1.0.0" },
     { name = "xorq", marker = "extra == 'examples'" },
     { name = "xorq", marker = "extra == 'xorq'" },
 ]
-provides-extras = ["examples", "xorq", "viz-altair", "viz-plotly", "dev", "fastmcp"]
+provides-extras = ["examples", "xorq", "viz-altair", "viz-plotly", "viz-plotext", "sql", "cli", "dev", "fastmcp"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2193,6 +2206,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/61/33/9611380c2bdb1225fdef633e2a9610622310fed35ab11dac9620972ee088/platformdirs-4.5.0.tar.gz", hash = "sha256:70ddccdd7c99fc5942e9fc25636a8b34d04c24b335100223152c2803e4063312", size = 21632, upload-time = "2025-10-08T17:44:48.791Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/73/cb/ac7874b3e5d58441674fb70742e6c374b28b0c7cb988d37d991cde47166c/platformdirs-4.5.0-py3-none-any.whl", hash = "sha256:e578a81bb873cbb89a41fcc904c7ef523cc18284b7e3b3ccf06aca1403b7ebd3", size = 18651, upload-time = "2025-10-08T17:44:47.223Z" },
+]
+
+[[package]]
+name = "plotext"
+version = "5.3.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c9/d7/f75f397af966fe252d0d34ffd3cae765317fce2134f925f95e7d6725d1ce/plotext-5.3.2.tar.gz", hash = "sha256:52d1e932e67c177bf357a3f0fe6ce14d1a96f7f7d5679d7b455b929df517068e", size = 61967, upload-time = "2024-09-24T15:13:37.728Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f6/1e/12fe7c40cd2099a1f454518754ed229b01beaf3bbb343127f0cc13ce6c22/plotext-5.3.2-py3-none-any.whl", hash = "sha256:394362349c1ddbf319548cfac17ca65e6d5dfc03200c40dfdc0503b3e95a2283", size = 64047, upload-time = "2024-09-24T15:13:36.296Z" },
 ]
 
 [[package]]
