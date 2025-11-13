@@ -39,6 +39,7 @@ import JoinsRelationships from "./pages/JoinsRelationships";
 import SemanticTable from "./pages/SemanticTable";
 import MCP from "./pages/MCP";
 import Windowing from "./pages/Windowing";
+import Profiles from "./pages/Profiles";
 
 const queryClient = new QueryClient();
 
@@ -123,7 +124,7 @@ const App = () => (
             {/* Building Section - New Consolidated Pages */}
             <Route path="/building/semantic-tables" element={<Layout><SemanticTable /></Layout>} />
             <Route path="/building/compose" element={<Layout><ComposeModels /></Layout>} />
-            <Route path="/building/profile" element={<Layout><Profile /></Layout>} />
+            <Route path="/building/profiles" element={<Layout><Profiles /></Layout>} />
             <Route path="/building/yaml" element={<Layout><YAMLConfig /></Layout>} />
 
             {/* Legacy routes - redirect to new consolidated pages */}

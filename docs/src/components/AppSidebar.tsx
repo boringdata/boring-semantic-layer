@@ -44,6 +44,7 @@ const navigationStructure = [
       },
       { title: "Backend Profiles", path: "/building/profile" },
       { title: "Compose Models", path: "/building/compose" },
+      { title: "Profiles", path: "/building/profiles" },
       { title: "YAML Config", path: "/building/yaml" },
     ],
   },
