@@ -230,10 +230,42 @@ def from_yaml(
     with open(yaml_path) as f:
         yaml_configs = yaml.safe_load(f)
 
+    # Handle profile section if present
+    if "profile" in yaml_configs and not tables:
+        from .profile import load_tables_from_profile
+
+        profile_config = yaml_configs["profile"]
+
+        if isinstance(profile_config, str):
+            # Simple format: profile: my_profile_name
+            profile_tables = load_tables_from_profile(profile_config)
+        elif isinstance(profile_config, dict):
+            # Extended format with optional table list
+            profile_name = profile_config.get("name")
+            profile_file = profile_config.get("file")
+            table_names = profile_config.get("tables")
+
+            if not profile_name:
+                raise ValueError("Profile section must specify 'name' field")
+
+            profile_tables = load_tables_from_profile(
+                profile_name,
+                table_names=table_names,
+                profile_file=profile_file,
+            )
+        else:
+            raise ValueError("Profile section must be a string or dict")
+
+        tables = {**profile_tables, **tables}
+
     models: dict[str, SemanticModel] = {}
 
     # First pass: create models without joins
     for name, config in yaml_configs.items():
+        # Skip special sections
+        if name == "profile":
+            continue
+
         if not isinstance(config, dict):
             continue
 
