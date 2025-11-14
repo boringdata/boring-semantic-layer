@@ -58,12 +58,41 @@ class MCPSemanticModel(FastMCP):
             for name, meas in model.get_measures().items():
                 measures[name] = {"description": meas.description}
 
-            return {
+            result = {
                 "name": model.name or "unnamed",
                 "dimensions": dimensions,
                 "measures": measures,
                 "calculated_measures": list(model.get_calculated_measures().keys()),
             }
+
+            # Include model description
+            # For base models, use the description directly
+            # For joined models, construct a description from the underlying tables
+            description = getattr(model, "description", None)
+
+            if description:
+                result["description"] = description
+            elif hasattr(model, "op") and type(model.op()).__name__ == "SemanticJoinOp":
+                # For joined models, construct description from base tables
+                from .ops import _find_all_root_models
+
+                roots = _find_all_root_models(model.op())
+                base_descriptions = []
+
+                for root in roots:
+                    root_name = getattr(root, "name", None) or "unnamed"
+                    root_desc = getattr(root, "description", None)
+                    if root_desc:
+                        base_descriptions.append(f"{root_name} ({root_desc})")
+                    else:
+                        base_descriptions.append(root_name)
+
+                if base_descriptions:
+                    result["description"] = "Joined model combining: " + ", ".join(
+                        base_descriptions
+                    )
+
+            return result
 
         @self.tool()
         def get_time_range(model_name: str) -> Mapping[str, Any]:

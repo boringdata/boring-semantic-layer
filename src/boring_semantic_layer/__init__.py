@@ -40,6 +40,8 @@ __all__ = [
     "options",
     "to_xorq",
     "from_xorq",
+    "load_profile",
+    "load_tables_from_profile",
 ]
 
 # Import MCP functionality from separate module if available
@@ -58,6 +60,14 @@ try:
 except ImportError:
     _XORQ_AVAILABLE = False
 
+# Import profile functionality if xorq is available
+try:
+    from .profile import load_profile, load_tables_from_profile  # noqa: F401
+
+    _PROFILE_AVAILABLE = True
+except ImportError:
+    _PROFILE_AVAILABLE = False
+
 
 def __getattr__(name):
     if name == "MCPSemanticModel" and not _MCP_AVAILABLE:
@@ -68,6 +78,11 @@ def __getattr__(name):
     if name in ("to_xorq", "from_xorq") and not _XORQ_AVAILABLE:
         raise ImportError(
             "Xorq conversion requires the 'xorq' optional dependency. "
+            "Install with: pip install 'boring-semantic-layer[xorq]'"
+        )
+    if name in ("load_profile", "load_tables_from_profile") and not _PROFILE_AVAILABLE:
+        raise ImportError(
+            "Profile support requires the 'xorq' optional dependency. "
             "Install with: pip install 'boring-semantic-layer[xorq]'"
         )
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

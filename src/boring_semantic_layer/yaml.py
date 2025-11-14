@@ -230,10 +230,121 @@ def from_yaml(
     with open(yaml_path) as f:
         yaml_configs = yaml.safe_load(f)
 
+    # Handle profile section if present
+    if "profile" in yaml_configs and not tables:
+        from .profile import load_tables_from_profile
+
+        profile_config = yaml_configs["profile"]
+
+        if isinstance(profile_config, str):
+            # Simple format: profile: my_profile_name
+            profile_tables = load_tables_from_profile(profile_config)
+        elif isinstance(profile_config, dict):
+            # Check if this is an inline profile definition or a profile reference
+            if "type" in profile_config:
+                # Inline profile definition (like catalog)
+                from .profile import ProfileError, _create_connection_from_config
+
+                try:
+                    connection = _create_connection_from_config(profile_config.copy())
+                    # Load all tables from the connection
+                    table_names = connection.list_tables()
+                    profile_tables = {name: connection.table(name) for name in table_names}
+                except ProfileError:
+                    raise
+                except Exception as e:
+                    raise ValueError(
+                        f"Failed to load inline profile configuration.\n"
+                        f"Error: {e}\n\n"
+                        f"Check that:\n"
+                        f"  - Connection details are correct\n"
+                        f"  - Required environment variables are set\n"
+                        f"  - Table sources (files/URLs) are accessible"
+                    ) from e
+            else:
+                # Extended format with profile name reference
+                profile_name = profile_config.get("name")
+                profile_file = profile_config.get("file")
+                table_names = profile_config.get("tables")
+
+                if not profile_name:
+                    raise ValueError("Profile section must specify 'name' or 'type' field")
+
+                profile_tables = load_tables_from_profile(
+                    profile_name,
+                    table_names=table_names,
+                    profile_file=profile_file,
+                )
+        else:
+            raise ValueError("Profile section must be a string or dict")
+
+        tables = {**profile_tables, **tables}
+
     models: dict[str, SemanticModel] = {}
+
+    # Handle catalog section if present (legacy, now uses profile)
+    if "catalog" in yaml_configs and not tables:
+        from .profile import ProfileError, _create_connection_from_config
+
+        catalog_config = yaml_configs["catalog"]
+        try:
+            # Create connection from catalog config
+            connection = _create_connection_from_config(catalog_config.copy())
+            # Load all tables from the connection
+            table_names = connection.list_tables()
+            catalog_tables = {name: connection.table(name) for name in table_names}
+            tables = {**catalog_tables, **tables}
+        except ProfileError:
+            # Re-raise profile-specific errors with their helpful messages
+            raise
+        except Exception as e:
+            # Provide helpful guidance for other catalog loading errors
+            error_msg = str(e)
+
+            # Common error patterns and their solutions
+            if "404" in error_msg or "Not Found" in error_msg:
+                hint = (
+                    "\n\n💡 The catalog references files/URLs that don't exist.\n"
+                    "   Solutions:\n"
+                    "   - Use local parquet files: source: 'path/to/file.parquet'\n"
+                    "   - Verify URLs are accessible and correct\n"
+                    "   - Check the catalog.tables section in your YAML"
+                )
+            elif "HTTP" in error_msg or "connect" in error_msg.lower():
+                hint = (
+                    "\n\n💡 Network connection issue.\n"
+                    "   Solutions:\n"
+                    "   - Check your internet connection\n"
+                    "   - Use local files instead of remote URLs\n"
+                    "   - Verify firewall/proxy settings"
+                )
+            else:
+                hint = (
+                    "\n\n💡 Catalog setup guide:\n"
+                    "   Basic example:\n"
+                    "   catalog:\n"
+                    "     type: duckdb\n"
+                    "     database: ':memory:'\n"
+                    "     tables:\n"
+                    "       my_table:\n"
+                    "         source: 'path/to/data.parquet'\n"
+                    "\n"
+                    "   See documentation for more options:\n"
+                    "   - Database connections (postgres, mysql, etc.)\n"
+                    "   - Table discovery from existing databases\n"
+                    "   - Environment variable substitution"
+                )
+
+            raise ValueError(
+                f"Failed to load catalog configuration.\nError: {error_msg}{hint}"
+            ) from e
 
     # First pass: create models without joins
     for name, config in yaml_configs.items():
+        # Skip special sections
+        if name in ("profile", "catalog"):
+            continue
+
         if not isinstance(config, dict):
             continue
 

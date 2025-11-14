@@ -1,0 +1,14 @@
+.envrc.secrets
+.env
+builds/
+*pyc
+.direnv/*
+**__pycache__**
+archives/**
+.cursor/*
+.DS_Store
+.vscode/*
+malloy-samples/
+tasks/**
+docs-archive*
+**node_modules**
