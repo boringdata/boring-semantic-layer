@@ -166,7 +166,88 @@ class MCPSemanticModel(FastMCP):
                 BeforeValidator(_parse_json_string),
                 Field(
                     default=None,
-                    description='List of filter dictionaries with "field", "operator", and "value"/"values" keys',
+                    description="""List of JSON filter objects with the following structure:
+
+                Simple Filter:
+                {
+                    "field": "dimension_name",  # Must be an existing dimension (check model schema first!).
+                    "operator": "=",            # See operator list below
+                    "value": "single_value"     # For single-value operators (=, !=, >, >=, <, <=, ilike, not ilike, like, not like)
+                    # OR for 'in'/'not in' operators only:
+                    "values": ["val1", "val2"]  # REQUIRED for 'in' and 'not in' operators
+                }
+
+                IMPORTANT OPERATOR GUIDELINES:
+                - Equality: Use "=" (preferred), "eq", or "equals" - all work identically
+                - Text matching: Use "ilike" (case-insensitive) instead of "like" for better results
+                - List membership: "in" requires "values" field (array), NOT "value"
+                - Negated list: "not in" requires "values" field (array), NOT "value"
+                - Pattern matching: "ilike" and "not ilike" support wildcards (%, _)
+                - Null checks: "is null" and "is not null" need no value/values field
+
+                Available operators:
+                - "=" / "eq" / "equals": exact match (use "value")
+                - "!=": not equal (use "value")
+                - ">", ">=", "<", "<=": comparisons (use "value")
+                - "in": value is in list (use "values" array)
+                - "not in": value not in list (use "values" array)
+                - "ilike": case-insensitive pattern match (use "value" with % wildcards)
+                - "not ilike": negated case-insensitive pattern (use "value" with % wildcards)
+                - "like": case-sensitive pattern match (use "value" with % wildcards)
+                - "not like": negated case-sensitive pattern (use "value" with % wildcards)
+                - "is null": field is null (no value/values needed)
+                - "is not null": field is not null (no value/values needed)
+
+                COMMON MISTAKES TO AVOID:
+                1. Don't use "value" with "in"/"not in" - use "values" array instead
+                2. Don't filter on measures - only filter on dimensions
+                3. Don't use .month(), .year() etc. - use time_grain parameter instead
+                4. For case-insensitive text search, prefer "ilike" over "like"
+
+                Compound Filter (AND/OR):
+                {
+                    "operator": "AND",          # or "OR"
+                    "conditions": [             # Non-empty list of other filter objects
+                        {
+                            "field": "country",
+                            "operator": "equals",   # or "=" or "eq" - all equivalent
+                            "value": "US"
+                        },
+                        {
+                            "field": "tier",
+                            "operator": "in",       # MUST use "values" array for "in"
+                            "values": ["gold", "platinum"]  # NOT "value"
+                        },
+                        {
+                            "field": "name",
+                            "operator": "ilike",    # Case-insensitive pattern matching
+                            "value": "%john%"       # Wildcards supported
+                        }
+                    ]
+                }
+
+                Example filters:
+                [
+                    {"field": "status", "operator": "in", "values": ["active", "pending"]},
+                    {"field": "name", "operator": "ilike", "value": "%smith%"},
+                    {"field": "created_date", "operator": ">=", "value": "2024-01-01"},
+                    {"field": "email", "operator": "not ilike", "value": "%spam%"}
+                ]
+                Example of a complex nested filter with time ranges:
+                [{
+                    "operator": "AND",
+                    "conditions": [
+                        {
+                            "operator": "AND",
+                            "conditions": [
+                                {"field": "flight_date", "operator": ">=", "value": "2024-01-01"},
+                                {"field": "flight_date", "operator": "<", "value": "2024-04-01"}
+                            ]
+                        },
+                        {"field": "carrier.country", "operator": "eq", "value": "US"}
+                    ]
+                }]
+                """,
                 ),
             ] = None,
             order_by: Annotated[
@@ -174,19 +255,45 @@ class MCPSemanticModel(FastMCP):
                 BeforeValidator(_parse_json_string),
                 Field(
                     default=None,
-                    description='List of [field, direction] pairs for sorting (e.g., [["flights.flight_count", "desc"]])',
+                    description="List of [field, direction] pairs for sorting (e.g., [['flights.flight_count', 'desc']])",
                     json_schema_extra={"items": {"type": "array", "items": {"type": "string"}}},
                 ),
             ] = None,
             limit: Annotated[
                 int | None,
-                Field(default=None, description="Maximum number of rows to return"),
+                Field(
+                    default=None,
+                    description="Maximum number of rows to return",
+                ),
             ] = None,
             time_grain: Annotated[
                 str | None,
                 Field(
                     default=None,
-                    description='Time grain for aggregation (e.g., "TIME_GRAIN_DAY", "TIME_GRAIN_MONTH")',
+                    description="""Time grain for aggregating time-based dimensions (e.g., "TIME_GRAIN_DAY", "TIME_GRAIN_MONTH").
+
+                IMPORTANT: Instead of trying to use .month(), .year(), .quarter() etc. in filters,
+                use this time_grain parameter to aggregate by time periods. The system will
+                automatically handle time dimension transformations.
+
+                Available time grains:
+                - TIME_GRAIN_YEAR
+                - TIME_GRAIN_QUARTER
+                - TIME_GRAIN_MONTH
+                - TIME_GRAIN_WEEK
+                - TIME_GRAIN_DAY
+                - TIME_GRAIN_HOUR
+                - TIME_GRAIN_MINUTE
+                - TIME_GRAIN_SECOND
+
+                Examples:
+                - For monthly data: time_grain="TIME_GRAIN_MONTH"
+                - For yearly data: time_grain="TIME_GRAIN_YEAR"
+                - For daily data: time_grain="TIME_GRAIN_DAY"
+
+                Then filter using the time_range parameter or regular date filters like:
+                {"field": "date_column", "operator": ">=", "value": "2024-01-01"}
+                """,
                 ),
             ] = None,
             time_range: Annotated[
@@ -194,7 +301,18 @@ class MCPSemanticModel(FastMCP):
                 BeforeValidator(_parse_json_string),
                 Field(
                     default=None,
-                    description='Time range with "start" and "end" keys in ISO format',
+                    description="""Optional time range filter with format:
+                    {
+                        "start": "2024-01-01T00:00:00Z",  # ISO 8601 format
+                        "end": "2024-12-31T23:59:59Z"     # ISO 8601 format
+                    }
+
+                    Using time_range is preferred over using filters for time-based filtering because:
+                    1. It automatically applies to the model's primary time dimension
+                    2. It ensures proper time zone handling with ISO 8601 format
+                    3. It's more concise than creating complex filter conditions
+                    4. It works seamlessly with time_grain parameter for time-based aggregations
+                """,
                 ),
             ] = None,
             chart_spec: Annotated[
@@ -202,7 +320,37 @@ class MCPSemanticModel(FastMCP):
                 BeforeValidator(_parse_json_string),
                 Field(
                     default=None,
-                    description='Chart specification with "backend", "spec", and "format" keys',
+                    description="""Chart specification dictionary for generating visualizations.
+
+                Format: {"backend": "altair"|"plotly"|"plotext", "spec": {...}, "format": "json"|"static"|"interactive"}
+
+                When provided, returns both data and chart: {"records": [...], "chart": {...}}
+                When None, returns only data: {"records": [...]}
+
+                Backend options:
+                - "altair": Vega-Lite charts (default, works everywhere)
+                - "plotly": Plotly charts (interactive, rich features)
+                - "plotext": Terminal charts (ASCII, for CLI display)
+
+                Format options:
+                - "json": Returns chart specification as JSON (serializable)
+                - "static": Returns static image (PNG/SVG)
+                - "interactive": Returns interactive chart object
+
+                Spec examples:
+                - {"mark": "bar"} - Bar chart
+                - {"mark": "line"} - Line chart
+                - {"mark": "point"} - Scatter plot
+                - {"title": "My Chart"} - Add title
+                - {"width": 600, "height": 400} - Set size
+
+                Complete example:
+                {
+                    "backend": "altair",
+                    "spec": {"mark": "line", "title": "Monthly Trends"},
+                    "format": "json"
+                }
+                """,
                 ),
             ] = None,
         ) -> str:
