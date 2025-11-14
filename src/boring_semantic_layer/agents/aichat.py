@@ -94,6 +94,9 @@ def start_aichat_session(
     # Generate agent files
     _create_agent_files(agent_dir, model_path, backend)
 
+    # Get current Python interpreter (from virtual env if active)
+    python_exe = sys.executable
+
     # Create bin executable for the agent
     bin_dir = functions_dir / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -103,16 +106,39 @@ def start_aichat_session(
     if bin_script.exists():
         bin_script.unlink()
 
-    # Create executable that calls Argcfile
+    # Create executable that calls Python tools directly
+    # Note: We need to properly handle the agent directory path in the bin script
     bin_content = f"""#!/usr/bin/env bash
 set -e
 
-# Get the functions directory
-FUNCTIONS_DIR="{functions_dir}"
+# Python executable and agent directory
+PYTHON_EXE="{python_exe}"
+AGENT_DIR="{agent_dir}"
 
-# Call Argcfile to run the agent
-cd "$FUNCTIONS_DIR"
-exec bash Argcfile.sh run@agent bsl "$1" "$2"
+# Call Python with the agent's tools module
+"$PYTHON_EXE" -c '
+import sys
+import json
+sys.path.insert(0, "{agent_dir}")
+
+from tools import list_bsl, query_bsl
+
+# Get function name and arguments
+func_name = sys.argv[1]
+args_json = sys.argv[2] if len(sys.argv) > 2 else "{{}}"
+
+# Parse arguments
+args = json.loads(args_json)
+
+# Call the appropriate function and print result
+if func_name == "list_bsl":
+    print(list_bsl())
+elif func_name == "query_bsl":
+    print(query_bsl(**args))
+else:
+    print(f"Error: Unknown function {{func_name}}")
+    sys.exit(1)
+' "$1" "$2"
 """
     bin_script.write_text(bin_content)
     bin_script.chmod(0o755)
@@ -177,9 +203,9 @@ def _create_agent_files(agent_dir: Path, model_path: Path, backend: str):
     # Get current Python interpreter (from virtual env if active)
     python_exe = sys.executable
 
-    # Load agent prompt from shared markdown file
-    prompt_file = Path(__file__).parent.parent / "BSL_AGENT_GUIDE.md"
-    agent_instructions = prompt_file.read_text()
+    # Load agent prompt from BSL query expert skill
+    skill_file = Path(__file__).parent / "claude-code" / "bsl-query-expert" / "SKILL.md"
+    agent_instructions = skill_file.read_text()
 
     # Add context about the specific model
     agent_instructions += (
@@ -228,16 +254,17 @@ def list_bsl():
     return tools.list_models()
 
 
-def query_bsl(query: str, show_chart: bool = None):
+def query_bsl(query: str, show_chart: bool = None, chart_spec: dict = None):
     """
     Execute a BSL query and optionally display results with a chart.
 
     Args:
         query: BSL query string (e.g., 'model.group_by("dim").aggregate("measure")')
         show_chart: Whether to display a chart (True/False). If None, only returns data table.
+        chart_spec: Optional chart specification dict (e.g., {{"chart_type": "bar"}}).
     """
     tools = get_tools()
-    return tools.query_model(query, show_chart)
+    return tools.query_model(query, show_chart, chart_spec)
 '''
 
     (agent_dir / "tools.py").write_text(tools_py)
@@ -264,6 +291,10 @@ def query_bsl(query: str, show_chart: bool = None):
                         "type": "boolean",
                         "description": "Whether to display a chart",
                     },
+                    "chart_spec": {
+                        "type": "object",
+                        "description": 'Optional chart specification (e.g., {"chart_type": "bar"})',
+                    },
                 },
                 "required": ["query"],
             },
@@ -272,6 +303,52 @@ def query_bsl(query: str, show_chart: bool = None):
     ]
 
     (agent_dir / "functions.json").write_text(json.dumps(functions_json, indent=2))
+
+    # Create Argcfile.sh for function dispatch (placed in functions_dir root)
+    functions_dir = agent_dir.parent.parent
+    argcfile_path = functions_dir / "Argcfile.sh"
+
+    argcfile_content = f'''#!/usr/bin/env bash
+# Argcfile for BSL agent function calls
+
+# Function to run agent tools
+run@agent() {{
+    local agent_name="$1"
+    local func_name="$2"
+    local args_json="${{3:-{{}}}}"
+
+    # Get the agent directory
+    local agent_dir="{functions_dir}/agents/$agent_name"
+
+    # Call Python with the agent's tools module
+    "{python_exe}" -c '
+import sys
+import json
+sys.path.insert(0, "'"$agent_dir"'")
+
+from tools import list_bsl, query_bsl
+
+# Get function name and arguments
+func_name = "'"$func_name"'"
+args_json = "'"$args_json"'"
+
+# Parse arguments
+args = json.loads(args_json) if args_json and args_json != "{{}}" else {{}}
+
+# Call the appropriate function and print result
+if func_name == "list_bsl":
+    print(list_bsl())
+elif func_name == "query_bsl":
+    print(query_bsl(**args))
+else:
+    print(f"Error: Unknown function {{func_name}}")
+    sys.exit(1)
+'
+}}
+'''
+
+    argcfile_path.write_text(argcfile_content)
+    argcfile_path.chmod(0o755)
 
 
 def _list_model_fields(model_path: Path):

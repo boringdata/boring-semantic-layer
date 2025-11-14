@@ -54,9 +54,17 @@ class PlotextBackend(ChartBackend):
         if has_time and num_dims >= 2 and num_measures == 1:
             return "line"
 
-        # Two dimensions, one measure - scatter plot (plotext doesn't have heatmap)
+        # Two dimensions, one measure - check if temporal (year/quarter/month patterns)
         if num_dims == 2 and num_measures == 1:
-            return "scatter"
+            # Check if dimensions contain common time-related names
+            dim_names = [d.lower() for d in dimensions]
+            time_indicators = ["year", "month", "quarter", "day", "week", "date", "time"]
+            has_time_pattern = any(
+                indicator in dim for dim in dim_names for indicator in time_indicators
+            )
+
+            # If it looks like temporal data, use line chart; otherwise scatter
+            return "line" if has_time_pattern else "scatter"
 
         # Default for complex queries - table
         return "table"
@@ -134,6 +142,10 @@ class PlotextBackend(ChartBackend):
 
         # Set theme to pro
         plt.theme("pro")
+
+        # Set plot size - max height of 20 lines for better terminal display
+        # Width is auto-detected from terminal, height is capped
+        plt.plotsize(None, 20)
 
         # Override chart type from spec if provided
         if spec and "chart_type" in spec:
@@ -225,16 +237,40 @@ class PlotextBackend(ChartBackend):
                     if non_time_dims:
                         # Multi-line chart by category
                         categories = df[non_time_dims[0]].unique()
+
+                        # Get time data for x-axis labels
+                        first_category = categories[0]
+                        category_data = df[df[non_time_dims[0]] == first_category]
+                        x_data_original = category_data[time_dimension].tolist()
+
+                        # Prepare x-axis: convert datetime to string labels
+                        x_labels = None
+                        if hasattr(x_data_original[0], "strftime"):
+                            # Format datetime as readable string
+                            x_labels = [
+                                x.strftime("%Y-%m-%d") if hasattr(x, "strftime") else str(x)
+                                for x in x_data_original
+                            ]
+                            x_positions = list(range(len(x_labels)))
+                        else:
+                            x_positions = x_data_original
+
+                        # Plot each category
                         for category in categories:
                             category_data = df[df[non_time_dims[0]] == category]
-                            x_data = category_data[time_dimension].tolist()
                             y_data = category_data[measures[0]].tolist()
+                            plt.plot(x_positions, y_data, label=str(category))
 
-                            # Convert datetime to numeric
-                            if hasattr(x_data[0], "timestamp"):
-                                x_data = [x.timestamp() for x in x_data]
-
-                            plt.plot(x_data, y_data, label=str(category))
+                        # Set x-tick labels if we have datetime data
+                        if x_labels is not None:
+                            # For many time points, show only a subset of labels
+                            if len(x_labels) > 20:
+                                step = max(1, len(x_labels) // 20)
+                                xtick_positions = list(range(0, len(x_labels), step))
+                                xtick_labels = [x_labels[i] for i in xtick_positions]
+                                plt.xticks(xtick_positions, xtick_labels)
+                            else:
+                                plt.xticks(x_positions, x_labels)
 
                         # Strip model prefixes for cleaner display
                         xlabel = (
@@ -258,18 +294,36 @@ class PlotextBackend(ChartBackend):
                     # Multiple measures as separate lines
                     x_data = df[dimensions[0]].tolist()
 
-                    # Convert datetime to numeric if needed
-                    if hasattr(x_data[0], "timestamp"):
-                        x_data = [x.timestamp() for x in x_data]
+                    # Convert datetime to string labels if needed
+                    x_labels = None
+                    if hasattr(x_data[0], "strftime"):
+                        # Format datetime as readable string
+                        x_labels = [
+                            x.strftime("%Y-%m-%d") if hasattr(x, "strftime") else str(x)
+                            for x in x_data
+                        ]
+                        x_positions = list(range(len(x_labels)))
                     elif not isinstance(x_data[0], (int, float)):
                         x_labels = [str(x) for x in x_data]
-                        x_data = list(range(len(x_data)))
-                        plt.xticks(x_data, x_labels)
+                        x_positions = list(range(len(x_data)))
+                    else:
+                        x_positions = x_data
 
                     for measure in measures:
                         y_data = df[measure].tolist()
                         clean_label = measure.split(".")[-1] if "." in measure else measure
-                        plt.plot(x_data, y_data, label=clean_label)
+                        plt.plot(x_positions, y_data, label=clean_label)
+
+                    # Set x-tick labels if we converted to positions
+                    if x_labels is not None:
+                        # For many time points, show only a subset of labels
+                        if len(x_labels) > 20:
+                            step = max(1, len(x_labels) // 20)
+                            xtick_positions = list(range(0, len(x_labels), step))
+                            xtick_labels = [x_labels[i] for i in xtick_positions]
+                            plt.xticks(xtick_positions, xtick_labels)
+                        else:
+                            plt.xticks(x_positions, x_labels)
 
                     xlabel = dimensions[0].split(".")[-1] if "." in dimensions[0] else dimensions[0]
                     plt.xlabel(xlabel)
@@ -280,70 +334,105 @@ class PlotextBackend(ChartBackend):
                     )
                     plt.title(f"{', '.join(clean_measures)} over {clean_dim}")
                 else:
-                    # Single line chart
-                    x_data = df[dimensions[0]].tolist()
-                    y_data = df[measures[0]].tolist()
+                    # Single line chart (or composite dimensions like year+quarter)
+                    # If we have multiple dimensions, create composite labels
+                    if len(dimensions) >= 2:
+                        # Create composite x-axis labels from all dimensions
+                        x_labels = []
+                        for _, row in df.iterrows():
+                            label_parts = [str(row[dim]) for dim in dimensions]
+                            x_labels.append("-".join(label_parts))
+                        x_positions = list(range(len(x_labels)))
+                        y_data = df[measures[0]].tolist()
+                    else:
+                        # Single dimension case
+                        x_data = df[dimensions[0]].tolist()
+                        y_data = df[measures[0]].tolist()
 
-                    # Convert datetime to numeric if needed
-                    if hasattr(x_data[0], "timestamp"):
-                        x_data = [x.timestamp() for x in x_data]
-                    elif not isinstance(x_data[0], (int, float)):
-                        x_labels = [str(x) for x in x_data]
-                        x_data = list(range(len(x_data)))
-                        plt.xticks(x_data, x_labels)
+                        # Convert datetime to string labels if needed
+                        x_labels = None
+                        if hasattr(x_data[0], "strftime"):
+                            # Format datetime as readable string
+                            x_labels = [
+                                x.strftime("%Y-%m-%d") if hasattr(x, "strftime") else str(x)
+                                for x in x_data
+                            ]
+                            x_positions = list(range(len(x_labels)))
+                        elif not isinstance(x_data[0], (int, float)):
+                            x_labels = [str(x) for x in x_data]
+                            x_positions = list(range(len(x_data)))
+                        else:
+                            x_positions = x_data
 
                     clean_label = measures[0].split(".")[-1] if "." in measures[0] else measures[0]
-                    plt.plot(x_data, y_data, label=clean_label)
-                    xlabel = dimensions[0].split(".")[-1] if "." in dimensions[0] else dimensions[0]
+                    plt.plot(x_positions, y_data, label=clean_label)
+
+                    # Set x-tick labels if we converted to positions
+                    if x_labels is not None:
+                        # For many time points, show only a subset of labels
+                        if len(x_labels) > 20:
+                            step = max(1, len(x_labels) // 20)
+                            xtick_positions = list(range(0, len(x_labels), step))
+                            xtick_labels = [x_labels[i] for i in xtick_positions]
+                            plt.xticks(xtick_positions, xtick_labels)
+                        else:
+                            plt.xticks(x_positions, x_labels)
+
+                    # Labels and title
+                    if len(dimensions) >= 2:
+                        xlabel = " + ".join(
+                            [d.split(".")[-1] if "." in d else d for d in dimensions]
+                        )
+                    else:
+                        xlabel = (
+                            dimensions[0].split(".")[-1] if "." in dimensions[0] else dimensions[0]
+                        )
+
                     ylabel = measures[0].split(".")[-1] if "." in measures[0] else measures[0]
                     plt.xlabel(xlabel)
                     plt.ylabel(ylabel)
                     clean_measure = (
                         measures[0].split(".")[-1] if "." in measures[0] else measures[0]
                     )
-                    clean_dim = (
-                        dimensions[0].split(".")[-1] if "." in dimensions[0] else dimensions[0]
-                    )
-                    plt.title(f"{clean_measure} over {clean_dim}")
+                    plt.title(f"{clean_measure} over {xlabel}")
 
         # Scatter plot
-        elif chart_type == "scatter":
-            if len(dimensions) >= 2 and measures:
-                x_data = df[dimensions[0]].tolist()
-                y_data = df[dimensions[1]].tolist()
+        elif chart_type == "scatter" and len(dimensions) >= 2 and measures:
+            x_data = df[dimensions[0]].tolist()
+            y_data = df[dimensions[1]].tolist()
 
-                # Store original labels before converting to numeric
-                x_labels = None
-                y_labels = None
+            # Store original labels before converting to numeric
+            x_labels = None
+            y_labels = None
 
-                # Convert to numeric if needed
-                if not isinstance(x_data[0], (int, float)):
-                    x_labels = [str(x) for x in x_data]
-                    x_data = list(range(len(x_data)))
-                if not isinstance(y_data[0], (int, float)):
-                    y_labels = [str(y) for y in y_data]
-                    y_data = list(range(len(y_data)))
+            # Convert to numeric if needed
+            if not isinstance(x_data[0], (int, float)):
+                x_labels = [str(x) for x in x_data]
+                x_data = list(range(len(x_data)))
+            if not isinstance(y_data[0], (int, float)):
+                y_labels = [str(y) for y in y_data]
+                y_data = list(range(len(y_data)))
 
-                # Use measure for marker size if available
-                if measures:
-                    marker_data = df[measures[0]].tolist()
-                    plt.scatter(x_data, y_data, marker="•")
-                else:
-                    plt.scatter(x_data, y_data, marker="•")
+            # Use measure for marker size if available
+            if measures:
+                df[measures[0]].tolist()
+                plt.scatter(x_data, y_data, marker="•")
+            else:
+                plt.scatter(x_data, y_data, marker="•")
 
-                # Set tick labels if we converted categorical data
-                if x_labels:
-                    plt.xticks(list(range(len(x_labels))), x_labels)
-                if y_labels:
-                    plt.yticks(list(range(len(y_labels))), y_labels)
+            # Set tick labels if we converted categorical data
+            if x_labels:
+                plt.xticks(list(range(len(x_labels))), x_labels)
+            if y_labels:
+                plt.yticks(list(range(len(y_labels))), y_labels)
 
-                xlabel = dimensions[0].split(".")[-1] if "." in dimensions[0] else dimensions[0]
-                ylabel = dimensions[1].split(".")[-1] if "." in dimensions[1] else dimensions[1]
-                plt.xlabel(xlabel)
-                plt.ylabel(ylabel)
-                clean_dim1 = dimensions[1].split(".")[-1] if "." in dimensions[1] else dimensions[1]
-                clean_dim0 = dimensions[0].split(".")[-1] if "." in dimensions[0] else dimensions[0]
-                plt.title(f"{clean_dim1} vs {clean_dim0}")
+            xlabel = dimensions[0].split(".")[-1] if "." in dimensions[0] else dimensions[0]
+            ylabel = dimensions[1].split(".")[-1] if "." in dimensions[1] else dimensions[1]
+            plt.xlabel(xlabel)
+            plt.ylabel(ylabel)
+            clean_dim1 = dimensions[1].split(".")[-1] if "." in dimensions[1] else dimensions[1]
+            clean_dim0 = dimensions[0].split(".")[-1] if "." in dimensions[0] else dimensions[0]
+            plt.title(f"{clean_dim1} vs {clean_dim0}")
 
         return plt
 

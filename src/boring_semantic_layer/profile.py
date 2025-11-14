@@ -74,8 +74,7 @@ def load_profile(profile_name: str, profile_file: str | Path | None = None) -> B
         from xorq.vendor.ibis.backends.profiles import Profile
     except ImportError as e:
         raise ProfileError(
-            "Profile support requires xorq. "
-            "Install with: pip install 'boring-semantic-layer[xorq]'"
+            "Profile support requires xorq. Install with: pip install 'boring-semantic-layer[xorq]'"
         ) from e
 
     # Case 1: profile_name is a path to a YAML file
@@ -219,6 +218,9 @@ def _create_connection_from_config(config: dict[str, Any]) -> BaseBackend:
     if not conn_type:
         raise ProfileError("Profile must specify 'type' field")
 
+    # Extract tables configuration if present (for DuckDB parquet loading)
+    tables_config = config.pop("tables", None)
+
     try:
         # Get the backend module
         backend_module = getattr(ibis, conn_type, None)
@@ -232,7 +234,26 @@ def _create_connection_from_config(config: dict[str, Any]) -> BaseBackend:
         if conn_type == "duckdb":
             # DuckDB connect takes database as first positional arg
             database = config.pop("database", ":memory:")
-            return backend_module.connect(database, **config)
+            connection = backend_module.connect(database, **config)
+
+            # Load parquet files as views if tables are specified
+            if tables_config:
+                for table_name, table_config in tables_config.items():
+                    if isinstance(table_config, dict) and "source" in table_config:
+                        source = table_config["source"]
+                        # Create a view from the parquet file
+                        connection.raw_sql(
+                            f"CREATE OR REPLACE VIEW {table_name} AS "
+                            f"SELECT * FROM read_parquet('{source}')"
+                        )
+                    elif isinstance(table_config, str):
+                        # Simple format: table_name: "path/to/file.parquet"
+                        connection.raw_sql(
+                            f"CREATE OR REPLACE VIEW {table_name} AS "
+                            f"SELECT * FROM read_parquet('{table_config}')"
+                        )
+
+            return connection
         elif conn_type == "postgres" and "connection_string" in config:
             # Postgres can use connection string
             return backend_module.connect(config["connection_string"])

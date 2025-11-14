@@ -42,6 +42,78 @@ flights.group_by("origin", "destination").aggregate("flight_count")
 flights.aggregate("flight_count", "avg_distance")
 ```
 
+## Filtering Data
+
+Use `.filter()` to narrow down your data before aggregation. Filters use lambda functions with ibis operators.
+
+### Basic Filters
+
+```python
+# Filter by string equality
+flights.filter(lambda t: t.carrier == "AA").group_by("origin").aggregate("flight_count")
+
+# Filter by numeric comparison
+flights.filter(lambda t: t.distance > 1000).aggregate("flight_count", "avg_distance")
+
+# Filter by date/time
+flights.filter(lambda t: t.arr_time.year() == 2004).group_by("carrier").aggregate("flight_count")
+```
+
+### Multiple Conditions
+
+```python
+# AND conditions (chain filters or use &)
+flights.filter(lambda t: t.carrier == "AA").filter(lambda t: t.distance > 500).aggregate("flight_count")
+
+# OR using the | operator
+flights.filter(lambda t: (t.carrier == "AA") | (t.carrier == "DL")).aggregate("flight_count")
+
+# Complex conditions
+flights.filter(lambda t: (t.distance > 1000) & (t.arr_time.year() >= 2003)).group_by("carrier").aggregate("flight_count")
+```
+
+### Common Filter Patterns
+
+```python
+# Numeric ranges
+flights.filter(lambda t: t.distance.between(500, 1500)).aggregate("flight_count")
+
+# String matching
+flights.filter(lambda t: t.origin.isin(["JFK", "LAX", "ORD"])).group_by("origin").aggregate("flight_count")
+
+# Null checks
+flights.filter(lambda t: t.dep_delay.notnull()).aggregate("avg_delay")
+
+# Date ranges
+flights.filter(lambda t: t.arr_time >= "2004-01-01").group_by("carrier").aggregate("flight_count")
+```
+
+### Filter then Aggregate Pattern
+
+**CRITICAL**: Always filter **before** aggregating for better performance and accuracy.
+
+```python
+# ✓ CORRECT - Filter first, then aggregate
+flights.filter(lambda t: t.carrier == "AA").group_by("origin").aggregate("flight_count")
+
+# ❌ WRONG - Don't aggregate then filter (won't work as expected)
+# flights.group_by("origin").aggregate("flight_count").filter(...)  # This will error
+```
+
+### Combining with_dimensions and filter
+
+**CRITICAL**: When you need both `.with_dimensions()` and `.filter()`, you MUST use `.with_dimensions()` **first**.
+
+```python
+# ✓ CORRECT - with_dimensions first, then filter
+flights.with_dimensions(arr_date=lambda t: t.arr_time.date()).filter(lambda t: t.carrier == "AA").group_by("arr_date").aggregate("flight_count")
+
+# ❌ WRONG - Can't use with_dimensions after filter
+# flights.filter(lambda t: t.carrier == "AA").with_dimensions(...)  # This will error!
+```
+
+The correct order is always: **Model → with_dimensions → filter → group_by → aggregate**
+
 ## Working with Joins
 
 When models have defined join relationships, use dot notation with model prefixes:

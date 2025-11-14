@@ -80,13 +80,17 @@ class BSLTools:
 
             return f"❌ Error loading model: {e}\n\n{traceback.format_exc()}"
 
-    def query_model(self, query: str, show_chart: bool | None = None) -> str:
+    def query_model(
+        self, query: str, show_chart: bool | None = None, chart_spec: dict | None = None
+    ) -> str:
         """
         Execute a BSL query and optionally display results with a chart.
 
         Args:
             query: BSL query string (e.g., 'model.group_by("dim").aggregate("measure")')
             show_chart: Whether to display a chart (True/False). If None, only returns data table.
+            chart_spec: Optional chart specification dict (backend-specific).
+                       For plotext: {"chart_type": "bar"|"line"|"scatter"}
 
         Returns:
             Formatted string with query results and optional chart.
@@ -109,7 +113,11 @@ class BSLTools:
             output.append("\n" + "=" * 80)
             output.append("QUERY RESULTS")
             output.append("=" * 80)
-            output.append(df.to_string(index=False))
+            # Limit to first 10 rows for display
+            display_df = df.head(10) if len(df) > 10 else df
+            output.append(display_df.to_string(index=False))
+            if len(df) > 10:
+                output.append(f"\n... ({len(df) - 10} more rows)")
 
             # Show chart if requested
             if show_chart is True:
@@ -118,7 +126,7 @@ class BSLTools:
                 output.append("VISUALIZATION")
                 output.append("=" * 80)
                 print("\n".join(output))
-                chart(result, backend=self.chart_backend, format="static")
+                chart(result, spec=chart_spec, backend=self.chart_backend, format="static")
                 print("")
                 return f"✅ Query executed successfully. Returned {len(df)} rows with chart."
             else:

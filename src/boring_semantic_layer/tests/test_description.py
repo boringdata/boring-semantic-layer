@@ -1,7 +1,6 @@
 """Tests for description parameter on semantic tables."""
 
 import ibis
-import pytest
 
 from boring_semantic_layer import to_semantic_table
 

@@ -191,11 +191,14 @@ class PlotlyBackend(ChartBackend):
             chart_type = spec["chart_type"]
 
         # Get measures from params if available
-        measures = []
-        if "data_frame" in params and hasattr(params["data_frame"], "columns"):
+        if (
+            "data_frame" in params
+            and hasattr(params["data_frame"], "columns")
+            and "y" in params
+            and isinstance(params["y"], str)
+        ):
             # Try to infer measures from params
-            if "y" in params and isinstance(params["y"], str):
-                measures = [params["y"]]
+            [params["y"]]
 
         # Create chart based on type
         if chart_type == "bar":

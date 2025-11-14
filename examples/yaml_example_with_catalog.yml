@@ -13,9 +13,9 @@ catalog:
   # Or specify tables explicitly (for file-based sources)
   tables:
     flights_tbl:
-      source: "https://github.com/ibis-project/testing-data/raw/master/parquet/flights.parquet"
+      source: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/flights.parquet"
     carriers_tbl:
-      source: "https://github.com/ibis-project/testing-data/raw/master/parquet/carriers.parquet"
+      source: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/carriers.parquet"
 
 carriers:
   table: carriers_tbl
@@ -42,7 +42,7 @@ flights:
       expr: _.origin
       description: "Origin airport code"
     destination:
-      expr: _.dest
+      expr: _.destination
       description: "Destination airport code"
     carrier: _.carrier
     arr_time:
@@ -68,9 +68,11 @@ flights:
       expr: _.dep_delay.mean()
       description: "Average departure delay"
 
-  joins:
-    carriers:
-      model: carriers
-      type: one
-      left_on: carrier
-      right_on: code
+  # Joins are commented out for simpler agent queries
+  # Uncomment to enable cross-model queries
+  # joins:
+  #   carriers:
+  #     model: carriers
+  #     type: one
+  #     left_on: carrier
+  #     right_on: code

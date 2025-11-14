@@ -149,6 +149,18 @@ class ChartBackend(ABC):
         # Execute query to get data
         df = semantic_aggregate.execute()
 
+        # If no time dimension found from metadata, check dataframe column types
+        if not time_dimension and len(dimensions) > 0:
+            import pandas as pd
+
+            for dim_name in dimensions:
+                if dim_name in df.columns:
+                    dtype = df[dim_name].dtype
+                    # Check if column is datetime or date type
+                    if pd.api.types.is_datetime64_any_dtype(dtype):
+                        time_dimension = dim_name
+                        break
+
         # Detect chart type
         chart_type = self.detect_chart_type(dimensions, measures, time_dimension, time_grain)
 

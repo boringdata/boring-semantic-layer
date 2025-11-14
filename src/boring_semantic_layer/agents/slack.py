@@ -82,7 +82,7 @@ class SlackBSLBot:
             """Handle when the bot is mentioned in a channel."""
             try:
                 # Extract the query (remove bot mention)
-                user_id = event.get("user", "")
+                event.get("user", "")
                 text = event.get("text", "")
                 # Remove bot mention from text
                 query = text.split(">", 1)[-1].strip() if ">" in text else text
@@ -210,10 +210,9 @@ Now answer the user's question!
         for block in response.content:
             if hasattr(block, "text"):
                 result_parts.append(block.text)
-            elif hasattr(block, "type") and block.type == "tool_use":
+            elif hasattr(block, "type") and block.type == "tool_use" and hasattr(block, "output"):
                 # Include code execution results if present
-                if hasattr(block, "output"):
-                    result_parts.append(f"```\n{block.output}\n```")
+                result_parts.append(f"```\n{block.output}\n```")
 
         return "\n\n".join(result_parts) if result_parts else "No response generated"
 

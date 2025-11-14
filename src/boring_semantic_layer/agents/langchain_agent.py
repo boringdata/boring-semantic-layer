@@ -38,13 +38,14 @@ def list_models() -> str:
 
 
 @tool
-def query_model(query: str) -> str:
+def query_model(query: str, chart_spec: dict | None = None) -> str:
     """
     Execute a semantic model query and return results with a chart.
 
     Args:
         query: A query string in the format:
                model_name.group_by("dim1", "dim2").aggregate("measure1", "measure2")
+        chart_spec: Optional chart specification dict (e.g., {"chart_type": "bar"})
 
     Returns:
         Formatted string with query results and terminal chart.
@@ -55,17 +56,17 @@ def query_model(query: str) -> str:
         return "Error: No models loaded. Please check the configuration."
 
     # Always show chart for langchain backend
-    return _TOOLS.query_model(query, show_chart=True)
+    return _TOOLS.query_model(query, show_chart=True, chart_spec=chart_spec)
 
 
 def create_system_message() -> str:
     """Create the system message for the LangChain agent."""
     from pathlib import Path
 
-    # Load the BSL Agent Guide
-    guide_path = Path(__file__).parent / "BSL_AGENT_GUIDE.md"
+    # Load the BSL Query Expert skill
+    skill_path = Path(__file__).parent / "claude-code" / "bsl-query-expert" / "SKILL.md"
     try:
-        bsl_guide = guide_path.read_text()
+        bsl_guide = skill_path.read_text()
     except FileNotFoundError:
         # Fallback to basic instructions if guide not found
         bsl_guide = """
@@ -142,6 +143,10 @@ def process_query(llm, user_input: str, conversation_history: list) -> tuple[str
                     "query": {
                         "type": "string",
                         "description": "The query to execute, e.g., flights.group_by('origin').aggregate('flight_count')",
+                    },
+                    "chart_spec": {
+                        "type": "object",
+                        "description": 'Optional chart specification (e.g., {"chart_type": "bar"})',
                     },
                 },
                 "required": ["query"],
