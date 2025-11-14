@@ -53,6 +53,21 @@ class SemanticTable(ir.Table):
     def group_by(self, *keys: str):
         return SemanticGroupBy(source=self.op(), keys=keys)
 
+    def aggregate(self, *measure_names, nest: dict[str, Callable] | None = None, **aliased):
+        """Aggregate measures without grouping (produces a single row result).
+
+        This is a convenience method that delegates to group_by().aggregate().
+
+        Args:
+            *measure_names: Measure names to aggregate
+            nest: Optional nested aggregations
+            **aliased: Optional aliased aggregations
+
+        Returns:
+            SemanticAggregate with no grouping keys
+        """
+        return self.group_by().aggregate(*measure_names, nest=nest, **aliased)
+
     def mutate(self, **post) -> SemanticMutate:
         return SemanticMutate(source=self.op(), post=post)
 
