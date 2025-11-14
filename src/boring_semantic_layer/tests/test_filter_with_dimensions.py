@@ -1,4 +1,5 @@
 """Tests for issue #98: with_dimensions() after filter()."""
+
 import ibis
 import pandas as pd
 import pytest
