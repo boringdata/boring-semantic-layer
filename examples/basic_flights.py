@@ -34,10 +34,6 @@ def main():
         )
     )
 
-    # Export for use in notebooks
-    flights_sm = flights
-    globals()["flights_sm"] = flights_sm
-
     result = flights.group_by("origin").aggregate("flight_count").limit(10).execute()
     print("\nFlight counts by origin:")
     print(result)

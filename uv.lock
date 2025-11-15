@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -235,7 +235,7 @@ provides-extras = ["examples", "xorq", "viz-altair", "viz-plotly", "dev", "fastm
 [package.metadata.requires-dev]
 dev = [
     { name = "ipython", specifier = ">=8.37.0" },
-    { name = "xorq", specifier = ">=0.3.2" },
+    { name = "xorq", specifier = ">=0.3.3" },
 ]
 
 [[package]]
@@ -3474,7 +3474,7 @@ wheels = [
 
 [[package]]
 name = "xorq"
-version = "0.3.2"
+version = "0.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "atpublic" },
@@ -3507,9 +3507,9 @@ dependencies = [
     { name = "uv" },
     { name = "xorq-datafusion" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0b/c8/7a80df401d0b78f855465d1d0fb491fc52ff111828cc96148c1454669b3c/xorq-0.3.2.tar.gz", hash = "sha256:e5df3c7bfa454d10a95b883b1ed2bc921ff6790514340a361eb1283afae75a8b", size = 1411582, upload-time = "2025-11-03T09:37:30.595Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ac/c3/142018531d77fd7fa50a2b05d0eddf5b131a49f75a9d56588950e1be062d/xorq-0.3.3.tar.gz", hash = "sha256:d1c0e83cb001108a23d3a682d96ada06dc27343508ee447987060e41921eb1d4", size = 1412954, upload-time = "2025-11-11T13:41:08.99Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fc/3b/298ef616d59f61809536d55a705b19bae035dd1c62f2d44f9697e653e13d/xorq-0.3.2-py3-none-any.whl", hash = "sha256:948866efd66b5deef1e6bc974f7184e678b3547d6450f66be09f3c0379a52af8", size = 1630836, upload-time = "2025-11-03T09:37:28.906Z" },
+    { url = "https://files.pythonhosted.org/packages/51/42/40b32def56921f73b28bcc81c0790d044d9f26bfa20e9b5f33d76418881e/xorq-0.3.3-py3-none-any.whl", hash = "sha256:aaab2b96c314fc90ac514681d0e3cc567096ac6c417ddb920911ddc29efa7149", size = 1632779, upload-time = "2025-11-11T13:41:07.184Z" },
 ]
 
 [[package]]
