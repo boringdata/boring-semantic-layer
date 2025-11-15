@@ -125,23 +125,59 @@
         });
 
         # Data processing packages
-        pyarrow = prev.pyarrow.overrideAttrs (old: {
-          nativeBuildInputs =
-            (old.nativeBuildInputs or [])
-            ++ [
-              final.setuptools
-              final.cython
-              final.numpy
-              pkgs.cmake
-              pkgs.pkg-config
-            ];
-          buildInputs =
-            (old.buildInputs or [])
-            ++ [
-              pkgs.arrow-cpp
-              pkgs.lz4
-            ];
-        });
+        pyarrow = let
+          arrow-testing = pkgs.fetchFromGitHub {
+            name = "arrow-testing";
+            owner = "apache";
+            repo = "arrow-testing";
+            rev = "d2a13712303498963395318a4eb42872e66aead7";
+            hash = "sha256-IkiCbuy0bWyClPZ4ZEdkEP7jFYLhM7RCuNLd6Lazd4o=";
+          };
+          parquet-testing = pkgs.fetchFromGitHub {
+            name = "parquet-testing";
+            owner = "apache";
+            repo = "parquet-testing";
+            rev = "18d17540097fca7c40be3d42c167e6bfad90763c";
+            hash = "sha256-gKEQc2RKpVp39RmuZbIeIXAwiAXDHGnLXF6VQuJtnRA=";
+          };
+          version = "21.0.0";
+          arrow-cpp = pkgs.arrow-cpp.overrideAttrs (old: {
+            inherit version;
+            src = pkgs.fetchFromGitHub {
+              owner = "apache";
+              repo = "arrow";
+              rev = "apache-arrow-${version}";
+              hash = "sha256-6RFa4GTNgjsHSX5LYp4t6p8ynmmr7Nuotj9C7mTmvlM=";
+            };
+            PARQUET_TEST_DATA = lib.optionalString old.doInstallCheck "${parquet-testing}/data";
+            ARROW_TEST_DATA = lib.optionalString old.doInstallCheck "${arrow-testing}/data";
+            # Disable mimalloc allocator to avoid missing header on Darwin
+            cmakeFlags = (old.cmakeFlags or []) ++ ["-DARROW_MIMALLOC=OFF"];
+          });
+        in
+          prev.pyarrow.overrideAttrs (old: {
+            nativeBuildInputs =
+              (old.nativeBuildInputs or [])
+              ++ [
+                python
+                pkgs.cmake
+                pkgs.pkg-config
+                arrow-cpp
+                final.pyprojectBuildHook
+                final.pyprojectWheelHook
+              ]
+              ++ final.resolveBuildSystem {
+                setuptools = [];
+                cython = [];
+                numpy = [];
+              };
+            buildInputs =
+              (old.buildInputs or [])
+              ++ [
+                pkgs.pkg-config
+                arrow-cpp
+              ];
+          });
 
         # Machine learning packages
         xgboost = prev.xgboost.overrideAttrs (old: {
