@@ -1,19 +1,3 @@
-"""Xorq conversion module for BSL semantic layer.
-
-Provides bidirectional conversion between BSL expressions and xorq expressions,
-preserving semantic metadata through xorq's tagging mechanism.
-
-This module is only available when xorq is installed. All functions return
-Result types to handle optional dependencies gracefully.
-
-Architecture:
-- Immutable data structures using @frozen
-- Result types for all fallible operations
-- Optional import handling
-- Functional composition
-- No side effects
-"""
-
 from __future__ import annotations
 
 import json
@@ -23,26 +7,14 @@ from typing import Any
 from attrs import frozen
 from returns.result import Failure, Result, safe
 
-# ==============================================================================
-# Optional Import Handling
-# ==============================================================================
-
+from .utils import expr_to_ibis_string, ibis_string_to_expr
 
 @frozen
 class XorqModule:
-    """Immutable wrapper for optional xorq module."""
-
-    api: Any  # xorq.api module
+    api: Any
 
 
 def try_import_xorq() -> Result[XorqModule, ImportError]:
-    """Attempt to import xorq module.
-
-    Returns:
-        Success(XorqModule) if xorq is installed
-        Failure(ImportError) if xorq is not available
-    """
-
     @safe
     def do_import():
         from xorq import api
@@ -52,96 +24,18 @@ def try_import_xorq() -> Result[XorqModule, ImportError]:
     return do_import()
 
 
-def try_import_cloudpickle() -> Result[Any, ImportError]:
-    """Attempt to import cloudpickle for callable serialization.
-
-    Returns:
-        Success(cloudpickle module) if available
-        Failure(ImportError) otherwise
-    """
-
-    @safe
-    def do_import():
-        import cloudpickle
-
-        return cloudpickle
-
-    return do_import()
-
-
-# ==============================================================================
-# Callable Serialization
-# ==============================================================================
-
-
-def serialize_callable(fn: Callable) -> Result[str, Exception]:
-    """Serialize callable using cloudpickle and base64 encoding.
-
-    Args:
-        fn: Callable to serialize
-
-    Returns:
-        Success(base64 string) with pickled callable
-        Failure(Exception) if serialization fails
-    """
-    import base64
-
-    def do_pickle(cloudpickle):
-        pickled_bytes = cloudpickle.dumps(fn)
-        return base64.b64encode(pickled_bytes).decode("ascii")
-
-    return try_import_cloudpickle().bind(lambda cp: safe(lambda: do_pickle(cp))())
-
-
-def deserialize_callable(pickled_str: str) -> Result[Callable, Exception]:
-    """Deserialize callable from base64-encoded cloudpickle string.
-
-    Args:
-        pickled_str: Base64-encoded pickled callable
-
-    Returns:
-        Success(Callable) if deserialization succeeds
-        Failure(Exception) otherwise
-    """
-    import base64
-
-    def do_unpickle(cloudpickle):
-        pickled_bytes = base64.b64decode(pickled_str.encode("ascii"))
-        return cloudpickle.loads(pickled_bytes)
-
-    return try_import_cloudpickle().bind(lambda cp: safe(lambda: do_unpickle(cp))())
-
-
-# ==============================================================================
-# Metadata Serialization for BSL Operations
-# ==============================================================================
-
-
 def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[str, Exception]:
-    """Serialize dimensions dict to JSON with pickled callables.
-
-    Stores dimension metadata including the pickled callable for full reconstruction.
-
-    Args:
-        dimensions: Mapping of dimension name to Dimension object
-
-    Returns:
-        Success(JSON string) with dimension metadata and pickled callables
-        Failure(Exception) if serialization fails
-    """
-
     @safe
     def do_serialize():
-        # Store dimension metadata including pickled callable
         dim_metadata = {}
         for name, dim in dimensions.items():
-            pickled_expr = serialize_callable(dim.expr).value_or(None)
+            expr_str = expr_to_ibis_string(dim.expr).value_or(None)
 
             dim_metadata[name] = {
                 "description": dim.description,
                 "is_time_dimension": dim.is_time_dimension,
                 "smallest_time_grain": dim.smallest_time_grain,
-                "expr_pickled": pickled_expr,
+                "expr": expr_str,
             }
         return json.dumps(dim_metadata)
 
@@ -149,29 +43,16 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[str, Exception
 
 
 def serialize_measures(measures: Mapping[str, Any]) -> Result[str, Exception]:
-    """Serialize measures dict to JSON with pickled callables.
-
-    Stores measure metadata including the pickled callable for full reconstruction.
-
-    Args:
-        measures: Mapping of measure name to Measure object
-
-    Returns:
-        Success(JSON string) with measure metadata and pickled callables
-        Failure(Exception) if serialization fails
-    """
-
     @safe
     def do_serialize():
-        # Store measure metadata including pickled callable
         meas_metadata = {}
         for name, meas in measures.items():
-            pickled_expr = serialize_callable(meas.expr).value_or(None)
+            expr_str = expr_to_ibis_string(meas.expr).value_or(None)
 
             meas_metadata[name] = {
                 "description": meas.description,
                 "requires_unnest": meas.requires_unnest,
-                "expr_pickled": pickled_expr,
+                "expr": expr_str,
             }
         return json.dumps(meas_metadata)
 
@@ -179,16 +60,7 @@ def serialize_measures(measures: Mapping[str, Any]) -> Result[str, Exception]:
 
 
 def serialize_predicate(predicate: Callable) -> Result[str, Exception]:
-    """Serialize filter predicate using cloudpickle.
-
-    Args:
-        predicate: Filter predicate callable
-
-    Returns:
-        Success(base64 string) with pickled predicate
-        Failure(Exception) if serialization fails
-    """
-    return serialize_callable(predicate)
+    return expr_to_ibis_string(predicate)
 
 
 def to_xorq(semantic_expr):
@@ -291,12 +163,11 @@ def _extract_op_metadata(op) -> dict[str, Any]:
 
     elif isinstance(op, ops.SemanticMutateOp):
         if op.post:
-            # Serialize the mutation callables
             post_metadata = {}
             for name, fn in op.post.items():
-                pickled = serialize_callable(fn).value_or(None)
-                if pickled:
-                    post_metadata[name] = pickled
+                expr_str = expr_to_ibis_string(fn).value_or(None)
+                if expr_str:
+                    post_metadata[name] = expr_str
             metadata["post"] = json.dumps(post_metadata)
 
     elif isinstance(op, ops.SemanticProjectOp):
@@ -308,19 +179,14 @@ def _extract_op_metadata(op) -> dict[str, Any]:
         metadata["offset"] = str(op.offset)
 
     elif isinstance(op, ops.SemanticOrderByOp):
-        # Serialize order by keys (can be strings or callables)
         order_keys = []
         for key in op.keys:
             if isinstance(key, str):
                 order_keys.append({"type": "string", "value": key})
             else:
-                # It's a callable wrapper - serialize it
-                pickled = serialize_callable(key).value_or(None)
-                if pickled:
-                    order_keys.append({"type": "callable", "value": pickled})
-                else:
-                    # Fallback: skip this key
-                    pass
+                expr_str = expr_to_ibis_string(key).value_or(None)
+                if expr_str:
+                    order_keys.append({"type": "callable", "value": expr_str})
         metadata["order_keys"] = json.dumps(order_keys)
 
     # Add source operation metadata recursively (all Relation ops have source)
@@ -459,16 +325,13 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
 
         if "dimensions" in metadata:
             dim_meta = json.loads(metadata["dimensions"])
-            # Reconstruct dimensions with unpickled callables
             for name, dim_data in dim_meta.items():
-                # Try to unpickle the callable - use value_or for functional style
-                pickled_expr = dim_data.get("expr_pickled")
-                if pickled_expr:
-                    expr_result = deserialize_callable(pickled_expr)
-                    # Use value_or to provide fallback
+                expr_str = dim_data.get("expr")
+                if expr_str:
+                    expr_result = ibis_string_to_expr(expr_str)
                     expr = expr_result.value_or(lambda t, n=name: t[n])  # noqa: E731
                 else:
-                    expr = lambda t, n=name: t[n]  # noqa: E731  # Fallback to column accessor
+                    expr = lambda t, n=name: t[n]  # noqa: E731
 
                 dimensions[name] = ops.Dimension(
                     expr=expr,
@@ -479,16 +342,13 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
 
         if "measures" in metadata:
             meas_meta = json.loads(metadata["measures"])
-            # Reconstruct measures with unpickled callables
             for name, meas_data in meas_meta.items():
-                # Try to unpickle the callable - use value_or for functional style
-                pickled_expr = meas_data.get("expr_pickled")
-                if pickled_expr:
-                    expr_result = deserialize_callable(pickled_expr)
-                    # Use value_or to provide fallback
+                expr_str = meas_data.get("expr")
+                if expr_str:
+                    expr_result = ibis_string_to_expr(expr_str)
                     expr = expr_result.value_or(lambda t, n=name: t[n])  # noqa: E731
                 else:
-                    expr = lambda t, n=name: t[n]  # noqa: E731  # Fallback to column accessor
+                    expr = lambda t, n=name: t[n]  # noqa: E731
 
                 measures[name] = ops.Measure(
                     expr=expr,
@@ -539,9 +399,8 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
         if source is None:
             raise ValueError("SemanticFilterOp requires source")
 
-        # Deserialize predicate - use value_or for functional style
         if "predicate" in metadata:
-            pred_result = deserialize_callable(metadata["predicate"])
+            pred_result = ibis_string_to_expr(metadata["predicate"])
             predicate = pred_result.value_or(lambda t: t)  # noqa: E731
         else:
             predicate = lambda t: t  # noqa: E731
@@ -585,18 +444,16 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
         if source is None:
             raise ValueError("SemanticMutateOp requires source")
 
-        # Deserialize mutation callables
         if "post" in metadata:
             post_meta = json.loads(metadata["post"])
             post_callables = {}
-            for name, pickled in post_meta.items():
-                result = deserialize_callable(pickled)
+            for name, expr_str in post_meta.items():
+                result = ibis_string_to_expr(expr_str)
                 post_callables[name] = result.value_or(lambda t, n=name: t[n])  # noqa: E731
 
             if post_callables:
                 return source.mutate(**post_callables)
 
-        # Fallback: return source as-is
         return source
 
     elif op_type == "SemanticProjectOp":
@@ -614,7 +471,6 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
         if source is None:
             raise ValueError("SemanticOrderByOp requires source")
 
-        # Deserialize order by keys
         if "order_keys" in metadata:
             order_keys_meta = json.loads(metadata["order_keys"])
             keys = []
@@ -622,7 +478,7 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
                 if key_meta["type"] == "string":
                     keys.append(key_meta["value"])
                 elif key_meta["type"] == "callable":
-                    result = deserialize_callable(key_meta["value"])
+                    result = ibis_string_to_expr(key_meta["value"])
                     keys.append(result.value_or(lambda t: t))  # noqa: E731
 
             if keys:
