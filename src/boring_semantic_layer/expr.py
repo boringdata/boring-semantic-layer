@@ -623,9 +623,58 @@ class SemanticFilter(SemanticTable):
     def schema(self):
         return self.op().schema
 
+    def get_dimensions(self):
+        return self.op().get_dimensions()
+
+    def get_measures(self):
+        return self.op().get_measures()
+
+    def get_calculated_measures(self):
+        return self.op().get_calculated_measures()
+
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.op().source)
         return _build_semantic_model_from_roots(self.op().to_ibis(), all_roots)
+
+    def with_dimensions(self, **dims) -> SemanticModel:
+        """Add or update dimensions after filtering."""
+        all_roots = _find_all_root_models(self.op().source)
+        existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
+        existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
+        existing_calc = _get_merged_fields(all_roots, "calc_measures") if all_roots else {}
+
+        return SemanticModel(
+            table=self.op().to_ibis(),
+            dimensions={**existing_dims, **dims},
+            measures=existing_meas,
+            calc_measures=existing_calc,
+        )
+
+    def with_measures(self, **meas) -> SemanticModel:
+        """Add or update measures after filtering."""
+        all_roots = _find_all_root_models(self.op().source)
+        existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
+        existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
+        existing_calc = _get_merged_fields(all_roots, "calc_measures") if all_roots else {}
+
+        new_base_meas = dict(existing_meas)
+        new_calc_meas = dict(existing_calc)
+
+        all_measure_names = (
+            tuple(new_base_meas.keys()) + tuple(new_calc_meas.keys()) + tuple(meas.keys())
+        )
+        scope = MeasureScope(_tbl=self.op().to_ibis(), _known=all_measure_names)
+
+        for name, fn_or_expr in meas.items():
+            kind, value = _classify_measure(fn_or_expr, scope)
+            (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
+
+        return SemanticModel(
+            table=self.op().to_ibis(),
+            dimensions=existing_dims,
+            measures=new_base_meas,
+            calc_measures=new_calc_meas,
+        )
 
 
 class SemanticGroupBy(SemanticTable):
