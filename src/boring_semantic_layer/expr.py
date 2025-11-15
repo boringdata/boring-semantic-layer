@@ -152,6 +152,7 @@ class SemanticModel(SemanticTable):
         measures: Mapping[str, Measure | Callable] | None = None,
         calc_measures: Mapping[str, Any] | None = None,
         name: str | None = None,
+        description: str | None = None,
         _source_join: Any | None = None,
     ) -> None:
         dims = FrozenDict(
@@ -177,6 +178,7 @@ class SemanticModel(SemanticTable):
             measures=meas,
             calc_measures=calc_meas,
             name=derived_name,
+            description=description,
             _source_join=_source_join,
         )
 
@@ -201,6 +203,10 @@ class SemanticModel(SemanticTable):
     @property
     def name(self):
         return self.op().name
+
+    @property
+    def description(self):
+        return self.op().description
 
     @property
     def dimensions(self):
@@ -238,6 +244,7 @@ class SemanticModel(SemanticTable):
             measures=self.get_measures(),
             calc_measures=self.get_calculated_measures(),
             name=self.name,
+            description=self.description,
         )
 
     def with_measures(self, **meas) -> SemanticModel:
@@ -260,6 +267,7 @@ class SemanticModel(SemanticTable):
             measures=new_base_meas,
             calc_measures=new_calc_meas,
             name=self.name,
+            description=self.description,
         )
 
     def join(
