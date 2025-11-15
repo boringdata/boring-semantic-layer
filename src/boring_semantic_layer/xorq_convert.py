@@ -191,50 +191,6 @@ def serialize_predicate(predicate: Callable) -> Result[str, Exception]:
     return serialize_callable(predicate)
 
 
-# ==============================================================================
-# BSL to Xorq Conversion
-# ==============================================================================
-
-
-def _patch_xorq_for_builtins():
-    """Patch xorq's map_ibis to handle builtin types.
-
-    Xorq's from_ibis() tries to import builtin types (int, str, tuple, etc.)
-    from xorq.vendor.builtins, which doesn't exist. This patches map_ibis
-    to handle builtins directly, recursively converting their contents.
-    """
-    import functools
-
-    from xorq.common.utils import ibis_utils
-
-    original_map_ibis = ibis_utils.map_ibis
-
-    @functools.wraps(original_map_ibis)
-    def patched_map_ibis(val, kw):
-        val_type = type(val)
-        val_module = val_type.__module__
-
-        # Handle builtin types
-        if val_module == "builtins":
-            # For tuples/lists, recursively convert contents
-            if isinstance(val, tuple):
-                return tuple(patched_map_ibis(item, None) for item in val)
-            if isinstance(val, list):
-                return [patched_map_ibis(item, None) for item in val]
-
-            # For simple builtins (int, str, float, bool, None), pass through
-            if isinstance(val, int | str | float | bool | type(None)):
-                return val
-
-            # For other builtins, pass through as-is
-            return val
-
-        # Otherwise use xorq's original logic
-        return original_map_ibis(val, kw)
-
-    ibis_utils.map_ibis = patched_map_ibis
-
-
 def to_xorq(semantic_expr):
     """Convert BSL expression to xorq expression with metadata tags.
 
@@ -261,7 +217,6 @@ def to_xorq(semantic_expr):
 
     @safe
     def do_convert(xorq_mod: XorqModule):
-        # Get the operation
         if isinstance(semantic_expr, bsl_expr.SemanticTable):
             op = semantic_expr.op()
         else:
@@ -270,24 +225,16 @@ def to_xorq(semantic_expr):
         # Convert BSL -> ibis -> xorq (expression level, no execution)
         ibis_expr = bsl_expr.to_ibis(semantic_expr)
 
-        # Patch xorq to handle builtin types
-        _patch_xorq_for_builtins()
-
-        # Use xorq's from_ibis for expression-level conversion
         from xorq.common.utils.ibis_utils import from_ibis
 
         xorq_table = from_ibis(ibis_expr)
-
-        # Tag with BSL operation metadata
         metadata = _extract_op_metadata(op)
         tag_data = _metadata_to_hashable_dict(metadata)
 
         return xorq_table.tag(tag="bsl", **tag_data)
 
-    # Internal use of Result types, but unwrap for user-facing API
     result = try_import_xorq().bind(do_convert)
 
-    # Match the pattern of to_ibis() - unwrap internally
     if isinstance(result, Failure):
         error = result.failure()
         if isinstance(error, ImportError):
@@ -549,7 +496,6 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
                     requires_unnest=tuple(meas_data.get("requires_unnest", [])),
                 )
 
-        # Convert xorq table to external ibis (expression level, no execution)
         import ibis
         from xorq.common.utils.graph_utils import walk_nodes
         from xorq.vendor.ibis.expr.operations import relations as xorq_rel
