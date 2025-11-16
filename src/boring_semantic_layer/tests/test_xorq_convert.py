@@ -183,15 +183,15 @@ def test_from_xorq_returns_bsl_expr():
 
 @pytest.mark.skipif(not xorq, reason="xorq not available")
 def test_from_xorq_with_tagged_table():
-    from ibis.common.collections import FrozenDict
     from xorq.api import memtable
 
+    # Use nested tuples format (following xorq sklearn pipeline pattern)
     xorq_table = memtable({"a": [1, 2, 3]}).tag(
         tag="bsl_test",
         bsl_op_type="SemanticTableOp",
         bsl_version="1.0",
-        dimensions=FrozenDict({"a": FrozenDict({"description": "Column A"})}),
-        measures=FrozenDict({}),
+        dimensions=(("a", (("description", "Column A"),)),),
+        measures=(),
     )
 
     bsl_expr = from_xorq(xorq_table)

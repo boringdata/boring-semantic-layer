@@ -454,8 +454,7 @@ class TestMalloyXorqFeatures:
         metadata = dict(op.metadata)
         assert metadata["bsl_op_type"] == "SemanticTableOp"
 
-        # Verify dimensions metadata preserved
-        import json
-
-        dims = json.loads(metadata["dimensions"])
+        # Verify dimensions metadata preserved (now stored as nested tuples)
+        dims_tuple = metadata["dimensions"]
+        dims = {k: dict(v) for k, v in dims_tuple}
         assert "event_type" in dims
