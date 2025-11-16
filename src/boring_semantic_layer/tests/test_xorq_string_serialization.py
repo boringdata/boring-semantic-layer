@@ -87,13 +87,22 @@ def test_to_xorq_with_string_metadata(flights_data):
     op = xorq_expr.op()
     metadata = dict(op.metadata)
 
+    # metadata is stored as nested tuples, convert to dict
     dims = dict(metadata["dimensions"])
-    assert dims["origin"]["expr"] == "_.origin"
-    assert dims["destination"]["expr"] == "_.destination"
+    # each dimension value is also a tuple of key-value pairs
+    origin_dim = dict(dims["origin"])
+    assert origin_dim["expr"] == "_.origin"
 
+    destination_dim = dict(dims["destination"])
+    assert destination_dim["expr"] == "_.destination"
+
+    # measures are also stored as nested tuples
     meas = dict(metadata["measures"])
-    assert meas["avg_distance"]["expr"] == "_.distance.mean()"
-    assert meas["total_distance"]["expr"] == "_.distance.sum()"
+    avg_distance_meas = dict(meas["avg_distance"])
+    assert avg_distance_meas["expr"] == "_.distance.mean()"
+
+    total_distance_meas = dict(meas["total_distance"])
+    assert total_distance_meas["expr"] == "_.distance.sum()"
 
 
 @pytest.mark.skipif(not xorq, reason="xorq not available")
