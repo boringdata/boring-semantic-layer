@@ -15,6 +15,8 @@ from attrs import frozen
 from ibis.common.collections import FrozenDict
 from toolz import curry
 
+from .utils import safe_eval
+
 # Time grain type alias
 TimeGrain = Literal[
     "TIME_GRAIN_YEAR",
@@ -267,15 +269,10 @@ class Filter:
             expr = self._parse_json_filter(self.filter)
             return lambda t: expr.resolve(t)
         elif isinstance(self.filter, str):
-            # Evaluate string as ibis expression with restricted namespace
-            # Only allow ibis._ and safe operators
-            allowed_globals = {"_": ibis._, "ibis": ibis}
-            allowed_builtins = {}
-            expr = eval(  # noqa: S307
+            expr = safe_eval(
                 self.filter,
-                {"__builtins__": allowed_builtins, **allowed_globals},
-                {},
-            )
+                context={"_": ibis._, "ibis": ibis},
+            ).unwrap()
             return lambda t: expr.resolve(t)
         elif callable(self.filter):
             return self.filter

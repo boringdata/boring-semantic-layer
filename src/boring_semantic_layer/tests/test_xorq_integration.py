@@ -143,16 +143,17 @@ class TestXorqIntegration:
         assert metadata["bsl_op_type"] == "SemanticTableOp"
         assert metadata["bsl_version"] == "1.0"
 
-        # Verify dimension metadata
-        import json
-
-        dims = json.loads(metadata["dimensions"])
+        # Verify dimension metadata (now stored as nested tuples)
+        dims_tuple = metadata["dimensions"]
+        # Convert tuple format back to dict for easy assertion
+        dims = {k: dict(v) for k, v in dims_tuple}
         assert "date" in dims
         assert dims["date"]["description"] == "Transaction date"
         assert dims["date"]["is_time_dimension"] is True
 
-        # Verify measure metadata
-        measures = json.loads(metadata["measures"])
+        # Verify measure metadata (now stored as nested tuples)
+        measures_tuple = metadata["measures"]
+        measures = {k: dict(v) for k, v in measures_tuple}
         assert "total" in measures
         assert measures["total"]["description"] == "Total value"
 

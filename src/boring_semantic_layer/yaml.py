@@ -6,11 +6,11 @@ from collections.abc import Mapping
 from typing import Any
 
 import yaml
-from ibis import _
 
 from .api import to_semantic_table
 from .expr import SemanticModel, SemanticTable
 from .ops import Dimension, Measure
+from .utils import safe_eval
 
 
 def _parse_dimensions(dimensions: Mapping[str, Any]) -> dict[str, Dimension]:
@@ -27,10 +27,11 @@ def _parse_dimensions(dimensions: Mapping[str, Any]) -> dict[str, Dimension]:
     """
     result: dict[str, Dimension] = {}
 
+    from ibis import _
+
     for name, config in dimensions.items():
         if isinstance(config, str):
-            # Simple format: name: _.column_name
-            deferred = eval(config, {"_": _, "__builtins__": {}})
+            deferred = safe_eval(config, context={"_": _}, allowed_names={"_"}).unwrap()
             result[name] = Dimension(
                 expr=lambda t, d=deferred: d.resolve(t),
                 description=None,
@@ -46,7 +47,7 @@ def _parse_dimensions(dimensions: Mapping[str, Any]) -> dict[str, Dimension]:
             is_time_dimension = config.get("is_time_dimension", False)
             smallest_time_grain = config.get("smallest_time_grain")
 
-            deferred = eval(expr_str, {"_": _, "__builtins__": {}})
+            deferred = safe_eval(expr_str, context={"_": _}, allowed_names={"_"}).unwrap()
             result[name] = Dimension(
                 expr=lambda t, d=deferred: d.resolve(t),
                 description=description,
@@ -73,10 +74,11 @@ def _parse_measures(measures: Mapping[str, Any]) -> dict[str, Measure]:
     """
     result: dict[str, Measure] = {}
 
+    from ibis import _
+
     for name, config in measures.items():
         if isinstance(config, str):
-            # Simple format: name: _.count()
-            deferred = eval(config, {"_": _, "__builtins__": {}})
+            deferred = safe_eval(config, context={"_": _}, allowed_names={"_"}).unwrap()
             result[name] = Measure(
                 expr=lambda t, d=deferred: d.resolve(t),
                 description=None,
@@ -90,7 +92,7 @@ def _parse_measures(measures: Mapping[str, Any]) -> dict[str, Measure]:
             expr_str = config["expr"]
             description = config.get("description")
 
-            deferred = eval(expr_str, {"_": _, "__builtins__": {}})
+            deferred = safe_eval(expr_str, context={"_": _}, allowed_names={"_"}).unwrap()
             result[name] = Measure(
                 expr=lambda t, d=deferred: d.resolve(t),
                 description=description,
