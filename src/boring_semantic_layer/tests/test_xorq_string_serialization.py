@@ -32,7 +32,7 @@ def test_dimension_serialization(flights_data):
 
     result = serialize_dimensions(dims)
     assert result
-    dim_metadata = json.loads(result.unwrap())
+    dim_metadata = result.unwrap()
 
     assert "origin" in dim_metadata
     assert dim_metadata["origin"]["expr"] == "_.origin"
@@ -54,7 +54,7 @@ def test_measure_serialization(flights_data):
 
     result = serialize_measures(measures)
     assert result
-    meas_metadata = json.loads(result.unwrap())
+    meas_metadata = result.unwrap()
 
     assert "avg_distance" in meas_metadata
     assert meas_metadata["avg_distance"]["expr"] == "_.distance.mean()"
@@ -87,11 +87,11 @@ def test_to_xorq_with_string_metadata(flights_data):
     op = xorq_expr.op()
     metadata = dict(op.metadata)
 
-    dims = json.loads(metadata["dimensions"])
+    dims = dict(metadata["dimensions"])
     assert dims["origin"]["expr"] == "_.origin"
     assert dims["destination"]["expr"] == "_.destination"
 
-    meas = json.loads(metadata["measures"])
+    meas = dict(metadata["measures"])
     assert meas["avg_distance"]["expr"] == "_.distance.mean()"
     assert meas["total_distance"]["expr"] == "_.distance.sum()"
 

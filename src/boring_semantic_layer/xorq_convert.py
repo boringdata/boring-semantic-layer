@@ -5,6 +5,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from attrs import frozen
+from ibis.common.collections import FrozenDict
 from returns.result import Failure, Result, safe
 
 from .utils import expr_to_ibis_string, ibis_string_to_expr
@@ -24,7 +25,7 @@ def try_import_xorq() -> Result[XorqModule, ImportError]:
     return do_import()
 
 
-def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[str, Exception]:
+def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exception]:
     @safe
     def do_serialize():
         dim_metadata = {}
@@ -37,12 +38,12 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[str, Exception
                 "smallest_time_grain": dim.smallest_time_grain,
                 "expr": expr_str,
             }
-        return json.dumps(dim_metadata)
+        return dim_metadata
 
     return do_serialize()
 
 
-def serialize_measures(measures: Mapping[str, Any]) -> Result[str, Exception]:
+def serialize_measures(measures: Mapping[str, Any]) -> Result[dict, Exception]:
     @safe
     def do_serialize():
         meas_metadata = {}
@@ -51,10 +52,10 @@ def serialize_measures(measures: Mapping[str, Any]) -> Result[str, Exception]:
 
             meas_metadata[name] = {
                 "description": meas.description,
-                "requires_unnest": meas.requires_unnest,
+                "requires_unnest": list(meas.requires_unnest),
                 "expr": expr_str,
             }
-        return json.dumps(meas_metadata)
+        return meas_metadata
 
     return do_serialize()
 
@@ -143,8 +144,8 @@ def _extract_op_metadata(op) -> dict[str, Any]:
         meas_result = serialize_measures(op.get_measures())
 
         # Use value_or for functional style - only store if serialization succeeded
-        metadata["dimensions"] = dims_result.value_or("")
-        metadata["measures"] = meas_result.value_or("")
+        metadata["dimensions"] = dims_result.value_or({})
+        metadata["measures"] = meas_result.value_or({})
         if op.name:
             metadata["name"] = op.name
 
@@ -155,11 +156,11 @@ def _extract_op_metadata(op) -> dict[str, Any]:
 
     elif isinstance(op, ops.SemanticGroupByOp):
         if op.keys:
-            metadata["keys"] = json.dumps(list(op.keys))
+            metadata["keys"] = list(op.keys)
 
     elif isinstance(op, ops.SemanticAggregateOp):
         if op.keys:
-            metadata["by"] = json.dumps(list(op.keys))
+            metadata["by"] = list(op.keys)
 
     elif isinstance(op, ops.SemanticMutateOp):
         if op.post:
@@ -168,15 +169,15 @@ def _extract_op_metadata(op) -> dict[str, Any]:
                 expr_str = expr_to_ibis_string(fn).value_or(None)
                 if expr_str:
                     post_metadata[name] = expr_str
-            metadata["post"] = json.dumps(post_metadata)
+            metadata["post"] = post_metadata
 
     elif isinstance(op, ops.SemanticProjectOp):
         if op.fields:
-            metadata["fields"] = json.dumps(list(op.fields))
+            metadata["fields"] = list(op.fields)
 
     elif isinstance(op, ops.SemanticLimitOp):
-        metadata["n"] = str(op.n)
-        metadata["offset"] = str(op.offset)
+        metadata["n"] = op.n
+        metadata["offset"] = op.offset
 
     elif isinstance(op, ops.SemanticOrderByOp):
         order_keys = []
@@ -187,22 +188,38 @@ def _extract_op_metadata(op) -> dict[str, Any]:
                 expr_str = expr_to_ibis_string(key).value_or(None)
                 if expr_str:
                     order_keys.append({"type": "callable", "value": expr_str})
-        metadata["order_keys"] = json.dumps(order_keys)
+        metadata["order_keys"] = order_keys
 
     # Add source operation metadata recursively (all Relation ops have source)
     try:
         source_metadata = _extract_op_metadata(op.source)
-        metadata["source"] = json.dumps(source_metadata)
+        metadata["source"] = source_metadata
     except AttributeError:
         pass
 
     return metadata
 
 
-def _metadata_to_hashable_dict(metadata: dict[str, Any]) -> dict[str, str]:
+def _to_hashable(value: Any) -> Any:
+    """Recursively convert value to hashable type.
+
+    Converts dicts to FrozenDict and lists to tuples.
+    """
+    if isinstance(value, dict):
+        return FrozenDict({k: _to_hashable(v) for k, v in value.items()})
+    elif isinstance(value, list):
+        return tuple(_to_hashable(item) for item in value)
+    elif isinstance(value, str | int | float | bool | type(None)):
+        return value
+    else:
+        return value
+
+
+def _metadata_to_hashable_dict(metadata: dict[str, Any]) -> dict[str, Any]:
     """Convert metadata to hashable dict for xorq tagging.
 
-    Xorq tags require all values to be hashable (strings, ints, etc).
+    Xorq tags require all values to be hashable. Converts dicts to FrozenDict
+    and lists to tuples recursively.
 
     Args:
         metadata: Metadata dict
@@ -210,15 +227,7 @@ def _metadata_to_hashable_dict(metadata: dict[str, Any]) -> dict[str, str]:
     Returns:
         Dict with string keys and hashable values
     """
-    hashable = {}
-    for key, value in metadata.items():
-        if isinstance(value, str | int | float | bool | type(None)):
-            hashable[key] = value
-        else:
-            # Convert to JSON string
-            hashable[key] = json.dumps(value) if value is not None else ""
-
-    return hashable
+    return {key: _to_hashable(value) for key, value in metadata.items()}
 
 
 # ==============================================================================
@@ -314,7 +323,7 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
     # Reconstruct source operation first if present
     source = None
     if "source" in metadata and metadata["source"]:
-        source_metadata = json.loads(metadata["source"])
+        source_metadata = dict(metadata["source"])
         source = _reconstruct_bsl_operation(source_metadata, xorq_expr)
 
     # Reconstruct based on operation type
@@ -324,7 +333,7 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
         measures = {}
 
         if "dimensions" in metadata:
-            dim_meta = json.loads(metadata["dimensions"])
+            dim_meta = dict(metadata["dimensions"]) if metadata["dimensions"] else {}
             for name, dim_data in dim_meta.items():
                 expr_str = dim_data.get("expr")
                 if expr_str:
@@ -341,7 +350,7 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
                 )
 
         if "measures" in metadata:
-            meas_meta = json.loads(metadata["measures"])
+            meas_meta = dict(metadata["measures"]) if metadata["measures"] else {}
             for name, meas_data in meas_meta.items():
                 expr_str = meas_data.get("expr")
                 if expr_str:
@@ -414,7 +423,8 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
         # Get group by keys
         keys = ()
         if "keys" in metadata:
-            keys = tuple(json.loads(metadata["keys"]))
+            keys_data = metadata["keys"]
+            keys = tuple(keys_data) if keys_data else ()
 
         # Group by
         if keys:
@@ -429,7 +439,8 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
         # Get group by keys
         by = ()
         if "by" in metadata:
-            by = tuple(json.loads(metadata["by"]))
+            by_data = metadata["by"]
+            by = tuple(by_data) if by_data else ()
 
         # Group by
         if by:
@@ -445,7 +456,7 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
             raise ValueError("SemanticMutateOp requires source")
 
         if "post" in metadata:
-            post_meta = json.loads(metadata["post"])
+            post_meta = dict(metadata["post"]) if metadata["post"] else {}
             post_callables = {}
             for name, expr_str in post_meta.items():
                 result = ibis_string_to_expr(expr_str)
@@ -462,7 +473,8 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
 
         # Get fields to project
         if "fields" in metadata:
-            fields = tuple(json.loads(metadata["fields"]))
+            fields_data = metadata["fields"]
+            fields = tuple(fields_data) if fields_data else ()
             return source.select(*fields)
 
         return source
@@ -472,7 +484,7 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
             raise ValueError("SemanticOrderByOp requires source")
 
         if "order_keys" in metadata:
-            order_keys_meta = json.loads(metadata["order_keys"])
+            order_keys_meta = list(metadata["order_keys"]) if metadata["order_keys"] else []
             keys = []
             for key_meta in order_keys_meta:
                 if key_meta["type"] == "string":

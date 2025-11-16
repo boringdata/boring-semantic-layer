@@ -77,7 +77,7 @@ def test_round_trip_expression():
 def test_serialize_empty_dimensions():
     result = serialize_dimensions({})
     assert isinstance(result, Success)
-    assert result.unwrap() == "{}"
+    assert result.unwrap() == {}
 
 
 def test_serialize_dimensions_with_metadata():
@@ -100,8 +100,7 @@ def test_serialize_dimensions_with_metadata():
     result = serialize_dimensions(dimensions)
     assert isinstance(result, Success)
 
-    serialized = result.unwrap()
-    data = json.loads(serialized)
+    data = result.unwrap()
 
     assert "dim1" in data
     assert data["dim1"]["description"] == "First dimension"
@@ -119,7 +118,7 @@ def test_serialize_dimensions_with_metadata():
 def test_serialize_empty_measures():
     result = serialize_measures({})
     assert isinstance(result, Success)
-    assert result.unwrap() == "{}"
+    assert result.unwrap() == {}
 
 
 def test_serialize_measures_with_metadata():
@@ -140,8 +139,7 @@ def test_serialize_measures_with_metadata():
     result = serialize_measures(measures)
     assert isinstance(result, Success)
 
-    serialized = result.unwrap()
-    data = json.loads(serialized)
+    data = result.unwrap()
 
     assert "total" in data
     assert data["total"]["description"] == "Total amount"
@@ -185,14 +183,15 @@ def test_from_xorq_returns_bsl_expr():
 
 @pytest.mark.skipif(not xorq, reason="xorq not available")
 def test_from_xorq_with_tagged_table():
+    from ibis.common.collections import FrozenDict
     from xorq.api import memtable
 
     xorq_table = memtable({"a": [1, 2, 3]}).tag(
         tag="bsl_test",
         bsl_op_type="SemanticTableOp",
         bsl_version="1.0",
-        dimensions='{"a": {"description": "Column A"}}',
-        measures="{}",
+        dimensions=FrozenDict({"a": FrozenDict({"description": "Column A"})}),
+        measures=FrozenDict({}),
     )
 
     bsl_expr = from_xorq(xorq_table)

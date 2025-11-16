@@ -47,6 +47,7 @@ markers = [
 
 [dependency-groups]
 dev = [
+    "adbc-driver-sqlite>=1.9.0",
     "ipython>=8.37.0",
     "xorq>=0.3.3",
 ]
