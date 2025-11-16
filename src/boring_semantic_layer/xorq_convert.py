@@ -69,28 +69,32 @@ def serialize_predicate(predicate: Callable) -> Result[str, Exception]:
     return expr_to_ibis_string(predicate)
 
 
-def to_xorq(semantic_expr):
+def to_xorq(semantic_expr, aggregate_cache_storage=None):
     """Convert BSL expression to xorq expression with metadata tags.
-
-    Converts the BSL expression to ibis first, then wraps with xorq tagging
-    to preserve BSL operation metadata for reconstruction.
 
     Args:
         semantic_expr: BSL SemanticTable or expression
+        aggregate_cache_storage: Optional xorq storage backend (ParquetStorage or
+                                SourceStorage). If provided, automatically injects
+                                .cache() at aggregation points for smart cube caching.
 
     Returns:
-        Xorq table expression with BSL metadata preserved
-
-    Raises:
-        ImportError: If xorq is not installed
-        Exception: If conversion fails
+       ir.Expr
 
     Example:
         >>> from boring_semantic_layer import SemanticModel
         >>> model = SemanticModel(...)
+        >>> # Without caching:
         >>> xorq_expr = to_xorq(model)
+
+        >>> # With auto cube caching:
+        >>> from xorq.caching import ParquetStorage
+        >>> import xorq.api as xo
+        >>> storage = ParquetStorage(source=xo.connect())
+        >>> xorq_expr = to_xorq(model, aggregate_cache_storage=storage)
     """
     from . import expr as bsl_expr
+    from .ops import SemanticAggregateOp
 
     @safe
     def do_convert(xorq_mod: XorqModule):
@@ -105,7 +109,7 @@ def to_xorq(semantic_expr):
 
         from xorq.common.utils.ibis_utils import from_ibis
         from xorq.common.utils.node_utils import replace_nodes
-        from xorq.vendor.ibis.expr.operations.relations import DatabaseTable
+        from xorq.vendor.ibis.expr.operations.relations import DatabaseTable, Aggregate
 
         xorq_table = from_ibis(ibis_expr)
 
@@ -118,6 +122,7 @@ def to_xorq(semantic_expr):
             @safe
             def extract_path_from_view(table_name):
                 backend = node.source
+                # this is bad.
                 query = "SELECT sql FROM duckdb_views() WHERE view_name = ?"
                 views_df = backend.con.execute(query, [table_name]).fetchdf()
                 if views_df.empty:
@@ -148,7 +153,12 @@ def to_xorq(semantic_expr):
 
         tag_data = {k: _to_hashable(v) for k, v in metadata.items()}
 
-        return xorq_table.tag(tag="bsl", **tag_data)
+        if aggregate_cache_storage is not None and isinstance(op, SemanticAggregateOp):
+            xorq_table = xorq_table.cache(storage=aggregate_cache_storage)
+
+        xorq_table = xorq_table.tag(tag="bsl", **tag_data)
+
+        return xorq_table
 
     result = try_import_xorq().bind(do_convert)
 
@@ -356,6 +366,8 @@ def _register_reconstructor(op_type: str):
 
 
 def _extract_xorq_metadata(xorq_expr) -> dict[str, Any] | None:
+    from xorq.expr.relations import Tag
+
     @safe
     def get_op(expr):
         return expr.op()
@@ -365,7 +377,8 @@ def _extract_xorq_metadata(xorq_expr) -> dict[str, Any] | None:
         return op.parent.to_expr()
 
     def is_bsl_tag(op) -> bool:
-        return type(op).__name__ == "Tag" and "bsl_op_type" in getattr(op, "metadata", {})
+        """Check if this is a BSL-tagged expression."""
+        return isinstance(op, Tag) and "bsl_op_type" in op.metadata
 
     maybe_op = get_op(xorq_expr).map(lambda op: op if is_bsl_tag(op) else None)
 
@@ -399,15 +412,54 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
             requires_unnest=tuple(meas_data.get("requires_unnest", [])),
         )
 
+    def _unwrap_cached_nodes(expr):
+        """Unwrap CachedNode wrappers to get to the underlying expression.
+
+        When aggregate_cache_storage is used, the expression is wrapped as:
+        Tag(parent=CachedNode(parent=RemoteTable(args[3]=actual_computation)))
+
+        This function unwraps these layers to extract the actual computation
+        which contains the original backend references (not the xorq "let" backend).
+
+        Args:
+            expr: Expression that may contain CachedNode wrappers
+
+        Returns:
+            Unwrapped expression with original backend references
+        """
+        from xorq.expr.relations import Tag, CachedNode, RemoteTable
+
+        op = expr.op()
+
+        # Unwrap Tag layer
+        if isinstance(op, Tag):
+            expr = op.parent.to_expr() if hasattr(op.parent, "to_expr") else op.parent
+            op = expr.op()
+
+        # Unwrap CachedNode layer
+        if isinstance(op, CachedNode):
+            expr = op.parent
+            op = expr.op()
+
+        # Unwrap RemoteTable layer - args[3] contains the actual computation
+        if isinstance(op, RemoteTable):
+            # RemoteTable.args[3] is the actual Ibis expression with correct backend
+            expr = op.args[3]
+
+        return expr
+
     def _reconstruct_table():
         import ibis
         from xorq.common.utils.graph_utils import walk_nodes
         from xorq.expr.relations import Read
         from xorq.vendor.ibis.expr.operations import relations as xorq_rel
 
-        read_ops = list(walk_nodes((Read,), xorq_expr))
-        in_memory_tables = list(walk_nodes((xorq_rel.InMemoryTable,), xorq_expr))
-        db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), xorq_expr))
+        # Unwrap any cached nodes before walking
+        unwrapped_expr = _unwrap_cached_nodes(xorq_expr)
+
+        read_ops = list(walk_nodes((Read,), unwrapped_expr))
+        in_memory_tables = list(walk_nodes((xorq_rel.InMemoryTable,), unwrapped_expr))
+        db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), unwrapped_expr))
 
         if read_ops:
             read_op = read_ops[0]
