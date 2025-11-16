@@ -5,8 +5,8 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from attrs import frozen
-from ibis.common.collections import FrozenDict
 from returns.result import Failure, Result, safe
+from toolz.curried import get, pipe, valmap
 
 from .utils import expr_to_ibis_string, ibis_string_to_expr
 
@@ -61,6 +61,12 @@ def serialize_measures(measures: Mapping[str, Any]) -> Result[dict, Exception]:
 
 
 def serialize_predicate(predicate: Callable) -> Result[str, Exception]:
+    # Unwrap _CallableWrapper if present
+    from . import ops
+
+    if isinstance(predicate, ops._CallableWrapper):
+        predicate = predicate._fn
+
     return expr_to_ibis_string(predicate)
 
 
@@ -99,8 +105,39 @@ def to_xorq(semantic_expr):
         ibis_expr = bsl_expr.to_ibis(semantic_expr)
 
         from xorq.common.utils.ibis_utils import from_ibis
+        from xorq.common.utils.node_utils import replace_nodes
+        from xorq.vendor.ibis.expr.operations.relations import DatabaseTable
+        import re
 
         xorq_table = from_ibis(ibis_expr)
+
+        # Replace read_parquet temporary tables with deferred ReadOp for serialization
+        def replace_read_parquet(node, _kwargs):
+            if isinstance(node, DatabaseTable):
+                table_name = node.name
+                # Check if this is a temporary read_parquet table
+                if table_name.startswith('ibis_read_parquet_'):
+                    backend = node.source
+                    # Extract the parquet path from the DuckDB view SQL
+                    try:
+                        views_df = backend.con.execute(
+                            f"SELECT sql FROM duckdb_views() WHERE view_name = '{table_name}'"
+                        ).fetchdf()
+                        if len(views_df) > 0:
+                            sql = views_df.iloc[0]['sql']
+                            # Extract path from SQL like: read_parquet(main.list_value('path'))
+                            match = re.search(r"list_value\(['\"](.*?)['\"]\)", sql)
+                            if match:
+                                path = match.group(1)
+                                # Replace with deferred read
+                                return xorq_mod.api.deferred_read_parquet(path).op()
+                    except Exception:
+                        # If extraction fails, leave the node as is
+                        pass
+            return node
+
+        xorq_table = replace_nodes(replace_read_parquet, xorq_table).to_expr()
+
         metadata = _extract_op_metadata(op)
         tag_data = _metadata_to_hashable_dict(metadata)
 
@@ -130,6 +167,7 @@ def _extract_op_metadata(op) -> dict[str, Any]:
         Dict with operation metadata
     """
     from . import ops
+    from .ops import _unwrap
 
     op_type = type(op).__name__
 
@@ -161,6 +199,15 @@ def _extract_op_metadata(op) -> dict[str, Any]:
     elif isinstance(op, ops.SemanticAggregateOp):
         if op.keys:
             metadata["by"] = list(op.keys)
+        # Serialize aggregation functions
+        if op.aggs:
+            agg_metadata = {}
+            for name, fn in op.aggs.items():
+                unwrapped = _unwrap(fn) if hasattr(fn, '_fn') else fn
+                expr_str = expr_to_ibis_string(unwrapped).value_or(None)
+                if expr_str:
+                    agg_metadata[name] = expr_str
+            metadata["aggs"] = agg_metadata
 
     elif isinstance(op, ops.SemanticMutateOp):
         if op.post:
@@ -185,7 +232,9 @@ def _extract_op_metadata(op) -> dict[str, Any]:
             if isinstance(key, str):
                 order_keys.append({"type": "string", "value": key})
             else:
-                expr_str = expr_to_ibis_string(key).value_or(None)
+                # Unwrap _CallableWrapper if present
+                unwrapped = _unwrap(key) if hasattr(key, '_fn') else key
+                expr_str = expr_to_ibis_string(unwrapped).value_or(None)
                 if expr_str:
                     order_keys.append({"type": "callable", "value": expr_str})
         metadata["order_keys"] = order_keys
@@ -200,34 +249,27 @@ def _extract_op_metadata(op) -> dict[str, Any]:
     return metadata
 
 
-def _to_hashable(value: Any) -> Any:
-    """Recursively convert value to hashable type.
-
-    Converts dicts to FrozenDict and lists to tuples.
-    """
-    if isinstance(value, dict):
-        return FrozenDict({k: _to_hashable(v) for k, v in value.items()})
-    elif isinstance(value, list):
-        return tuple(_to_hashable(item) for item in value)
-    elif isinstance(value, str | int | float | bool | type(None)):
-        return value
-    else:
-        return value
-
-
-def _metadata_to_hashable_dict(metadata: dict[str, Any]) -> dict[str, Any]:
+def _metadata_to_hashable_dict(metadata: dict[str, Any]) -> dict[str, str]:
     """Convert metadata to hashable dict for xorq tagging.
 
-    Xorq tags require all values to be hashable. Converts dicts to FrozenDict
-    and lists to tuples recursively.
+    Xorq tags require all values to be hashable (strings, ints, etc).
+    Converts complex structures to JSON strings.
 
     Args:
         metadata: Metadata dict
 
     Returns:
-        Dict with string keys and hashable values
+        Dict with string keys and hashable string values
     """
-    return {key: _to_hashable(value) for key, value in metadata.items()}
+    hashable = {}
+    for key, value in metadata.items():
+        if isinstance(value, str | int | float | bool | type(None)):
+            hashable[key] = value
+        else:
+            # Convert to JSON string to ensure hashability
+            hashable[key] = json.dumps(value) if value is not None else ""
+
+    return hashable
 
 
 # ==============================================================================
@@ -259,23 +301,101 @@ def from_xorq(xorq_expr):
 
     @safe
     def do_convert():
-        # Extract metadata from xorq tags
         metadata = _extract_xorq_metadata(xorq_expr)
 
         if not metadata:
             raise ValueError("No BSL metadata found in xorq expression")
 
-        # Reconstruct BSL operation from metadata
         return _reconstruct_bsl_operation(metadata, xorq_expr)
 
-    # Internal use of Result types, but unwrap for user-facing API
     result = do_convert()
 
-    # Match the pattern of to_ibis() - unwrap internally
     if isinstance(result, Failure):
         raise result.failure()
 
     return result.value_or(None)
+
+
+# ==============================================================================
+# Reconstruction helpers
+# ==============================================================================
+
+
+def _parse_json_field(metadata: dict, field: str) -> dict:
+    """Parse a metadata field that might be JSON string or dict."""
+    value = metadata.get(field)
+    if not value:
+        return {}
+    if isinstance(value, str):
+        return json.loads(value)
+    return dict(value) if value else {}
+
+
+def _deserialize_expr(expr_str: str | None, fallback_name: str | None = None) -> Callable:
+    """Deserialize expression string to callable, with fallback."""
+    if not expr_str:
+        return lambda t, n=fallback_name: t[n] if n else t  # noqa: E731
+
+    result = ibis_string_to_expr(expr_str)
+    return result.value_or(lambda t, n=fallback_name: t[n] if n else t)  # noqa: E731
+
+
+def _extract_source_metadata(metadata: dict) -> dict | None:
+    """Extract and parse source metadata if present."""
+    if "source" not in metadata or not metadata["source"]:
+        return None
+    return _parse_json_field(metadata, "source")
+
+
+# ==============================================================================
+# Metadata extraction
+# ==============================================================================
+
+
+# ==============================================================================
+# Reconstruction helpers
+# ==============================================================================
+
+
+def _parse_json_field(metadata: dict, field: str) -> dict | list:
+    """Parse a metadata field that might be JSON string or dict/list."""
+    value = metadata.get(field)
+    if not value:
+        return {} if field != "order_keys" else []
+    if isinstance(value, str):
+        return json.loads(value)
+    return dict(value) if isinstance(value, dict) else list(value) if isinstance(value, list) else {}
+
+
+def _deserialize_expr(expr_str: str | None, fallback_name: str | None = None) -> Callable:
+    """Deserialize expression string to callable, with fallback."""
+    if not expr_str:
+        return lambda t, n=fallback_name: t[n] if n else t  # noqa: E731
+
+    result = ibis_string_to_expr(expr_str)
+    return result.value_or(lambda t, n=fallback_name: t[n] if n else t)  # noqa: E731
+
+
+# ==============================================================================
+# Operation type registry (for singledispatch pattern)
+# ==============================================================================
+
+# We'll use a simple dict-based dispatch instead of singledispatch
+# since we're dispatching on strings, not types
+_RECONSTRUCTORS = {}
+
+
+def _register_reconstructor(op_type: str):
+    """Decorator to register a reconstructor for an operation type."""
+    def decorator(func):
+        _RECONSTRUCTORS[op_type] = func
+        return func
+    return decorator
+
+
+# ==============================================================================
+# Metadata extraction
+# ==============================================================================
 
 
 def _extract_xorq_metadata(xorq_expr) -> dict[str, Any] | None:
@@ -287,22 +407,217 @@ def _extract_xorq_metadata(xorq_expr) -> dict[str, Any] | None:
     Returns:
         Dict with BSL metadata or None if no tags found
     """
-    try:
-        op = xorq_expr.op()
-    except AttributeError:
+    @safe
+    def get_op(expr):
+        return expr.op()
+
+    @safe
+    def get_parent_expr(op):
+        return op.parent.to_expr()
+
+    def is_bsl_tag(op) -> bool:
+        return type(op).__name__ == "Tag" and "bsl_op_type" in getattr(op, "metadata", {})
+
+    # Try to get operation from expression
+    maybe_op = get_op(xorq_expr).map(lambda op: op if is_bsl_tag(op) else None)
+
+    # If we found a BSL tag, return its metadata
+    if maybe_op.value_or(None):
+        return dict(maybe_op.unwrap().metadata)
+
+    # Otherwise, recursively check parent
+    parent_result = get_op(xorq_expr).bind(get_parent_expr)
+    if isinstance(parent_result, Failure):
         return None
 
-    # Check if this is a Tag operation
-    if type(op).__name__ == "Tag":
-        tag_metadata = dict(op.metadata)
-        if "bsl_op_type" in tag_metadata:
-            return tag_metadata
+    return _extract_xorq_metadata(parent_result.unwrap())
 
-    # Check parent if available
-    try:
-        return _extract_xorq_metadata(op.parent.to_expr())
-    except AttributeError:
-        return None
+
+# ==============================================================================
+# Operation reconstructors (registered by type)
+# ==============================================================================
+
+
+@_register_reconstructor("SemanticTableOp")
+def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
+    """Reconstruct SemanticTableOp from metadata."""
+    from . import expr as bsl_expr
+    from . import ops
+
+    def _create_dimension(name: str, dim_data: dict) -> ops.Dimension:
+        """Create Dimension from metadata dict."""
+        return ops.Dimension(
+            expr=_deserialize_expr(dim_data.get("expr"), fallback_name=name),
+            description=dim_data.get("description"),
+            is_time_dimension=dim_data.get("is_time_dimension", False),
+            smallest_time_grain=dim_data.get("smallest_time_grain"),
+        )
+
+    def _create_measure(name: str, meas_data: dict) -> ops.Measure:
+        """Create Measure from metadata dict."""
+        return ops.Measure(
+            expr=_deserialize_expr(meas_data.get("expr"), fallback_name=name),
+            description=meas_data.get("description"),
+            requires_unnest=tuple(meas_data.get("requires_unnest", [])),
+        )
+
+    def _load_from_read_op(read_op):
+        """Load table from xorq Read operation."""
+        import ibis
+        import pandas as pd
+
+        read_kwargs = read_op.args[4] if len(read_op.args) > 4 else None
+        if not (read_kwargs and isinstance(read_kwargs, tuple)):
+            return None
+
+        path = next((v for k, v in read_kwargs if k in ('path', 'source_list')), None)
+        return ibis.memtable(pd.read_parquet(path)) if path else None
+
+    def _load_from_in_memory(op):
+        """Load table from xorq InMemoryTable."""
+        import ibis
+
+        proxy = op.args[2]
+        return ibis.memtable(proxy.to_frame())
+
+    def _load_from_db_table(op):
+        """Load table from xorq DatabaseTable."""
+        import ibis
+
+        table_name, xorq_backend = op.args[0], op.args[2]
+        backend_class = getattr(ibis, xorq_backend.name)
+        external_backend = backend_class.from_connection(xorq_backend.con)
+        return external_backend.table(table_name)
+
+    def _materialize_table():
+        """Materialize ibis table from xorq expression."""
+        import ibis
+        from xorq.common.utils.graph_utils import walk_nodes
+        from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+        from xorq.expr.relations import Read
+
+        # Find underlying table operations
+        read_ops = list(walk_nodes((Read,), xorq_expr))
+        in_memory_tables = list(walk_nodes((xorq_rel.InMemoryTable,), xorq_expr))
+        db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), xorq_expr))
+
+        # Try each loading strategy in order
+        if read_ops:
+            table = _load_from_read_op(read_ops[0])
+            if table is not None:
+                return table
+        if in_memory_tables:
+            return _load_from_in_memory(in_memory_tables[0])
+        if db_tables:
+            return _load_from_db_table(db_tables[0])
+
+        # Fallback: materialize entire expression
+        return ibis.memtable(xorq_expr.to_pandas())
+
+    # Reconstruct dimensions and measures using dict comprehension + toolz
+    dim_meta = _parse_json_field(metadata, "dimensions")
+    meas_meta = _parse_json_field(metadata, "measures")
+
+    dimensions = {name: _create_dimension(name, data) for name, data in dim_meta.items()}
+    measures = {name: _create_measure(name, data) for name, data in meas_meta.items()}
+
+    return bsl_expr.SemanticModel(
+        table=_materialize_table(),
+        dimensions=dimensions,
+        measures=measures,
+        name=metadata.get("name"),
+    )
+
+
+@_register_reconstructor("SemanticFilterOp")
+def _reconstruct_filter(metadata: dict, xorq_expr, source):
+    """Reconstruct SemanticFilterOp from metadata."""
+    if source is None:
+        raise ValueError("SemanticFilterOp requires source")
+
+    predicate = _deserialize_expr(metadata.get("predicate"), fallback_name=None)
+    return source.filter(predicate)
+
+
+@_register_reconstructor("SemanticGroupByOp")
+def _reconstruct_group_by(metadata: dict, xorq_expr, source):
+    """Reconstruct SemanticGroupByOp from metadata."""
+    if source is None:
+        raise ValueError("SemanticGroupByOp requires source")
+
+    keys = tuple(_parse_json_field(metadata, "keys")) or ()
+    return source.group_by(*keys) if keys else source
+
+
+@_register_reconstructor("SemanticAggregateOp")
+def _reconstruct_aggregate(metadata: dict, xorq_expr, source):
+    """Reconstruct SemanticAggregateOp from metadata."""
+    if source is None:
+        raise ValueError("SemanticAggregateOp requires source")
+
+    aggs_meta = _parse_json_field(metadata, "aggs")
+    return source.aggregate(*aggs_meta.keys()) if aggs_meta else source
+
+
+@_register_reconstructor("SemanticMutateOp")
+def _reconstruct_mutate(metadata: dict, xorq_expr, source):
+    """Reconstruct SemanticMutateOp from metadata."""
+    if source is None:
+        raise ValueError("SemanticMutateOp requires source")
+
+    post_meta = _parse_json_field(metadata, "post")
+    if not post_meta:
+        return source
+
+    post_callables = {
+        name: _deserialize_expr(expr_str, fallback_name=name)
+        for name, expr_str in post_meta.items()
+    }
+    return source.mutate(**post_callables)
+
+
+@_register_reconstructor("SemanticProjectOp")
+def _reconstruct_project(metadata: dict, xorq_expr, source):
+    """Reconstruct SemanticProjectOp from metadata."""
+    if source is None:
+        raise ValueError("SemanticProjectOp requires source")
+
+    fields = tuple(_parse_json_field(metadata, "fields")) or ()
+    return source.select(*fields) if fields else source
+
+
+@_register_reconstructor("SemanticOrderByOp")
+def _reconstruct_order_by(metadata: dict, xorq_expr, source):
+    """Reconstruct SemanticOrderByOp from metadata."""
+    if source is None:
+        raise ValueError("SemanticOrderByOp requires source")
+
+    def _deserialize_key(key_meta: dict):
+        """Deserialize a single order key from metadata."""
+        return (
+            key_meta["value"]
+            if key_meta["type"] == "string"
+            else _deserialize_expr(key_meta["value"])
+        )
+
+    order_keys_meta = _parse_json_field(metadata, "order_keys")
+    if not order_keys_meta:
+        return source
+
+    keys = [_deserialize_key(key_meta) for key_meta in order_keys_meta]
+    return source.order_by(*keys) if keys else source
+
+
+@_register_reconstructor("SemanticLimitOp")
+def _reconstruct_limit(metadata: dict, xorq_expr, source):
+    """Reconstruct SemanticLimitOp from metadata."""
+    if source is None:
+        raise ValueError("SemanticLimitOp requires source")
+
+    return source.limit(
+        n=int(metadata.get("n", 0)),
+        offset=int(metadata.get("offset", 0)),
+    )
 
 
 def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
@@ -315,199 +630,20 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
     Returns:
         Reconstructed BSL expression
     """
-    from . import expr as bsl_expr
-    from . import ops
-
     op_type = metadata.get("bsl_op_type")
 
     # Reconstruct source operation first if present
     source = None
-    if "source" in metadata and metadata["source"]:
-        source_metadata = dict(metadata["source"])
+    source_metadata = _parse_json_field(metadata, "source")
+    if source_metadata:
         source = _reconstruct_bsl_operation(source_metadata, xorq_expr)
 
-    # Reconstruct based on operation type
-    if op_type == "SemanticTableOp":
-        # Get dimensions and measures from metadata
-        dimensions = {}
-        measures = {}
-
-        if "dimensions" in metadata:
-            dim_meta = dict(metadata["dimensions"]) if metadata["dimensions"] else {}
-            for name, dim_data in dim_meta.items():
-                expr_str = dim_data.get("expr")
-                if expr_str:
-                    expr_result = ibis_string_to_expr(expr_str)
-                    expr = expr_result.value_or(lambda t, n=name: t[n])  # noqa: E731
-                else:
-                    expr = lambda t, n=name: t[n]  # noqa: E731
-
-                dimensions[name] = ops.Dimension(
-                    expr=expr,
-                    description=dim_data.get("description"),
-                    is_time_dimension=dim_data.get("is_time_dimension", False),
-                    smallest_time_grain=dim_data.get("smallest_time_grain"),
-                )
-
-        if "measures" in metadata:
-            meas_meta = dict(metadata["measures"]) if metadata["measures"] else {}
-            for name, meas_data in meas_meta.items():
-                expr_str = meas_data.get("expr")
-                if expr_str:
-                    expr_result = ibis_string_to_expr(expr_str)
-                    expr = expr_result.value_or(lambda t, n=name: t[n])  # noqa: E731
-                else:
-                    expr = lambda t, n=name: t[n]  # noqa: E731
-
-                measures[name] = ops.Measure(
-                    expr=expr,
-                    description=meas_data.get("description"),
-                    requires_unnest=tuple(meas_data.get("requires_unnest", [])),
-                )
-
-        import ibis
-        from xorq.common.utils.graph_utils import walk_nodes
-        from xorq.vendor.ibis.expr.operations import relations as xorq_rel
-
-        # Find underlying table operation (unwraps Tag operations)
-        in_memory_tables = list(walk_nodes((xorq_rel.InMemoryTable,), xorq_expr))
-        db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), xorq_expr))
-
-        if in_memory_tables:
-            # Extract pandas dataframe from xorq's proxy (already in memory)
-            op = in_memory_tables[0]
-            proxy = op.args[2]
-            df = proxy.to_frame()
-            ibis_table = ibis.memtable(df)
-        elif db_tables:
-            # Reference the same database table in external ibis
-            op = db_tables[0]
-            table_name = op.args[0]
-            xorq_backend = op.args[2]
-
-            # Get underlying connection and backend type
-            underlying_con = xorq_backend.con
-            backend_name = xorq_backend.name
-
-            # Create external ibis backend from same connection
-            backend_class = getattr(ibis, backend_name)
-            external_backend = backend_class.from_connection(underlying_con)
-            ibis_table = external_backend.table(table_name)
-        else:
-            # Fallback: materialize for complex expressions
-            ibis_table = ibis.memtable(xorq_expr.to_pandas())
-
-        return bsl_expr.SemanticModel(
-            table=ibis_table,
-            dimensions=dimensions,
-            measures=measures,
-            name=metadata.get("name"),
-        )
-
-    elif op_type == "SemanticFilterOp":
-        if source is None:
-            raise ValueError("SemanticFilterOp requires source")
-
-        if "predicate" in metadata:
-            pred_result = ibis_string_to_expr(metadata["predicate"])
-            predicate = pred_result.value_or(lambda t: t)  # noqa: E731
-        else:
-            predicate = lambda t: t  # noqa: E731
-
-        return source.filter(predicate)
-
-    elif op_type == "SemanticGroupByOp":
-        if source is None:
-            raise ValueError("SemanticGroupByOp requires source")
-
-        # Get group by keys
-        keys = ()
-        if "keys" in metadata:
-            keys_data = metadata["keys"]
-            keys = tuple(keys_data) if keys_data else ()
-
-        # Group by
-        if keys:
-            return source.group_by(*keys)
-        else:
-            return source
-
-    elif op_type == "SemanticAggregateOp":
-        if source is None:
-            raise ValueError("SemanticAggregateOp requires source")
-
-        # Get group by keys
-        by = ()
-        if "by" in metadata:
-            by_data = metadata["by"]
-            by = tuple(by_data) if by_data else ()
-
-        # Group by
-        if by:
-            grouped = source.group_by(*by)
-            # Would need to aggregate, but we don't have measure info here
-            # This is a limitation of current design
-            return grouped
-        else:
-            return source
-
-    elif op_type == "SemanticMutateOp":
-        if source is None:
-            raise ValueError("SemanticMutateOp requires source")
-
-        if "post" in metadata:
-            post_meta = dict(metadata["post"]) if metadata["post"] else {}
-            post_callables = {}
-            for name, expr_str in post_meta.items():
-                result = ibis_string_to_expr(expr_str)
-                post_callables[name] = result.value_or(lambda t, n=name: t[n])  # noqa: E731
-
-            if post_callables:
-                return source.mutate(**post_callables)
-
-        return source
-
-    elif op_type == "SemanticProjectOp":
-        if source is None:
-            raise ValueError("SemanticProjectOp requires source")
-
-        # Get fields to project
-        if "fields" in metadata:
-            fields_data = metadata["fields"]
-            fields = tuple(fields_data) if fields_data else ()
-            return source.select(*fields)
-
-        return source
-
-    elif op_type == "SemanticOrderByOp":
-        if source is None:
-            raise ValueError("SemanticOrderByOp requires source")
-
-        if "order_keys" in metadata:
-            order_keys_meta = list(metadata["order_keys"]) if metadata["order_keys"] else []
-            keys = []
-            for key_meta in order_keys_meta:
-                if key_meta["type"] == "string":
-                    keys.append(key_meta["value"])
-                elif key_meta["type"] == "callable":
-                    result = ibis_string_to_expr(key_meta["value"])
-                    keys.append(result.value_or(lambda t: t))  # noqa: E731
-
-            if keys:
-                return source.order_by(*keys)
-
-        return source
-
-    elif op_type == "SemanticLimitOp":
-        if source is None:
-            raise ValueError("SemanticLimitOp requires source")
-
-        n = int(metadata.get("n", 0))
-        offset = int(metadata.get("offset", 0))
-        return source.limit(n, offset=offset)
-
-    else:
+    # Dispatch to appropriate reconstructor
+    reconstructor = _RECONSTRUCTORS.get(op_type)
+    if not reconstructor:
         raise ValueError(f"Unknown BSL operation type: {op_type}")
+
+    return reconstructor(metadata, xorq_expr, source)
 
 
 # ==============================================================================

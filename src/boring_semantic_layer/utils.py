@@ -224,12 +224,19 @@ def expr_to_ibis_string(fn: Callable) -> Result[str, Exception]:
 
 
 def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
-    from ibis import _
-
     @safe
     def do_convert():
-        deferred = safe_eval(expr_str, context={"_": _}, allowed_names={"_"}).unwrap()
-        return lambda t: deferred.resolve(t)
+        # Parse the expression string and create a callable that works with BSL's resolver
+        # Replace _ with t in the expression
+        t_expr = expr_str.replace("_.", "t.")
+
+        # Create a lambda from the expression string
+        # This allows it to work with BSL's _Resolver object
+        lambda_str = f"lambda t: {t_expr}"
+
+        # Compile and return the lambda
+        code = compile(lambda_str, "<ibis_expr>", "eval")
+        return eval(code)  # noqa: S307
 
     return do_convert()
 
