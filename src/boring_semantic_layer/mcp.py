@@ -12,13 +12,6 @@ from .query import _find_time_dimension
 
 
 def _parse_json_string(v: Any) -> Any:
-    """
-    Parse JSON-stringified parameters that some MCP clients send.
-
-    Some MCP clients (like Claude Desktop) send JSON-stringified arrays
-    instead of actual arrays (e.g., '["a","b"]' instead of ["a","b"]).
-    This validator handles that case while still accepting proper types.
-    """
     if isinstance(v, str):
         try:
             return json.loads(v)
@@ -31,6 +24,28 @@ def _parse_json_string(v: Any) -> Any:
 class MCPSemanticModel(FastMCP):
     """
     MCP server specialized for semantic models using SemanticTable.
+
+    This server provides a semantic layer for querying structured data with support for:
+    - Dimensions (columns to group by)
+    - Measures (metrics to aggregate)
+    - Time-based aggregations with configurable grains
+    - Filtering with various operators
+    - Joins across multiple tables
+
+    IMPORTANT USAGE GUIDELINES FOR LLM:
+
+    1. ALWAYS start by calling list_models() to see available models
+    2. ALWAYS call get_model(model_name) to understand dimensions and measures before querying
+    3. When using joined models (multiple tables), ALWAYS prefix dimension/measure names with table name
+       Example: "flights.arr_time" not just "arr_time"
+    4. For time-based queries, use time_grain parameter (e.g., "TIME_GRAIN_YEAR", "TIME_GRAIN_MONTH")
+    5. Time dimensions must be explicitly included in dimensions parameter when using time_grain
+
+    Common mistakes to avoid:
+    - Using unprefixed names in joined models (will cause errors)
+    - Forgetting to include time dimension in dimensions list when using time_grain
+    - Using invalid time grain values (must be one of: TIME_GRAIN_SECOND, TIME_GRAIN_MINUTE,
+      TIME_GRAIN_HOUR, TIME_GRAIN_DAY, TIME_GRAIN_WEEK, TIME_GRAIN_MONTH, TIME_GRAIN_QUARTER, TIME_GRAIN_YEAR)
 
     Provides tools:
     - list_models: list all model names
@@ -53,12 +68,45 @@ class MCPSemanticModel(FastMCP):
     def _register_tools(self):
         @self.tool()
         def list_models() -> Mapping[str, str]:
-            """List all available semantic model names."""
+            """List all available semantic model names.
+
+            USAGE: This should be your FIRST call when exploring a new semantic layer.
+            It returns the names of all models you can query.
+
+            Returns:
+                Dictionary mapping model names to descriptions
+
+            Example output:
+                {"flights": "Semantic model: flights", "carriers": "Semantic model: carriers"}
+
+            Next step: Call get_model(model_name) for each model to see its dimensions and measures.
+            """
             return {name: f"Semantic model: {name}" for name in self.models}
 
         @self.tool()
         def get_model(model_name: str) -> Mapping[str, Any]:
-            """Get details about a specific semantic model including dimensions and measures."""
+            """Get details about a specific semantic model including dimensions and measures.
+
+            USAGE: Call this BEFORE querying to understand what dimensions and measures are available.
+            Pay special attention to dimension names - if they contain a dot (e.g., "flights.arr_time"),
+            the model is joined and you MUST use the full prefixed names in your queries.
+
+            Args:
+                model_name: Name of the model (get from list_models())
+
+            Returns:
+                Dictionary with:
+                - dimensions: Available grouping columns with metadata
+                - measures: Available metrics with descriptions
+                - calculated_measures: Derived metrics
+                - is_time_dimension: True for time-based dimensions
+                - smallest_time_grain: Minimum time granularity for time dimensions
+
+            IMPORTANT: Check dimension names carefully!
+            - Simple model: dimensions like "carrier", "origin"
+            - Joined model: dimensions like "flights.carrier", "carriers.name"
+              → You MUST use the prefixed names in query_model()
+            """
             if model_name not in self.models:
                 raise ValueError(f"Model {model_name} not found")
 
@@ -116,7 +164,32 @@ class MCPSemanticModel(FastMCP):
 
         @self.tool()
         def get_time_range(model_name: str) -> Mapping[str, Any]:
-            """Get the available time range for a model's time dimension."""
+            """Get the available time range for a model's time dimension.
+
+            USAGE: Call this to understand the date/time range of data before filtering.
+            Useful for determining appropriate time_range filters in query_model().
+
+            Args:
+                model_name: Name of the model (must have a time dimension)
+
+            Returns:
+                Dictionary with:
+                - start: Earliest timestamp in ISO format (e.g., "2000-01-01T00:00:00")
+                - end: Latest timestamp in ISO format (e.g., "2005-12-31T23:59:59")
+
+            Example:
+                get_time_range("flights")
+                → {"start": "2000-01-01T00:00:00", "end": "2005-12-31T23:06:00"}
+
+            Then use in query_model with time_range:
+                query_model(
+                    model_name="flights",
+                    dimensions=["flights.arr_time"],
+                    measures=["flights.flight_count"],
+                    time_grain="TIME_GRAIN_MONTH",
+                    time_range={"start": "2000-01-01", "end": "2000-12-31"}
+                )
+            """
             if model_name not in self.models:
                 raise ValueError(f"Model {model_name} not found")
 
@@ -357,14 +430,56 @@ class MCPSemanticModel(FastMCP):
             """
             Query a semantic model with support for filters and time dimensions.
 
+            ⚠️ CRITICAL USAGE RULES - READ CAREFULLY:
+
+            1. **ALWAYS call get_model() first** to see available dimensions and measures
+            2. **Use correct dimension/measure names**:
+               - For joined models, names MUST include table prefix (e.g., "flights.arr_time")
+               - Check get_model() output - if you see dots in names, the model is joined
+            3. **When using time_grain, MUST include the time dimension in dimensions list**:
+               ✅ CORRECT: dimensions=["flights.arr_time"], time_grain="TIME_GRAIN_YEAR"
+               ❌ WRONG: dimensions=[], time_grain="TIME_GRAIN_YEAR"  # Missing time dimension!
+            4. **For filters with lists, use "values" (plural), not "value"**:
+               ✅ CORRECT: {"field": "carrier", "operator": "in", "values": ["AA", "UA"]}
+               ❌ WRONG: {"field": "carrier", "operator": "in", "value": ["AA", "UA"]}
+
+            COMMON QUERY PATTERNS:
+
+            Simple aggregation:
+                query_model(
+                    model_name="flights",
+                    dimensions=["flights.carrier"],
+                    measures=["flights.flight_count"]
+                )
+
+            Time-based aggregation (MUST include time dimension in dimensions list):
+                query_model(
+                    model_name="flights",
+                    dimensions=["flights.arr_time"],  # ← REQUIRED when using time_grain
+                    measures=["flights.flight_count"],
+                    time_grain="TIME_GRAIN_YEAR",
+                    order_by=[["flights.arr_time", "asc"]]
+                )
+
+            With filters:
+                query_model(
+                    model_name="flights",
+                    dimensions=["flights.origin"],
+                    measures=["flights.flight_count"],
+                    filters=[
+                        {"field": "flights.carrier", "operator": "in", "values": ["AA", "UA"]},
+                        {"field": "flights.distance", "operator": ">", "value": 1000}
+                    ]
+                )
+
             Args:
                 model_name: Name of the model to query
-                dimensions: List of dimension names to group by
-                measures: List of measure names to aggregate
+                dimensions: List of dimension names to group by (MUST match names from get_model())
+                measures: List of measure names to aggregate (MUST match names from get_model())
                 filters: List of filter dicts (e.g., [{"field": "carrier", "operator": "=", "value": "AA"}])
-                order_by: List of (field, direction) tuples
+                order_by: List of [field, direction] pairs (e.g., [["flights.arr_time", "asc"]])
                 limit: Maximum number of rows to return
-                time_grain: Optional time grain (e.g., "TIME_GRAIN_MONTH")
+                time_grain: Optional time grain (e.g., "TIME_GRAIN_MONTH") - requires time dimension in dimensions
                 time_range: Optional time range with 'start' and 'end' keys
                 chart_spec: Optional chart specification dict. When provided, returns both data and chart.
                            Format: {"backend": "altair"|"plotly", "spec": {...}, "format": "json"|"static"}
@@ -372,6 +487,11 @@ class MCPSemanticModel(FastMCP):
             Returns:
                 When chart_spec is None: Query results as JSON string ({"records": [...]})
                 When chart_spec is provided: JSON with both records and chart ({"records": [...], "chart": {...}})
+
+            Common Errors and Solutions:
+                - "'Table' object has no attribute 'column_name'": Check column names in get_model()
+                - "Column 'X' not found": You used unprefixed name in joined model (add table prefix)
+                - "time_range requires a time dimension": Add time dimension to dimensions parameter
             """
             if model_name not in self.models:
                 raise ValueError(f"Model {model_name} not found")
@@ -433,14 +553,4 @@ def create_mcp_server(
     models: Mapping[str, Any],
     name: str = "Semantic Layer MCP Server",
 ) -> MCPSemanticModel:
-    """
-    Create an MCP server for semantic models.
-
-    Args:
-        models: Dictionary mapping model names to SemanticTable instances
-        name: Name of the MCP server
-
-    Returns:
-        MCPSemanticModel instance ready to serve
-    """
     return MCPSemanticModel(models=models, name=name)
