@@ -47,6 +47,44 @@ def to_ibis(expr):
 
 
 class SemanticTable(ir.Table):
+    @property
+    def graph(self):
+        """Get the dependency graph for this semantic table.
+
+        Returns the dependency graph showing how dimensions and measures
+        relate to each other. This works on all semantic table types
+        (SemanticModel, joins, filters, group_by, etc.).
+
+        For joins, this merges graphs from both left and right sides.
+        For filters/limits/ordering, this returns the graph from the source.
+
+        Returns:
+            DependencyGraph with predecessors() and successors() methods
+        """
+        from .dependency_graph import DependencyGraph
+
+        op = self.op()
+
+        # For SemanticModel, get cached graph from the op
+        if hasattr(op, "graph"):
+            return op.graph
+
+        # For joins, merge graphs from left and right ops
+        if hasattr(op, "left") and hasattr(op, "right"):
+            merged = DependencyGraph()
+            if hasattr(op.left, "graph"):
+                merged.update(op.left.graph)
+            if hasattr(op.right, "graph"):
+                merged.update(op.right.graph)
+            return merged
+
+        # For pass-through nodes (filter, limit, order_by, group_by), get graph from source op
+        if hasattr(op, "source") and hasattr(op.source, "graph"):
+            return op.source.graph
+
+        # Fallback to empty graph
+        return DependencyGraph()
+
     def filter(self, predicate: Callable) -> SemanticFilter:
         return SemanticFilter(source=self.op(), predicate=predicate)
 
@@ -236,43 +274,6 @@ class SemanticModel(SemanticTable):
     @property
     def table(self):
         return self.op().table
-
-    @property
-    def graph(self):
-        """Get the dependency graph with full type information.
-
-        Returns a dict where keys are dimension/measure names and values are
-        dicts containing typed dependencies and field type.
-
-        Example:
-            sm = to_semantic_table(tbl).with_dimensions(
-                revenue = lambda t: t.quantity * t.price
-            ).with_measures(
-                total_revenue = lambda t: t.revenue.sum()
-            )
-
-            # Get the dependency graph
-            graph = sm.graph
-            # {
-            #   'revenue': {
-            #     'deps': {'quantity': 'column', 'price': 'column'},
-            #     'type': 'dimension'
-            #   },
-            #   'total_revenue': {
-            #     'deps': {'revenue': 'dimension'},
-            #     'type': 'measure'
-            #   }
-            # }
-
-            # Find what a field depends on
-            sm.graph['revenue']['deps']  # {'quantity': 'column', 'price': 'column'}
-            sm.graph['revenue']['type']  # 'dimension'
-
-            # Navigate the dependency graph
-            sm.graph.predecessors('revenue')  # {'quantity', 'price'}
-            sm.graph.successors('revenue')  # {'total_revenue'}
-        """
-        return self.op().graph
 
     def with_dimensions(self, **dims) -> SemanticModel:
         return SemanticModel(

@@ -324,3 +324,85 @@ def test_to_networkx_json():
     assert link_types[("price", "revenue")] == "column"
     assert link_types[("revenue", "total_revenue")] == "dimension"
     assert link_types[("revenue", "avg_revenue")] == "dimension"
+
+
+def test_graph_accessible_from_all_node_types():
+    """Test that graph is accessible from filter, group_by, join, etc."""
+    tbl = ibis.memtable(
+        {
+            "quantity": [10, 20, 30],
+            "price": [1.5, 2.0, 2.5],
+        }
+    )
+
+    sm = (
+        to_semantic_table(tbl)
+        .with_dimensions(revenue=lambda t: t.quantity * t.price)
+        .with_measures(total_revenue=lambda t: t.revenue.sum())
+    )
+
+    # Test graph on SemanticModel
+    model_graph = sm.graph
+    assert "revenue" in model_graph
+    assert "total_revenue" in model_graph
+
+    # Test graph on filtered table
+    filtered = sm.filter(lambda t: t.quantity > 15)
+    filtered_graph = filtered.graph
+    assert "revenue" in filtered_graph
+    assert "total_revenue" in filtered_graph
+
+    # Test graph on grouped table
+    grouped = sm.group_by("revenue")
+    grouped_graph = grouped.graph
+    assert "revenue" in grouped_graph
+    assert "total_revenue" in grouped_graph
+
+    # All graphs should be the same
+    assert model_graph == filtered_graph == grouped_graph
+
+
+def test_graph_merge_on_join():
+    """Test that graphs are computed correctly for joined semantic tables."""
+    flights_tbl = ibis.memtable(
+        {
+            "carrier_code": ["AA", "DL", "UA"],
+            "distance": [1000, 1500, 2000],
+        }
+    )
+
+    carriers_tbl = ibis.memtable(
+        {
+            "code": ["AA", "DL", "UA"],
+            "name": ["American", "Delta", "United"],
+        }
+    )
+
+    # Create two semantic tables with different dimensions/measures
+    flights = (
+        to_semantic_table(flights_tbl, name="flights")
+        .with_dimensions(carrier=lambda t: t.carrier_code)
+        .with_measures(total_distance=lambda t: t.distance.sum())
+    )
+
+    carriers = (
+        to_semantic_table(carriers_tbl, name="carriers")
+        .with_dimensions(carrier_name=lambda t: t.name)
+        .with_measures(carrier_count=lambda t: t.count())
+    )
+
+    # Join the tables
+    joined = flights.join_one(carriers, left_on="carrier_code", right_on="code")
+
+    # Graph should contain fields from both tables (without prefixes in graph keys)
+    graph = joined.graph
+    assert "carrier" in graph
+    assert "total_distance" in graph
+    assert "carrier_name" in graph
+    assert "carrier_count" in graph
+
+    # Verify dependencies are preserved
+    assert set(graph["carrier"]["deps"].keys()) == {"carrier_code"}
+    assert set(graph["total_distance"]["deps"].keys()) == {"distance"}
+    assert set(graph["carrier_name"]["deps"].keys()) == {"name"}
+    assert set(graph["carrier_count"]["deps"].keys()) == set()

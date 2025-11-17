@@ -532,16 +532,6 @@ class SemanticTableOp(Relation):
 
     @property
     def graph(self) -> dict[str, dict[str, Any]]:
-        """Get the dependency graph with type information.
-
-        Returns a dict mapping field names to their metadata:
-        {
-            'field_name': {
-                'deps': {'dep_name': 'column' | 'dimension' | 'measure'},
-                'type': 'dimension' | 'measure' | 'calc_measure'
-            }
-        }
-        """
         from .dependency_graph import build_dependency_graph
 
         return build_dependency_graph(
