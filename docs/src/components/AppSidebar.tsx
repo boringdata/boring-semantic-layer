@@ -42,6 +42,7 @@ const navigationStructure = [
           { title: "join_one() (+many/cross)", hash: "#join-one-join-many-join-cross" },
         ],
       },
+      { title: "Backend Profiles", path: "/building/profile" },
       { title: "Compose Models", path: "/building/compose" },
       { title: "YAML Config", path: "/building/yaml" },
     ],

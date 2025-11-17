@@ -13,7 +13,7 @@ repos:
       - id: codespell
         additional_dependencies:
           - tomli
-        args: ["--skip=*.ipynb,**/node_modules/**,**/package-lock.json", "--ignore-words-list=hastable"]
+        args: ["--skip=*.ipynb,**/node_modules/**,**/package-lock.json", "--ignore-words-list=hastable,notin"]
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
     rev: v0.11.13

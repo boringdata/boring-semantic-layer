@@ -14,17 +14,6 @@ from .utils import safe_eval
 
 
 def _parse_dimensions(dimensions: Mapping[str, Any]) -> dict[str, Dimension]:
-    """Parse dimension expressions from YAML configurations.
-
-    Supports two formats:
-    1. Simple format (backwards compatible): name: expression_string
-    2. Extended format with descriptions and time dimension info:
-        name:
-          expr: expression_string
-          description: "description text"
-          is_time_dimension: true/false
-          smallest_time_grain: "TIME_GRAIN_DAY"
-    """
     result: dict[str, Dimension] = {}
 
     from ibis import _
@@ -63,15 +52,6 @@ def _parse_dimensions(dimensions: Mapping[str, Any]) -> dict[str, Dimension]:
 
 
 def _parse_measures(measures: Mapping[str, Any]) -> dict[str, Measure]:
-    """Parse measure expressions from YAML configurations.
-
-    Supports two formats:
-    1. Simple format (backwards compatible): name: expression_string
-    2. Extended format with descriptions:
-        name:
-          expr: expression_string
-          description: "description text"
-    """
     result: dict[str, Measure] = {}
 
     from ibis import _
@@ -112,11 +92,6 @@ def _parse_joins(
     current_model_name: str,
     models: dict[str, SemanticModel],
 ) -> SemanticModel:
-    """Parse join configurations for a model.
-
-    Note: The alias in the join config is used to look up the model to join.
-    The actual prefix in queries will be based on the joined model's name property.
-    """
     result_model = models[current_model_name]
 
     for alias, join_config in joins_config.items():
@@ -186,62 +161,170 @@ def _parse_joins(
     return result_model
 
 
+def _resolve_table_references(tables: Mapping[str, Any]) -> dict[str, Any]:
+    resolved_tables = {}
+    if isinstance(tables, dict):
+        from .profile import load_profile
+
+        for table_name, table_ref in tables.items():
+            if isinstance(table_ref, tuple) and len(table_ref) in (2, 3):
+                if len(table_ref) == 2:
+                    profile_name, remote_table_name = table_ref
+                    profile_file_for_table = None
+                else:
+                    profile_name, remote_table_name, profile_file_for_table = table_ref
+
+                con = load_profile(profile_name, profile_file=profile_file_for_table)
+                resolved_tables[table_name] = con.table(remote_table_name)
+            else:
+                resolved_tables[table_name] = table_ref
+        return resolved_tables
+    return tables
+
+
+def _merge_tables_with_conflict_check(
+    existing_tables: dict[str, Any],
+    new_tables: dict[str, Any],
+    source_description: str,
+) -> dict[str, Any]:
+    conflicts = set(existing_tables.keys()) & set(new_tables.keys())
+    if conflicts:
+        raise ValueError(
+            f"Table name conflict from {source_description}: {', '.join(sorted(conflicts))}\n"
+            f"Tables with these names already exist in the tables dictionary.\n"
+            f"Ensure different profiles or table sources don't provide tables with the same name."
+        )
+    return {**existing_tables, **new_tables}
+
+
+def _load_profile_tables(profile: str | None, profile_path: str | None) -> dict[str, Any]:
+    import os
+
+    from .profile import load_tables_from_profile
+
+    if profile is None:
+        profile = os.environ.get("BSL_PROFILE")
+
+    if profile is not None:
+        return load_tables_from_profile(profile, profile_file=profile_path)
+    return {}
+
+
+def _load_yaml_profile_section(yaml_configs: dict) -> dict[str, Any]:
+    from .profile import ProfileError, _create_connection_from_config, load_tables_from_profile
+
+    profile_config = yaml_configs["profile"]
+
+    if isinstance(profile_config, str):
+        return load_tables_from_profile(profile_config)
+
+    if isinstance(profile_config, dict):
+        if "type" in profile_config:
+            try:
+                connection = _create_connection_from_config(profile_config.copy())
+                table_names = connection.list_tables()
+                return {name: connection.table(name) for name in table_names}
+            except ProfileError:
+                raise
+            except Exception as e:
+                raise ValueError(
+                    f"Failed to load inline profile configuration.\n"
+                    f"Error: {e}\n\n"
+                    f"Check that:\n"
+                    f"  - Connection details are correct\n"
+                    f"  - Required environment variables are set\n"
+                    f"  - Table sources (files/URLs) are accessible"
+                ) from e
+        else:
+            profile_name = profile_config.get("name")
+            profile_file = profile_config.get("file")
+            table_names = profile_config.get("tables")
+
+            if not profile_name:
+                raise ValueError("Profile section must specify 'name' or 'type' field")
+
+            return load_tables_from_profile(
+                profile_name,
+                table_names=table_names,
+                profile_file=profile_file,
+            )
+
+    raise ValueError("Profile section must be a string or dict")
+
+
+def _load_model_profile(config: dict, table_name: str) -> dict[str, Any]:
+    from .profile import load_tables_from_profile
+
+    model_profile = config["profile"]
+
+    if isinstance(model_profile, str):
+        return load_tables_from_profile(model_profile, table_names=[table_name])
+
+    if isinstance(model_profile, dict):
+        profile_name = model_profile.get("name")
+        profile_file = model_profile.get("file")
+
+        if not profile_name:
+            raise ValueError("Profile section must specify 'name' field")
+
+        return load_tables_from_profile(
+            profile_name,
+            table_names=[table_name],
+            profile_file=profile_file,
+        )
+
+    raise ValueError("Profile must be a string or dict")
+
+
 def from_yaml(
     yaml_path: str,
     tables: Mapping[str, Any] | None = None,
+    profile: str | None = None,
+    profile_path: str | None = None,
 ) -> dict[str, SemanticModel]:
-    """
-    Load semantic tables from a YAML file.
-
-    Args:
-        yaml_path: Path to the YAML configuration file
-        tables: Optional mapping of table names to ibis table expressions
-
-    Returns:
-        Dict mapping model names to SemanticModel instances
-
-    Example YAML format:
-        flights:
-          table: flights_tbl
-          description: "Flight data model"
-          dimensions:
-            origin: _.origin
-            destination: _.destination
-            carrier: _.carrier
-            arr_time:
-              expr: _.arr_time
-              description: "Arrival time"
-              is_time_dimension: true
-              smallest_time_grain: "TIME_GRAIN_DAY"
-          measures:
-            flight_count: _.count()
-            avg_distance: _.distance.mean()
-            total_distance:
-              expr: _.distance.sum()
-              description: "Total distance flown"
-          joins:
-            carriers:
-              model: carriers
-              type: one
-              left_on: carrier
-              right_on: code
-    """
+    """Load semantic models from a YAML file with optional profile-based table loading."""
     if tables is None:
         tables = {}
 
+    tables = _resolve_table_references(tables)
+
+    profile_tables = _load_profile_tables(profile, profile_path)
+    if profile_tables:
+        tables = _merge_tables_with_conflict_check(
+            tables, profile_tables, f"profile parameter '{profile}'"
+        )
+
     with open(yaml_path) as f:
         yaml_configs = yaml.safe_load(f)
+
+    if "profile" in yaml_configs and not tables:
+        profile_tables = _load_yaml_profile_section(yaml_configs)
+        if profile_tables:
+            tables = _merge_tables_with_conflict_check(
+                tables, profile_tables, "YAML profile section"
+            )
 
     models: dict[str, SemanticModel] = {}
 
     # First pass: create models without joins
     for name, config in yaml_configs.items():
+        # Skip special sections
+        if name == "profile":
+            continue
+
         if not isinstance(config, dict):
             continue
 
         table_name = config.get("table")
         if not table_name:
             raise ValueError(f"Model '{name}' must specify 'table' field")
+
+        # Check if this model has its own profile (table-level)
+        if "profile" in config:
+            profile_tables = _load_model_profile(config, table_name)
+            tables = _merge_tables_with_conflict_check(
+                tables, profile_tables, f"table-level profile for model '{name}'"
+            )
 
         if table_name not in tables:
             available = ", ".join(
