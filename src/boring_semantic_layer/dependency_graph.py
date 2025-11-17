@@ -42,7 +42,7 @@ class DependencyGraph(dict):
 
                 # Classify each dependency
                 deps_with_types = _classify_dependencies(
-                    fields, dimensions, measures, calc_measures
+                    fields, dimensions, measures, calc_measures, current_field=name
                 )
 
                 self[name] = {
@@ -121,9 +121,7 @@ class DependencyGraph(dict):
         extended_table = _build_extended_table(base_table, dimensions)
 
         # Extract dependencies for dimensions and measures
-        graph._extract_field_deps(
-            dimensions, measures, calc_measures, base_table, extended_table
-        )
+        graph._extract_field_deps(dimensions, measures, calc_measures, base_table, extended_table)
 
         # Extract calculated measure dependencies
         graph._extract_calc_measure_deps(calc_measures)
@@ -163,16 +161,21 @@ def _add_previous_dimensions(table: ir.Table, dimensions: dict, current_name: st
 
 
 def _classify_dependencies(
-    fields: list, dimensions: dict, measures: dict, calc_measures: dict
+    fields: list,
+    dimensions: dict,
+    measures: dict,
+    calc_measures: dict,
+    current_field: str | None = None,
 ) -> dict[str, str]:
+    """Classify field dependencies, excluding the current field being processed to avoid self-references."""
     deps_with_types = {}
     for f in fields:
-        if f.name in dimensions:
+        # Don't classify a field as a dimension/measure if it's the field we're currently processing
+        # (e.g., dimension "origin" referencing column "origin" should be classified as "column", not "dimension")
+        if f.name in dimensions and f.name != current_field:
             deps_with_types[f.name] = "dimension"
         elif f.name in measures or f.name in calc_measures:
             deps_with_types[f.name] = "measure"
         else:
             deps_with_types[f.name] = "column"
     return deps_with_types
-
-
