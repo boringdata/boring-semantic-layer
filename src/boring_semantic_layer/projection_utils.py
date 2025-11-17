@@ -100,6 +100,13 @@ def extract_columns_from_callable(
         if isinstance(result, ir.Expr):
             return extract_column_names(result)
         return Success(frozenset())
+    except AttributeError as e:
+        # If the error is about dimension validation, preserve it
+        if "Dimension expression references non-existent column" in str(e):
+            logger.debug(f"Dimension expression error (preserved): {e}")
+            return Failure(e)
+        logger.debug(f"Failed to extract columns from callable: {e}")
+        return Failure(e)
     except Exception as e:
         logger.debug(f"Failed to extract columns from callable: {e}")
         return Failure(e)
@@ -219,6 +226,13 @@ def _extract_requirement_for_key(
             cols = result.unwrap() & available_cols
             if cols:
                 return apply_requirements_to_tables(current_reqs, table_names, cols)
+        elif isinstance(result, Failure):
+            # If the failure is about a dimension validation error, raise it immediately
+            exc = result.failure()
+            if isinstance(
+                exc, AttributeError
+            ) and "Dimension expression references non-existent column" in str(exc):
+                raise exc
         return current_reqs
 
     # If not a dimension and we have a table prefix, assume col_name is a direct column reference
