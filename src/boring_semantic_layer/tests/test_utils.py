@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import pytest
 from ibis import _
 from returns.result import Failure, Success
 
 from boring_semantic_layer.utils import (
-    SafeEvalError,
     expr_to_ibis_string,
     ibis_string_to_expr,
     safe_eval,

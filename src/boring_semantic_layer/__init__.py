@@ -24,6 +24,10 @@ from .ops import (
     Dimension,
     Measure,
 )
+from .profile import (
+    Profile,
+    load_profile,
+)
 from .yaml import (
     from_yaml,
 )
@@ -40,6 +44,8 @@ __all__ = [
     "options",
     "to_xorq",
     "from_xorq",
+    "Profile",
+    "load_profile",
 ]
 
 # Import MCP functionality from separate module if available
