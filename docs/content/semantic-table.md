@@ -172,28 +172,17 @@ flights_with_deps.graph['avg_distance_per_flight']['deps']
 ```
 <regularoutput code-block="graph_structure"></regularoutput>
 
-### Finding Dependents (Reverse Dependencies)
+### Reverse Dependencies
 
-Use `get_dependents()` to find which fields depend on a given field:
+Find what depends on a field using `get_dependents()`:
 
 ```graph_dependents
 from boring_semantic_layer.dependency_graph import get_dependents
 
-# Build reverse index: field → fields that depend on it
 dependents = get_dependents(flights_with_deps.graph)
-
-# Find what depends on total_distance
-dependents['total_distance']
+dependents['total_distance']  # {'avg_distance_per_flight'}
 ```
 <regularoutput code-block="graph_dependents"></regularoutput>
-
-<note type="info">
-The dependency graph is particularly useful when:
-- Refactoring dimensions or measures
-- Understanding complex calculated measures
-- Generating documentation or lineage diagrams
-- Validating model structure
-</note>
 
 ## join_one() / join_many() / join_cross()
 
