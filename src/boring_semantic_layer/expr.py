@@ -83,10 +83,7 @@ class SemanticTable(ir.Table):
                         f"{left_name}.{dep_name}" if left_name else dep_name: dep_type
                         for dep_name, dep_type in field_data["deps"].items()
                     }
-                    merged[prefixed_name] = {
-                        "deps": prefixed_deps,
-                        "type": field_data["type"]
-                    }
+                    merged[prefixed_name] = {"deps": prefixed_deps, "type": field_data["type"]}
 
             # Add right graph with prefixes (both field names and their dependencies)
             if hasattr(op.right, "graph") and hasattr(op.right, "name"):
@@ -98,10 +95,7 @@ class SemanticTable(ir.Table):
                         f"{right_name}.{dep_name}" if right_name else dep_name: dep_type
                         for dep_name, dep_type in field_data["deps"].items()
                     }
-                    merged[prefixed_name] = {
-                        "deps": prefixed_deps,
-                        "type": field_data["type"]
-                    }
+                    merged[prefixed_name] = {"deps": prefixed_deps, "type": field_data["type"]}
 
             return merged
 

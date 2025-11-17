@@ -107,21 +107,21 @@ def chart(
 def _register_builtin_backends():
     """Register all built-in chart backends."""
     try:
-        from .altair_backend import AltairBackend
+        from .altair_chart import AltairBackend
 
         register_backend("altair", AltairBackend)
     except ImportError:
         pass  # Altair not installed
 
     try:
-        from .plotly_backend import PlotlyBackend
+        from .plotly_chart import PlotlyBackend
 
         register_backend("plotly", PlotlyBackend)
     except ImportError:
         pass  # Plotly not installed
 
     try:
-        from .plotext_backend import PlotextBackend
+        from .plotext_chart import PlotextBackend
 
         register_backend("plotext", PlotextBackend)
     except ImportError:

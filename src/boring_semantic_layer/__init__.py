@@ -49,9 +49,9 @@ __all__ = [
     "load_tables_from_profile",
 ]
 
-# Import MCP functionality from separate module if available
+# Import MCP functionality from agents module if available
 try:
-    from .mcp import MCPSemanticModel  # noqa: F401
+    from .agents.mcp import MCPSemanticModel  # noqa: F401
 
     _MCP_AVAILABLE = True
 except ImportError:

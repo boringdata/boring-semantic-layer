@@ -1,0 +1,14 @@
+# Example profiles.yml file
+# Place this file in your project root directory
+
+# DuckDB with parquet files automatically loaded as views
+# This demonstrates the tables feature for DuckDB profiles
+my_flights_db:
+  type: duckdb
+  database: ":memory:"
+  # Automatically load parquet files as DuckDB views
+  tables:
+    flights_tbl:
+      source: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/flights.parquet"
+    carriers_tbl:
+      source: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/carriers.parquet"

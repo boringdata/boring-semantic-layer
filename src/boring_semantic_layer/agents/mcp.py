@@ -8,7 +8,7 @@ from fastmcp import FastMCP
 from pydantic import Field
 from pydantic.functional_validators import BeforeValidator
 
-from .query import _find_time_dimension
+from ..query import _find_time_dimension
 
 
 def _parse_json_string(v: Any) -> Any:

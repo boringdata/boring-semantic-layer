@@ -14,76 +14,28 @@ Benefits of YAML configuration:
 
 from pathlib import Path
 
-import ibis
-import pandas as pd
-
 from boring_semantic_layer import from_yaml
-
-BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
 
 
 def main():
     print("=" * 80)
-    print("  Example: Loading Semantic Models from YAML")
+    print("  Example: Loading Semantic Models from YAML with Profiles")
     print("=" * 80)
 
     # ============================================================================
-    # STEP 1: Load the underlying data tables
+    # STEP 1: Load semantic models from YAML using profiles
     # ============================================================================
     print("\n" + "-" * 80)
-    print("STEP 1: Load underlying data tables from remote datasets")
+    print("STEP 1: Load semantic models from YAML using profiles")
     print("-" * 80)
-
-    con = ibis.duckdb.connect(":memory:")
-
-    # Create carriers table
-    carriers_df = pd.DataFrame(
-        {
-            "code": ["AA", "UA", "DL", "SW"],
-            "name": [
-                "American Airlines",
-                "United Airlines",
-                "Delta Airlines",
-                "Southwest Airlines",
-            ],
-            "nickname": ["American", "United", "Delta", "Southwest"],
-        },
-    )
-    carriers_tbl = con.create_table("carriers", carriers_df)
-
-    # Create flights table
-    flights_df = pd.DataFrame(
-        {
-            "carrier": ["AA", "UA", "DL", "AA", "SW", "UA"],
-            "origin": ["JFK", "LAX", "ATL", "JFK", "DAL", "ORD"],
-            "destination": ["LAX", "JFK", "ORD", "ATL", "HOU", "LAX"],
-            "dep_delay": [10, -5, 20, 0, 15, 30],
-            "distance": [2475, 2475, 606, 760, 239, 1744],
-            "arr_time": pd.date_range("2024-01-01", periods=6, freq="h"),
-        },
-    )
-    flights_tbl = con.create_table("flights", flights_df)
-
-    print("\n✓ Created 2 tables:")
-    print(f"  - carriers_tbl: {len(carriers_df)} rows")
-    print(f"  - flights_tbl: {len(flights_df)} rows")
-
-    # ============================================================================
-    # STEP 2: Load semantic models from YAML
-    # ============================================================================
-    print("\n" + "-" * 80)
-    print("STEP 2: Load semantic models from YAML")
-    print("-" * 80)
+    print("\n💡 This example uses profiles.yml to define the database connection")
+    print("   and automatically load tables from remote parquet files.")
 
     # Load models from YAML file (path relative to this script)
+    # The yaml_example.yml file references the 'my_flights_db' profile
+    # which is defined in profiles.yml
     yaml_path = Path(__file__).parent / "yaml_example.yml"
-    models = from_yaml(
-        str(yaml_path),
-        tables={
-            "carriers_tbl": carriers_tbl,
-            "flights_tbl": flights_tbl,
-        },
-    )
+    models = from_yaml(str(yaml_path))
 
     print(f"\n✓ Loaded {len(models)} models from YAML:")
     for name in models:

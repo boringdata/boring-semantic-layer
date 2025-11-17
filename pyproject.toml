@@ -18,13 +18,31 @@ license-files = [
 ]
 
 [project.optional-dependencies]
+# Core optional features
 examples = ["ibis-framework[duckdb]>=10.6.0", "xorq", "duckdb<1.4"]
 xorq = ["xorq"]
+sql = ["sqlglot>=25.0.0"]
+fastmcp = ["fastmcp>=2.12.4"]
+
+# Visualization backends
 viz-altair = ["altair>=5.0.0", "vl-convert-python>=1.0.0"]
 viz-plotly = ["plotly>=6.3.0", "kaleido", "nbformat>=4.2.0"]
-viz-plotext = ["plotext>=5.0.0"]
-sql = ["sqlglot>=25.0.0"]
-cli = ["boring-semantic-layer[sql,viz-plotext]"]
+viz-plotext = ["plotext>=5.0.0", "rich>=13.0.0"]
+
+# Chat/Agent integrations (grouped together)
+chat = [
+    "langchain>=0.3.0",
+    "python-dotenv>=1.0.0",
+    "boring-semantic-layer[sql,viz-plotext]"
+]
+chat-slack = ["slack-bolt>=1.18.0", "boring-semantic-layer[chat,viz-plotly]"]
+
+# Legacy aliases (for backward compatibility)
+langchain = ["boring-semantic-layer[chat]"]
+slack = ["boring-semantic-layer[chat-slack]"]
+cli = ["boring-semantic-layer[chat]"]
+
+# Development
 dev = [
     "boring-semantic-layer[fastmcp,examples,xorq,viz-altair,viz-plotly]",
     "ruff>=0.6.7",
@@ -34,9 +52,6 @@ dev = [
     "urllib3>=2.2.3",
     "pytest-asyncio",
     "malloy>=0.1.0", # Malloy tests
-]
-fastmcp = [
-    "fastmcp>=2.12.4",
 ]
 
 [project.scripts]

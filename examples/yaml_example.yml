@@ -1,6 +1,10 @@
 # Example YAML configuration for flights semantic model
 # This demonstrates the YAML loader for the Boring Semantic Layer
 
+# Profile to use for database connection
+# References the 'my_flights_db' profile from profile.yml
+profile: my_flights_db
+
 carriers:
   table: carriers_tbl
   description: "Airline carrier information"

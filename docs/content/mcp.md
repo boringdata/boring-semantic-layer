@@ -21,7 +21,7 @@ Create an MCP server script that exposes your semantic models:
 ```python
 import ibis
 from boring_semantic_layer.semantic_api import to_semantic_table
-from boring_semantic_layer.api.mcp import MCPSemanticModel
+from boring_semantic_layer import MCPSemanticModel
 
 # Create synthetic flights data
 flights_data = ibis.memtable({

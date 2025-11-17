@@ -232,7 +232,7 @@ def render_table_html(table_data: dict) -> str:
             # Format cell value
             if cell is None:
                 cell_str = "null"
-            elif isinstance(cell, (int, float)):
+            elif isinstance(cell, int | float):
                 cell_str = f"{cell:,}" if isinstance(cell, int) else f"{cell:.2f}"
             else:
                 cell_str = str(cell)

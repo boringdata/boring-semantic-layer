@@ -127,11 +127,25 @@ class ChartBackend(ABC):
 
         # Extract dimensions and measures from the operation chain
         aggregate_op = semantic_aggregate.op()
+
+        # Handle mutate operations - they wrap the aggregate
+        mutated_columns = []
+        if (
+            hasattr(aggregate_op, "__class__")
+            and aggregate_op.__class__.__name__ == "SemanticMutateOp"
+        ):
+            # Extract mutated column names from the post transformations
+            if hasattr(aggregate_op, "post"):
+                mutated_columns = list(aggregate_op.post.keys())
+            # Navigate to the underlying aggregate op
+            aggregate_op = aggregate_op.source
+
         while hasattr(aggregate_op, "source") and not hasattr(aggregate_op, "aggs"):
             aggregate_op = aggregate_op.source
 
         dimensions = list(aggregate_op.keys)
-        measures = list(aggregate_op.aggs.keys())
+        # Combine original aggregated measures with mutated columns
+        measures = list(aggregate_op.aggs.keys()) + mutated_columns
 
         # Try to detect time dimension from source
         time_dimension = None
@@ -148,6 +162,48 @@ class ChartBackend(ABC):
 
         # Execute query to get data
         df = semantic_aggregate.execute()
+
+        # If no time dimension found from metadata, check dataframe column types
+        if not time_dimension and len(dimensions) > 0:
+            import pandas as pd
+
+            for dim_name in dimensions:
+                if dim_name in df.columns:
+                    dtype = df[dim_name].dtype
+                    # Check if column is datetime or date type
+                    if pd.api.types.is_datetime64_any_dtype(dtype):
+                        time_dimension = dim_name
+                        break
+
+            # Also check if dimension is derived from a time dimension using dependency graph
+            if not time_dimension and all_roots:
+                try:
+                    # Get the dependency graph from the semantic aggregate
+                    graph = semantic_aggregate.graph
+
+                    # Check each dimension to see if it depends on a time dimension
+                    for dim_name in dimensions:
+                        if dim_name in graph:
+                            # Get all predecessors (dependencies) of this dimension
+                            predecessors = graph.predecessors(dim_name)
+
+                            # Check if any predecessor is a time dimension
+                            for pred_name in predecessors:
+                                # Check if this predecessor is a time dimension in the model
+                                if pred_name in dims_dict:
+                                    pred_obj = dims_dict[pred_name]
+                                    if (
+                                        hasattr(pred_obj, "is_time_dimension")
+                                        and pred_obj.is_time_dimension
+                                    ):
+                                        time_dimension = dim_name
+                                        break
+
+                            if time_dimension:
+                                break
+                except (AttributeError, KeyError):
+                    # Graph not available or dimension not in graph
+                    pass
 
         # Detect chart type
         chart_type = self.detect_chart_type(dimensions, measures, time_dimension, time_grain)

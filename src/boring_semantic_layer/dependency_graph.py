@@ -121,9 +121,7 @@ class DependencyGraph(dict):
         extended_table = _build_extended_table(base_table, dimensions)
 
         # Extract dependencies for dimensions and measures
-        graph._extract_field_deps(
-            dimensions, measures, calc_measures, base_table, extended_table
-        )
+        graph._extract_field_deps(dimensions, measures, calc_measures, base_table, extended_table)
 
         # Extract calculated measure dependencies
         graph._extract_calc_measure_deps(calc_measures)
@@ -174,5 +172,3 @@ def _classify_dependencies(
         else:
             deps_with_types[f.name] = "column"
     return deps_with_types
-
-
