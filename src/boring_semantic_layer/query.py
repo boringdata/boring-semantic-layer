@@ -299,6 +299,14 @@ def _normalize_filter(
 
 
 @curry
+def _make_time_range_filter(time_dim_name: str, start: str, end: str) -> Callable:
+    """Create time range filter predicate (curried)."""
+    return lambda t, dim=time_dim_name, s=start, e=end: (
+        (t[dim] >= ibis.timestamp(s)) & (t[dim] <= ibis.timestamp(e))
+    )
+
+
+@curry
 def _make_order_key(field: str, direction: str):
     """Create order key for sorting (curried)."""
     return ibis.desc(field) if direction.lower() == "desc" else field
@@ -377,10 +385,13 @@ def query(
                 "Mark a dimension as a time dimension using: "
                 ".with_dimensions(dim_name={'expr': lambda t: t.column, 'is_time_dimension': True})"
             )
-
-        # Add two filters for the time range: >= start AND <= end
-        filters.append({"field": time_dim_name, "operator": ">=", "value": time_range["start"]})
-        filters.append({"field": time_dim_name, "operator": "<=", "value": time_range["end"]})
+        filters.append(
+            _make_time_range_filter(
+                time_dim_name,
+                time_range["start"],
+                time_range["end"],
+            ),
+        )
 
     # Step 1: Handle time grain transformations
     if time_grain:
