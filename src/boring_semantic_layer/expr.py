@@ -89,9 +89,18 @@ class SemanticTable(ir.Table):
 
             return merged
 
-        # For pass-through nodes (filter, limit, order_by, group_by), get graph from source op
-        if hasattr(op, "source") and hasattr(op.source, "graph"):
-            return op.source.graph
+        # For pass-through nodes (filter, limit, order_by, group_by, aggregate), get graph from source
+        # Traverse through the source chain until we find a graph
+        if hasattr(op, "source"):
+            current = op.source
+            while current is not None:
+                if hasattr(current, "graph"):
+                    return current.graph
+                # Continue traversing if this node has a source
+                if hasattr(current, "source"):
+                    current = current.source
+                else:
+                    break
 
         # Fallback to empty graph
         return DependencyGraph()

@@ -327,17 +327,21 @@ def test_to_networkx_json():
 
 
 def test_graph_accessible_from_all_node_types():
-    """Test that graph is accessible from filter, group_by, join, etc."""
+    """Test that graph is accessible from all semantic table node types."""
     tbl = ibis.memtable(
         {
             "quantity": [10, 20, 30],
             "price": [1.5, 2.0, 2.5],
+            "category": ["A", "B", "A"],
         }
     )
 
     sm = (
         to_semantic_table(tbl)
-        .with_dimensions(revenue=lambda t: t.quantity * t.price)
+        .with_dimensions(
+            revenue=lambda t: t.quantity * t.price,
+            cat=lambda t: t.category,
+        )
         .with_measures(total_revenue=lambda t: t.revenue.sum())
     )
 
@@ -346,20 +350,45 @@ def test_graph_accessible_from_all_node_types():
     assert "revenue" in model_graph
     assert "total_revenue" in model_graph
 
-    # Test graph on filtered table
+    # Test graph on SemanticFilter
     filtered = sm.filter(lambda t: t.quantity > 15)
     filtered_graph = filtered.graph
     assert "revenue" in filtered_graph
     assert "total_revenue" in filtered_graph
 
-    # Test graph on grouped table
+    # Test graph on SemanticGroupBy
     grouped = sm.group_by("revenue")
     grouped_graph = grouped.graph
     assert "revenue" in grouped_graph
     assert "total_revenue" in grouped_graph
 
-    # All graphs should be the same
-    assert model_graph == filtered_graph == grouped_graph
+    # Test graph on SemanticAggregate
+    aggregated = sm.group_by("cat").aggregate("total_revenue")
+    aggregated_graph = aggregated.graph
+    assert "revenue" in aggregated_graph
+    assert "total_revenue" in aggregated_graph
+
+    # Test graph on SemanticOrderBy
+    ordered = sm.order_by("revenue")
+    ordered_graph = ordered.graph
+    assert "revenue" in ordered_graph
+    assert "total_revenue" in ordered_graph
+
+    # Test graph on SemanticLimit
+    limited = sm.limit(2)
+    limited_graph = limited.graph
+    assert "revenue" in limited_graph
+    assert "total_revenue" in limited_graph
+
+    # Test graph on SemanticMutate
+    mutated = sm.mutate(double_qty=lambda t: t.quantity * 2)
+    mutated_graph = mutated.graph
+    assert "revenue" in mutated_graph
+    assert "total_revenue" in mutated_graph
+
+    # All graphs should be the same (pass-through nodes)
+    assert model_graph == filtered_graph == grouped_graph == aggregated_graph
+    assert model_graph == ordered_graph == limited_graph == mutated_graph
 
 
 def test_graph_merge_on_join():
