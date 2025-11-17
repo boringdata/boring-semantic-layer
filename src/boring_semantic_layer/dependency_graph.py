@@ -15,6 +15,68 @@ class DependencyGraph(dict):
     Extends dict to provide methods for querying dependencies between fields.
     """
 
+    def _extract_field_deps(
+        self,
+        dimensions: dict,
+        measures: dict,
+        calc_measures: dict,
+        base_table: ir.Table,
+        extended_table: ir.Table,
+    ) -> None:
+        """Extract dependencies for dimensions and measures.
+
+        Args:
+            dimensions: Dict of dimension name -> Dimension object
+            measures: Dict of measure name -> Measure object
+            calc_measures: Dict of calc measure name -> MeasureRef/BinOp/etc
+            base_table: The base table
+            extended_table: Table with dimensions added
+        """
+        from .graph_utils import to_node
+
+        for name, obj in {**dimensions, **measures}.items():
+            try:
+                # Determine which table to use for resolution
+                table = extended_table if name in measures else base_table
+
+                # Add previous dimensions if resolving a dimension
+                if name in dimensions:
+                    table = _add_previous_dimensions(table, dimensions, name)
+
+                # Resolve expression and extract field dependencies
+                resolved = _resolve_expr(obj.expr, table)
+                table_op = to_node(table)
+                fields = [
+                    f
+                    for f in walk_nodes(Field, resolved)
+                    if hasattr(f, "name") and hasattr(f, "rel") and f.rel == table_op
+                ]
+
+                # Classify each dependency
+                deps_with_types = _classify_dependencies(
+                    fields, dimensions, measures, calc_measures
+                )
+
+                self[name] = {
+                    "deps": deps_with_types,
+                    "type": "dimension" if name in dimensions else "measure",
+                }
+            except Exception:
+                self[name] = {"deps": {}, "type": "dimension" if name in dimensions else "measure"}
+
+    def _extract_calc_measure_deps(self, calc_measures: dict) -> None:
+        """Extract dependencies for calculated measures.
+
+        Args:
+            calc_measures: Dict of calc measure name -> MeasureRef/BinOp/etc
+        """
+        for name, calc_expr in calc_measures.items():
+            refs = set()
+            _collect_measure_refs(calc_expr, refs)
+            # All calc measure deps are other measures
+            deps_with_types = {ref: "measure" for ref in refs}
+            self[name] = {"deps": deps_with_types, "type": "calc_measure"}
+
     def predecessors(self, node: str) -> set[str]:
         """Get nodes that this node depends on (incoming edges).
 
@@ -99,97 +161,47 @@ class DependencyGraph(dict):
             "links": links,
         }
 
+    @classmethod
+    def build(
+        cls,
+        dimensions: dict,
+        measures: dict,
+        calc_measures: dict,
+        base_table: ir.Table,
+    ) -> DependencyGraph:
+        """Build a dependency graph from dimensions and measures.
 
-def build_dependency_graph(
-    dimensions: dict,
-    measures: dict,
-    calc_measures: dict,
-    base_table: ir.Table,
-) -> DependencyGraph:
-    """Build a dependency graph: field -> {deps, type}.
+        Args:
+            dimensions: Dict of dimension name -> Dimension object
+            measures: Dict of measure name -> Measure object
+            calc_measures: Dict of calc measure name -> MeasureRef/BinOp/etc
+            base_table: The base table to resolve expressions
 
-    Args:
-        dimensions: Dict of dimension name -> Dimension object
-        measures: Dict of measure name -> Measure object
-        calc_measures: Dict of calc measure name -> MeasureRef/BinOp/etc
-        base_table: The base table to resolve expressions
-
-    Returns:
-        Dict mapping field names to their metadata:
-        {
-            'field_name': {
-                'deps': {
-                    'dep_name': 'column' | 'dimension' | 'measure'
-                },
-                'type': 'dimension' | 'measure' | 'calc_measure'
+        Returns:
+            DependencyGraph mapping field names to their metadata:
+            {
+                'field_name': {
+                    'deps': {
+                        'dep_name': 'column' | 'dimension' | 'measure'
+                    },
+                    'type': 'dimension' | 'measure' | 'calc_measure'
+                }
             }
-        }
-    """
-    from .graph_utils import to_node
+        """
+        graph = cls()
 
-    graph = DependencyGraph()
+        # Build extended table with all dimensions
+        extended_table = _build_extended_table(base_table, dimensions)
 
-    # Build extended table with all dimensions
-    extended_table = base_table
-    for dim_name, dim in dimensions.items():
-        try:
-            resolved = _resolve_expr(dim.expr, extended_table)
-            extended_table = extended_table.mutate(**{dim_name: resolved})
-        except Exception:
-            pass
+        # Extract dependencies for dimensions and measures
+        graph._extract_field_deps(
+            dimensions, measures, calc_measures, base_table, extended_table
+        )
 
-    # Extract dependencies for dimensions and measures
-    for name, obj in {**dimensions, **measures}.items():
-        try:
-            # Determine which table to use for resolution
-            table = extended_table if name in measures else base_table
+        # Extract calculated measure dependencies
+        graph._extract_calc_measure_deps(calc_measures)
 
-            # Add previous dimensions if resolving a dimension
-            if name in dimensions:
-                for prev_name, prev_dim in dimensions.items():
-                    if prev_name == name:
-                        break
-                    try:
-                        resolved = _resolve_expr(prev_dim.expr, table)
-                        table = table.mutate(**{prev_name: resolved})
-                    except Exception:
-                        pass
-
-            # Resolve expression and extract field dependencies
-            resolved = _resolve_expr(obj.expr, table)
-            table_op = to_node(table)
-            fields = [
-                f
-                for f in walk_nodes(Field, resolved)
-                if hasattr(f, "name") and hasattr(f, "rel") and f.rel == table_op
-            ]
-
-            # Classify each dependency
-            deps_with_types = {}
-            for f in fields:
-                if f.name in dimensions:
-                    deps_with_types[f.name] = "dimension"
-                elif f.name in measures or f.name in calc_measures:
-                    deps_with_types[f.name] = "measure"
-                else:
-                    deps_with_types[f.name] = "column"
-
-            graph[name] = {
-                "deps": deps_with_types,
-                "type": "dimension" if name in dimensions else "measure",
-            }
-        except Exception:
-            graph[name] = {"deps": {}, "type": "dimension" if name in dimensions else "measure"}
-
-    # Extract calculated measure dependencies
-    for name, calc_expr in calc_measures.items():
-        refs = set()
-        _collect_measure_refs(calc_expr, refs)
-        # All calc measure deps are other measures
-        deps_with_types = {ref: "measure" for ref in refs}
-        graph[name] = {"deps": deps_with_types, "type": "calc_measure"}
-
-    return graph
+        return graph
 
 
 def _resolve_expr(expr, table):
@@ -199,3 +211,72 @@ def _resolve_expr(expr, table):
     elif callable(expr):
         return expr(table)
     return expr
+
+
+def _build_extended_table(base_table: ir.Table, dimensions: dict) -> ir.Table:
+    """Build table with all dimensions added.
+
+    Args:
+        base_table: The base table
+        dimensions: Dict of dimension name -> Dimension object
+
+    Returns:
+        Table with all dimensions mutated in
+    """
+    extended_table = base_table
+    for dim_name, dim in dimensions.items():
+        try:
+            resolved = _resolve_expr(dim.expr, extended_table)
+            extended_table = extended_table.mutate(**{dim_name: resolved})
+        except Exception:
+            pass
+    return extended_table
+
+
+def _add_previous_dimensions(table: ir.Table, dimensions: dict, current_name: str) -> ir.Table:
+    """Add all dimensions defined before the current one to the table.
+
+    Args:
+        table: The table to extend
+        dimensions: Dict of dimension name -> Dimension object
+        current_name: Name of current dimension being processed
+
+    Returns:
+        Table with previous dimensions added
+    """
+    for prev_name, prev_dim in dimensions.items():
+        if prev_name == current_name:
+            break
+        try:
+            resolved = _resolve_expr(prev_dim.expr, table)
+            table = table.mutate(**{prev_name: resolved})
+        except Exception:
+            pass
+    return table
+
+
+def _classify_dependencies(
+    fields: list, dimensions: dict, measures: dict, calc_measures: dict
+) -> dict[str, str]:
+    """Classify field dependencies as 'column', 'dimension', or 'measure'.
+
+    Args:
+        fields: List of Field nodes from expression
+        dimensions: Dict of dimension names
+        measures: Dict of measure names
+        calc_measures: Dict of calc measure names
+
+    Returns:
+        Dict mapping field name to dependency type
+    """
+    deps_with_types = {}
+    for f in fields:
+        if f.name in dimensions:
+            deps_with_types[f.name] = "dimension"
+        elif f.name in measures or f.name in calc_measures:
+            deps_with_types[f.name] = "measure"
+        else:
+            deps_with_types[f.name] = "column"
+    return deps_with_types
+
+

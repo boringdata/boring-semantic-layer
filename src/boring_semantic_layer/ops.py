@@ -532,9 +532,9 @@ class SemanticTableOp(Relation):
 
     @property
     def graph(self) -> dict[str, dict[str, Any]]:
-        from .dependency_graph import build_dependency_graph
+        from .dependency_graph import DependencyGraph
 
-        return build_dependency_graph(
+        return DependencyGraph.build(
             self.get_dimensions(),
             self.get_measures(),
             self.get_calculated_measures(),
