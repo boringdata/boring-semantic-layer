@@ -204,6 +204,14 @@ def _extract_requirement_for_key(
     # First check if the key (with or without prefix) is a dimension
     # This handles both 'orders.category' and 'category' dimension lookups
     dim_fn = dimensions.get(key)
+    if not dim_fn and not table_name:
+        # If key is unqualified and not found, try qualified names with each table
+        for tname in table_names:
+            qualified_key = f"{tname}.{key}"
+            if qualified_key in dimensions:
+                dim_fn = dimensions[qualified_key]
+                break
+
     if dim_fn:
         # Extract columns from the dimension's callable expression
         result = extract_columns_from_callable(dim_fn, table)
