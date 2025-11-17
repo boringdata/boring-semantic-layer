@@ -940,9 +940,9 @@ class SemanticAggregateOp(Relation):
         all_roots = _find_all_root_models(self.source)
         merged_dimensions = _get_merged_fields(all_roots, "dimensions")
 
-        base_tbl = (
-            self.source.to_expr() if hasattr(self.source, "to_expr") else _to_ibis(self.source)
-        )
+        # Use _to_ibis directly to avoid triggering .values/.schema evaluation
+        # which would try to evaluate ALL dimensions (including unused ones)
+        base_tbl = _to_ibis(self.source)
 
         table_names = []
         for root in all_roots:
