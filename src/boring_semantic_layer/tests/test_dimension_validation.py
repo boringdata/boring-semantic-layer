@@ -359,3 +359,138 @@ def test_join_dimension_matching_column_name():
     alice_orders = result[result["name"] == "Alice"]
     assert len(alice_orders) == 2
     assert alice_orders["amount"].sum() == 250  # 100 + 150
+
+
+# Additional validation test scenarios
+
+
+def test_measure_with_nonexistent_column():
+    """Test that measures with wrong column names give helpful errors."""
+    con = ibis.duckdb.connect(":memory:")
+    tbl = con.create_table("test", {"a": [1, 2, 3], "b": [4, 5, 6]})
+
+    st = (
+        to_semantic_table(tbl, name="test")
+        .with_dimensions(dim_a=lambda t: t.a)
+        .with_measures(bad_measure=lambda t: t.nonexistent_col.sum())
+    )
+
+    with pytest.raises(AttributeError) as exc_info:
+        st.query(dimensions=["dim_a"], measures=["bad_measure"]).execute()
+
+    error_msg = str(exc_info.value)
+    assert "nonexistent_col" in error_msg
+    # Measure errors show basic ibis error (could be enhanced in future)
+    assert "'Table' object has no attribute" in error_msg
+
+
+def test_multiple_wrong_dimensions():
+    """Test error reporting when multiple dimensions have wrong columns."""
+    con = ibis.duckdb.connect(":memory:")
+    tbl = con.create_table("test", {"a": [1, 2], "b": [3, 4]})
+
+    st = (
+        to_semantic_table(tbl, name="test")
+        .with_dimensions(
+            bad_dim1=lambda t: t.wrong1,
+            bad_dim2=lambda t: t.wrong2,
+            good_dim=lambda t: t.a,
+        )
+        .with_measures(count=lambda t: t.count())
+    )
+
+    # First bad dimension should error
+    with pytest.raises(AttributeError) as exc_info:
+        st.query(dimensions=["bad_dim1"], measures=["count"]).execute()
+    assert "wrong1" in str(exc_info.value)
+
+    # Second bad dimension should also error
+    with pytest.raises(AttributeError) as exc_info:
+        st.query(dimensions=["bad_dim2"], measures=["count"]).execute()
+    assert "wrong2" in str(exc_info.value)
+
+
+def test_nested_expression_with_wrong_column():
+    """Test error when nested expression references non-existent column."""
+    con = ibis.duckdb.connect(":memory:")
+    tbl = con.create_table("test", {"date_col": ["2023-01-01", "2023-01-02"]})
+
+    st = (
+        to_semantic_table(tbl, name="test")
+        .with_dimensions(
+            # Trying to extract year from non-existent column
+            year=lambda t: t.wrong_date_col.cast("timestamp").year()
+        )
+        .with_measures(count=lambda t: t.count())
+    )
+
+    with pytest.raises(AttributeError) as exc_info:
+        st.query(dimensions=["year"], measures=["count"]).execute()
+
+    error_msg = str(exc_info.value)
+    assert "wrong_date_col" in error_msg
+
+
+def test_filter_with_nonexistent_column():
+    """Test that filters with wrong column names give helpful errors."""
+    con = ibis.duckdb.connect(":memory:")
+    tbl = con.create_table("test", {"status": ["active", "inactive"], "value": [1, 2]})
+
+    st = (
+        to_semantic_table(tbl, name="test")
+        .with_dimensions(status=lambda t: t.status)
+        .with_measures(total=lambda t: t.value.sum())
+    )
+
+    query = st.query(dimensions=["status"], measures=["total"])
+
+    # Filter using wrong column name
+    with pytest.raises(AttributeError) as exc_info:
+        query.filter(lambda t: t.wrong_status == "active").execute()
+
+    error_msg = str(exc_info.value)
+    assert "wrong_status" in error_msg
+
+
+def test_complex_dimension_expression_with_wrong_column():
+    """Test error in complex dimension expression with multiple column references."""
+    con = ibis.duckdb.connect(":memory:")
+    tbl = con.create_table("test", {"col1": [1, 2], "col2": [3, 4]})
+
+    st = (
+        to_semantic_table(tbl, name="test")
+        .with_dimensions(
+            # Complex expression where one column doesn't exist
+            combined=lambda t: t.col1 + t.wrong_col
+        )
+        .with_measures(count=lambda t: t.count())
+    )
+
+    with pytest.raises(AttributeError) as exc_info:
+        st.query(dimensions=["combined"], measures=["count"]).execute()
+
+    error_msg = str(exc_info.value)
+    assert "wrong_col" in error_msg
+
+
+def test_case_sensitive_column_name():
+    """Test that column name case sensitivity is handled with suggestions."""
+    con = ibis.duckdb.connect(":memory:")
+    # DuckDB lowercases column names by default
+    tbl = con.create_table("test", {"customer_id": [1, 2], "customer_name": ["A", "B"]})
+
+    st = (
+        to_semantic_table(tbl, name="test")
+        .with_dimensions(
+            # Using wrong case
+            customer=lambda t: t.Customer_ID  # Should be customer_id
+        )
+        .with_measures(count=lambda t: t.count())
+    )
+
+    with pytest.raises(AttributeError) as exc_info:
+        st.query(dimensions=["customer"], measures=["count"]).execute()
+
+    error_msg = str(exc_info.value)
+    # Error should mention the wrong column name
+    assert "Customer_ID" in error_msg or "customer_id" in error_msg.lower()
