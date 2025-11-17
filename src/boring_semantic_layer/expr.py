@@ -69,13 +69,24 @@ class SemanticTable(ir.Table):
         if hasattr(op, "graph"):
             return op.graph
 
-        # For joins, merge graphs from left and right ops
+        # For joins, merge graphs from left and right ops with prefixing
         if hasattr(op, "left") and hasattr(op, "right"):
             merged = DependencyGraph()
-            if hasattr(op.left, "graph"):
-                merged.update(op.left.graph)
-            if hasattr(op.right, "graph"):
-                merged.update(op.right.graph)
+
+            # Add left graph with prefixes
+            if hasattr(op.left, "graph") and hasattr(op.left, "name"):
+                left_name = op.left.name
+                for field_name, field_data in op.left.graph.items():
+                    prefixed_name = f"{left_name}.{field_name}" if left_name else field_name
+                    merged[prefixed_name] = field_data
+
+            # Add right graph with prefixes
+            if hasattr(op.right, "graph") and hasattr(op.right, "name"):
+                right_name = op.right.name
+                for field_name, field_data in op.right.graph.items():
+                    prefixed_name = f"{right_name}.{field_name}" if right_name else field_name
+                    merged[prefixed_name] = field_data
+
             return merged
 
         # For pass-through nodes (filter, limit, order_by, group_by), get graph from source op

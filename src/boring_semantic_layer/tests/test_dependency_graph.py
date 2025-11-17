@@ -394,15 +394,15 @@ def test_graph_merge_on_join():
     # Join the tables
     joined = flights.join_one(carriers, left_on="carrier_code", right_on="code")
 
-    # Graph should contain fields from both tables (without prefixes in graph keys)
+    # Graph should contain fields from both tables with prefixes (matching get_dimensions())
     graph = joined.graph
-    assert "carrier" in graph
-    assert "total_distance" in graph
-    assert "carrier_name" in graph
-    assert "carrier_count" in graph
+    assert "flights.carrier" in graph
+    assert "flights.total_distance" in graph
+    assert "carriers.carrier_name" in graph
+    assert "carriers.carrier_count" in graph
 
     # Verify dependencies are preserved
-    assert set(graph["carrier"]["deps"].keys()) == {"carrier_code"}
-    assert set(graph["total_distance"]["deps"].keys()) == {"distance"}
-    assert set(graph["carrier_name"]["deps"].keys()) == {"name"}
-    assert set(graph["carrier_count"]["deps"].keys()) == set()
+    assert set(graph["flights.carrier"]["deps"].keys()) == {"carrier_code"}
+    assert set(graph["flights.total_distance"]["deps"].keys()) == {"distance"}
+    assert set(graph["carriers.carrier_name"]["deps"].keys()) == {"name"}
+    assert set(graph["carriers.carrier_count"]["deps"].keys()) == set()
