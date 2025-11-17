@@ -268,3 +268,59 @@ def test_graph_with_deferred_expressions():
 
     assert "revenue" in graph
     assert set(graph["revenue"]["deps"].keys()) == {"quantity", "price"}
+
+
+def test_to_networkx_json():
+    """Test conversion to NetworkX node-link JSON format."""
+    tbl = ibis.memtable(
+        {
+            "quantity": [10, 20, 30],
+            "price": [1.5, 2.0, 2.5],
+        }
+    )
+
+    sm = (
+        to_semantic_table(tbl)
+        .with_dimensions(revenue=lambda t: t.quantity * t.price)
+        .with_measures(
+            total_revenue=lambda t: t.revenue.sum(),
+            avg_revenue=lambda t: t.revenue.mean(),
+        )
+    )
+
+    graph = sm.graph
+    json_data = graph.to_networkx_json()
+
+    # Check structure
+    assert json_data["directed"] is True
+    assert json_data["multigraph"] is False
+    assert "nodes" in json_data
+    assert "links" in json_data
+
+    # Check nodes
+    node_ids = {node["id"] for node in json_data["nodes"]}
+    assert node_ids == {"quantity", "price", "revenue", "total_revenue", "avg_revenue"}
+
+    # Check node types
+    node_types = {node["id"]: node["field_type"] for node in json_data["nodes"]}
+    assert node_types["quantity"] == "column"
+    assert node_types["price"] == "column"
+    assert node_types["revenue"] == "dimension"
+    assert node_types["total_revenue"] == "measure"
+    assert node_types["avg_revenue"] == "measure"
+
+    # Check links (edges)
+    links = {(link["source"], link["target"]) for link in json_data["links"]}
+    assert ("quantity", "revenue") in links
+    assert ("price", "revenue") in links
+    assert ("revenue", "total_revenue") in links
+    assert ("revenue", "avg_revenue") in links
+
+    # Check link types
+    link_types = {
+        (link["source"], link["target"]): link["dependency_type"] for link in json_data["links"]
+    }
+    assert link_types[("quantity", "revenue")] == "column"
+    assert link_types[("price", "revenue")] == "column"
+    assert link_types[("revenue", "total_revenue")] == "dimension"
+    assert link_types[("revenue", "avg_revenue")] == "dimension"

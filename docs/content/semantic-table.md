@@ -187,6 +187,23 @@ flights_with_deps.graph.successors('total_distance')
 ```
 <regularoutput code-block="graph_traversal"></regularoutput>
 
+### Export to NetworkX
+
+Export the graph to NetworkX-compatible JSON format for visualization or analysis:
+
+```graph_export
+# Export to NetworkX node-link format
+json_data = flights_with_deps.graph.to_networkx_json()
+
+# Use with NetworkX
+import networkx as nx
+G = nx.node_link_graph(json_data)
+
+# Or serialize to JSON for visualization (e.g., d3.js)
+import json
+json.dumps(json_data)
+```
+
 ## join_one() / join_many() / join_cross()
 
 Join semantic tables together to query across relationships. Joins allow you to combine data from multiple semantic tables and access dimensions and measures across all joined tables.

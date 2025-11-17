@@ -49,6 +49,56 @@ class DependencyGraph(dict):
                 result.add(field)
         return result
 
+    def to_networkx_json(self) -> dict:
+        """Export graph to NetworkX node-link JSON format.
+
+        This format is compatible with NetworkX's `node_link_graph()` and
+        can be used with visualization libraries like d3.js.
+
+        Returns:
+            Dict in NetworkX node-link format with nodes and links
+
+        Example:
+            >>> graph = sm.graph
+            >>> json_data = graph.to_networkx_json()
+            >>> # Use with NetworkX
+            >>> import networkx as nx
+            >>> G = nx.node_link_graph(json_data)
+            >>> # Or serialize to JSON
+            >>> import json
+            >>> json.dumps(json_data)
+        """
+        # Collect all unique nodes (fields and their dependencies)
+        all_nodes = set(self.keys())
+        for field_meta in self.values():
+            all_nodes.update(field_meta["deps"].keys())
+
+        # Build nodes list with metadata
+        nodes = []
+        for node in sorted(all_nodes):
+            node_data = {"id": node}
+            # Add type if this is a tracked field (dimension/measure)
+            if node in self:
+                node_data["field_type"] = self[node]["type"]
+            else:
+                # This is a base column (dependency but not tracked)
+                node_data["field_type"] = "column"
+            nodes.append(node_data)
+
+        # Build links (edges) from dependencies
+        links = []
+        for target, metadata in self.items():
+            for source, dep_type in metadata["deps"].items():
+                links.append({"source": source, "target": target, "dependency_type": dep_type})
+
+        return {
+            "directed": True,
+            "multigraph": False,
+            "graph": {},
+            "nodes": nodes,
+            "links": links,
+        }
+
 
 def build_dependency_graph(
     dimensions: dict,
