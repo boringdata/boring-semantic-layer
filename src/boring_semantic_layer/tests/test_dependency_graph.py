@@ -3,7 +3,6 @@
 import ibis
 
 from boring_semantic_layer.api import to_semantic_table
-from boring_semantic_layer.dependency_graph import get_dependents
 
 
 def test_simple_dimension_dependencies():
@@ -83,8 +82,8 @@ def test_calculated_measure_dependencies():
     assert set(graph["avg_price"]["deps"].keys()) == {"total_amount", "total_quantity"}
 
 
-def test_get_dependents():
-    """Test the reverse dependency lookup (what depends on this field)."""
+def test_successors_and_predecessors():
+    """Test successors (dependents) and predecessors (dependencies) methods."""
     tbl = ibis.memtable(
         {
             "quantity": [10, 20, 30],
@@ -102,19 +101,15 @@ def test_get_dependents():
     )
 
     graph = sm.graph
-    dependents = get_dependents(graph)
 
-    # quantity is used by revenue
-    assert "quantity" in dependents
-    assert dependents["quantity"] == {"revenue"}
+    # Test predecessors (what this node depends on)
+    assert graph.predecessors("revenue") == {"quantity", "price"}
+    assert graph.predecessors("total_revenue") == {"revenue"}
 
-    # price is used by revenue
-    assert "price" in dependents
-    assert dependents["price"] == {"revenue"}
-
-    # revenue is used by both measures
-    assert "revenue" in dependents
-    assert dependents["revenue"] == {"total_revenue", "avg_revenue"}
+    # Test successors (what depends on this node)
+    assert graph.successors("quantity") == {"revenue"}
+    assert graph.successors("price") == {"revenue"}
+    assert graph.successors("revenue") == {"total_revenue", "avg_revenue"}
 
 
 def test_complex_dependency_chain():
@@ -147,11 +142,10 @@ def test_complex_dependency_chain():
     assert set(graph["net_revenue"]["deps"].keys()) == {"gross_revenue", "discount_amount"}
     assert set(graph["total_net_revenue"]["deps"].keys()) == {"net_revenue"}
 
-    # Check reverse dependencies
-    dependents = get_dependents(graph)
-    assert dependents["quantity"] == {"gross_revenue"}
-    assert dependents["gross_revenue"] == {"discount_amount", "net_revenue"}
-    assert dependents["net_revenue"] == {"total_net_revenue"}
+    # Check reverse dependencies (successors)
+    assert graph.successors("quantity") == {"gross_revenue"}
+    assert graph.successors("gross_revenue") == {"discount_amount", "net_revenue"}
+    assert graph.successors("net_revenue") == {"total_net_revenue"}
 
 
 def test_multiple_dimension_usage():
@@ -169,10 +163,9 @@ def test_multiple_dimension_usage():
     )
 
     graph = sm.graph
-    dependents = get_dependents(graph)
 
     # All three dimensions depend on value
-    assert dependents["value"] == {"doubled", "tripled", "squared"}
+    assert graph.successors("value") == {"doubled", "tripled", "squared"}
 
 
 def test_no_dependencies():

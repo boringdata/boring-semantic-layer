@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
-from typing import Any
-
 from ibis.expr import types as ir
 from ibis.expr.operations.relations import Field
 
@@ -12,12 +9,53 @@ from .graph_utils import walk_nodes
 from .ops import _collect_measure_refs
 
 
+class DependencyGraph(dict):
+    """A dependency graph with NetworkX-style API for graph traversal.
+
+    Extends dict to provide methods for querying dependencies between fields.
+    """
+
+    def predecessors(self, node: str) -> set[str]:
+        """Get nodes that this node depends on (incoming edges).
+
+        Args:
+            node: The field name to query
+
+        Returns:
+            Set of field names that this node depends on
+
+        Example:
+            graph.predecessors('avg_distance')  # {'total_distance', 'flight_count'}
+        """
+        if node not in self:
+            return set()
+        return set(self[node]["deps"].keys())
+
+    def successors(self, node: str) -> set[str]:
+        """Get nodes that depend on this node (outgoing edges).
+
+        Args:
+            node: The field name to query
+
+        Returns:
+            Set of field names that depend on this node
+
+        Example:
+            graph.successors('total_distance')  # {'avg_distance'}
+        """
+        result = set()
+        for field, metadata in self.items():
+            if node in metadata["deps"]:
+                result.add(field)
+        return result
+
+
 def build_dependency_graph(
     dimensions: dict,
     measures: dict,
     calc_measures: dict,
     base_table: ir.Table,
-) -> dict[str, dict[str, Any]]:
+) -> DependencyGraph:
     """Build a dependency graph: field -> {deps, type}.
 
     Args:
@@ -39,7 +77,7 @@ def build_dependency_graph(
     """
     from .graph_utils import to_node
 
-    graph = {}
+    graph = DependencyGraph()
 
     # Build extended table with all dimensions
     extended_table = base_table
@@ -111,19 +149,3 @@ def _resolve_expr(expr, table):
     elif callable(expr):
         return expr(table)
     return expr
-
-
-def get_dependents(graph: dict[str, dict[str, Any]]) -> dict[str, set[str]]:
-    """Build reverse index: field -> fields that depend on it.
-
-    Args:
-        graph: Dependency graph (field -> {deps: {name: type}, type})
-
-    Returns:
-        Dict mapping field names to their dependents
-    """
-    dependents = defaultdict(set)
-    for field, metadata in graph.items():
-        for dep_name in metadata["deps"]:
-            dependents[dep_name].add(field)
-    return dict(dependents)

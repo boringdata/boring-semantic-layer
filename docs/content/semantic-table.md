@@ -172,17 +172,20 @@ flights_with_deps.graph['avg_distance_per_flight']['deps']
 ```
 <regularoutput code-block="graph_structure"></regularoutput>
 
-### Reverse Dependencies
+### Graph Traversal
 
-Find what depends on a field using `get_dependents()`:
+Use `successors()` and `predecessors()` to navigate dependencies:
 
-```graph_dependents
-from boring_semantic_layer.dependency_graph import get_dependents
+```graph_traversal
+# What does this field depend on? (predecessors)
+flights_with_deps.graph.predecessors('avg_distance_per_flight')
+# {'total_distance', 'flight_count'}
 
-dependents = get_dependents(flights_with_deps.graph)
-dependents['total_distance']  # {'avg_distance_per_flight'}
+# What depends on this field? (successors)
+flights_with_deps.graph.successors('total_distance')
+# {'avg_distance_per_flight'}
 ```
-<regularoutput code-block="graph_dependents"></regularoutput>
+<regularoutput code-block="graph_traversal"></regularoutput>
 
 ## join_one() / join_many() / join_cross()
 

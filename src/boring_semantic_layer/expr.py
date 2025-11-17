@@ -268,10 +268,9 @@ class SemanticModel(SemanticTable):
             sm.graph['revenue']['deps']  # {'quantity': 'column', 'price': 'column'}
             sm.graph['revenue']['type']  # 'dimension'
 
-            # Build reverse index to find dependents
-            from boring_semantic_layer.dependency_graph import get_dependents
-            dependents = get_dependents(sm.graph)
-            dependents['quantity']  # {'revenue'}
+            # Navigate the dependency graph
+            sm.graph.predecessors('revenue')  # {'quantity', 'price'}
+            sm.graph.successors('revenue')  # {'total_revenue'}
         """
         return self.op().graph
 
