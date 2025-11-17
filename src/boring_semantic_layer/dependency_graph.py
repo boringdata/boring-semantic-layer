@@ -10,10 +10,7 @@ from .ops import _collect_measure_refs
 
 
 class DependencyGraph(dict):
-    """A dependency graph with NetworkX-style API for graph traversal.
-
-    Extends dict to provide methods for querying dependencies between fields.
-    """
+    """Dependency graph with NetworkX-style API for graph traversal."""
 
     def _extract_field_deps(
         self,
@@ -23,15 +20,6 @@ class DependencyGraph(dict):
         base_table: ir.Table,
         extended_table: ir.Table,
     ) -> None:
-        """Extract dependencies for dimensions and measures.
-
-        Args:
-            dimensions: Dict of dimension name -> Dimension object
-            measures: Dict of measure name -> Measure object
-            calc_measures: Dict of calc measure name -> MeasureRef/BinOp/etc
-            base_table: The base table
-            extended_table: Table with dimensions added
-        """
         from .graph_utils import to_node
 
         for name, obj in {**dimensions, **measures}.items():
@@ -65,11 +53,6 @@ class DependencyGraph(dict):
                 self[name] = {"deps": {}, "type": "dimension" if name in dimensions else "measure"}
 
     def _extract_calc_measure_deps(self, calc_measures: dict) -> None:
-        """Extract dependencies for calculated measures.
-
-        Args:
-            calc_measures: Dict of calc measure name -> MeasureRef/BinOp/etc
-        """
         for name, calc_expr in calc_measures.items():
             refs = set()
             _collect_measure_refs(calc_expr, refs)
@@ -78,33 +61,13 @@ class DependencyGraph(dict):
             self[name] = {"deps": deps_with_types, "type": "calc_measure"}
 
     def predecessors(self, node: str) -> set[str]:
-        """Get nodes that this node depends on (incoming edges).
-
-        Args:
-            node: The field name to query
-
-        Returns:
-            Set of field names that this node depends on
-
-        Example:
-            graph.predecessors('avg_distance')  # {'total_distance', 'flight_count'}
-        """
+        """Get nodes that this node depends on."""
         if node not in self:
             return set()
         return set(self[node]["deps"].keys())
 
     def successors(self, node: str) -> set[str]:
-        """Get nodes that depend on this node (outgoing edges).
-
-        Args:
-            node: The field name to query
-
-        Returns:
-            Set of field names that depend on this node
-
-        Example:
-            graph.successors('total_distance')  # {'avg_distance'}
-        """
+        """Get nodes that depend on this node."""
         result = set()
         for field, metadata in self.items():
             if node in metadata["deps"]:
@@ -112,24 +75,7 @@ class DependencyGraph(dict):
         return result
 
     def to_networkx_json(self) -> dict:
-        """Export graph to NetworkX node-link JSON format.
-
-        This format is compatible with NetworkX's `node_link_graph()` and
-        can be used with visualization libraries like d3.js.
-
-        Returns:
-            Dict in NetworkX node-link format with nodes and links
-
-        Example:
-            >>> graph = sm.graph
-            >>> json_data = graph.to_networkx_json()
-            >>> # Use with NetworkX
-            >>> import networkx as nx
-            >>> G = nx.node_link_graph(json_data)
-            >>> # Or serialize to JSON
-            >>> import json
-            >>> json.dumps(json_data)
-        """
+        """Export graph to NetworkX node-link JSON format."""
         # Collect all unique nodes (fields and their dependencies)
         all_nodes = set(self.keys())
         for field_meta in self.values():
@@ -169,25 +115,6 @@ class DependencyGraph(dict):
         calc_measures: dict,
         base_table: ir.Table,
     ) -> DependencyGraph:
-        """Build a dependency graph from dimensions and measures.
-
-        Args:
-            dimensions: Dict of dimension name -> Dimension object
-            measures: Dict of measure name -> Measure object
-            calc_measures: Dict of calc measure name -> MeasureRef/BinOp/etc
-            base_table: The base table to resolve expressions
-
-        Returns:
-            DependencyGraph mapping field names to their metadata:
-            {
-                'field_name': {
-                    'deps': {
-                        'dep_name': 'column' | 'dimension' | 'measure'
-                    },
-                    'type': 'dimension' | 'measure' | 'calc_measure'
-                }
-            }
-        """
         graph = cls()
 
         # Build extended table with all dimensions
@@ -205,7 +132,6 @@ class DependencyGraph(dict):
 
 
 def _resolve_expr(expr, table):
-    """Helper to resolve an expression against a table."""
     if hasattr(expr, "resolve"):
         return expr.resolve(table)
     elif callable(expr):
@@ -214,15 +140,6 @@ def _resolve_expr(expr, table):
 
 
 def _build_extended_table(base_table: ir.Table, dimensions: dict) -> ir.Table:
-    """Build table with all dimensions added.
-
-    Args:
-        base_table: The base table
-        dimensions: Dict of dimension name -> Dimension object
-
-    Returns:
-        Table with all dimensions mutated in
-    """
     extended_table = base_table
     for dim_name, dim in dimensions.items():
         try:
@@ -234,16 +151,6 @@ def _build_extended_table(base_table: ir.Table, dimensions: dict) -> ir.Table:
 
 
 def _add_previous_dimensions(table: ir.Table, dimensions: dict, current_name: str) -> ir.Table:
-    """Add all dimensions defined before the current one to the table.
-
-    Args:
-        table: The table to extend
-        dimensions: Dict of dimension name -> Dimension object
-        current_name: Name of current dimension being processed
-
-    Returns:
-        Table with previous dimensions added
-    """
     for prev_name, prev_dim in dimensions.items():
         if prev_name == current_name:
             break
@@ -258,17 +165,6 @@ def _add_previous_dimensions(table: ir.Table, dimensions: dict, current_name: st
 def _classify_dependencies(
     fields: list, dimensions: dict, measures: dict, calc_measures: dict
 ) -> dict[str, str]:
-    """Classify field dependencies as 'column', 'dimension', or 'measure'.
-
-    Args:
-        fields: List of Field nodes from expression
-        dimensions: Dict of dimension names
-        measures: Dict of measure names
-        calc_measures: Dict of calc measure names
-
-    Returns:
-        Dict mapping field name to dependency type
-    """
     deps_with_types = {}
     for f in fields:
         if f.name in dimensions:
