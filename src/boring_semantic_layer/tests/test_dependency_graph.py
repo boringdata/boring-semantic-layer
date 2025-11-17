@@ -430,8 +430,8 @@ def test_graph_merge_on_join():
     assert "carriers.carrier_name" in graph
     assert "carriers.carrier_count" in graph
 
-    # Verify dependencies are preserved
-    assert set(graph["flights.carrier"]["deps"].keys()) == {"carrier_code"}
-    assert set(graph["flights.total_distance"]["deps"].keys()) == {"distance"}
-    assert set(graph["carriers.carrier_name"]["deps"].keys()) == {"name"}
+    # Verify dependencies are preserved with prefixes
+    assert set(graph["flights.carrier"]["deps"].keys()) == {"flights.carrier_code"}
+    assert set(graph["flights.total_distance"]["deps"].keys()) == {"flights.distance"}
+    assert set(graph["carriers.carrier_name"]["deps"].keys()) == {"carriers.name"}
     assert set(graph["carriers.carrier_count"]["deps"].keys()) == set()
