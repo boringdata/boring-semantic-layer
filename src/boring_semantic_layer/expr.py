@@ -106,17 +106,13 @@ class SemanticTable(ir.Table):
             return merged
 
         # For pass-through nodes (filter, limit, order_by, group_by, aggregate), get graph from source
-        # Traverse through the source chain until we find a graph
-        if hasattr(op, "source"):
-            current = op.source
-            while current is not None:
-                if hasattr(current, "graph"):
-                    return current.graph
-                # Continue traversing if this node has a source
-                if hasattr(current, "source"):
-                    current = current.source
-                else:
-                    break
+        # Walk the node tree to find any node with a graph attribute
+        from .graph_utils import walk_nodes
+        from .ops import SemanticTableOp
+
+        for node in walk_nodes((SemanticTableOp,), self):
+            if hasattr(node, "graph"):
+                return node.graph
 
         # Fallback to empty graph
         return DependencyGraph()
