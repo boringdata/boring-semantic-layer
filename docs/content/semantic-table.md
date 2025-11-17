@@ -194,14 +194,15 @@ Export the graph to NetworkX-compatible JSON format for visualization or analysi
 ```graph_export
 # Export to NetworkX node-link format
 json_data = flights_with_deps.graph.to_networkx_json()
+json_data
 
-# Use with NetworkX
-import networkx as nx
-G = nx.node_link_graph(json_data)
+# Use with NetworkX (if installed)
+# import networkx as nx
+# G = nx.node_link_graph(json_data)
 
 # Or serialize to JSON for visualization (e.g., d3.js)
-import json
-json.dumps(json_data)
+# import json
+# json.dumps(json_data)
 ```
 
 ## join_one() / join_many() / join_cross()
