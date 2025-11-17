@@ -530,6 +530,27 @@ class SemanticTableOp(Relation):
         """Get dictionary of calculated measures with metadata."""
         return object.__getattribute__(self, "calc_measures")
 
+    @property
+    def graph(self) -> dict[str, dict[str, Any]]:
+        """Get the dependency graph with type information.
+
+        Returns a dict mapping field names to their metadata:
+        {
+            'field_name': {
+                'deps': {'dep_name': 'column' | 'dimension' | 'measure'},
+                'type': 'dimension' | 'measure' | 'calc_measure'
+            }
+        }
+        """
+        from .dependency_graph import build_dependency_graph
+
+        return build_dependency_graph(
+            self.get_dimensions(),
+            self.get_measures(),
+            self.get_calculated_measures(),
+            self.table,
+        )
+
     def __getattribute__(self, name: str):
         if name == "dimensions":
             dims = object.__getattribute__(self, "dimensions")

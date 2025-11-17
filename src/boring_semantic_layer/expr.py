@@ -237,6 +237,44 @@ class SemanticModel(SemanticTable):
     def table(self):
         return self.op().table
 
+    @property
+    def graph(self):
+        """Get the dependency graph with full type information.
+
+        Returns a dict where keys are dimension/measure names and values are
+        dicts containing typed dependencies and field type.
+
+        Example:
+            sm = to_semantic_table(tbl).with_dimensions(
+                revenue = lambda t: t.quantity * t.price
+            ).with_measures(
+                total_revenue = lambda t: t.revenue.sum()
+            )
+
+            # Get the dependency graph
+            graph = sm.graph
+            # {
+            #   'revenue': {
+            #     'deps': {'quantity': 'column', 'price': 'column'},
+            #     'type': 'dimension'
+            #   },
+            #   'total_revenue': {
+            #     'deps': {'revenue': 'dimension'},
+            #     'type': 'measure'
+            #   }
+            # }
+
+            # Find what a field depends on
+            sm.graph['revenue']['deps']  # {'quantity': 'column', 'price': 'column'}
+            sm.graph['revenue']['type']  # 'dimension'
+
+            # Build reverse index to find dependents
+            from boring_semantic_layer.dependency_graph import get_dependents
+            dependents = get_dependents(sm.graph)
+            dependents['quantity']  # {'revenue'}
+        """
+        return self.op().graph
+
     def with_dimensions(self, **dims) -> SemanticModel:
         return SemanticModel(
             table=self.op().table,

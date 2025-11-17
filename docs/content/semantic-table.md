@@ -117,6 +117,84 @@ result = (
 
 For more examples, see the [Percent of Total pattern](/advanced/percentage-total).
 
+## graph
+
+The `graph` property provides a dependency graph showing how dimensions and measures relate to each other. This is useful for:
+- **Understanding dependencies**: See what columns or fields each dimension/measure depends on
+- **Impact analysis**: Find what breaks when changing a field
+- **Documentation**: Generate visual representations of your data model
+- **Validation**: Ensure your model doesn't have circular dependencies
+
+```graph_demo
+# Build a semantic table with dependencies
+flights_with_deps = flights_st.with_dimensions(
+    origin=lambda t: t.origin,
+    destination=lambda t: t.dest,
+).with_measures(
+    flight_count=lambda t: t.count(),
+    total_distance=lambda t: t.distance.sum(),
+    avg_distance_per_flight=lambda t: t.total_distance / t.flight_count
+)
+
+# Access the dependency graph
+graph = flights_with_deps.graph
+graph
+```
+<regularoutput code-block="graph_demo"></regularoutput>
+
+### Understanding the Graph Structure
+
+The graph is a dictionary where:
+- **Keys**: Dimension or measure names
+- **Values**: Metadata containing:
+  - `deps`: Dependencies mapped to their types (`'column'`, `'dimension'`, or `'measure'`)
+  - `type`: The field type (`'dimension'`, `'measure'`, or `'calc_measure'`)
+
+```graph_structure
+# Example structure
+# {
+#   'origin': {
+#     'deps': {'origin': 'column'},
+#     'type': 'dimension'
+#   },
+#   'total_distance': {
+#     'deps': {'distance': 'column'},
+#     'type': 'measure'
+#   },
+#   'avg_distance_per_flight': {
+#     'deps': {'total_distance': 'measure', 'flight_count': 'measure'},
+#     'type': 'calc_measure'
+#   }
+# }
+
+# Find what a field depends on
+flights_with_deps.graph['avg_distance_per_flight']['deps']
+```
+<regularoutput code-block="graph_structure"></regularoutput>
+
+### Finding Dependents (Reverse Dependencies)
+
+Use `get_dependents()` to find which fields depend on a given field:
+
+```graph_dependents
+from boring_semantic_layer.dependency_graph import get_dependents
+
+# Build reverse index: field → fields that depend on it
+dependents = get_dependents(flights_with_deps.graph)
+
+# Find what depends on total_distance
+dependents['total_distance']
+```
+<regularoutput code-block="graph_dependents"></regularoutput>
+
+<note type="info">
+The dependency graph is particularly useful when:
+- Refactoring dimensions or measures
+- Understanding complex calculated measures
+- Generating documentation or lineage diagrams
+- Validating model structure
+</note>
+
 ## join_one() / join_many() / join_cross()
 
 Join semantic tables together to query across relationships. Joins allow you to combine data from multiple semantic tables and access dimensions and measures across all joined tables.
