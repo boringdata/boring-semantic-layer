@@ -1,5 +1,5 @@
 {
-  "markdown": "# YAML Configuration\n\nDefine your semantic models using YAML for better organization and maintainability.\n\n## Why YAML?\n\nYAML configuration provides several advantages:\n- **Better organization**: Keep your model definitions separate from your code\n- **Version control**: Track changes to your data model structure\n- **Collaboration**: Non-developers can review and understand the model\n- **Reusability**: Share model definitions across different projects\n\n## Expression Syntax\n\nHere's a complete example with dimensions, measures, and joins:\n\n<yamlcontent path=\"yaml_example.yaml\"></yamlcontent>\n\n<note type=\"warning\">\nIn YAML configuration, **only unbound syntax (`_`) is accepted** for expressions. Lambda expressions are not supported in YAML files.\n</note>\n\n## Loading YAML Models\n\nIbis table objects must be created separately in Python and passed to the YAML loader. Tables are resolved by the names specified in the YAML `table` field.\n\nCreate your ibis tables:\n\n```yaml_setup\nimport ibis\n\nflights_tbl = ibis.memtable({\n    \"origin\": [\"JFK\", \"LAX\", \"SFO\"],\n    \"dest\": [\"LAX\", \"SFO\", \"JFK\"],\n    \"carrier\": [\"AA\", \"UA\", \"DL\"],\n    \"year\": [2023, 2023, 2024],\n    \"distance\": [2475, 337, 382]\n})\n\ncarriers_tbl = ibis.memtable({\n    \"code\": [\"AA\", \"UA\", \"DL\"],\n    \"name\": [\"American Airlines\", \"United Airlines\", \"Delta Air Lines\"]\n})\n```\n\nAnd pass them to the loaded YAML file defining your Semantic Tables:\n\n\n```load_yaml_example\nfrom boring_semantic_layer import from_yaml\n\n# Load models from YAML file\nmodels = from_yaml(\n    \"content/yaml_example.yaml\",\n    tables={\n        \"flights_tbl\": flights_tbl,\n        \"carriers_tbl\": carriers_tbl\n    }\n)\n\nflights_sm = models[\"flights\"]\ncarriers_sm = models[\"carriers\"]\n\n# Inspect the loaded models\nflights_sm.dimensions, flights_sm.measures\n```\n\n<regularoutput code-block=\"load_yaml_example\"></regularoutput>\n\n## Querying YAML Models\n\nYAML-defined models work exactly like Python-defined models. You can use the same `group_by()` and `aggregate()` methods to query your data.\n\n```query_yaml_model\n# Query the YAML-defined model\nresult = (\n    flights_sm\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"avg_distance\")\n)\n```\n\n<bslquery code-block=\"query_yaml_model\"></bslquery>\n\n## Next Steps\n\n- See [Building Semantic Tables](/building/semantic-tables) for Python-based definitions\n- Learn [Query Methods](/querying/methods) for querying YAML-defined models\n- Explore [Composing Models](/building/compose) for joining YAML models\n",
+  "markdown": "# YAML Configuration\n\nDefine your semantic models using YAML for better organization and maintainability.\n\n## Why YAML?\n\nYAML configuration provides several advantages:\n- **Better organization**: Keep your model definitions separate from your code\n- **Version control**: Track changes to your data model structure\n- **Collaboration**: Non-developers can review and understand the model\n- **Reusability**: Share model definitions across different projects\n\n## Expression Syntax\n\nHere's a complete example with dimensions, measures, and joins:\n\n<yamlcontent path=\"yaml_example.yaml\"></yamlcontent>\n\n<note type=\"warning\">\nIn YAML configuration, **only unbound syntax (`_`) is accepted** for expressions. Lambda expressions are not supported in YAML files.\n</note>\n\n## Loading YAML Models\n\nIbis table objects must be created separately in Python and passed to the YAML loader. Tables are resolved by the names specified in the YAML `table` field.\n\nCreate your ibis tables:\n\n```yaml_setup\nimport ibis\n\nflights_tbl = ibis.memtable({\n    \"origin\": [\"JFK\", \"LAX\", \"SFO\"],\n    \"dest\": [\"LAX\", \"SFO\", \"JFK\"],\n    \"carrier\": [\"AA\", \"UA\", \"DL\"],\n    \"year\": [2023, 2023, 2024],\n    \"distance\": [2475, 337, 382]\n})\n\ncarriers_tbl = ibis.memtable({\n    \"code\": [\"AA\", \"UA\", \"DL\"],\n    \"name\": [\"American Airlines\", \"United Airlines\", \"Delta Air Lines\"]\n})\n```\n\nAnd pass them to the loaded YAML file defining your Semantic Tables:\n\n\n```load_yaml_example\nfrom boring_semantic_layer import from_yaml\n\n# Load models from YAML file\nmodels = from_yaml(\n    \"yaml_example.yaml\",\n    tables={\n        \"flights_tbl\": flights_tbl,\n        \"carriers_tbl\": carriers_tbl\n    }\n)\n\nflights_sm = models[\"flights\"]\ncarriers_sm = models[\"carriers\"]\n\n# Inspect the loaded models\nflights_sm.dimensions, flights_sm.measures\n```\n\n<regularoutput code-block=\"load_yaml_example\"></regularoutput>\n\n## Querying YAML Models\n\nYAML-defined models work exactly like Python-defined models. You can use the same `group_by()` and `aggregate()` methods to query your data.\n\n```query_yaml_model\n# Query the YAML-defined model\nresult = (\n    flights_sm\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"avg_distance\")\n)\n```\n\n<bslquery code-block=\"query_yaml_model\"></bslquery>\n\n## Next Steps\n\n- See [Building Semantic Tables](/building/semantic-tables) for Python-based definitions\n- Learn [Query Methods](/querying/methods) for querying YAML-defined models\n- Explore [Composing Models](/building/compose) for joining YAML models\n",
   "queries": {
     "load_yaml_example": {
       "output": [
@@ -9,7 +9,7 @@
     },
     "query_yaml_model": {
       "code": "# Query the YAML-defined model\nresult = (\n    flights_sm\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"avg_distance\")\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"distance\") AS \"avg_distance\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_54ceyaylkzektlkgxbj2hmp5dq\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"distance\") AS \"avg_distance\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_a4ws2u5fovfuvpnwtdtjmagen4\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": "r0 := SemanticTableOp[flights]\n  4 dimensions: origin, destination, year, ...\n  3 measures: flight_count, total_distance, avg_distance\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['origin']\n  inherited dimensions: 4\n  inherited measures: 3\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['origin']\n  aggs: [flight_count, avg_distance]",
       "table": {
         "columns": [
@@ -19,9 +19,9 @@
         ],
         "data": [
           [
-            "JFK",
+            "SFO",
             1,
-            2475.0
+            382.0
           ],
           [
             "LAX",
@@ -29,9 +29,9 @@
             337.0
           ],
           [
-            "SFO",
+            "JFK",
             1,
-            382.0
+            2475.0
           ]
         ]
       },
@@ -45,7 +45,7 @@
             }
           },
           "data": {
-            "name": "data-5e957fb8d888b60ccb5be04ecb943b47"
+            "name": "data-9dec79c4162b73c096e1da93eff3c6ba"
           },
           "mark": {
             "type": "bar"
@@ -98,12 +98,7 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-5e957fb8d888b60ccb5be04ecb943b47": [
-              {
-                "origin": "JFK",
-                "flight_count": 1,
-                "avg_distance": 2475.0
-              },
+            "data-9dec79c4162b73c096e1da93eff3c6ba": [
               {
                 "origin": "SFO",
                 "flight_count": 1,
@@ -113,6 +108,11 @@
                 "origin": "LAX",
                 "flight_count": 1,
                 "avg_distance": 337.0
+              },
+              {
+                "origin": "JFK",
+                "flight_count": 1,
+                "avg_distance": 2475.0
               }
             ]
           }

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 import ibis
 import pytest
 
@@ -118,11 +116,7 @@ def test_from_xorq_deserialization(flights_data):
     xorq_expr = to_xorq(flights)
     reconstructed = from_xorq(xorq_expr)
 
-    result = (
-        reconstructed.group_by("origin")
-        .aggregate("avg_distance")
-        .execute()
-    )
+    result = reconstructed.group_by("origin").aggregate("avg_distance").execute()
 
     assert len(result) > 0
     assert "origin" in result.columns
