@@ -58,69 +58,88 @@ def _load_from_file(yaml_file: Path, profile_name: str | None = None) -> BaseBac
 
 
 def _load_from_yaml(yaml_file: Path, profile_name: str | None = None) -> BaseBackend:
-    try:
-        with open(yaml_file) as f:
-            profiles_config = yaml.safe_load(f)
+    with open(yaml_file) as f:
+        config = yaml.safe_load(f)
 
-        if not isinstance(profiles_config, dict):
+    if not config:
+        raise ProfileError(f"Empty or invalid YAML file: {yaml_file}")
+
+    # Support both formats:
+    # 1. New format with "profiles:" key
+    # 2. Legacy format with profiles at root level
+    profiles = config.get("profiles", config)
+
+    if not profiles:
+        raise ProfileError(f"No profiles found in {yaml_file}")
+
+    if profile_name:
+        if profile_name not in profiles:
+            available = ", ".join(profiles.keys())
             raise ProfileError(
-                f"Profile file must contain a dict of profiles, got: {type(profiles_config)}"
-            )
-
-        if profile_name is None:
-            if not profiles_config:
-                raise ProfileError(f"Profile file {yaml_file} is empty")
-            profile_name = list(profiles_config.keys())[0]
-
-        config = profiles_config.get(profile_name)
-        if config is None:
-            available = ", ".join(profiles_config.keys())
-            raise ProfileError(
-                f"Profile '{profile_name}' not found in {yaml_file}. "
+                f"Profile '{profile_name}' not found in {yaml_file}\n"
                 f"Available profiles: {available}"
             )
+        profile_config = profiles[profile_name]
+    else:
+        # Auto-select first profile when loading from file path
+        # (backward compatibility for legacy behavior)
+        profile_config = next(iter(profiles.values()))
 
-        if not isinstance(config, dict):
-            raise ProfileError(f"Profile '{profile_name}' must be a dict, got: {type(config)}")
+    return _create_connection_from_config(profile_config)
 
-        conn_type = config.get("type")
-        if not conn_type:
-            raise ProfileError("Profile must specify 'type' field")
 
-        parquet_tables = config.pop("tables", None)
+def _create_connection_from_config(config: dict) -> BaseBackend:
+    """Create a connection from a profile configuration dict."""
+    import os
 
-        kwargs = {k: v for k, v in config.items() if k != "type"}
-        kwargs_tuple = tuple(sorted(kwargs.items()))
-        xorq_profile = XorqProfile(con_name=conn_type, kwargs_tuple=kwargs_tuple)
+    import ibis
 
-        con = xorq_profile.get_con()
+    config = config.copy()
 
-        if parquet_tables:
-            _load_parquet_tables(con, parquet_tables, conn_type)
+    # Handle environment variable substitution
+    for key, value in config.items():
+        if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
+            env_var = value[2:-1]
+            env_value = os.getenv(env_var)
+            if env_value is None:
+                raise ProfileError(f"Environment variable {env_var} not set")
+            config[key] = env_value
 
-        return con
+    conn_type = config.pop("type", None)
+    if not conn_type:
+        raise ProfileError("Profile configuration must specify 'type' field")
 
-    except ProfileError:
-        raise
+    tables_config = config.pop("tables", None)
+
+    try:
+        # Use ibis backend-specific connection instead of generic connect
+        # to avoid duplicate keyword argument issues
+        connection = ibis.__getattribute__(conn_type).connect(**config)
     except Exception as e:
-        raise ProfileError(
-            f"Failed to load profile '{profile_name}' from {yaml_file}: {type(e).__name__}: {e}"
-        ) from e
+        raise ProfileError(f"Failed to create {conn_type} connection: {e}") from e
+
+    if tables_config:
+        _load_parquet_tables(connection, tables_config, conn_type)
+
+    return connection
 
 
 def _profile_not_found_error(name: str, local_profile: Path, search_locations: list[str]) -> str:
-    searched = []
-    for i, location in enumerate(search_locations, 1):
-        if location == "bsl_dir":
-            searched.append(f"  {i}. BSL profiles: ~/.config/bsl/profiles/{name}.yml")
-        elif location == "local":
-            searched.append(f"  {i}. Current directory: {local_profile}")
-        elif location == "xorq_dir":
-            searched.append(f"  {i}. xorq profiles directory")
+    message = f"Profile '{name}' not found.\n\n"
+    message += "Searched in:\n"
 
-    message = f"Profile '{name}' not found.\n\nSearched in:\n"
-    message += "\n".join(searched)
-    message += f"\n\nCreate a profiles.yml file at {local_profile} with:\n"
+    if "bsl_dir" in search_locations:
+        bsl_dir = Path.home() / ".config" / "bsl" / "profiles"
+        message += f"  - BSL profiles directory: {bsl_dir}\n"
+
+    if "local" in search_locations:
+        message += f"  - Local profiles file: {local_profile}\n"
+
+    if "xorq_dir" in search_locations:
+        message += "  - Xorq profiles directory\n"
+
+    message += "\nTo create a profile, add it to profiles.yml or create a profile file:\n\n"
+    message += "profiles:\n"
     message += f"  {name}:\n"
     message += "    type: duckdb\n"
     message += "    database: ':memory:'"
@@ -150,3 +169,42 @@ def _load_parquet_tables(connection: BaseBackend, tables_config: dict, conn_type
             raise ProfileError(
                 f"Failed to load parquet file '{source}' as table '{table_name}': {e}"
             ) from e
+
+
+def load_tables_from_profile(
+    profile_name: str,
+    profile_file: str | Path | None = None,
+    table_names: list[str] | None = None,
+) -> dict:
+    """
+    Load tables from a profile and return them as a dictionary.
+
+    This is a helper function for yaml.py to get tables from a profile connection.
+
+    Args:
+        profile_name: Name of the profile or path to profile file
+        profile_file: Optional path to the profile file
+        table_names: Optional list of specific table names to load
+
+    Returns:
+        Dictionary mapping table names to table objects
+    """
+    connection = load_profile(profile_name, profile_file=profile_file)
+
+    # Get all table names from the connection
+    available_tables = connection.list_tables()
+
+    # Filter to requested tables if specified
+    if table_names:
+        tables_to_load = [t for t in table_names if t in available_tables]
+        missing = set(table_names) - set(available_tables)
+        if missing:
+            raise ProfileError(
+                f"Tables not found in profile '{profile_name}': {', '.join(missing)}\n"
+                f"Available tables: {', '.join(available_tables)}"
+            )
+    else:
+        tables_to_load = available_tables
+
+    # Return dict of table name -> table object
+    return {name: connection.table(name) for name in tables_to_load}

@@ -5,10 +5,12 @@ Verifies that when users try to use features requiring optional dependencies,
 they receive clear error messages indicating which dependency group to install.
 
 Dependency groups in pyproject.toml:
-- xorq: For xorq conversion functionality (to_xorq, from_xorq)
 - fastmcp: For MCP semantic model functionality (MCPSemanticModel)
 - viz-altair: For Altair visualization (chart with backend="altair")
 - viz-plotly: For Plotly visualization (chart with backend="plotly")
+
+Note: xorq is now a required dependency (in main dependencies list)
+Note: agents dependency group is only on bsl-agent branch, not bsl-profiles
 """
 
 import sys
@@ -42,17 +44,19 @@ class TestDependencyGroupDocumentation:
 
         optional_deps = pyproject["project"]["optional-dependencies"]
 
-        # Verify all expected groups exist
-        assert "xorq" in optional_deps, "xorq dependency group missing"
+        # Verify all expected groups exist (agents is only on bsl-agent branch)
         assert "fastmcp" in optional_deps, "fastmcp dependency group missing"
         assert "viz-altair" in optional_deps, "viz-altair dependency group missing"
         assert "viz-plotly" in optional_deps, "viz-plotly dependency group missing"
 
         # Verify key dependencies in each group
-        assert any("xorq" in dep for dep in optional_deps["xorq"])
         assert any("fastmcp" in dep for dep in optional_deps["fastmcp"])
         assert any("altair" in dep for dep in optional_deps["viz-altair"])
         assert any("plotly" in dep for dep in optional_deps["viz-plotly"])
+
+        # Verify xorq is in main dependencies (not optional)
+        main_deps = pyproject["project"]["dependencies"]
+        assert any("xorq" in dep for dep in main_deps), "xorq should be in main dependencies"
 
     def test_all_dependency_groups_in_dev(self):
         """Verify dev dependency group includes all optional dependencies."""
@@ -80,40 +84,45 @@ class TestDependencyGroupDocumentation:
 
         assert len(dev_with_extras) > 0, "Dev should include boring-semantic-layer with extras"
 
-        # The first dev dependency should include all the optional groups
+        # The first dev dependency should include all the optional groups (not xorq, it's required; not agents, only on bsl-agent branch)
         if dev_with_extras:
             first_dep = dev_with_extras[0]
             assert "fastmcp" in first_dep
-            assert "xorq" in first_dep
             assert "viz-altair" in first_dep
             assert "viz-plotly" in first_dep
             assert "viz-plotext" in first_dep
 
 
-class TestXorqErrorMessages:
-    """Test that xorq functions have proper error handling."""
+class TestXorqAvailability:
+    """Test that xorq functions are available (xorq is now a required dependency)."""
 
-    def test_xorq_convert_module_has_error_handling(self):
-        """Verify xorq_convert module has ImportError handling."""
-        import inspect
+    def test_xorq_is_required_dependency(self):
+        """Verify xorq is in main dependencies."""
+        # Use tomllib (Python 3.11+) or tomli (Python 3.10)
+        if sys.version_info >= (3, 11):
+            import tomllib
+        else:
+            try:
+                import tomli as tomllib
+            except ImportError:
+                pytest.skip("tomli not available for Python < 3.11")
 
-        from boring_semantic_layer import xorq_convert
+        test_file = Path(__file__)
+        project_root = test_file.parent.parent.parent.parent
+        pyproject_path = project_root / "pyproject.toml"
+        with open(pyproject_path, "rb") as f:
+            pyproject = tomllib.load(f)
 
-        # Check that to_xorq raises ImportError with helpful message
-        source = inspect.getsource(xorq_convert.to_xorq)
-        assert "ImportError" in source
-        assert "boring-semantic-layer[xorq]" in source or "xorq" in source
+        # xorq should be in main dependencies, not optional
+        main_deps = pyproject["project"]["dependencies"]
+        assert any("xorq" in dep for dep in main_deps)
 
-    def test_main_module_getattr_handles_xorq(self):
-        """Verify __init__.py __getattr__ handles xorq imports."""
-        import inspect
+    def test_xorq_functions_importable(self):
+        """Verify to_xorq and from_xorq can be imported."""
+        from boring_semantic_layer import from_xorq, to_xorq
 
-        import boring_semantic_layer
-
-        # Check __getattr__ implementation
-        source = inspect.getsource(boring_semantic_layer.__getattr__)
-        assert "xorq" in source.lower()
-        assert "boring-semantic-layer[xorq]" in source
+        assert callable(to_xorq)
+        assert callable(from_xorq)
 
 
 class TestMCPErrorMessages:
@@ -177,25 +186,23 @@ class TestErrorMessageQuality:
 
         source = inspect.getsource(boring_semantic_layer.__getattr__)
 
-        # Should mention both features and how to install
+        # Should mention features and how to install
         assert "MCPSemanticModel" in source
         assert "fastmcp" in source
-        assert "xorq" in source or "to_xorq" in source or "from_xorq" in source
 
+        # xorq is now a required dependency, so no error message needed
         # Should have install instructions
         assert "pip install" in source or "Install with" in source
 
-    def test_xorq_convert_has_clear_error_messages(self):
-        """Verify xorq_convert module has clear error messages."""
-        import inspect
-
+    def test_xorq_convert_available(self):
+        """Verify xorq_convert module functions are available (xorq is now required)."""
         from boring_semantic_layer import xorq_convert
 
-        # Check to_xorq function
-        source = inspect.getsource(xorq_convert.to_xorq)
-        assert "ImportError" in source
-        # Should mention how to install
-        assert "pip install" in source or "Install with" in source or "xorq" in source
+        # xorq is now a required dependency, so these should just work
+        assert hasattr(xorq_convert, "to_xorq")
+        assert hasattr(xorq_convert, "from_xorq")
+        assert callable(xorq_convert.to_xorq)
+        assert callable(xorq_convert.from_xorq)
 
 
 class TestDependencyGroupCoverage:
@@ -207,8 +214,7 @@ class TestDependencyGroupCoverage:
         # Read this test file and verify it tests all groups
         test_file_content = Path(__file__).read_text()
 
-        # Should test all dependency groups
-        assert "xorq" in test_file_content
+        # Should test all optional dependency groups (agents is only on bsl-agent branch)
         assert "fastmcp" in test_file_content
         assert "viz-altair" in test_file_content or "altair" in test_file_content
         assert "viz-plotly" in test_file_content or "plotly" in test_file_content
@@ -248,34 +254,24 @@ class TestDependencyGroupCoverage:
 class TestIntegrationWithRealDependencies:
     """Integration tests that verify behavior with real (installed) dependencies."""
 
-    def test_xorq_available_if_installed(self):
-        """Verify xorq functions work when xorq is installed."""
-        try:
-            import xorq  # noqa: F401
+    def test_xorq_always_available(self):
+        """Verify xorq functions are always available (xorq is a required dependency)."""
+        # xorq is now a required dependency, so it should always be available
+        from boring_semantic_layer import from_xorq, to_xorq
 
-            xorq_available = True
-        except ImportError:
-            xorq_available = False
+        assert callable(to_xorq)
+        assert callable(from_xorq)
 
-        if xorq_available:
-            # xorq is installed, verify it can be imported and used
-            from boring_semantic_layer import from_xorq, to_xorq
+        # Verify we can actually use them
+        import ibis
 
-            assert callable(to_xorq)
-            assert callable(from_xorq)
-        else:
-            # xorq not installed, verify we get helpful error
-            with pytest.raises((ImportError, AttributeError)) as exc_info:
-                import ibis
+        from boring_semantic_layer import SemanticModel
 
-                from boring_semantic_layer import SemanticModel, to_xorq
-
-                table = ibis.memtable({"a": [1]})
-                model = SemanticModel(table=table, dimensions={}, measures={})
-                to_xorq(model)
-
-            # Should mention xorq in the error
-            assert "xorq" in str(exc_info.value).lower() or "xorq" in str(exc_info.typename).lower()
+        table = ibis.memtable({"a": [1]})
+        model = SemanticModel(table=table, dimensions={}, measures={})
+        # This should work without errors since xorq is required
+        result = to_xorq(model)
+        assert result is not None
 
     def test_mcp_available_if_installed(self):
         """Verify MCPSemanticModel works when fastmcp is installed."""
