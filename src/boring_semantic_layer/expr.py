@@ -71,17 +71,17 @@ class SemanticTable(ir.Table):
         op = self.op()
 
         # For SemanticModel, get cached graph from the op
-        if hasattr(op, "graph"):
-            return op.graph
+        if hasattr(op, "get_graph"):
+            return op.get_graph()
 
         # For joins, merge graphs from left and right ops with prefixing
         if hasattr(op, "left") and hasattr(op, "right"):
             merged = DependencyGraph()
 
             # Add left graph with prefixes (both field names and their dependencies)
-            if hasattr(op.left, "graph") and hasattr(op.left, "name"):
+            if hasattr(op.left, "get_graph") and hasattr(op.left, "name"):
                 left_name = op.left.name
-                for field_name, field_data in op.left.graph.items():
+                for field_name, field_data in op.left.get_graph().items():
                     prefixed_name = f"{left_name}.{field_name}" if left_name else field_name
                     # Also prefix the dependencies
                     prefixed_deps = {
@@ -94,9 +94,9 @@ class SemanticTable(ir.Table):
                     }
 
             # Add right graph with prefixes (both field names and their dependencies)
-            if hasattr(op.right, "graph") and hasattr(op.right, "name"):
+            if hasattr(op.right, "get_graph") and hasattr(op.right, "name"):
                 right_name = op.right.name
-                for field_name, field_data in op.right.graph.items():
+                for field_name, field_data in op.right.get_graph().items():
                     prefixed_name = f"{right_name}.{field_name}" if right_name else field_name
                     # Also prefix the dependencies
                     prefixed_deps = {
@@ -116,8 +116,8 @@ class SemanticTable(ir.Table):
         from .ops import SemanticTableOp
 
         for node in walk_nodes((SemanticTableOp,), self):
-            if hasattr(node, "graph"):
-                return node.graph
+            if hasattr(node, "get_graph"):
+                return node.get_graph()
 
         # Fallback to empty graph
         return DependencyGraph()

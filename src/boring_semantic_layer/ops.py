@@ -530,8 +530,7 @@ class SemanticTableOp(Relation):
         """Get dictionary of calculated measures with metadata."""
         return object.__getattribute__(self, "calc_measures")
 
-    @property
-    def graph(self) -> dict[str, dict[str, Any]]:
+    def get_graph(self) -> dict[str, dict[str, Any]]:
         from .dependency_graph import DependencyGraph
 
         return DependencyGraph.build(
