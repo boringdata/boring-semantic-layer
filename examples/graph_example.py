@@ -46,12 +46,12 @@ carriers = to_semantic_table(
 )
 
 # Get the graph
-print("=== flights.graph (raw dict output) ===\n")
-pprint(dict(flights.graph))
+print("=== flights.get_graph() (raw dict output) ===\n")
+pprint(dict(flights.get_graph()))
 
 print("\n\n=== Joined graph ===\n")
 joined = flights.join_one(carriers, left_on="carrier_code", right_on="code")
-pprint(dict(joined.graph))
+pprint(dict(joined.get_graph()))
 
 print("\n\n=== Graph export to JSON format ===\n")
-print(json.dumps(joined.graph.to_dict(), indent=2))
+print(json.dumps(joined.get_graph().to_dict(), indent=2))

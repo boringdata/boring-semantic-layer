@@ -47,8 +47,7 @@ def to_ibis(expr):
 
 
 class SemanticTable(ir.Table):
-    @property
-    def graph(self):
+    def get_graph(self):
         """Get the dependency graph for this semantic table.
 
         Returns the dependency graph showing how dimensions and measures
@@ -59,7 +58,13 @@ class SemanticTable(ir.Table):
         For filters/limits/ordering, this returns the graph from the source.
 
         Returns:
-            DependencyGraph with predecessors() and successors() methods
+            DependencyGraph with graph traversal methods:
+            - predecessors(field): direct dependencies
+            - successors(field): direct dependents
+            - bfs(field): breadth-first traversal
+            - dfs(field): depth-first traversal
+            - invert(): reverse dependencies
+            - to_dict(): export to JSON format
         """
         from .dependency_graph import DependencyGraph
 

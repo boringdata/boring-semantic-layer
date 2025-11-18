@@ -137,7 +137,7 @@ flights_with_deps = flights_st.with_dimensions(
 )
 
 # Access the dependency graph
-graph = flights_with_deps.graph
+graph = flights_with_deps.get_graph()
 graph
 ```
 <regularoutput code-block="graph_demo"></regularoutput>
@@ -168,7 +168,7 @@ The graph is a dictionary where:
 # }
 
 # Find what a field depends on
-flights_with_deps.graph['avg_distance_per_flight']['deps']
+flights_with_deps.get_graph()['avg_distance_per_flight']['deps']
 ```
 <regularoutput code-block="graph_structure"></regularoutput>
 
@@ -178,11 +178,11 @@ Use `successors()` and `predecessors()` to navigate dependencies:
 
 ```graph_traversal
 # What does this field depend on? (predecessors)
-flights_with_deps.graph.predecessors('avg_distance_per_flight')
+flights_with_deps.get_graph().predecessors('avg_distance_per_flight')
 # {'total_distance', 'flight_count'}
 
 # What depends on this field? (successors)
-flights_with_deps.graph.successors('total_distance')
+flights_with_deps.get_graph().successors('total_distance')
 # {'avg_distance_per_flight'}
 ```
 <regularoutput code-block="graph_traversal"></regularoutput>
@@ -193,7 +193,7 @@ Export the graph to NetworkX-compatible JSON format for visualization or analysi
 
 ```graph_export
 # Export to NetworkX node-link format
-json_data = flights_with_deps.graph.to_networkx_json()
+json_data = flights_with_deps.get_graph().to_networkx_json()
 json_data
 
 # Use with NetworkX (if installed)

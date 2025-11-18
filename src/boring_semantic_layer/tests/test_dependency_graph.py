@@ -18,7 +18,7 @@ def test_simple_dimension_dependencies():
         revenue=lambda t: t.quantity * t.price,
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
 
     assert "revenue" in graph
     assert set(graph["revenue"]["deps"].keys()) == {"quantity", "price"}
@@ -40,7 +40,7 @@ def test_measure_dependencies():
         .with_measures(total_revenue=lambda t: t.revenue.sum())
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
 
     # Check dimension dependencies
     assert "revenue" in graph
@@ -72,7 +72,7 @@ def test_calculated_measure_dependencies():
         )
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
 
     # Base measures depend on columns
     assert set(graph["total_quantity"]["deps"].keys()) == {"quantity"}
@@ -100,7 +100,7 @@ def test_successors_and_predecessors():
         )
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
 
     # Test predecessors (what this node depends on)
     assert graph.predecessors("revenue") == {"quantity", "price"}
@@ -134,7 +134,7 @@ def test_complex_dependency_chain():
         )
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
 
     # Check all dependency chains
     assert set(graph["gross_revenue"]["deps"].keys()) == {"quantity", "unit_price"}
@@ -162,7 +162,7 @@ def test_multiple_dimension_usage():
         squared=lambda t: t.value * t.value,
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
 
     # All three dimensions depend on value
     assert graph.successors("value") == {"doubled", "tripled", "squared"}
@@ -182,7 +182,7 @@ def test_no_dependencies():
         dim_b=lambda t: t.col_b,
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
 
     # Simple column references
     assert set(graph["dim_a"]["deps"].keys()) == {"col_a"}
@@ -201,7 +201,7 @@ def test_measure_with_no_dimension_dependency():
         total=lambda t: t.amount.sum(),
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
 
     assert set(graph["total"]["deps"].keys()) == {"amount"}
 
@@ -225,13 +225,13 @@ def test_graph_immutability_after_with_dimensions():
     )
 
     # Original graph only has revenue
-    assert "revenue" in sm1.graph
-    assert "double_revenue" not in sm1.graph
+    assert "revenue" in sm1.get_graph()
+    assert "double_revenue" not in sm1.get_graph()
 
     # New graph has both
-    assert "revenue" in sm2.graph
-    assert "double_revenue" in sm2.graph
-    assert set(sm2.graph["double_revenue"]["deps"].keys()) == {"revenue"}
+    assert "revenue" in sm2.get_graph()
+    assert "double_revenue" in sm2.get_graph()
+    assert set(sm2.get_graph()["double_revenue"]["deps"].keys()) == {"revenue"}
 
 
 def test_empty_semantic_table():
@@ -244,7 +244,7 @@ def test_empty_semantic_table():
 
     sm = to_semantic_table(tbl)
 
-    graph = sm.graph
+    graph = sm.get_graph()
 
     assert graph == {}
 
@@ -264,7 +264,7 @@ def test_graph_with_deferred_expressions():
         revenue=_.quantity * _.price,
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
 
     assert "revenue" in graph
     assert set(graph["revenue"]["deps"].keys()) == {"quantity", "price"}
@@ -292,7 +292,7 @@ def test_bfs_traversal():
         )
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
 
     # BFS from total_net_revenue should visit in breadth-first order
     bfs_order = list(graph.bfs("total_net_revenue"))
@@ -332,7 +332,7 @@ def test_dfs_traversal():
         )
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
 
     # DFS from total_net_revenue should visit deeply first
     dfs_order = list(graph.dfs("total_net_revenue"))
@@ -362,7 +362,7 @@ def test_bfs_simple_chain():
         .with_measures(total_revenue=lambda t: t.revenue.sum())
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
     bfs_order = list(graph.bfs("total_revenue"))
 
     # Should visit in order: total_revenue -> revenue -> [quantity, price] (order of quantity/price may vary)
@@ -390,7 +390,7 @@ def test_invert_graph():
         )
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
     inverted = graph.invert()
 
     # In inverted graph, dependencies become dependents
@@ -420,7 +420,7 @@ def test_invert_preserves_all_nodes():
         dim_b=lambda t: t.col_b,
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
     inverted = graph.invert()
 
     # Both base columns and dimensions should be in inverted graph
@@ -453,7 +453,7 @@ def test_bfs_dfs_visit_all_dependencies():
         .with_measures(total_abc=lambda t: t.abc.sum())
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
 
     # Both BFS and DFS should visit all 6 nodes
     bfs_nodes = set(graph.bfs("total_abc"))
@@ -482,7 +482,7 @@ def test_to_dict_export():
         )
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
     graph_dict = graph.to_dict()
 
     # Check structure
@@ -545,43 +545,43 @@ def test_graph_accessible_from_all_node_types():
     )
 
     # Test graph on SemanticModel
-    model_graph = sm.graph
+    model_graph = sm.get_graph()
     assert "revenue" in model_graph
     assert "total_revenue" in model_graph
 
     # Test graph on SemanticFilter
     filtered = sm.filter(lambda t: t.quantity > 15)
-    filtered_graph = filtered.graph
+    filtered_graph = filtered.get_graph()
     assert "revenue" in filtered_graph
     assert "total_revenue" in filtered_graph
 
     # Test graph on SemanticGroupBy
     grouped = sm.group_by("revenue")
-    grouped_graph = grouped.graph
+    grouped_graph = grouped.get_graph()
     assert "revenue" in grouped_graph
     assert "total_revenue" in grouped_graph
 
     # Test graph on SemanticAggregate
     aggregated = sm.group_by("cat").aggregate("total_revenue")
-    aggregated_graph = aggregated.graph
+    aggregated_graph = aggregated.get_graph()
     assert "revenue" in aggregated_graph
     assert "total_revenue" in aggregated_graph
 
     # Test graph on SemanticOrderBy
     ordered = sm.order_by("revenue")
-    ordered_graph = ordered.graph
+    ordered_graph = ordered.get_graph()
     assert "revenue" in ordered_graph
     assert "total_revenue" in ordered_graph
 
     # Test graph on SemanticLimit
     limited = sm.limit(2)
-    limited_graph = limited.graph
+    limited_graph = limited.get_graph()
     assert "revenue" in limited_graph
     assert "total_revenue" in limited_graph
 
     # Test graph on SemanticMutate
     mutated = sm.mutate(double_qty=lambda t: t.quantity * 2)
-    mutated_graph = mutated.graph
+    mutated_graph = mutated.get_graph()
     assert "revenue" in mutated_graph
     assert "total_revenue" in mutated_graph
 
@@ -595,7 +595,7 @@ def test_bfs_dfs_nonexistent_node():
     tbl = ibis.memtable({"a": [1, 2, 3]})
     sm = to_semantic_table(tbl).with_dimensions(dim_a=lambda t: t.a)
 
-    graph = sm.graph
+    graph = sm.get_graph()
 
     # BFS/DFS should still yield the starting node even if it doesn't exist in graph
     assert list(graph.bfs("nonexistent")) == ["nonexistent"]
@@ -607,7 +607,7 @@ def test_predecessors_successors_nonexistent():
     tbl = ibis.memtable({"a": [1, 2, 3]})
     sm = to_semantic_table(tbl).with_dimensions(dim_a=lambda t: t.a)
 
-    graph = sm.graph
+    graph = sm.get_graph()
 
     # Should return empty sets for non-existent nodes
     assert graph.predecessors("nonexistent") == set()
@@ -619,7 +619,7 @@ def test_invert_empty_graph():
     tbl = ibis.memtable({"a": [1, 2, 3]})
     sm = to_semantic_table(tbl)
 
-    graph = sm.graph
+    graph = sm.get_graph()
     inverted = graph.invert()
 
     # Empty graph should invert to empty graph
@@ -631,7 +631,7 @@ def test_to_dict_empty_graph():
     tbl = ibis.memtable({"a": [1, 2, 3]})
     sm = to_semantic_table(tbl)
 
-    graph = sm.graph
+    graph = sm.get_graph()
     graph_dict = graph.to_dict()
 
     # Should return empty nodes and edges
@@ -646,7 +646,7 @@ def test_bfs_dfs_circular_protection():
         dim_b=lambda t: t.b,
     )
 
-    graph = sm.graph
+    graph = sm.get_graph()
 
     # Even with multiple starting points that share dependencies, each node visited once
     bfs_result = list(graph.bfs(["dim_a", "dim_b"]))
@@ -690,7 +690,7 @@ def test_graph_merge_on_join():
     joined = flights.join_one(carriers, left_on="carrier_code", right_on="code")
 
     # Graph should contain fields from both tables with prefixes (matching get_dimensions())
-    graph = joined.graph
+    graph = joined.get_graph()
     assert "flights.carrier" in graph
     assert "flights.total_distance" in graph
     assert "carriers.carrier_name" in graph
