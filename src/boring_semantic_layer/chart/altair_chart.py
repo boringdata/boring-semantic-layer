@@ -51,7 +51,6 @@ class AltairBackend(ChartBackend):
 
         # Check if we have a time dimension
         has_time = has_time_dimension(list(dimensions), time_dimension)
-        time_dim_index = dimensions.index(time_dimension) if has_time else -1
 
         # Determine appropriate date format and axis config based on time grain
         if has_time and time_grain:

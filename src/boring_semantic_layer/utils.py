@@ -64,9 +64,8 @@ def _validate_ast(node: ast.AST, allowed_names: set[str] | None = None) -> None:
             f"Unsafe node type: {type(node).__name__}. Only whitelisted operations are allowed."
         )
 
-    if isinstance(node, ast.Name) and allowed_names is not None:
-        if node.id not in allowed_names:
-            raise SafeEvalError(f"Name '{node.id}' is not in the allowed names: {allowed_names}")
+    if isinstance(node, ast.Name) and allowed_names is not None and node.id not in allowed_names:
+        raise SafeEvalError(f"Name '{node.id}' is not in the allowed names: {allowed_names}")
 
     for child in ast.iter_child_nodes(node):
         _validate_ast(child, allowed_names)

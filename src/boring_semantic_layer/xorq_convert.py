@@ -145,7 +145,7 @@ def to_xorq(semantic_expr, aggregate_cache_storage=None):
                 return value
             elif isinstance(value, dict):
                 return tuple((k, _to_hashable(v)) for k, v in value.items())
-            elif isinstance(value, (list, tuple)):
+            elif isinstance(value, list | tuple):
                 return tuple(_to_hashable(item) for item in value)
             else:
                 return str(value)
