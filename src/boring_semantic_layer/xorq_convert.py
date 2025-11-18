@@ -5,7 +5,6 @@ from typing import Any
 
 from attrs import frozen
 from returns.result import Failure, Result, safe
-from toolz.curried import get, pipe, valmap
 
 from .utils import expr_to_ibis_string, ibis_string_to_expr
 
@@ -109,7 +108,7 @@ def to_xorq(semantic_expr, aggregate_cache_storage=None):
 
         from xorq.common.utils.ibis_utils import from_ibis
         from xorq.common.utils.node_utils import replace_nodes
-        from xorq.vendor.ibis.expr.operations.relations import DatabaseTable, Aggregate
+        from xorq.vendor.ibis.expr.operations.relations import DatabaseTable
 
         xorq_table = from_ibis(ibis_expr)
 
@@ -427,7 +426,7 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
         Returns:
             Unwrapped expression with original backend references
         """
-        from xorq.expr.relations import Tag, CachedNode, RemoteTable
+        from xorq.expr.relations import CachedNode, RemoteTable, Tag
 
         op = expr.op()
 
