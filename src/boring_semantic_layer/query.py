@@ -15,6 +15,8 @@ from attrs import frozen
 from ibis.common.collections import FrozenDict
 from toolz import curry
 
+from .utils import safe_eval
+
 # Time grain type alias
 TimeGrain = Literal[
     "TIME_GRAIN_YEAR",
@@ -267,15 +269,10 @@ class Filter:
             expr = self._parse_json_filter(self.filter)
             return lambda t: expr.resolve(t)
         elif isinstance(self.filter, str):
-            # Evaluate string as ibis expression with restricted namespace
-            # Only allow ibis._ and safe operators
-            allowed_globals = {"_": ibis._, "ibis": ibis}
-            allowed_builtins = {}
-            expr = eval(  # noqa: S307
+            expr = safe_eval(
                 self.filter,
-                {"__builtins__": allowed_builtins, **allowed_globals},
-                {},
-            )
+                context={"_": ibis._, "ibis": ibis},
+            ).unwrap()
             return lambda t: expr.resolve(t)
         elif callable(self.filter):
             return self.filter
@@ -299,14 +296,6 @@ def _normalize_filter(
         return filter_spec
     else:
         raise ValueError(f"Unsupported filter type: {type(filter_spec)}")
-
-
-@curry
-def _make_time_range_filter(time_dim_name: str, start: str, end: str) -> Callable:
-    """Create time range filter predicate (curried)."""
-    return lambda t, dim=time_dim_name, s=start, e=end: (
-        (t[dim] >= ibis.timestamp(s)) & (t[dim] <= ibis.timestamp(e))
-    )
 
 
 @curry
@@ -388,13 +377,10 @@ def query(
                 "Mark a dimension as a time dimension using: "
                 ".with_dimensions(dim_name={'expr': lambda t: t.column, 'is_time_dimension': True})"
             )
-        filters.append(
-            _make_time_range_filter(
-                time_dim_name,
-                time_range["start"],
-                time_range["end"],
-            ),
-        )
+
+        # Add two filters for the time range: >= start AND <= end
+        filters.append({"field": time_dim_name, "operator": ">=", "value": time_range["start"]})
+        filters.append({"field": time_dim_name, "operator": "<=", "value": time_range["end"]})
 
     # Step 1: Handle time grain transformations
     if time_grain:

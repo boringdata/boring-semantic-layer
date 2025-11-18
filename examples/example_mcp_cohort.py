@@ -40,6 +40,7 @@ Usage:
 """
 
 import ibis
+
 from boring_semantic_layer import MCPSemanticModel, to_semantic_table
 
 # Create a DuckDB connection for in-memory table creation
@@ -208,20 +209,14 @@ cohort_model = (
         },
         retention_rate={
             "expr": lambda t: (
-                t.customer_id.nunique().cast("float")
-                / t.cohort_size.max().cast("float")
-                * 100
+                t.customer_id.nunique().cast("float") / t.cohort_size.max().cast("float") * 100
             ),
             "description": "Percentage of customers retained from initial cohort",
         },
         churn_rate={
             "expr": lambda t: (
                 100
-                - (
-                    t.customer_id.nunique().cast("float")
-                    / t.cohort_size.max().cast("float")
-                    * 100
-                )
+                - (t.customer_id.nunique().cast("float") / t.cohort_size.max().cast("float") * 100)
             ),
             "description": "Percentage of customers churned from initial cohort",
         },

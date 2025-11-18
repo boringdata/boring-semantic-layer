@@ -352,8 +352,9 @@ def _build_json_definition(
     dims_dict: dict,
     meas_dict: dict,
     name: str | None = None,
+    description: str | None = None,
 ) -> dict:
-    return {
+    result = {
         "dimensions": {n: spec.to_json() for n, spec in dims_dict.items()},
         "measures": {n: spec.to_json() for n, spec in meas_dict.items()},
         "time_dimensions": {
@@ -361,6 +362,9 @@ def _build_json_definition(
         },
         "name": name,
     }
+    if description is not None:
+        result["description"] = description
+    return result
 
 
 def _format_column_error(e: AttributeError, table: ir.Table) -> str:
@@ -468,6 +472,7 @@ class SemanticTableOp(Relation):
     measures: FrozenDict[str, Measure]
     calc_measures: FrozenDict[str, Any]
     name: str | None = None
+    description: str | None = None
     _source_join: Any = None  # Track if this wraps a join (SemanticJoinOp) for optimization
 
     def __init__(
@@ -477,6 +482,7 @@ class SemanticTableOp(Relation):
         measures: dict[str, Measure] | FrozenDict[str, Measure],
         calc_measures: dict[str, Any] | FrozenDict[str, Any],
         name: str | None = None,
+        description: str | None = None,
         _source_join: Any = None,
     ) -> None:
         # Accept both regular ibis and xorq's vendored ibis tables
@@ -503,6 +509,7 @@ class SemanticTableOp(Relation):
                 else calc_measures,
             )
             object.__setattr__(self, "name", name)
+            object.__setattr__(self, "description", description)
             object.__setattr__(self, "_source_join", _source_join)
         else:
             # Use normal initialization for regular ibis tables
@@ -516,6 +523,7 @@ class SemanticTableOp(Relation):
                 if not isinstance(calc_measures, FrozenDict)
                 else calc_measures,
                 name=name,
+                description=description,
                 _source_join=_source_join,
             )
 
@@ -539,6 +547,7 @@ class SemanticTableOp(Relation):
             self.get_dimensions(),
             self.get_measures(),
             self.name,
+            self.description,
         )
 
     @property

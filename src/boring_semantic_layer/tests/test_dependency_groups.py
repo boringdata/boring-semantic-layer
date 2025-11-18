@@ -87,6 +87,7 @@ class TestDependencyGroupDocumentation:
             assert "xorq" in first_dep
             assert "viz-altair" in first_dep
             assert "viz-plotly" in first_dep
+            assert "viz-plotext" in first_dep
 
 
 class TestXorqErrorMessages:
@@ -134,39 +135,34 @@ class TestChartErrorMessages:
     """Test that chart functions have proper error handling for missing viz dependencies."""
 
     def test_chart_module_imports_altair_conditionally(self):
-        """Verify chart module imports altair only when needed."""
+        """Verify Altair backend imports altair only when needed."""
         import inspect
 
-        from boring_semantic_layer import chart as chart_module
+        from boring_semantic_layer.chart import altair_chart
 
-        # Chart function should import altair inside the function, not at module level
-        source = inspect.getsource(chart_module.chart)
+        # Altair backend should import altair inside methods, not at module level
+        source = inspect.getsource(altair_chart.AltairBackend.create_chart)
         assert "import altair" in source
-        # Should be conditional (inside a function or try/except)
-        assert 'backend == "altair"' in source or "altair" in source
 
     def test_chart_module_imports_plotly_conditionally(self):
-        """Verify chart module imports plotly only when needed."""
+        """Verify Plotly backend imports plotly only when needed."""
         import inspect
 
-        from boring_semantic_layer import chart as chart_module
+        from boring_semantic_layer.chart import plotly_chart
 
-        # Chart function should import plotly inside the function
-        source = inspect.getsource(chart_module.chart)
+        # Plotly backend should import plotly inside methods
+        source = inspect.getsource(plotly_chart.PlotlyBackend.create_chart)
         assert "import plotly" in source
-        # Should be conditional
-        assert 'backend == "plotly"' in source or "plotly" in source
 
     def test_chart_png_export_has_error_handling(self):
-        """Verify chart function has error handling for PNG export dependencies."""
+        """Verify chart backends have error handling for PNG export dependencies."""
         import inspect
 
-        from boring_semantic_layer import chart as chart_module
+        from boring_semantic_layer.chart import altair_chart
 
-        # Chart function should have error handling for image export
-        source = inspect.getsource(chart_module.chart)
-        # Should have try/except or error handling for export formats
-        assert 'format == "png"' in source or "format in" in source
+        # Altair backend should have error handling for image export
+        source = inspect.getsource(altair_chart.AltairBackend.format_output)
+        # Should have try/except for image formats
         assert "ImportError" in source or "Exception" in source
 
 

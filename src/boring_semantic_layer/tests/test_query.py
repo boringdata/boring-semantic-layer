@@ -105,6 +105,40 @@ class TestBasicQuery:
 
         assert len(result) == 2
 
+    def test_aggregate_without_group_by(self, flights_data):
+        """Test calling aggregate() directly without group_by() first."""
+        st = (
+            to_semantic_table(flights_data, "flights")
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(
+                total_passengers=lambda t: t.passengers.sum(),
+                avg_distance=lambda t: t.distance.mean(),
+            )
+        )
+
+        # Should be able to call aggregate() directly
+        result = st.aggregate("total_passengers", "avg_distance").execute()
+
+        assert len(result) == 1
+        assert "total_passengers" in result.columns
+        assert "avg_distance" in result.columns
+        # Check the actual values (5 repetitions of each passenger count)
+        assert result["total_passengers"].iloc[0] == 5 * (50 + 75 + 100 + 60 + 80 + 110)
+        # Average distance should be the mean of all distance values
+        assert result["avg_distance"].iloc[0] == pytest.approx(225.0)
+
+    def test_aggregate_with_single_measure(self, flights_data):
+        """Test aggregate() with a single measure name."""
+        st = to_semantic_table(flights_data, "flights").with_measures(
+            flight_count=lambda t: t.count(),
+        )
+
+        result = st.aggregate("flight_count").execute()
+
+        assert len(result) == 1
+        assert "flight_count" in result.columns
+        assert result["flight_count"].iloc[0] == 30  # 6 carriers * 5 repetitions
+
 
 class TestFilters:
     """Test filter functionality."""

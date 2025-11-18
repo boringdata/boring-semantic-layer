@@ -10,8 +10,8 @@ This script showcases:
   - Rolling-window calculations
 """
 
-import pandas as pd
 import ibis
+import pandas as pd
 
 from boring_semantic_layer import to_semantic_table
 
@@ -33,9 +33,7 @@ def main():
     flights_st = (
         to_semantic_table(flights_tbl, name="flights")
         .with_dimensions(origin=lambda t: t.origin)
-        .with_measures(
-            flight_count=lambda t: t.count(), total_distance=lambda t: t.distance.sum()
-        )
+        .with_measures(flight_count=lambda t: t.count(), total_distance=lambda t: t.distance.sum())
     )
 
     df1 = flights_st.group_by("origin").aggregate("flight_count").execute()
@@ -72,9 +70,7 @@ def main():
 
     marketing_st = (
         to_semantic_table(marketing_tbl, name="marketing")
-        .with_dimensions(
-            customer_id=lambda t: t.customer_id, segment=lambda t: t.segment
-        )
+        .with_dimensions(customer_id=lambda t: t.customer_id, segment=lambda t: t.segment)
         .with_measures(avg_spend=lambda t: t.monthly_spend.mean())
     )
     support_st = (
@@ -87,9 +83,9 @@ def main():
         .with_measures(case_count=lambda t: t.count())
     )
 
-    cross_team = marketing_st.join_one(
-        support_st, "customer_id", "customer_id"
-    ).with_measures(cases_per_spend=lambda t: t.case_count / t.avg_spend)
+    cross_team = marketing_st.join_one(support_st, "customer_id", "customer_id").with_measures(
+        cases_per_spend=lambda t: t.case_count / t.avg_spend
+    )
     df3 = cross_team.group_by("segment").aggregate("cases_per_spend").execute()
     print("\nCases per spend by segment:\n", df3)
 

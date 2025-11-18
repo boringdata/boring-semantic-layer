@@ -31,7 +31,7 @@ examples:
 # Build docs
 docs-build:
 	@echo "Building documentation..."
-	cd docs && npm run build
+	cd docs/web && npm run build
 
 # Run all checks (CI target)
 check: test examples docs-build
