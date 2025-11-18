@@ -2,6 +2,9 @@
 #    uv export --frozen --no-hashes --no-emit-project --all-groups --all-extras --output-file=requirements-dev.txt
 absl-py==2.3.1
     # via malloy
+adbc-driver-manager==1.9.0
+    # via adbc-driver-sqlite
+adbc-driver-sqlite==1.9.0
 altair==5.5.0
     # via boring-semantic-layer
 annotated-types==0.7.0
@@ -196,6 +199,8 @@ importlib-metadata==8.7.0
     #   dask
     #   keyring
     #   opentelemetry-api
+importlib-resources==6.5.2
+    # via adbc-driver-sqlite
 iniconfig==2.3.0
     # via pytest
 ipython==8.37.0 ; python_full_version < '3.11'
@@ -544,6 +549,7 @@ traitlets==5.14.3
     #   nbformat
 typing-extensions==4.15.0
     # via
+    #   adbc-driver-manager
     #   altair
     #   anyio
     #   cryptography
@@ -596,7 +602,7 @@ wcwidth==0.2.14
     # via prompt-toolkit
 websockets==15.0.1
     # via fastmcp
-xorq==0.3.2
+xorq==0.3.3
     # via boring-semantic-layer
 xorq-datafusion==0.2.4
     # via xorq

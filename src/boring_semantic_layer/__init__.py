@@ -25,7 +25,6 @@ from .ops import (
     Measure,
 )
 from .profile import (
-    Profile,
     load_profile,
 )
 from .yaml import (
@@ -44,13 +43,12 @@ __all__ = [
     "options",
     "to_xorq",
     "from_xorq",
-    "Profile",
     "load_profile",
 ]
 
-# Import MCP functionality from separate module if available
+# Import MCP functionality from agents module if available
 try:
-    from .mcp import MCPSemanticModel  # noqa: F401
+    from .agents.backends.mcp import MCPSemanticModel  # noqa: F401
 
     _MCP_AVAILABLE = True
 except ImportError:
@@ -73,7 +71,7 @@ def __getattr__(name):
         )
     if name in ("to_xorq", "from_xorq") and not _XORQ_AVAILABLE:
         raise ImportError(
-            "Xorq conversion requires the 'xorq' optional dependency. "
-            "Install with: pip install 'boring-semantic-layer[xorq]'"
+            "Xorq conversion requires xorq to be installed. "
+            "This should not happen as xorq is now a required dependency."
         )
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

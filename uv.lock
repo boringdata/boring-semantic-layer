@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -216,6 +216,7 @@ dependencies = [
     { name = "packaging" },
     { name = "pyyaml" },
     { name = "returns" },
+    { name = "xorq" },
 ]
 
 [package.optional-dependencies]
@@ -235,12 +236,10 @@ dev = [
     { name = "ruff" },
     { name = "urllib3" },
     { name = "vl-convert-python" },
-    { name = "xorq" },
 ]
 examples = [
     { name = "duckdb" },
     { name = "ibis-framework", extra = ["duckdb"] },
-    { name = "xorq" },
 ]
 fastmcp = [
     { name = "fastmcp" },
@@ -253,9 +252,6 @@ viz-plotly = [
     { name = "kaleido" },
     { name = "nbformat" },
     { name = "plotly" },
-]
-xorq = [
-    { name = "xorq" },
 ]
 
 [package.dev-dependencies]
@@ -270,7 +266,7 @@ dev = [
 requires-dist = [
     { name = "altair", marker = "extra == 'viz-altair'", specifier = ">=5.0.0" },
     { name = "attrs", specifier = ">=25.3.0" },
-    { name = "boring-semantic-layer", extras = ["fastmcp", "examples", "xorq", "viz-altair", "viz-plotly"], marker = "extra == 'dev'" },
+    { name = "boring-semantic-layer", extras = ["fastmcp", "examples", "viz-altair", "viz-plotly"], marker = "extra == 'dev'" },
     { name = "duckdb", marker = "extra == 'examples'", specifier = "<1.4" },
     { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=2.12.4" },
     { name = "ibis-framework", specifier = ">=11.0.0" },
@@ -289,10 +285,9 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.7" },
     { name = "urllib3", marker = "extra == 'dev'", specifier = ">=2.2.3" },
     { name = "vl-convert-python", marker = "extra == 'viz-altair'", specifier = ">=1.0.0" },
-    { name = "xorq", marker = "extra == 'examples'" },
-    { name = "xorq", marker = "extra == 'xorq'" },
+    { name = "xorq", specifier = ">=0.3.3" },
 ]
-provides-extras = ["examples", "xorq", "viz-altair", "viz-plotly", "dev", "fastmcp"]
+provides-extras = ["examples", "viz-altair", "viz-plotly", "dev", "fastmcp"]
 
 [package.metadata.requires-dev]
 dev = [
