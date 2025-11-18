@@ -61,15 +61,11 @@ SAFE_NODES = {
 def _validate_ast(node: ast.AST, allowed_names: set[str] | None = None) -> None:
     if type(node) not in SAFE_NODES:
         raise SafeEvalError(
-            f"Unsafe node type: {type(node).__name__}. "
-            f"Only whitelisted operations are allowed."
+            f"Unsafe node type: {type(node).__name__}. Only whitelisted operations are allowed."
         )
 
-    if isinstance(node, ast.Name) and allowed_names is not None:
-        if node.id not in allowed_names:
-            raise SafeEvalError(
-                f"Name '{node.id}' is not in the allowed names: {allowed_names}"
-            )
+    if isinstance(node, ast.Name) and allowed_names is not None and node.id not in allowed_names:
+        raise SafeEvalError(f"Name '{node.id}' is not in the allowed names: {allowed_names}")
 
     for child in ast.iter_child_nodes(node):
         _validate_ast(child, allowed_names)
@@ -108,8 +104,6 @@ def safe_eval(
     return do_eval()
 
 
-
-
 def _extract_lambda_from_source(source: str) -> str:
     if "lambda" not in source:
         return source
@@ -135,8 +129,6 @@ def lambda_to_string(fn: Callable) -> Result[str, Exception]:
     return do_extract()
 
 
-
-
 def _check_deferred(fn: Any) -> Maybe[str]:
     from ibis.common.deferred import Deferred
 
@@ -155,7 +147,7 @@ def _check_closure_vars(fn: Callable) -> Maybe[str]:
     for name, value in closure_vars.nonlocals.items():
         if isinstance(value, Deferred):
             return Some(str(value))
-        if callable(value) and name == 'expr':
+        if callable(value) and name == "expr":
             result = expr_to_ibis_string(value)
             if isinstance(result, Success):
                 return Some(result.unwrap())
@@ -197,8 +189,6 @@ def _try_source_extraction(fn: Callable) -> Maybe[str]:
 
 
 def expr_to_ibis_string(fn: Callable) -> Result[str, Exception]:
-    from returns.result import Success
-
     @safe
     def do_convert():
         if not callable(fn):

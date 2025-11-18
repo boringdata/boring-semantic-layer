@@ -51,7 +51,7 @@ from boring_semantic_layer import from_yaml
 
 # Load models from YAML file
 models = from_yaml(
-    "content/yaml_example.yaml",
+    "yaml_example.yaml",
     tables={
         "flights_tbl": flights_tbl,
         "carriers_tbl": carriers_tbl

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "npm run build:bsl && vite build",
-    "build:bsl": "uv run scripts/build_data.py",
+    "build:bsl": "uv run ../md/docs_builder.py",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview"

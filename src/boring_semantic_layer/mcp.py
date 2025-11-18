@@ -1,16 +1,51 @@
 """MCP functionality for semantic models."""
 
-from collections.abc import Mapping, Sequence
-from typing import Any
+import json
+from collections.abc import Mapping
+from typing import Annotated, Any
 
 from fastmcp import FastMCP
+from pydantic import Field
+from pydantic.functional_validators import BeforeValidator
 
 from .query import _find_time_dimension
+
+
+def _parse_json_string(v: Any) -> Any:
+    if isinstance(v, str):
+        try:
+            return json.loads(v)
+        except (json.JSONDecodeError, ValueError):
+            # If it's not valid JSON, return as-is and let Pydantic handle validation
+            return v
+    return v
 
 
 class MCPSemanticModel(FastMCP):
     """
     MCP server specialized for semantic models using SemanticTable.
+
+    This server provides a semantic layer for querying structured data with support for:
+    - Dimensions (columns to group by)
+    - Measures (metrics to aggregate)
+    - Time-based aggregations with configurable grains
+    - Filtering with various operators
+    - Joins across multiple tables
+
+    IMPORTANT USAGE GUIDELINES FOR LLM:
+
+    1. ALWAYS start by calling list_models() to see available models
+    2. ALWAYS call get_model(model_name) to understand dimensions and measures before querying
+    3. When using joined models (multiple tables), ALWAYS prefix dimension/measure names with table name
+       Example: "flights.arr_time" not just "arr_time"
+    4. For time-based queries, use time_grain parameter (e.g., "TIME_GRAIN_YEAR", "TIME_GRAIN_MONTH")
+    5. Time dimensions must be explicitly included in dimensions parameter when using time_grain
+
+    Common mistakes to avoid:
+    - Using unprefixed names in joined models (will cause errors)
+    - Forgetting to include time dimension in dimensions list when using time_grain
+    - Using invalid time grain values (must be one of: TIME_GRAIN_SECOND, TIME_GRAIN_MINUTE,
+      TIME_GRAIN_HOUR, TIME_GRAIN_DAY, TIME_GRAIN_WEEK, TIME_GRAIN_MONTH, TIME_GRAIN_QUARTER, TIME_GRAIN_YEAR)
 
     Provides tools:
     - list_models: list all model names
@@ -33,12 +68,45 @@ class MCPSemanticModel(FastMCP):
     def _register_tools(self):
         @self.tool()
         def list_models() -> Mapping[str, str]:
-            """List all available semantic model names."""
+            """List all available semantic model names.
+
+            USAGE: This should be your FIRST call when exploring a new semantic layer.
+            It returns the names of all models you can query.
+
+            Returns:
+                Dictionary mapping model names to descriptions
+
+            Example output:
+                {"flights": "Semantic model: flights", "carriers": "Semantic model: carriers"}
+
+            Next step: Call get_model(model_name) for each model to see its dimensions and measures.
+            """
             return {name: f"Semantic model: {name}" for name in self.models}
 
         @self.tool()
         def get_model(model_name: str) -> Mapping[str, Any]:
-            """Get details about a specific semantic model including dimensions and measures."""
+            """Get details about a specific semantic model including dimensions and measures.
+
+            USAGE: Call this BEFORE querying to understand what dimensions and measures are available.
+            Pay special attention to dimension names - if they contain a dot (e.g., "flights.arr_time"),
+            the model is joined and you MUST use the full prefixed names in your queries.
+
+            Args:
+                model_name: Name of the model (get from list_models())
+
+            Returns:
+                Dictionary with:
+                - dimensions: Available grouping columns with metadata
+                - measures: Available metrics with descriptions
+                - calculated_measures: Derived metrics
+                - is_time_dimension: True for time-based dimensions
+                - smallest_time_grain: Minimum time granularity for time dimensions
+
+            IMPORTANT: Check dimension names carefully!
+            - Simple model: dimensions like "carrier", "origin"
+            - Joined model: dimensions like "flights.carrier", "carriers.name"
+              → You MUST use the prefixed names in query_model()
+            """
             if model_name not in self.models:
                 raise ValueError(f"Model {model_name} not found")
 
@@ -96,7 +164,32 @@ class MCPSemanticModel(FastMCP):
 
         @self.tool()
         def get_time_range(model_name: str) -> Mapping[str, Any]:
-            """Get the available time range for a model's time dimension."""
+            """Get the available time range for a model's time dimension.
+
+            USAGE: Call this to understand the date/time range of data before filtering.
+            Useful for determining appropriate time_range filters in query_model().
+
+            Args:
+                model_name: Name of the model (must have a time dimension)
+
+            Returns:
+                Dictionary with:
+                - start: Earliest timestamp in ISO format (e.g., "2000-01-01T00:00:00")
+                - end: Latest timestamp in ISO format (e.g., "2005-12-31T23:59:59")
+
+            Example:
+                get_time_range("flights")
+                → {"start": "2000-01-01T00:00:00", "end": "2005-12-31T23:06:00"}
+
+            Then use in query_model with time_range:
+                query_model(
+                    model_name="flights",
+                    dimensions=["flights.arr_time"],
+                    measures=["flights.flight_count"],
+                    time_grain="TIME_GRAIN_MONTH",
+                    time_range={"start": "2000-01-01", "end": "2000-12-31"}
+                )
+            """
             if model_name not in self.models:
                 raise ValueError(f"Model {model_name} not found")
 
@@ -125,26 +218,268 @@ class MCPSemanticModel(FastMCP):
         @self.tool()
         def query_model(
             model_name: str,
-            dimensions: Sequence[str] | None = None,
-            measures: Sequence[str] | None = None,
-            filters: Sequence[Mapping[str, Any]] | None = None,
-            order_by: Sequence[tuple[str, str]] | None = None,
-            limit: int | None = None,
-            time_grain: str | None = None,
-            time_range: Mapping[str, str] | None = None,
-            chart_spec: Mapping[str, Any] | None = None,
+            dimensions: Annotated[
+                list[str] | None,
+                BeforeValidator(_parse_json_string),
+                Field(
+                    default=None,
+                    description="List of dimension names to group by (e.g., ['flights.origin', 'flights.destination'])",
+                ),
+            ] = None,
+            measures: Annotated[
+                list[str] | None,
+                BeforeValidator(_parse_json_string),
+                Field(
+                    default=None,
+                    description="List of measure names to aggregate (e.g., ['flights.flight_count', 'flights.avg_distance'])",
+                ),
+            ] = None,
+            filters: Annotated[
+                list[dict[str, Any]] | None,
+                BeforeValidator(_parse_json_string),
+                Field(
+                    default=None,
+                    description="""List of JSON filter objects with the following structure:
+
+                Simple Filter:
+                {
+                    "field": "dimension_name",  # Must be an existing dimension (check model schema first!).
+                    "operator": "=",            # See operator list below
+                    "value": "single_value"     # For single-value operators (=, !=, >, >=, <, <=, ilike, not ilike, like, not like)
+                    # OR for 'in'/'not in' operators only:
+                    "values": ["val1", "val2"]  # REQUIRED for 'in' and 'not in' operators
+                }
+
+                IMPORTANT OPERATOR GUIDELINES:
+                - Equality: Use "=" (preferred), "eq", or "equals" - all work identically
+                - Text matching: Use "ilike" (case-insensitive) instead of "like" for better results
+                - List membership: "in" requires "values" field (array), NOT "value"
+                - Negated list: "not in" requires "values" field (array), NOT "value"
+                - Pattern matching: "ilike" and "not ilike" support wildcards (%, _)
+                - Null checks: "is null" and "is not null" need no value/values field
+
+                Available operators:
+                - "=" / "eq" / "equals": exact match (use "value")
+                - "!=": not equal (use "value")
+                - ">", ">=", "<", "<=": comparisons (use "value")
+                - "in": value is in list (use "values" array)
+                - "not in": value not in list (use "values" array)
+                - "ilike": case-insensitive pattern match (use "value" with % wildcards)
+                - "not ilike": negated case-insensitive pattern (use "value" with % wildcards)
+                - "like": case-sensitive pattern match (use "value" with % wildcards)
+                - "not like": negated case-sensitive pattern (use "value" with % wildcards)
+                - "is null": field is null (no value/values needed)
+                - "is not null": field is not null (no value/values needed)
+
+                COMMON MISTAKES TO AVOID:
+                1. Don't use "value" with "in"/"not in" - use "values" array instead
+                2. Don't filter on measures - only filter on dimensions
+                3. Don't use .month(), .year() etc. - use time_grain parameter instead
+                4. For case-insensitive text search, prefer "ilike" over "like"
+
+                Compound Filter (AND/OR):
+                {
+                    "operator": "AND",          # or "OR"
+                    "conditions": [             # Non-empty list of other filter objects
+                        {
+                            "field": "country",
+                            "operator": "equals",   # or "=" or "eq" - all equivalent
+                            "value": "US"
+                        },
+                        {
+                            "field": "tier",
+                            "operator": "in",       # MUST use "values" array for "in"
+                            "values": ["gold", "platinum"]  # NOT "value"
+                        },
+                        {
+                            "field": "name",
+                            "operator": "ilike",    # Case-insensitive pattern matching
+                            "value": "%john%"       # Wildcards supported
+                        }
+                    ]
+                }
+
+                Example filters:
+                [
+                    {"field": "status", "operator": "in", "values": ["active", "pending"]},
+                    {"field": "name", "operator": "ilike", "value": "%smith%"},
+                    {"field": "created_date", "operator": ">=", "value": "2024-01-01"},
+                    {"field": "email", "operator": "not ilike", "value": "%spam%"}
+                ]
+                Example of a complex nested filter with time ranges:
+                [{
+                    "operator": "AND",
+                    "conditions": [
+                        {
+                            "operator": "AND",
+                            "conditions": [
+                                {"field": "flight_date", "operator": ">=", "value": "2024-01-01"},
+                                {"field": "flight_date", "operator": "<", "value": "2024-04-01"}
+                            ]
+                        },
+                        {"field": "carrier.country", "operator": "eq", "value": "US"}
+                    ]
+                }]
+                """,
+                ),
+            ] = None,
+            order_by: Annotated[
+                list[list[str]] | None,
+                BeforeValidator(_parse_json_string),
+                Field(
+                    default=None,
+                    description="List of [field, direction] pairs for sorting (e.g., [['flights.flight_count', 'desc']])",
+                    json_schema_extra={"items": {"type": "array", "items": {"type": "string"}}},
+                ),
+            ] = None,
+            limit: Annotated[
+                int | None,
+                Field(
+                    default=None,
+                    description="Maximum number of rows to return",
+                ),
+            ] = None,
+            time_grain: Annotated[
+                str | None,
+                Field(
+                    default=None,
+                    description="""Time grain for aggregating time-based dimensions (e.g., "TIME_GRAIN_DAY", "TIME_GRAIN_MONTH").
+
+                IMPORTANT: Instead of trying to use .month(), .year(), .quarter() etc. in filters,
+                use this time_grain parameter to aggregate by time periods. The system will
+                automatically handle time dimension transformations.
+
+                Available time grains:
+                - TIME_GRAIN_YEAR
+                - TIME_GRAIN_QUARTER
+                - TIME_GRAIN_MONTH
+                - TIME_GRAIN_WEEK
+                - TIME_GRAIN_DAY
+                - TIME_GRAIN_HOUR
+                - TIME_GRAIN_MINUTE
+                - TIME_GRAIN_SECOND
+
+                Examples:
+                - For monthly data: time_grain="TIME_GRAIN_MONTH"
+                - For yearly data: time_grain="TIME_GRAIN_YEAR"
+                - For daily data: time_grain="TIME_GRAIN_DAY"
+
+                Then filter using the time_range parameter or regular date filters like:
+                {"field": "date_column", "operator": ">=", "value": "2024-01-01"}
+                """,
+                ),
+            ] = None,
+            time_range: Annotated[
+                dict[str, str] | None,
+                BeforeValidator(_parse_json_string),
+                Field(
+                    default=None,
+                    description="""Optional time range filter with format:
+                    {
+                        "start": "2024-01-01T00:00:00Z",  # ISO 8601 format
+                        "end": "2024-12-31T23:59:59Z"     # ISO 8601 format
+                    }
+
+                    Using time_range is preferred over using filters for time-based filtering because:
+                    1. It automatically applies to the model's primary time dimension
+                    2. It ensures proper time zone handling with ISO 8601 format
+                    3. It's more concise than creating complex filter conditions
+                    4. It works seamlessly with time_grain parameter for time-based aggregations
+                """,
+                ),
+            ] = None,
+            chart_spec: Annotated[
+                dict[str, Any] | None,
+                BeforeValidator(_parse_json_string),
+                Field(
+                    default=None,
+                    description="""Chart specification dictionary for generating visualizations.
+
+                Format: {"backend": "altair"|"plotly"|"plotext", "spec": {...}, "format": "json"|"static"|"interactive"}
+
+                When provided, returns both data and chart: {"records": [...], "chart": {...}}
+                When None, returns only data: {"records": [...]}
+
+                Backend options:
+                - "altair": Vega-Lite charts (default, works everywhere)
+                - "plotly": Plotly charts (interactive, rich features)
+                - "plotext": Terminal charts (ASCII, for CLI display)
+
+                Format options:
+                - "json": Returns chart specification as JSON (serializable)
+                - "static": Returns static image (PNG/SVG)
+                - "interactive": Returns interactive chart object
+
+                Spec examples:
+                - {"mark": "bar"} - Bar chart
+                - {"mark": "line"} - Line chart
+                - {"mark": "point"} - Scatter plot
+                - {"title": "My Chart"} - Add title
+                - {"width": 600, "height": 400} - Set size
+
+                Complete example:
+                {
+                    "backend": "altair",
+                    "spec": {"mark": "line", "title": "Monthly Trends"},
+                    "format": "json"
+                }
+                """,
+                ),
+            ] = None,
         ) -> str:
             """
             Query a semantic model with support for filters and time dimensions.
 
+            ⚠️ CRITICAL USAGE RULES - READ CAREFULLY:
+
+            1. **ALWAYS call get_model() first** to see available dimensions and measures
+            2. **Use correct dimension/measure names**:
+               - For joined models, names MUST include table prefix (e.g., "flights.arr_time")
+               - Check get_model() output - if you see dots in names, the model is joined
+            3. **When using time_grain, MUST include the time dimension in dimensions list**:
+               ✅ CORRECT: dimensions=["flights.arr_time"], time_grain="TIME_GRAIN_YEAR"
+               ❌ WRONG: dimensions=[], time_grain="TIME_GRAIN_YEAR"  # Missing time dimension!
+            4. **For filters with lists, use "values" (plural), not "value"**:
+               ✅ CORRECT: {"field": "carrier", "operator": "in", "values": ["AA", "UA"]}
+               ❌ WRONG: {"field": "carrier", "operator": "in", "value": ["AA", "UA"]}
+
+            COMMON QUERY PATTERNS:
+
+            Simple aggregation:
+                query_model(
+                    model_name="flights",
+                    dimensions=["flights.carrier"],
+                    measures=["flights.flight_count"]
+                )
+
+            Time-based aggregation (MUST include time dimension in dimensions list):
+                query_model(
+                    model_name="flights",
+                    dimensions=["flights.arr_time"],  # ← REQUIRED when using time_grain
+                    measures=["flights.flight_count"],
+                    time_grain="TIME_GRAIN_YEAR",
+                    order_by=[["flights.arr_time", "asc"]]
+                )
+
+            With filters:
+                query_model(
+                    model_name="flights",
+                    dimensions=["flights.origin"],
+                    measures=["flights.flight_count"],
+                    filters=[
+                        {"field": "flights.carrier", "operator": "in", "values": ["AA", "UA"]},
+                        {"field": "flights.distance", "operator": ">", "value": 1000}
+                    ]
+                )
+
             Args:
                 model_name: Name of the model to query
-                dimensions: List of dimension names to group by
-                measures: List of measure names to aggregate
+                dimensions: List of dimension names to group by (MUST match names from get_model())
+                measures: List of measure names to aggregate (MUST match names from get_model())
                 filters: List of filter dicts (e.g., [{"field": "carrier", "operator": "=", "value": "AA"}])
-                order_by: List of (field, direction) tuples
+                order_by: List of [field, direction] pairs (e.g., [["flights.arr_time", "asc"]])
                 limit: Maximum number of rows to return
-                time_grain: Optional time grain (e.g., "TIME_GRAIN_MONTH")
+                time_grain: Optional time grain (e.g., "TIME_GRAIN_MONTH") - requires time dimension in dimensions
                 time_range: Optional time range with 'start' and 'end' keys
                 chart_spec: Optional chart specification dict. When provided, returns both data and chart.
                            Format: {"backend": "altair"|"plotly", "spec": {...}, "format": "json"|"static"}
@@ -152,9 +487,12 @@ class MCPSemanticModel(FastMCP):
             Returns:
                 When chart_spec is None: Query results as JSON string ({"records": [...]})
                 When chart_spec is provided: JSON with both records and chart ({"records": [...], "chart": {...}})
-            """
-            import json
 
+            Common Errors and Solutions:
+                - "'Table' object has no attribute 'column_name'": Check column names in get_model()
+                - "Column 'X' not found": You used unprefixed name in joined model (add table prefix)
+                - "time_range requires a time dimension": Add time dimension to dimensions parameter
+            """
             if model_name not in self.models:
                 raise ValueError(f"Model {model_name} not found")
 
@@ -215,14 +553,4 @@ def create_mcp_server(
     models: Mapping[str, Any],
     name: str = "Semantic Layer MCP Server",
 ) -> MCPSemanticModel:
-    """
-    Create an MCP server for semantic models.
-
-    Args:
-        models: Dictionary mapping model names to SemanticTable instances
-        name: Name of the MCP server
-
-    Returns:
-        MCPSemanticModel instance ready to serve
-    """
     return MCPSemanticModel(models=models, name=name)
