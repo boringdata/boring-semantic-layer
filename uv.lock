@@ -270,7 +270,7 @@ dev = [
 requires-dist = [
     { name = "altair", marker = "extra == 'viz-altair'", specifier = ">=5.0.0" },
     { name = "attrs", specifier = ">=25.3.0" },
-    { name = "boring-semantic-layer", extras = ["fastmcp", "examples", "xorq", "viz-altair", "viz-plotly", "viz-plotext"], marker = "extra == 'dev'" },
+    { name = "boring-semantic-layer", extras = ["fastmcp", "examples", "viz-altair", "viz-plotly", "viz-plotext"], marker = "extra == 'dev'" },
     { name = "duckdb", marker = "extra == 'examples'", specifier = "<1.4" },
     { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=2.12.4" },
     { name = "ibis-framework", specifier = ">=11.0.0" },
