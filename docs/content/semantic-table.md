@@ -192,13 +192,9 @@ flights_with_deps.get_graph().successors('total_distance')
 Export the graph to NetworkX-compatible JSON format for visualization or analysis:
 
 ```graph_export
-# Export to NetworkX node-link format
-json_data = flights_with_deps.get_graph().to_networkx_json()
+# Export to JSON format
+json_data = flights_with_deps.get_graph().to_dict()
 json_data
-
-# Use with NetworkX (if installed)
-# import networkx as nx
-# G = nx.node_link_graph(json_data)
 
 # Or serialize to JSON for visualization (e.g., d3.js)
 # import json
