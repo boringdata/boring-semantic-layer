@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Roundtrip Serialization to Disk with BSL and xorq.
-"""
+"""Roundtrip Serialization to Disk with BSL and xorq."""
 
 import ibis
 

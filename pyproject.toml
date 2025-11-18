@@ -22,8 +22,9 @@ license-files = [
 examples = ["ibis-framework[duckdb]>=10.6.0", "duckdb<1.4"]
 viz-altair = ["altair>=5.0.0", "vl-convert-python>=1.0.0"]
 viz-plotly = ["plotly>=6.3.0", "kaleido", "nbformat>=4.2.0"]
+viz-plotext = ["plotext>=5.0.0"]
 dev = [
-    "boring-semantic-layer[fastmcp,examples,viz-altair,viz-plotly]",
+    "boring-semantic-layer[fastmcp,examples,xorq,viz-altair,viz-plotly,viz-plotext]",
     "ruff>=0.6.7",
     "pre-commit>=4.2.0",
     "pytest",

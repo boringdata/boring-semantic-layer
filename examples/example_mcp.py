@@ -33,8 +33,9 @@ Usage:
 The server will start and listen for MCP connections.
 """
 
-from boring_semantic_layer import MCPSemanticModel, to_semantic_table
 import ibis
+
+from boring_semantic_layer import MCPSemanticModel, to_semantic_table
 
 con = ibis.duckdb.connect(":memory:")
 
@@ -76,7 +77,7 @@ flights = (
             "description": "Origin airport code",
         },
         destination={
-            "expr": lambda t: t.dest,
+            "expr": lambda t: t.destination,
             "description": "Destination airport code",
         },
         carrier={
