@@ -79,7 +79,7 @@ airports:
   dimensions:
     code: _.code
     site_number: _.site_number
-    facility_type: _.facility_type
+    fac_type: _.fac_type
     fac_use: _.fac_use
     faa_region: _.faa_region
     faa_dist: _.faa_dist

@@ -57,6 +57,9 @@ SAFE_NODES = {
     ast.Dict,
     ast.keyword,
     ast.IfExp,
+    ast.Lambda,
+    ast.arguments,
+    ast.arg,
 }
 
 
