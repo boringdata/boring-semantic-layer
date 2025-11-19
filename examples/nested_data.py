@@ -41,7 +41,7 @@ def main():
     print("STEP 2: Load semantic model from YAML profile")
 
     # Load the profile from YAML
-    yaml_path = Path(__file__).parent.parent / "profiles" / "ga_sessions.yaml"
+    yaml_path = Path(__file__).parent / "ga_sessions.yaml"
     models = from_yaml(str(yaml_path), tables={"ga_sample": ga_sample})
     ga_sessions = models["ga_sessions"]
 
