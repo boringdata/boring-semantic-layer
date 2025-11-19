@@ -531,9 +531,9 @@ class SemanticTableOp(Relation):
         return object.__getattribute__(self, "calc_measures")
 
     def get_graph(self) -> dict[str, dict[str, Any]]:
-        from .dependency_graph import DependencyGraph
+        from .graph_utils import build_dependency_graph
 
-        return DependencyGraph.build(
+        return build_dependency_graph(
             self.get_dimensions(),
             self.get_measures(),
             self.get_calculated_measures(),

@@ -7,6 +7,7 @@ from pprint import pprint
 import ibis
 
 from boring_semantic_layer import to_semantic_table
+from boring_semantic_layer.graph_utils import graph_to_dict
 
 # Create sample flights data
 flights = (
@@ -54,4 +55,4 @@ joined = flights.join_one(carriers, left_on="carrier_code", right_on="code")
 pprint(dict(joined.get_graph()))
 
 print("\n\n=== Graph export to JSON format ===\n")
-print(json.dumps(joined.get_graph().to_dict(), indent=2))
+print(json.dumps(graph_to_dict(joined.get_graph()), indent=2))

@@ -58,16 +58,14 @@ class SemanticTable(ir.Table):
         For filters/limits/ordering, this returns the graph from the source.
 
         Returns:
-            DependencyGraph with graph traversal methods:
-            - predecessors(field): direct dependencies
-            - successors(field): direct dependents
-            - bfs(field): breadth-first traversal
-            - dfs(field): depth-first traversal
-            - invert(): reverse dependencies
-            - to_dict(): export to JSON format
+            dict: Dependency graph mapping field names to metadata with "deps" and "type" keys.
+                  Use graph utility functions for traversal:
+                  - graph_predecessors(graph, field): direct dependencies
+                  - graph_successors(graph, field): direct dependents
+                  - graph_bfs(graph, field): breadth-first traversal
+                  - graph_invert(graph): reverse dependencies
+                  - graph_to_dict(graph): export to JSON format
         """
-        from .dependency_graph import DependencyGraph
-
         op = self.op()
 
         # For SemanticModel, get cached graph from the op
@@ -76,7 +74,7 @@ class SemanticTable(ir.Table):
 
         # For joins, merge graphs from left and right ops with prefixing
         if hasattr(op, "left") and hasattr(op, "right"):
-            merged = DependencyGraph()
+            merged = {}
 
             # Add left graph with prefixes (both field names and their dependencies)
             if hasattr(op.left, "get_graph") and hasattr(op.left, "name"):
@@ -120,7 +118,7 @@ class SemanticTable(ir.Table):
                 return node.get_graph()
 
         # Fallback to empty graph
-        return DependencyGraph()
+        return {}
 
     def filter(self, predicate: Callable) -> SemanticFilter:
         return SemanticFilter(source=self.op(), predicate=predicate)
