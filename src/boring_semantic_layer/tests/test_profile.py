@@ -141,6 +141,22 @@ env_db:
         with pytest.raises((ProfileError, KeyError)):
             loader.get_connection("env_db", profile_file=profile_file)
 
+    def test_bsl_profile_file_env_var(self, temp_dir, monkeypatch):
+        """Test BSL_PROFILE_FILE environment variable for profile file path."""
+        profile_file = temp_dir / "my_profiles.yml"
+        profile_file.write_text("""
+test_profile:
+  type: duckdb
+  database: ":memory:"
+""")
+
+        monkeypatch.setenv("BSL_PROFILE_FILE", str(profile_file))
+
+        # load_tables should use BSL_PROFILE_FILE when profile_file is not provided
+        tables = loader.load_tables(profile="test_profile")
+        # Should not raise an error - the file path was read from env var
+        assert isinstance(tables, dict)
+
 
 class TestParquetLoading:
     """Test generic parquet file loading for backends that support read_parquet."""
