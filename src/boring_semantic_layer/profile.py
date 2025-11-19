@@ -4,9 +4,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-import yaml
 from ibis import BaseBackend
 from xorq.vendor.ibis.backends.profiles import Profile as XorqProfile
+
+from .utils import read_yaml_file
 
 
 class ProfileError(Exception):
@@ -28,65 +29,56 @@ class ProfileLoader:
         """Initialize ProfileLoader with optional search location order."""
         self.search_locations = search_locations or ["bsl_dir", "local", "xorq_dir"]
 
-    def load(
+    def get_connection(
         self,
-        profile_name: str | BaseBackend,
+        profile: str | dict | BaseBackend,
         profile_file: str | Path | None = None,
     ) -> BaseBackend:
-        """Load a profile and return the database connection."""
-        # Already a connection
-        if isinstance(profile_name, BaseBackend):
-            return profile_name
+        """Get database connection from profile."""
+        # Return if already a connection
+        if isinstance(profile, BaseBackend):
+            return profile
 
-        # Direct file path
-        name_path = Path(profile_name)
-        if name_path.suffix in (".yml", ".yaml") and name_path.exists():
-            return self._load_from_file(name_path)
+        # Create from inline dict config
+        if isinstance(profile, dict):
+            return self._create_ibis_connection(profile)
 
-        # Specific profile file provided
+        # Load from file or search
+        if not isinstance(profile, str):
+            raise ProfileError(f"Profile must be string, dict, or BaseBackend, got {type(profile)}")
+
+        # Direct YAML file path
+        if profile.endswith((".yml", ".yaml")) and Path(profile).exists():
+            return self._load_from_file(Path(profile))
+
+        # Load from specific profile file
         if profile_file:
-            return self._load_from_file(Path(profile_file), profile_name)
+            return self._load_from_file(Path(profile_file), profile)
 
-        # Search in configured locations
-        return self._search_and_load(profile_name)
+        # Search for profile name
+        return self._search_and_load(profile)
 
     def load_tables(
         self,
-        profile_config: str | dict | None = None,
+        profile: str | dict | None = None,
         profile_file: str | Path | None = None,
     ) -> dict[str, Any]:
-        """Load tables from profile (string name, inline dict config, or named dict with filter)."""
-        # Check BSL_PROFILE env var if no profile provided
-        if profile_config is None:
-            profile_config = os.environ.get("BSL_PROFILE")
-            if not profile_config:
-                return {}
+        """Load tables from profile."""
+        # Get profile from parameter or environment
+        profile = profile or os.environ.get("BSL_PROFILE")
+        if not profile:
+            return {}
 
-        # Get connection and optional table filter
+        # Extract table filter from dict config
         table_filter = None
+        if isinstance(profile, dict):
+            table_filter = profile.get("tables")
+            profile_file = profile.get("file") or profile_file
+            profile = profile.get("name", profile)
 
-        if isinstance(profile_config, str):
-            connection = self.load(profile_config, profile_file=profile_file)
-        elif isinstance(profile_config, dict):
-            if "type" in profile_config:
-                # Inline connection config
-                connection = self._create_connection(profile_config.copy())
-            elif "name" in profile_config:
-                # Named profile with options
-                connection = self.load(
-                    profile_config["name"], profile_file=profile_config.get("file") or profile_file
-                )
-                table_filter = profile_config.get("tables")
-            else:
-                raise ProfileError(
-                    "Profile dict must specify either 'type' (inline config) or 'name' (named profile)"
-                )
-        else:
-            raise ProfileError(f"Profile config must be string or dict, got {type(profile_config)}")
-
-        # Load tables
-        table_names = table_filter or connection.list_tables()
-        return {name: connection.table(name) for name in table_names}
+        # Get connection and return tables
+        connection = self.get_connection(profile, profile_file=profile_file)
+        return self._get_tables_from_connection(connection, table_filter)
 
     def _search_and_load(self, profile_name: str) -> BaseBackend:
         """Search for profile in configured locations."""
@@ -110,60 +102,51 @@ class ProfileLoader:
         raise ProfileError.not_found(profile_name, local_profile, self.search_locations)
 
     def _load_from_file(self, yaml_file: Path, profile_name: str | None = None) -> BaseBackend:
-        """Load profile from a YAML file."""
-        if not yaml_file.exists():
-            raise ProfileError(f"Profile file not found: {yaml_file}")
-
+        """Load profile from YAML file."""
         try:
-            with open(yaml_file) as f:
-                profiles_config = yaml.safe_load(f)
+            profiles_config = read_yaml_file(yaml_file)
+        except (FileNotFoundError, ValueError) as e:
+            raise ProfileError(str(e)) from e
 
-            if not isinstance(profiles_config, dict):
-                raise ProfileError(
-                    f"Profile file must contain a dict of profiles, got: {type(profiles_config)}"
-                )
+        config = self._get_profile_config(profiles_config, profile_name, yaml_file)
+        return self._create_ibis_connection(config)
 
-            if profile_name is None:
-                if not profiles_config:
-                    raise ProfileError(f"Profile file {yaml_file} is empty")
-                profile_name = list(profiles_config.keys())[0]
+    def _get_profile_config(
+        self, profiles_config: dict, profile_name: str | None, yaml_file: Path
+    ) -> dict:
+        """Extract specific profile config from profiles dict."""
+        if not profiles_config:
+            raise ProfileError(f"Profile file {yaml_file} is empty")
 
-            config = profiles_config.get(profile_name)
-            if config is None:
-                available = ", ".join(profiles_config.keys())
-                raise ProfileError(
-                    f"Profile '{profile_name}' not found in {yaml_file}. "
-                    f"Available profiles: {available}"
-                )
+        # Use first profile if no name specified
+        if profile_name is None:
+            profile_name = list(profiles_config.keys())[0]
 
-            if not isinstance(config, dict):
-                raise ProfileError(f"Profile '{profile_name}' must be a dict, got: {type(config)}")
-
-            return self._create_connection(config)
-
-        except ProfileError:
-            raise
-        except Exception as e:
+        config = profiles_config.get(profile_name)
+        if config is None:
+            available = ", ".join(profiles_config.keys())
             raise ProfileError(
-                f"Failed to load profile '{profile_name}' from {yaml_file}: {type(e).__name__}: {e}"
-            ) from e
+                f"Profile '{profile_name}' not found in {yaml_file}. "
+                f"Available profiles: {available}"
+            )
 
-    def _create_connection(self, config: dict) -> BaseBackend:
-        """Create connection from profile configuration dict."""
-        conn_type = config.get("type")
-        if not conn_type:
-            raise ProfileError("Profile must specify 'type' field")
+        if not isinstance(config, dict):
+            raise ProfileError(f"Profile '{profile_name}' must be a dict, got: {type(config)}")
 
-        parquet_tables = config.pop("tables", None)
-        kwargs_tuple = tuple(sorted((k, v) for k, v in config.items() if k != "type"))
+        return config
 
-        xorq_profile = XorqProfile(con_name=conn_type, kwargs_tuple=kwargs_tuple)
-        con = xorq_profile.get_con()
+    def _create_ibis_connection(self, config: dict) -> BaseBackend:
+        """Create connection from configuration dict."""
+        # Currently using legacy ibis connection
+        # TODO: Switch to xorq connection (see _create_xorq_connection below)
+        return _create_ibis_connection_legacy(self, config)
 
-        if parquet_tables:
-            self._load_parquet_tables(con, parquet_tables, conn_type)
-
-        return con
+    def _get_tables_from_connection(
+        self, connection: BaseBackend, table_filter: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Get tables from connection, optionally filtered by name list."""
+        table_names = table_filter or connection.list_tables()
+        return {name: connection.table(name) for name in table_names}
 
     @staticmethod
     def _load_parquet_tables(connection: BaseBackend, tables_config: dict, conn_type: str) -> None:
@@ -193,3 +176,101 @@ class ProfileLoader:
 
 # Default loader instance
 loader = ProfileLoader()
+
+
+# =============================================================================
+# TO MIGRATE: Temporary code - will be replaced when fully migrated to xorq
+# =============================================================================
+
+
+def _substitute_env_vars(value: Any) -> Any:
+    """Recursively substitute environment variables in config values.
+
+    Supports both ${VAR} and $VAR formats.
+    Raises ProfileError if referenced environment variable is not set.
+
+    NOTE: This function will be replaced by xorq's environment variable handling.
+    """
+    import re
+
+    if isinstance(value, str):
+        # Support both ${VAR} and $VAR formats - process ${VAR} first to avoid conflicts
+        for pattern, fmt in [
+            (r"\$\{([^}]+)\}", lambda v: f"${{{v}}}"),  # ${VAR}
+            (r"\$([A-Z_][A-Z0-9_]*)", lambda v: f"${v}"),  # $VAR
+        ]:
+            for var_name in re.findall(pattern, value):
+                if var_name not in os.environ:
+                    raise ProfileError(
+                        f"Environment variable not set: {var_name}\n\n"
+                        f"Set it before running:\n"
+                        f"  export {var_name}=..."
+                    )
+                value = value.replace(fmt(var_name), os.environ[var_name])
+        return value
+
+    if isinstance(value, dict):
+        return {k: _substitute_env_vars(v) for k, v in value.items()}
+
+    if isinstance(value, list):
+        return [_substitute_env_vars(item) for item in value]
+
+    return value
+
+
+def _create_ibis_connection_legacy(loader: ProfileLoader, config: dict) -> BaseBackend:
+    """Currently used: Create native ibis connection directly.
+
+    TODO: Replace with _create_xorq_connection when ready.
+    """
+    import ibis
+
+    config = _substitute_env_vars(config.copy())
+
+    conn_type = config.get("type")
+    if not conn_type:
+        raise ProfileError("Profile must specify 'type' field")
+
+    parquet_tables = config.pop("tables", None)
+    kwargs = {k: v for k, v in config.items() if k != "type"}
+
+    # Create native ibis connection directly
+    backend_module = getattr(ibis, conn_type, None)
+    if not backend_module:
+        raise ProfileError(f"Unknown connection type: {conn_type}")
+
+    connect_method = getattr(backend_module, "connect", None)
+    if not connect_method:
+        raise ProfileError(f"Backend '{conn_type}' does not have a connect() method")
+
+    connection = connect_method(**kwargs)
+
+    # Load parquet tables if specified
+    if parquet_tables:
+        loader._load_parquet_tables(connection, parquet_tables, conn_type)
+
+    return connection
+
+
+def _create_xorq_connection(loader: ProfileLoader, config: dict) -> BaseBackend:
+    """Future: Create connection using xorq for better caching and management.
+
+    Uncomment and use this when ready to migrate to xorq.
+    """
+    config = config.copy()
+    conn_type = config.get("type")
+    if not conn_type:
+        raise ProfileError("Profile must specify 'type' field")
+
+    parquet_tables = config.pop("tables", None)
+
+    # Use xorq for connection management
+    kwargs_tuple = tuple(sorted((k, v) for k, v in config.items() if k != "type"))
+    xorq_profile = XorqProfile(con_name=conn_type, kwargs_tuple=kwargs_tuple)
+    connection = xorq_profile.get_con()
+
+    # Load parquet tables if specified
+    if parquet_tables:
+        loader._load_parquet_tables(connection, parquet_tables, conn_type)
+
+    return connection

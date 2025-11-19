@@ -1,0 +1,186 @@
+# Example YAML configuration for flights semantic model
+# This demonstrates the YAML loader for the Boring Semantic Layer
+
+# ========================================================================
+# Airlines and Carriers
+# ========================================================================
+carriers:
+  table: carriers_tbl
+  description: "Airline carrier information"
+
+  dimensions:
+    code: _.code
+    name:
+      expr: _.name
+      description: "Full airline name"
+    nickname: _.nickname
+
+  measures:
+    carrier_count:
+      expr: _.count()
+      description: "Number of carriers"
+
+# ========================================================================
+# Aircraft Models
+# ========================================================================
+aircraft_models:
+  table: aircraft_models_tbl
+  description: "Aircraft model specifications"
+
+  dimensions:
+    aircraft_model_code: _.aircraft_model_code
+    manufacturer: _.manufacturer
+    model: _.model
+    aircraft_type_id: _.aircraft_type_id
+    aircraft_engine_type_id: _.aircraft_engine_type_id
+    aircraft_category_id: _.aircraft_category_id
+
+  measures:
+    model_count:
+      expr: _.count()
+      description: "Number of aircraft models"
+    avg_seats:
+      expr: _.seats.mean()
+      description: "Average number of seats"
+
+# ========================================================================
+# Aircraft (Individual Planes)
+# ========================================================================
+aircraft:
+  table: aircraft_tbl
+  description: "Individual aircraft registry"
+
+  dimensions:
+    tail_num: _.tail_num
+    aircraft_serial: _.aircraft_serial
+    aircraft_model_code: _.aircraft_model_code
+    aircraft_engine_code: _.aircraft_engine_code
+    aircraft_type_id: _.aircraft_type_id
+
+  measures:
+    aircraft_count:
+      expr: _.count()
+      description: "Number of aircraft"
+
+  joins:
+    models:
+      model: aircraft_models
+      type: one
+      left_on: aircraft_model_code
+      right_on: aircraft_model_code
+
+# ========================================================================
+# Airports
+# ========================================================================
+airports:
+  table: airports_tbl
+  description: "Airport locations and information"
+
+  dimensions:
+    code: _.code
+    site_number: _.site_number
+    facility_type: _.facility_type
+    fac_use: _.fac_use
+    faa_region: _.faa_region
+    faa_dist: _.faa_dist
+    city: _.city
+    county: _.county
+    state: _.state
+    full_name: _.full_name
+    own_type: _.own_type
+    longitude: _.longitude
+    latitude: _.latitude
+    elevation: _.elevation
+    aero_cht: _.aero_cht
+    cbd_dist: _.cbd_dist
+    cbd_dir: _.cbd_dir
+    act_date: _.act_date
+    cert: _.cert
+    fed_agree: _.fed_agree
+    cust_intl: _.cust_intl
+    c_ldg_rts: _.c_ldg_rts
+    joint_use: _.joint_use
+    mil_rts: _.mil_rts
+    cntl_twr: _.cntl_twr
+    major: _.major
+
+  measures:
+    airport_count:
+      expr: _.count()
+      description: "Number of airports"
+    avg_elevation:
+      expr: _.elevation.mean()
+      description: "Average airport elevation"
+
+# ========================================================================
+# Flights
+# ========================================================================
+flights:
+  table: flights_tbl
+  description: "Flight data with origin, destination, and metrics"
+
+  dimensions:
+    origin:
+      expr: _.origin
+      description: "Origin airport code"
+    destination:
+      expr: _.destination
+      description: "Destination airport code"
+    carrier: _.carrier
+    tail_num: _.tail_num
+    dep_time:
+      expr: _.dep_time
+      description: "Departure timestamp"
+    arr_time:
+      expr: _.arr_time
+      description: "Arrival timestamp"
+      is_time_dimension: true
+      smallest_time_grain: "TIME_GRAIN_DAY"
+
+  measures:
+    flight_count:
+      expr: _.count()
+      description: "Total number of flights"
+    total_distance:
+      expr: _.distance.sum()
+      description: "Total distance flown"
+    avg_distance:
+      expr: _.distance.mean()
+      description: "Average flight distance"
+    max_distance:
+      expr: _.distance.max()
+      description: "Maximum flight distance"
+    avg_delay:
+      expr: _.dep_delay.mean()
+      description: "Average departure delay"
+    max_delay:
+      expr: _.dep_delay.max()
+      description: "Maximum departure delay"
+    # Note: .all() for percent-of-total calculations is not supported in YAML
+    # These would need to be added programmatically:
+    #   distance_share: lambda t: (t.distance.sum() / t.all(t.distance.sum())) * 100
+    #   percent_of_total: lambda t: (t.count() / t.all(t.count())) * 100
+
+  joins:
+    carriers:
+      model: carriers
+      type: one
+      left_on: carrier
+      right_on: code
+    aircraft:
+      model: aircraft
+      type: one
+      left_on: tail_num
+      right_on: tail_num
+    origin_airport:
+      model: airports
+      type: one
+      left_on: origin
+      right_on: code
+    # Note: Self-joins (joining to the same table multiple times) are not yet supported
+    # For example, this would cause an "Ambiguous field reference" error:
+    # destination_airport:
+    #   model: airports
+    #   type: one
+    #   left_on: destination
+    #   right_on: code

@@ -1,38 +1,25 @@
 #!/usr/bin/env python3
-"""Basic Semantic Table Usage with Flights."""
+"""
+Basic Flights Example with Profiles and YAML
 
-import ibis
+Demonstrates loading semantic models from YAML configuration with profile-based
+database connections.
+"""
+
+from pathlib import Path
+
 from ibis import _
 
-from boring_semantic_layer import to_semantic_table
-
-BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
+from boring_semantic_layer import from_yaml
 
 
 def main():
-    con = ibis.duckdb.connect(":memory:")
-    flights_tbl = con.read_parquet(f"{BASE_URL}/flights.parquet")
+    # Load semantic models from YAML with profile
+    yaml_path = Path(__file__).parent / "flights.yml"
+    profile_file = Path(__file__).parent / "profiles.yml"
+    models = from_yaml(str(yaml_path), profile="example_db", profile_path=str(profile_file))
 
-    flights = (
-        to_semantic_table(flights_tbl, name="flights")
-        .with_dimensions(
-            origin=lambda t: t.origin,
-            destination=lambda t: t.destination,
-            carrier=lambda t: t.carrier,
-            arr_time={
-                "expr": lambda t: t.arr_time,
-                "is_time_dimension": True,
-                "smallest_time_grain": "day",
-            },
-        )
-        .with_measures(
-            flight_count=lambda t: t.count(),
-            total_distance=lambda t: t.distance.sum(),
-            avg_distance=lambda t: t.distance.mean(),
-            max_distance=lambda t: t.distance.max(),
-            min_distance=lambda t: t.distance.min(),
-        )
-    )
+    flights = models["flights"]
 
     result = flights.group_by("origin").aggregate("flight_count").limit(10).execute()
     print("\nFlight counts by origin:")
@@ -48,6 +35,7 @@ def main():
     print("\nFlights by origin and carrier:")
     print(result)
 
+    # Add calculated measure dynamically
     flights_enhanced = flights.with_measures(
         distance_per_flight=lambda t: t.distance.sum() / t.count(),
     )

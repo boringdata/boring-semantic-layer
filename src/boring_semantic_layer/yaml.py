@@ -5,14 +5,13 @@ YAML loader for Boring Semantic Layer models using the semantic API.
 from collections.abc import Mapping
 from typing import Any
 
-import yaml
 from ibis import _
 
 from .api import to_semantic_table
 from .expr import SemanticModel, SemanticTable
 from .ops import Dimension, Measure
 from .profile import loader
-from .utils import safe_eval
+from .utils import read_yaml_file, safe_eval
 
 
 def _parse_dimension_or_measure(
@@ -40,7 +39,7 @@ def _parse_dimension_or_measure(
 
     # Create the metric
     deferred = safe_eval(expr_str, context={"_": _}).unwrap()
-    base_kwargs = {"expr": lambda t, d=deferred: d.resolve(t), "description": description}
+    base_kwargs = {"expr": deferred, "description": description}
     return (
         Dimension(**base_kwargs, **extra_kwargs)
         if metric_type == "dimension"
@@ -142,8 +141,7 @@ def from_yaml(
     # Load tables from profile parameter (or BSL_PROFILE env var if profile is None)
     tables = {**tables, **loader.load_tables(profile, profile_file=profile_path)}
 
-    with open(yaml_path) as f:
-        yaml_configs = yaml.safe_load(f)
+    yaml_configs = read_yaml_file(yaml_path)
 
     # Load from YAML profile section if no tables loaded yet
     if "profile" in yaml_configs and not tables:
@@ -169,6 +167,13 @@ def from_yaml(
             # Load only the specific table needed
             all_tables = loader.load_tables(config["profile"])
             profile_tables = {table_name: all_tables[table_name]}
+            # Check for duplicate table names before merging
+            duplicates = set(tables.keys()) & set(profile_tables.keys())
+            if duplicates:
+                raise ValueError(
+                    f"Table name conflict: {', '.join(sorted(duplicates))} already exists. "
+                    f"Tables loaded from profiles must have unique names."
+                )
             tables = {**tables, **profile_tables}
 
         if table_name not in tables:
