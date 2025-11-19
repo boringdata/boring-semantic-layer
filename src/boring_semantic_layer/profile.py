@@ -67,7 +67,16 @@ class ProfileLoader:
         # Get profile from parameter or environment
         profile = profile or os.environ.get("BSL_PROFILE")
         # Get profile_file from parameter or environment
-        profile_file = profile_file or os.environ.get("BSL_PROFILE_FILE")
+        profile_file = profile_file or os.environ.get("BSL_PROFILE_PATH")
+
+        # Auto-select first profile if profile_file is provided but no profile name
+        if not profile and profile_file:
+            try:
+                profiles_config = read_yaml_file(Path(profile_file))
+                if profiles_config:
+                    profile = list(profiles_config.keys())[0]
+            except Exception:
+                pass
 
         if not profile:
             return {}
