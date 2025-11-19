@@ -66,6 +66,9 @@ class ProfileLoader:
         """Load tables from profile."""
         # Get profile from parameter or environment
         profile = profile or os.environ.get("BSL_PROFILE")
+        # Get profile_file from parameter or environment
+        profile_file = profile_file or os.environ.get("BSL_PROFILE_FILE")
+
         if not profile:
             return {}
 
