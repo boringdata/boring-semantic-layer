@@ -138,8 +138,10 @@ def from_yaml(
     """Load semantic models from a YAML file with optional profile-based table loading."""
     tables = _resolve_table_references(tables or {}, loader)
 
-    # Load tables from profile parameter (or BSL_PROFILE env var if profile is None)
-    tables = {**tables, **loader.load_tables(profile, profile_file=profile_path)}
+    # Load tables from profile parameter only if explicitly requested OR no tables provided yet
+    # Don't auto-load from env vars when explicit tables are provided
+    if profile is not None or profile_path is not None or not tables:
+        tables = {**tables, **loader.load_tables(profile, profile_file=profile_path)}
 
     yaml_configs = read_yaml_file(yaml_path)
 
