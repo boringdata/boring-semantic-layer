@@ -16,7 +16,8 @@ from boring_semantic_layer import from_yaml
 def main():
     # Load semantic model from YAML (includes profile connection)
     yaml_path = Path(__file__).parent / "order_items.yml"
-    models = from_yaml(str(yaml_path))
+    profile_file = Path(__file__).parent / "profiles.yml"
+    models = from_yaml(str(yaml_path), profile="example_db", profile_path=str(profile_file))
 
     # Get the order_items model (already has all dimensions and measures)
     order_items = models["order_items"]

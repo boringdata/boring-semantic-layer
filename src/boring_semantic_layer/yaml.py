@@ -40,7 +40,7 @@ def _parse_dimension_or_measure(
 
     # Create the metric
     deferred = safe_eval(expr_str, context={"_": _}).unwrap()
-    base_kwargs = {"expr": lambda t, d=deferred: d.resolve(t), "description": description}
+    base_kwargs = {"expr": deferred, "description": description}
     return (
         Dimension(**base_kwargs, **extra_kwargs)
         if metric_type == "dimension"
@@ -169,6 +169,13 @@ def from_yaml(
             # Load only the specific table needed
             all_tables = loader.load_tables(config["profile"])
             profile_tables = {table_name: all_tables[table_name]}
+            # Check for duplicate table names before merging
+            duplicates = set(tables.keys()) & set(profile_tables.keys())
+            if duplicates:
+                raise ValueError(
+                    f"Table name conflict: {', '.join(sorted(duplicates))} already exists. "
+                    f"Tables loaded from profiles must have unique names."
+                )
             tables = {**tables, **profile_tables}
 
         if table_name not in tables:

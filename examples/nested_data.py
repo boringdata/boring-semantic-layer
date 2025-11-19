@@ -20,9 +20,12 @@ source: ga_sessions is duckdb.table('../data/ga_sample.parquet') extend {
 
 from pathlib import Path
 
+import ibis
 from ibis import _
 
 from boring_semantic_layer import from_yaml
+
+BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
 
 
 def main():
@@ -30,15 +33,20 @@ def main():
     print("  Working with Nested Data - Malloy-style")
     print("=" * 80)
 
-    # Load semantic models from YAML with profile
-    yaml_path = Path(__file__).parent / "flights.yml"
-    profile_file = Path(__file__).parent / "profiles.yml"
-    models = from_yaml(str(yaml_path), profile="example_db", profile_path=str(profile_file))
+    con = ibis.duckdb.connect(":memory:")
 
-    print("STEP 2: Use semantic model from YAML")
+    # Load the GA sample table
+    ga_sample = con.read_parquet(f"{BASE_URL}/ga_sample.parquet")
 
-    # Use ga_sessions model from YAML (already has all dimensions and measures)
+    print("STEP 2: Load semantic model from YAML profile")
+
+    # Load the profile from YAML
+    yaml_path = Path(__file__).parent.parent / "profiles" / "ga_sessions.yaml"
+    models = from_yaml(str(yaml_path), tables={"ga_sample": ga_sample})
     ga_sessions = models["ga_sessions"]
+
+    # Note: percent_of_users with .all() is not working with nested data structures
+    # See issue for details
 
     print(f"  Measures: {list(ga_sessions.measures)}")
 
@@ -49,7 +57,6 @@ def main():
         .group_by("source")
         .aggregate(
             "user_count",
-            "percent_of_users",
             "hits_count",
             "total_visits",
             "session_count",
@@ -64,15 +71,10 @@ def main():
 
     print("PART 2: Show Data by Browser (with multi-level aggregation)")
 
-    ga_with_browser = ga_sessions.with_dimensions(
-        browser=lambda t: t.device.browser,
-    )
-
     query = (
-        ga_with_browser.group_by("browser")
+        ga_sessions.group_by("browser")
         .aggregate(
             "user_count",
-            "percent_of_users",
             "total_visits",
             "total_hits",
             "total_page_views",

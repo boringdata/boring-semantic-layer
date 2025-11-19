@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,40 @@ import ibis
 import yaml
 from ibis import BaseBackend
 from xorq.vendor.ibis.backends.profiles import Profile as XorqProfile
+
+
+def _substitute_env_vars(value: Any) -> Any:
+    """Recursively substitute environment variables in config values.
+
+    Supports both ${VAR} and $VAR formats.
+    Raises ProfileError if referenced environment variable is not set.
+
+    NOTE: This function will be replaced by xorq's environment variable handling
+    in a future release when the profile system is migrated to use xorq backends.
+    """
+    if isinstance(value, str):
+        # Support both ${VAR} and $VAR formats - process ${VAR} first to avoid conflicts
+        for pattern, fmt in [
+            (r"\$\{([^}]+)\}", lambda v: f"${{{v}}}"),  # ${VAR}
+            (r"\$([A-Z_][A-Z0-9_]*)", lambda v: f"${v}"),  # $VAR
+        ]:
+            for var_name in re.findall(pattern, value):
+                if var_name not in os.environ:
+                    raise ProfileError(
+                        f"Environment variable not set: {var_name}\n\n"
+                        f"Set it before running:\n"
+                        f"  export {var_name}=..."
+                    )
+                value = value.replace(fmt(var_name), os.environ[var_name])
+        return value
+
+    if isinstance(value, dict):
+        return {k: _substitute_env_vars(v) for k, v in value.items()}
+
+    if isinstance(value, list):
+        return [_substitute_env_vars(item) for item in value]
+
+    return value
 
 
 class ProfileError(Exception):
@@ -151,6 +186,9 @@ class ProfileLoader:
 
     def _create_connection(self, config: dict) -> BaseBackend:
         """Create connection from profile configuration dict."""
+        # Substitute environment variables in config
+        config = _substitute_env_vars(config)
+
         conn_type = config.get("type")
         if not conn_type:
             raise ProfileError("Profile must specify 'type' field")

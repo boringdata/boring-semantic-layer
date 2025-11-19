@@ -156,12 +156,10 @@ flights:
     max_delay:
       expr: _.dep_delay.max()
       description: "Maximum departure delay"
-    distance_share:
-      expr: (_.distance.sum() / _.all(_.distance.sum())) * 100
-      description: "Share of total distance flown (%)"
-    percent_of_total:
-      expr: (_.count() / _.all(_.count())) * 100
-      description: "Share of total flights (%)"
+    # Note: .all() for percent-of-total calculations is not supported in YAML
+    # These would need to be added programmatically:
+    #   distance_share: lambda t: (t.distance.sum() / t.all(t.distance.sum())) * 100
+    #   percent_of_total: lambda t: (t.count() / t.all(t.count())) * 100
 
   joins:
     carriers:
@@ -179,98 +177,10 @@ flights:
       type: one
       left_on: origin
       right_on: code
-    destination_airport:
-      model: airports
-      type: one
-      left_on: destination
-      right_on: code
-
-# ========================================================================
-# E-commerce Order Items
-# ========================================================================
-order_items:
-  table: order_items
-  description: "E-commerce order line items"
-
-  dimensions:
-    id: _.id
-    order_id: _.order_id
-    user_id: _.user_id
-    product_id: _.product_id
-    inventory_item_id: _.inventory_item_id
-    status: _.status
-    created_at:
-      expr: _.created_at
-      description: "Order creation timestamp"
-      is_time_dimension: true
-      smallest_time_grain: "TIME_GRAIN_DAY"
-    shipped_at: _.shipped_at
-    delivered_at: _.delivered_at
-    returned_at: _.returned_at
-
-  measures:
-    order_count:
-      expr: _.count()
-      description: "Number of orders"
-    total_sales:
-      expr: _.sale_price.sum()
-      description: "Total sales revenue"
-    avg_price:
-      expr: _.sale_price.mean()
-      description: "Average sale price"
-
-# ========================================================================
-# Google Analytics Sessions (with nested data)
-# ========================================================================
-ga_sessions:
-  table: ga_sample
-  description: "Google Analytics session data with nested structures"
-
-  dimensions:
-    fullVisitorId: _.fullVisitorId
-    visitId: _.visitId
-    visitNumber: _.visitNumber
-    visitStartTime: _.visitStartTime
-    date: _.date
-    # Nested struct access examples
-    source:
-      expr: _.trafficSource.source
-      description: "Traffic source"
-    medium:
-      expr: _.trafficSource.medium
-      description: "Traffic medium"
-    browser:
-      expr: _.device.browser
-      description: "Browser used"
-    deviceCategory:
-      expr: _.device.deviceCategory
-      description: "Device category"
-    operatingSystem:
-      expr: _.device.operatingSystem
-      description: "Operating system"
-
-  measures:
-    user_count:
-      expr: _.fullVisitorId.nunique()
-      description: "Unique visitor count"
-    session_count:
-      expr: _.count()
-      description: "Total sessions"
-    total_visits:
-      expr: _.totals.visits.sum()
-      description: "Total visits from nested totals"
-    total_hits:
-      expr: _.totals.hits.sum()
-      description: "Total hits from nested totals"
-    total_page_views:
-      expr: _.totals.pageviews.sum()
-      description: "Total pageviews from nested totals"
-    hits_count:
-      expr: _.hits.count()
-      description: "Total hits from nested hits array"
-    product_count:
-      expr: _.hits.product.count()
-      description: "Total products from doubly-nested structure"
-    percent_of_users:
-      expr: (_.fullVisitorId.nunique() / _.all(_.fullVisitorId.nunique())) * 100
-      description: "Share of total users (%)"
+    # Note: Self-joins (joining to the same table multiple times) are not yet supported
+    # For example, this would cause an "Ambiguous field reference" error:
+    # destination_airport:
+    #   model: airports
+    #   type: one
+    #   left_on: destination
+    #   right_on: code

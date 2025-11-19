@@ -1,0 +1,57 @@
+# ========================================================================
+# Google Analytics Sessions (with nested data)
+# ========================================================================
+ga_sessions:
+  table: ga_sample
+  description: "Google Analytics session data with nested structures"
+
+  dimensions:
+    fullVisitorId: _.fullVisitorId
+    visitId: _.visitId
+    visitNumber: _.visitNumber
+    visitStartTime: _.visitStartTime
+    date: _.date
+    # Nested struct access examples
+    source:
+      expr: _.trafficSource.source
+      description: "Traffic source"
+    medium:
+      expr: _.trafficSource.medium
+      description: "Traffic medium"
+    browser:
+      expr: _.device.browser
+      description: "Browser used"
+    deviceCategory:
+      expr: _.device.deviceCategory
+      description: "Device category"
+    operatingSystem:
+      expr: _.device.operatingSystem
+      description: "Operating system"
+
+  measures:
+    user_count:
+      expr: _.fullVisitorId.nunique()
+      description: "Unique visitor count"
+    session_count:
+      expr: _.count()
+      description: "Total sessions"
+    total_visits:
+      expr: _.totals.visits.sum()
+      description: "Total visits from nested totals"
+    total_hits:
+      expr: _.totals.hits.sum()
+      description: "Total hits from nested totals"
+    total_page_views:
+      expr: _.totals.pageviews.sum()
+      description: "Total pageviews from nested totals"
+    hits_count:
+      expr: _.hits.count()
+      description: "Total hits from nested hits array"
+    product_count:
+      expr: _.hits.product.count()
+      description: "Total products from doubly-nested structure"
+    # Note: .all() for percent-of-total calculations is not yet supported in YAML
+    # For now, this type of calculation should be added programmatically after loading:
+    #   ga_sessions = ga_sessions.with_measures(
+    #       percent_of_users=lambda t: t.fullVisitorId.nunique() / t.all(t.fullVisitorId.nunique()) * 100
+    #   )
