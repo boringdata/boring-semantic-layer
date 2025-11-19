@@ -19,7 +19,7 @@ license-files = [
 ]
 
 [project.scripts]
-bsl-agent = "boring_semantic_layer.agents.cli:main"
+bsl = "boring_semantic_layer.agents.cli:main"
 
 [project.optional-dependencies]
 examples = ["xorq[duckdb]>=0.3.4", "xorq", "duckdb<1.4"]
