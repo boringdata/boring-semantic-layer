@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+import ibis
 import yaml
 from ibis import BaseBackend
 from xorq.vendor.ibis.backends.profiles import Profile as XorqProfile
@@ -155,10 +156,24 @@ class ProfileLoader:
             raise ProfileError("Profile must specify 'type' field")
 
         parquet_tables = config.pop("tables", None)
-        kwargs_tuple = tuple(sorted((k, v) for k, v in config.items() if k != "type"))
 
-        xorq_profile = XorqProfile(con_name=conn_type, kwargs_tuple=kwargs_tuple)
-        con = xorq_profile.get_con()
+        # # Use xorq for caching
+        # kwargs_tuple = tuple(sorted((k, v) for k, v in config.items() if k != "type"))
+        # xorq_profile = XorqProfile(con_name=conn_type, kwargs_tuple=kwargs_tuple)
+        # con = xorq_profile.get_con()
+
+        # Create native ibis connection directly
+        kwargs = {k: v for k, v in config.items() if k != "type"}
+        backend_module = getattr(ibis, conn_type, None)
+        if not backend_module:
+            raise ProfileError(f"Unknown connection type: {conn_type}")
+
+        # Get the connect method from the backend module
+        connect_method = getattr(backend_module, "connect", None)
+        if not connect_method:
+            raise ProfileError(f"Backend '{conn_type}' does not have a connect() method")
+
+        con = connect_method(**kwargs)
 
         if parquet_tables:
             self._load_parquet_tables(con, parquet_tables, conn_type)

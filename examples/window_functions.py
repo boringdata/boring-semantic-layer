@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """Window Functions - Rolling Averages, Rankings, Running Totals, and t.all()."""
 
+from pathlib import Path
+
 import ibis
 from ibis import _
 
-from boring_semantic_layer import to_semantic_table
-
-BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
+from boring_semantic_layer import loader, to_semantic_table
 
 
 def main():
-    con = ibis.duckdb.connect(":memory:")
-    flights_tbl = con.read_parquet(f"{BASE_URL}/flights.parquet")
+    # Load database connection from profile
+    profile_file = Path(__file__).parent / "profiles.yml"
+    con = loader.load("example_db", profile_file=profile_file)
+
+    flights_tbl = con.table("flights_tbl")
 
     flights_with_date = flights_tbl.mutate(
         flight_date=flights_tbl.dep_time.date(),

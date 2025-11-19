@@ -4,33 +4,21 @@
 https://docs.malloydata.dev/documentation/patterns/dim_index
 """
 
-import ibis
+from pathlib import Path
+
 import ibis.selectors as s
 
-from boring_semantic_layer import to_semantic_table
-
-BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
+from boring_semantic_layer import from_yaml
 
 
 def main():
-    con = ibis.duckdb.connect(":memory:")
+    # Load semantic models from YAML with profile
+    yaml_path = Path(__file__).parent / "flights.yml"
+    profile_file = Path(__file__).parent / "profiles.yml"
+    models = from_yaml(str(yaml_path), profile="example_db", profile_path=str(profile_file))
 
-    airports_tbl = con.read_parquet(f"{BASE_URL}/airports.parquet")
-
-    airports = (
-        to_semantic_table(airports_tbl, name="airports")
-        .with_dimensions(
-            code=lambda t: t.code,
-            city=lambda t: t.city,
-            state=lambda t: t.state,
-            fac_type=lambda t: t.fac_type,
-            elevation=lambda t: t.elevation,
-        )
-        .with_measures(
-            airport_count=lambda t: t.count(),
-            avg_elevation=lambda t: t.elevation.mean(),
-        )
-    )
+    # Use airports model from YAML (already has all dimensions and measures)
+    airports = models["airports"]
 
     print("\n" + "=" * 80)
     print("1. Simple Index - All Dimensions")
@@ -193,20 +181,10 @@ def main():
     print("    index: carrier, airports.state")
     print("  }\n")
 
-    # Load flights data
-    flights_tbl = con.read_parquet(f"{BASE_URL}/flights.parquet")
+    # Use flights model from YAML (already has joins defined including origin_airport)
+    flights = models["flights"]
 
-    flights = (
-        to_semantic_table(flights_tbl, name="flights")
-        .with_dimensions(
-            carrier=lambda t: t.carrier,
-            origin=lambda t: t.origin,
-        )
-        .with_measures(
-            flight_count=lambda t: t.count(),
-        )
-    )
-
+    # The YAML already defines origin_airport join, but we'll create a custom join for this demo
     flights_with_origin = flights.join_one(airports, left_on="origin", right_on="code")
 
     joined_index = (

@@ -18,12 +18,11 @@ source: ga_sessions is duckdb.table('../data/ga_sample.parquet') extend {
 ```
 """
 
-import ibis
+from pathlib import Path
+
 from ibis import _
 
-from boring_semantic_layer import to_semantic_table
-
-BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
+from boring_semantic_layer import from_yaml
 
 
 def main():
@@ -31,38 +30,22 @@ def main():
     print("  Working with Nested Data - Malloy-style")
     print("=" * 80)
 
-    con = ibis.duckdb.connect(":memory:")
+    # Load semantic models from YAML with profile
+    yaml_path = Path(__file__).parent / "flights.yml"
+    profile_file = Path(__file__).parent / "profiles.yml"
+    models = from_yaml(str(yaml_path), profile="example_db", profile_path=str(profile_file))
 
-    ga_sessions_raw = con.read_parquet(f"{BASE_URL}/ga_sample.parquet")
+    print("STEP 2: Use semantic model from YAML")
 
-    print("STEP 2: Define semantic model with Malloy-style measures")
-
-    ga_sessions = (
-        to_semantic_table(ga_sessions_raw, name="ga_sessions")
-        .with_measures(
-            user_count=lambda t: t.fullVisitorId.nunique(),
-            session_count=lambda t: t.count(),
-            total_visits=lambda t: t.totals.visits.sum(),
-            total_hits=lambda t: t.totals.hits.sum(),
-            total_page_views=lambda t: t.totals.pageviews.sum(),
-            hits_count=lambda t: t.hits.count(),
-            product_count=lambda t: t.hits.product.count(),
-        )
-        .with_measures(
-            percent_of_users=lambda t: (t.user_count / t.all(t.user_count)) * 100,
-        )
-    )
+    # Use ga_sessions model from YAML (already has all dimensions and measures)
+    ga_sessions = models["ga_sessions"]
 
     print(f"  Measures: {list(ga_sessions.measures)}")
 
     print("PART 1: Show Data by Traffic Source")
 
-    ga_with_source = ga_sessions.with_dimensions(
-        source=lambda t: t.trafficSource.source,
-    )
-
     query = (
-        ga_with_source.filter(lambda t: t.source != "(direct)")
+        ga_sessions.filter(lambda t: t.source != "(direct)")
         .group_by("source")
         .aggregate(
             "user_count",
