@@ -99,6 +99,26 @@ def _collect_measure_refs(expr, refs_out: set):
         _collect_measure_refs(expr.right, refs_out)
 
 
+def _classify_dependencies(
+    fields: list,
+    dimensions: dict,
+    measures: dict,
+    calc_measures: dict,
+    current_field: str | None = None,
+) -> dict[str, str]:
+    """Classify field dependencies as dimension, measure, or column."""
+    return {
+        f.name: (
+            "dimension"
+            if f.name in dimensions and f.name != current_field
+            else "measure"
+            if f.name in measures or f.name in calc_measures
+            else "column"
+        )
+        for f in fields
+    }
+
+
 @frozen
 class _CallableWrapper:
     """Hashable wrapper for Callable and Deferred.

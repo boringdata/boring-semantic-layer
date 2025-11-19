@@ -151,26 +151,17 @@ The graph is a dictionary where:
   - `type`: The field type (`'dimension'`, `'measure'`, or `'calc_measure'`)
 
 ```graph_structure
-# Example structure
-# {
-#   'origin': {
-#     'deps': {'origin': 'column'},
-#     'type': 'dimension'
-#   },
-#   'total_distance': {
-#     'deps': {'distance': 'column'},
-#     'type': 'measure'
-#   },
-#   'avg_distance_per_flight': {
-#     'deps': {'total_distance': 'measure', 'flight_count': 'measure'},
-#     'type': 'calc_measure'
-#   }
-# }
-
-# Find what a field depends on
-flights_with_deps.get_graph()['avg_distance_per_flight']['deps']
+# Access the graph - it's a dict-like object
+graph = flights_with_deps.get_graph()
+graph
 ```
 <regularoutput code-block="graph_structure"></regularoutput>
+
+```python
+# Find what a specific field depends on
+flights_with_deps.get_graph()['avg_distance_per_flight']['deps']
+# Output: {'total_distance': 'measure', 'flight_count': 'measure'}
+```
 
 ### Graph Traversal
 
@@ -187,18 +178,17 @@ flights_with_deps.get_graph().successors('total_distance')
 ```
 <regularoutput code-block="graph_traversal"></regularoutput>
 
-### Export to NetworkX
+### Working with the Dependency Graph
 
-Export the graph to NetworkX-compatible JSON format for visualization or analysis:
+The dependency graph is a dict-like object where each key is a field name and the value is a dict with `"type"` (dimension/measure/calc_measure/column) and `"deps"` (dependencies with their types):
 
-```graph_export
-# Export to JSON format
-json_data = flights_with_deps.get_graph().to_dict()
-json_data
+```python
+# Access the graph directly as a dict
+graph = flights_with_deps.get_graph()
 
-# Or serialize to JSON for visualization (e.g., d3.js)
-# import json
-# json.dumps(json_data)
+# Iterate over fields and their dependencies
+for field, info in graph.items():
+    print(f"{field} ({info['type']}): depends on {info['deps']}")
 ```
 
 ## join_one() / join_many() / join_cross()
