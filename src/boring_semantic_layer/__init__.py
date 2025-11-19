@@ -64,7 +64,7 @@ __all__ = [
 
 # Import MCP functionality from separate module if available
 try:
-    from .mcp import MCPSemanticModel  # noqa: F401
+    from .agents.backends.mcp import MCPSemanticModel  # noqa: F401
 
     _MCP_AVAILABLE = True
 except ImportError:
