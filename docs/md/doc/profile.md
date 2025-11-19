@@ -50,35 +50,6 @@ prod_db:
 **Notes:**
 - The `type` field corresponds to the ibis backend name. Each backend has specific required parameters - see the [Supported Backends](#supported-backends) section below for details.
 - Use `${VAR_NAME}` or `$VAR_NAME` syntax for environment variables (see `prod_db` example above for securing credentials). Environment variables are resolved at connection time from the OS environment.
-- The `tables` configuration automatically loads parquet files for any backend that supports `read_parquet()` (DuckDB, Polars, DataFusion, etc.). An error will be raised if the backend doesn't support this feature.
-
-### Auto-Loading Parquet Files 
-
-The `tables` configuration automatically creates database tables from parquet files when loading a profile:
-
-```python
-from boring_semantic_layer import loader
-
-con = loader.load('test_db')  # Creates 'flights' table
-print(con.list_tables())       # ['flights']
-```
-
-Supports both string paths and dict config:
-
-```yaml
-test_db:
-  type: duckdb
-  database: ":memory:"
-  tables:
-    # String format
-    flights: "data/flights.parquet"
-
-    # Dict format
-    carriers:
-      source: "data/carriers.parquet"
-```
-
-Ideal for testing, CI/CD, and prototyping. Supports local files, remote URLs, and S3 paths.
 
 ### YAML-Based
 
@@ -164,3 +135,31 @@ BSL accepts both native ibis backends and xorq's vendored ibis backends. The `ty
 **xorq's vendored backends are required to enable caching.** By default, BSL uses xorq's cached backends automatically via `loader.load()` for improved performance. If you need native ibis backends without caching, you can pass them directly to BSL functions.
 
 See the [ibis backends documentation](https://ibis-project.org/backends/) for the complete list of supported backends and their required connection parameters.
+
+## Auto-Loading Parquet Files
+
+The `tables` configuration automatically creates database tables from parquet files when loading a profile:
+
+```python
+from boring_semantic_layer import loader
+
+con = loader.load('test_db')  # Creates 'flights' table
+print(con.list_tables())       # ['flights']
+```
+
+Supports both string paths and dict config:
+
+```yaml
+test_db:
+  type: duckdb
+  database: ":memory:"
+  tables:
+    # String format
+    flights: "data/flights.parquet"
+
+    # Dict format
+    carriers:
+      source: "data/carriers.parquet"
+```
+
+Ideal for testing, CI/CD, and prototyping. Supports local files, remote URLs, and S3 paths. The `tables` configuration works with any backend that supports `read_parquet()` (DuckDB, Polars, DataFusion, etc.). An error will be raised if the backend doesn't support this feature.
