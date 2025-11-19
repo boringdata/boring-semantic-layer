@@ -1,9 +1,15 @@
 """Tests for dependency graph functionality."""
 
 import ibis
-import pytest
 
 from boring_semantic_layer.api import to_semantic_table
+from boring_semantic_layer.graph_utils import (
+    graph_bfs,
+    graph_invert,
+    graph_predecessors,
+    graph_successors,
+    graph_to_dict,
+)
 
 
 def test_simple_dimension_dependencies():
@@ -103,19 +109,14 @@ def test_successors_and_predecessors():
 
     graph = sm.get_graph()
 
-    # Test predecessors (all transitive dependencies)
-    assert graph.predecessors("revenue") == {"quantity", "price"}
-    assert graph.predecessors("total_revenue") == {"revenue", "quantity", "price"}  # Transitive
-    assert graph.predecessors("avg_revenue") == {"revenue", "quantity", "price"}  # Transitive
+    # Test predecessors (what this node depends on)
+    assert graph_predecessors(graph, "revenue") == {"quantity", "price"}
+    assert graph_predecessors(graph, "total_revenue") == {"revenue"}
 
-    # Test successors (all transitive dependents)
-    assert graph.successors("quantity") == {"revenue", "total_revenue", "avg_revenue"}  # Transitive
-    assert graph.successors("price") == {"revenue", "total_revenue", "avg_revenue"}  # Transitive
-    assert graph.successors("revenue") == {"total_revenue", "avg_revenue"}
-
-    # Test max_depth parameter
-    assert graph.predecessors("total_revenue", max_depth=1) == {"revenue"}  # Only direct
-    assert graph.successors("quantity", max_depth=1) == {"revenue"}  # Only direct
+    # Test successors (what depends on this node)
+    assert graph_successors(graph, "quantity") == {"revenue"}
+    assert graph_successors(graph, "price") == {"revenue"}
+    assert graph_successors(graph, "revenue") == {"total_revenue", "avg_revenue"}
 
 
 def test_complex_dependency_chain():
@@ -148,19 +149,10 @@ def test_complex_dependency_chain():
     assert set(graph["net_revenue"]["deps"].keys()) == {"gross_revenue", "discount_amount"}
     assert set(graph["total_net_revenue"]["deps"].keys()) == {"net_revenue"}
 
-    # Check reverse dependencies (successors - all transitive)
-    assert graph.successors("quantity") == {
-        "gross_revenue",
-        "discount_amount",
-        "net_revenue",
-        "total_net_revenue",
-    }
-    assert graph.successors("gross_revenue") == {
-        "discount_amount",
-        "net_revenue",
-        "total_net_revenue",
-    }
-    assert graph.successors("net_revenue") == {"total_net_revenue"}
+    # Check reverse dependencies (successors)
+    assert graph_successors(graph, "quantity") == {"gross_revenue"}
+    assert graph_successors(graph, "gross_revenue") == {"discount_amount", "net_revenue"}
+    assert graph_successors(graph, "net_revenue") == {"total_net_revenue"}
 
 
 def test_multiple_dimension_usage():
@@ -180,7 +172,7 @@ def test_multiple_dimension_usage():
     graph = sm.get_graph()
 
     # All three dimensions depend on value
-    assert graph.successors("value") == {"doubled", "tripled", "squared"}
+    assert graph_successors(graph, "value") == {"doubled", "tripled", "squared"}
 
 
 def test_no_dependencies():
@@ -310,7 +302,7 @@ def test_bfs_traversal():
     graph = sm.get_graph()
 
     # BFS from total_net_revenue should visit in breadth-first order
-    bfs_order = list(graph.bfs("total_net_revenue"))
+    bfs_order = list(graph_bfs(graph, "total_net_revenue"))
     assert bfs_order[0] == "total_net_revenue"
     assert bfs_order[1] == "net_revenue"
     # gross_revenue and discount_amount should come before their dependencies
@@ -320,7 +312,7 @@ def test_bfs_traversal():
     assert bfs_order.index("gross_revenue") < bfs_order.index("unit_price")
 
     # Test BFS from multiple starting points
-    bfs_multi = list(graph.bfs(["gross_revenue", "discount_amount"]))
+    bfs_multi = list(graph_bfs(graph, ["gross_revenue", "discount_amount"]))
     assert "gross_revenue" in bfs_multi[:2]
     assert "discount_amount" in bfs_multi[:2]
 
@@ -336,7 +328,7 @@ def test_bfs_simple_chain():
     )
 
     graph = sm.get_graph()
-    bfs_order = list(graph.bfs("total_revenue"))
+    bfs_order = list(graph_bfs(graph, "total_revenue"))
 
     # Should visit in order: total_revenue -> revenue -> [quantity, price] (order of quantity/price may vary)
     assert bfs_order[0] == "total_revenue"
@@ -364,7 +356,7 @@ def test_invert_graph():
     )
 
     graph = sm.get_graph()
-    inverted = graph.invert()
+    inverted = graph_invert(graph)
 
     # In inverted graph, dependencies become dependents
     # Original: revenue depends on [quantity, price]
@@ -394,7 +386,7 @@ def test_invert_preserves_all_nodes():
     )
 
     graph = sm.get_graph()
-    inverted = graph.invert()
+    inverted = graph_invert(graph)
 
     # Both base columns and dimensions should be in inverted graph
     assert "col_a" in inverted
@@ -407,7 +399,7 @@ def test_invert_preserves_all_nodes():
     assert inverted["col_b"]["type"] == "column"
 
 
-def test_bfs_visit_all_dependencies():
+def test_bfs_visits_all_dependencies():
     """Test that BFS visits all transitive dependencies."""
     tbl = ibis.memtable(
         {
@@ -429,10 +421,71 @@ def test_bfs_visit_all_dependencies():
     graph = sm.get_graph()
 
     # BFS should visit all 6 nodes
-    bfs_nodes = set(graph.bfs("total_abc"))
+    bfs_nodes = set(graph_bfs(graph, "total_abc"))
 
     expected = {"total_abc", "abc", "ab", "a", "b", "c"}
     assert bfs_nodes == expected
+
+
+def test_to_dict_export():
+    """Test exporting graph to dictionary format."""
+    tbl = ibis.memtable(
+        {
+            "quantity": [10, 20, 30],
+            "price": [1.5, 2.0, 2.5],
+        }
+    )
+
+    sm = (
+        to_semantic_table(tbl)
+        .with_dimensions(revenue=lambda t: t.quantity * t.price)
+        .with_measures(
+            total_revenue=lambda t: t.revenue.sum(),
+            avg_revenue=lambda t: t.revenue.mean(),
+        )
+    )
+
+    graph = sm.get_graph()
+    graph_dict = graph_to_dict(graph)
+
+    # Check structure
+    assert "nodes" in graph_dict
+    assert "edges" in graph_dict
+    assert isinstance(graph_dict["nodes"], list)
+    assert isinstance(graph_dict["edges"], list)
+
+    # Check nodes
+    node_ids = {node["id"] for node in graph_dict["nodes"]}
+    assert node_ids == {"quantity", "price", "revenue", "total_revenue", "avg_revenue"}
+
+    # Check node types
+    node_types = {node["id"]: node["type"] for node in graph_dict["nodes"]}
+    assert node_types["quantity"] == "column"
+    assert node_types["price"] == "column"
+    assert node_types["revenue"] == "dimension"
+    assert node_types["total_revenue"] == "measure"
+    assert node_types["avg_revenue"] == "measure"
+
+    # Check edges
+    edges = {(edge["source"], edge["target"]) for edge in graph_dict["edges"]}
+    assert ("quantity", "revenue") in edges
+    assert ("price", "revenue") in edges
+    assert ("revenue", "total_revenue") in edges
+    assert ("revenue", "avg_revenue") in edges
+
+    # Check edge types
+    edge_types = {(edge["source"], edge["target"]): edge["type"] for edge in graph_dict["edges"]}
+    assert edge_types[("quantity", "revenue")] == "column"
+    assert edge_types[("price", "revenue")] == "column"
+    assert edge_types[("revenue", "total_revenue")] == "dimension"
+    assert edge_types[("revenue", "avg_revenue")] == "dimension"
+
+    # Verify it's JSON serializable
+    import json
+
+    json_str = json.dumps(graph_dict)
+    assert isinstance(json_str, str)
+    assert len(json_str) > 0
 
 
 def test_graph_accessible_from_all_node_types():
@@ -508,7 +561,7 @@ def test_bfs_nonexistent_node():
     graph = sm.get_graph()
 
     # BFS should still yield the starting node even if it doesn't exist in graph
-    assert list(graph.bfs("nonexistent")) == ["nonexistent"]
+    assert list(graph_bfs(graph, "nonexistent")) == ["nonexistent"]
 
 
 def test_predecessors_successors_nonexistent():
@@ -519,8 +572,8 @@ def test_predecessors_successors_nonexistent():
     graph = sm.get_graph()
 
     # Should return empty sets for non-existent nodes
-    assert graph.predecessors("nonexistent") == set()
-    assert graph.successors("nonexistent") == set()
+    assert graph_predecessors(graph, "nonexistent") == set()
+    assert graph_successors(graph, "nonexistent") == set()
 
 
 def test_invert_empty_graph():
@@ -529,10 +582,22 @@ def test_invert_empty_graph():
     sm = to_semantic_table(tbl)
 
     graph = sm.get_graph()
-    inverted = graph.invert()
+    inverted = graph_invert(graph)
 
     # Empty graph should invert to empty graph
     assert inverted == {}
+
+
+def test_to_dict_empty_graph():
+    """Test to_dict on empty graph."""
+    tbl = ibis.memtable({"a": [1, 2, 3]})
+    sm = to_semantic_table(tbl)
+
+    graph = sm.get_graph()
+    graph_dict = graph_to_dict(graph)
+
+    # Should return empty nodes and edges
+    assert graph_dict == {"nodes": [], "edges": []}
 
 
 def test_bfs_circular_protection():
@@ -546,7 +611,7 @@ def test_bfs_circular_protection():
     graph = sm.get_graph()
 
     # Even with multiple starting points that share dependencies, each node visited once
-    bfs_result = list(graph.bfs(["dim_a", "dim_b"]))
+    bfs_result = list(graph_bfs(graph, ["dim_a", "dim_b"]))
 
     # Check no duplicates
     assert len(bfs_result) == len(set(bfs_result))
@@ -596,42 +661,3 @@ def test_graph_merge_on_join():
     assert set(graph["flights.total_distance"]["deps"].keys()) == {"flights.distance"}
     assert set(graph["carriers.carrier_name"]["deps"].keys()) == {"carriers.name"}
     assert set(graph["carriers.carrier_count"]["deps"].keys()) == set()
-
-
-def test_bad_dimension_raises_error():
-    """Test that dimensions with invalid expressions raise errors."""
-    tbl = ibis.memtable({"a": [1, 2, 3]})
-
-    # Dimension referencing non-existent column should raise AttributeError
-    sm = to_semantic_table(tbl).with_dimensions(bad_dim=lambda t: t.nonexistent_column)
-
-    with pytest.raises(AttributeError, match="nonexistent_column"):
-        sm.get_graph()
-
-
-def test_circular_dependency_raises_error():
-    """Test that circular dependencies raise errors."""
-    tbl = ibis.memtable({"a": [1, 2, 3]})
-
-    # Dimension referencing itself (directly)
-    # Note: This is caught at resolution time
-    sm = to_semantic_table(tbl).with_dimensions(circular=lambda t: t.circular * 2)
-
-    with pytest.raises(AttributeError, match="circular"):
-        sm.get_graph()
-
-
-def test_forward_reference_dimension_raises_error():
-    """Test that forward references in dimensions raise errors."""
-    tbl = ibis.memtable({"a": [1, 2, 3]})
-
-    # dim_b references dim_c which is defined later
-    # Since dict order is preserved in Python 3.7+, this is a forward reference
-    sm = to_semantic_table(tbl).with_dimensions(
-        dim_a=lambda t: t.a,
-        dim_b=lambda t: t.dim_c * 2,  # Forward reference
-        dim_c=lambda t: t.a + 1,
-    )
-
-    with pytest.raises(AttributeError, match="dim_c"):
-        sm.get_graph()

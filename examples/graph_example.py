@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Dependency graph example - inspect field dependencies using YAML models."""
 
+import json
 from pprint import pprint
 
 import ibis
 
 from boring_semantic_layer import from_yaml
+from boring_semantic_layer.graph_utils import graph_to_dict
 
 # Create sample data tables
 carriers_tbl = ibis.memtable(
@@ -45,12 +47,5 @@ print("\n\n=== Joined graph (flights with carriers) ===\n")
 joined = flights.join_one(carriers, left_on="carrier", right_on="code")
 pprint(dict(joined.get_graph()))
 
-# Show some example traversals
-print("\n\n=== Example: Dependencies of flights.total_distance ===")
-graph = flights.get_graph()
-deps = graph.predecessors("flights.total_distance")
-print(f"flights.total_distance depends on: {deps}")
-
-print("\n=== Example: What uses flights.distance? ===")
-successors = graph.successors("flights.distance")
-print(f"Fields depending on flights.distance: {successors}")
+print("\n\n=== Graph export to JSON format ===\n")
+print(json.dumps(graph_to_dict(joined.get_graph()), indent=2))
