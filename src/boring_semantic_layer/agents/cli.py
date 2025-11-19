@@ -19,14 +19,43 @@ def setup_logging(verbose: bool = False):
 
 def cmd_chat(args):
     """Start an interactive chat session with the semantic model."""
+    import os
+    from pathlib import Path
+
     from boring_semantic_layer.agents.chats.cli import start_chat
+
+    # Load .env file early if specified, so env vars are available
+    env_path = getattr(args, "env_path", None)
+    if env_path:
+        load_dotenv(dotenv_path=env_path)
+    else:
+        # Try to load from current directory or parent directories
+        load_dotenv()
+
+    # Get model_path from args or BSL_MODEL_PATH env var
+    model_path = args.sm if hasattr(args, "sm") and args.sm else None
+    if not model_path:
+        model_path_str = os.environ.get("BSL_MODEL_PATH")
+        if model_path_str:
+            model_path = Path(model_path_str)
+        else:
+            print("❌ Error: No semantic model file specified.")
+            print("   Use --sm <path> or set BSL_MODEL_PATH environment variable")
+            return
 
     # Get model from args (no validation - let LangChain handle it)
     llm_model = args.model if hasattr(args, "model") and args.model else "gpt-4"
     initial_query = " ".join(args.query) if hasattr(args, "query") and args.query else None
     profile = args.profile if hasattr(args, "profile") else None
-    profile_file = args.profile_file if hasattr(args, "profile_file") else None
-    env_path = getattr(args, "env_path", None)
+
+    # Get profile_file from args or BSL_PROFILE_PATH env var
+    profile_file = (
+        args.profile_file if hasattr(args, "profile_file") and args.profile_file else None
+    )
+    if not profile_file:
+        profile_file_str = os.environ.get("BSL_PROFILE_PATH")
+        if profile_file_str:
+            profile_file = Path(profile_file_str)
 
     # Auto-select profile if not specified and only one exists
     if not profile and profile_file:
@@ -48,13 +77,13 @@ def cmd_chat(args):
             pass
 
     start_chat(
-        model_path=args.sm,
+        model_path=model_path,
         llm_model=llm_model,
         chart_backend=args.chart_backend,
         initial_query=initial_query,
         profile=profile,
         profile_file=profile_file,
-        env_path=env_path,
+        env_path=env_path,  # Pass through for start_chat's internal use
     )
 
 
@@ -101,8 +130,7 @@ def main():
     chat_parser.add_argument(
         "--sm",
         type=Path,
-        required=True,
-        help="Path to semantic model definition (YAML file)",
+        help="Path to semantic model definition (YAML file). Can also be set via BSL_MODEL_PATH environment variable.",
     )
     chat_parser.add_argument(
         "--chart-backend",

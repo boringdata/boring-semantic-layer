@@ -3,6 +3,7 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 
+import ibis
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain.tools import tool
@@ -103,6 +104,7 @@ class LangChainAgent:
         self.profile = profile
         self.profile_file = profile_file
         self.conversation_history = []
+        self._error_callback: Callable[[str], None] | None = None
 
         self.models = from_yaml(
             str(model_path),
@@ -153,14 +155,36 @@ class LangChainAgent:
         )
         def query_model(**kwargs) -> str:
             try:
-                query_result = safe_eval(kwargs["query"], self.models)
+                # Don't restrict allowed_names - let safe_eval handle security via AST validation
+                # This allows lambda parameters like 't' to work
+                # Include ibis in context for window functions and other ibis operations
+                query_result = safe_eval(
+                    kwargs["query"],
+                    context={**self.models, "ibis": ibis},
+                )
                 chart_spec = kwargs.get("chart_spec")
+
+                # Determine if we're in CLI mode (plotext backend)
+                is_cli_mode = self.chart_backend == "plotext"
+
+                # If no chart_spec provided and we're in CLI mode, add a default plotext spec
+                if chart_spec is None and is_cli_mode:
+                    chart_spec = {"backend": "plotext", "format": "static"}
+
                 return generate_chart_with_data(
-                    query_result, chart_spec, default_backend="altair", return_json=True
+                    query_result,
+                    chart_spec,
+                    default_backend=self.chart_backend,
+                    return_json=not is_cli_mode,  # Return JSON for web, render for CLI
+                    error_callback=self._error_callback,
                 )
             except Exception as e:
                 error_detail = traceback.format_exc()
-                print(f"\n❌ Query Error: {str(e)}\n{error_detail}")
+                error_msg = f"❌ Query Error: {str(e)}\n{error_detail}"
+                if self._error_callback:
+                    self._error_callback(error_msg)
+                else:
+                    print(f"\n{error_msg}")
                 return f"❌ Error: {str(e)}"
 
         self.tools = [list_models, query_model, get_documentation]
@@ -169,8 +193,14 @@ class LangChainAgent:
         self.llm = init_chat_model(llm_model, temperature=0)
 
     def query(
-        self, user_input: str, on_tool_call: Callable[[str, dict], None] | None = None
+        self,
+        user_input: str,
+        on_tool_call: Callable[[str, dict], None] | None = None,
+        on_error: Callable[[str], None] | None = None,
     ) -> tuple[str, str]:
+        # Store error callback for use by query_model tool
+        self._error_callback = on_error
+
         tool_output, agent_response = process_query(
             self.llm, user_input, self.conversation_history, self.tools, on_tool_call
         )
@@ -180,6 +210,9 @@ class LangChainAgent:
 
         if len(self.conversation_history) > 20:
             self.conversation_history = self.conversation_history[-20:]
+
+        # Clear the callback after query is done
+        self._error_callback = None
 
         return tool_output, agent_response
 

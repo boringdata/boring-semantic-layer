@@ -12,6 +12,12 @@ Common options:
 - `show_chart`: `true/false` - Show chart visualization (default: true)
 - `show_table`: `true/false` - Show tabular output (default: true)
 
+**IMPORTANT: To display raw dataframe without chart visualization, use:**
+```json
+{"show_chart": false, "show_table": true}
+```
+This will show only the tabular data, which is useful when the user asks to "show the dataframe" or "display the table".
+
 Examples:
 ```json
 {"chart_type": "bar", "theme": "dark", "height": 50}

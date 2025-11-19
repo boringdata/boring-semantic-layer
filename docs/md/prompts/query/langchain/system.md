@@ -54,17 +54,37 @@ flights.with_dimensions(
 
 **For advanced time transformations**, use `get_documentation(topic="query-methods")`
 
+## Sorting Results
+
+**IMPORTANT**: Always sort results when relevant to make data more meaningful:
+
+```python
+# Sort ascending (default)
+flights.group_by("carrier").aggregate("flight_count").order_by("flight_count")
+
+# Sort descending (use ibis.desc())
+flights.group_by("carrier").aggregate("flight_count").order_by(ibis.desc("flight_count"))
+
+# Multiple sort columns
+flights.group_by("carrier", "origin").aggregate("flight_count").order_by(ibis.desc("flight_count"), "carrier")
+```
+
+**When to sort:**
+- Rankings or "top N" queries → Sort descending by the measure
+- Time series → Sort ascending by time dimension
+- Alphabetical listings → Sort by the dimension name
+
 ## Method Order
 
 **CRITICAL**: Always follow this order:
 
 ```
-Model → with_dimensions → filter → group_by → aggregate → order_by → mutate
+Model → with_dimensions → filter → group_by → aggregate → order_by → mutate → limit
 ```
 
 Example:
 ```python
-flights.with_dimensions(arr_date=lambda t: t.arr_time.date()).filter(lambda t: t.carrier == "AA").group_by("arr_date").aggregate("flight_count")
+flights.with_dimensions(arr_date=lambda t: t.arr_time.date()).filter(lambda t: t.carrier == "AA").group_by("arr_date").aggregate("flight_count").order_by(ibis.desc("flight_count"))
 ```
 
 ## Agent Instructions
@@ -76,6 +96,11 @@ flights.with_dimensions(arr_date=lambda t: t.arr_time.date()).filter(lambda t: t
 3. **Then call `query_model()`** with the actual query
 4. **Charts/tables are auto-displayed** by the tool - you don't need to do anything
 5. **Provide brief summaries** after results display (1-2 sentences)
+
+**IMPORTANT - Chart vs Table Display:**
+- When user asks for **"chart"**, **"graph"**, **"visualization"** → Use default chart display (omit `chart_spec` or use `{"show_chart": true}`)
+- When user asks for **"dataframe"**, **"table"**, **"show data"**, **"raw data"** → Use `chart_spec={"show_chart": false, "show_table": true}`
+- Default behavior shows both chart and table together
 
 ### What NOT to Do
 

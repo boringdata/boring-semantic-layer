@@ -9,7 +9,7 @@ altair==5.5.0
     # via boring-semantic-layer
 annotated-types==0.7.0
     # via pydantic
-anthropic==0.74.0
+anthropic==0.75.0
     # via langchain-anthropic
 anyio==4.11.0
     # via
@@ -263,11 +263,11 @@ kaleido==1.1.0
     # via boring-semantic-layer
 keyring==25.6.0
     # via py-key-value-aio
-langchain==1.0.7
+langchain==1.1.0
     # via boring-semantic-layer
-langchain-anthropic==1.1.0
+langchain-anthropic==1.2.0
     # via boring-semantic-layer
-langchain-core==1.0.5
+langchain-core==1.1.0
     # via
     #   langchain
     #   langchain-anthropic
@@ -275,19 +275,19 @@ langchain-core==1.0.5
     #   langgraph
     #   langgraph-checkpoint
     #   langgraph-prebuilt
-langchain-openai==1.0.3
+langchain-openai==1.1.0
     # via boring-semantic-layer
-langgraph==1.0.3
+langgraph==1.0.4
     # via langchain
 langgraph-checkpoint==3.0.1
     # via
     #   langgraph
     #   langgraph-prebuilt
-langgraph-prebuilt==1.0.4
+langgraph-prebuilt==1.0.5
     # via langgraph
-langgraph-sdk==0.2.9
+langgraph-sdk==0.2.10
     # via langgraph
-langsmith==0.4.43
+langsmith==0.4.49
     # via langchain-core
 locket==1.0.0 ; python_full_version < '4'
     # via partd

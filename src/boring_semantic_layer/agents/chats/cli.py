@@ -50,6 +50,20 @@ def display_tool_call(function_name: str, function_args: dict, status: Status | 
         console.print("Call bsl list_bsl {}", style="dim")
 
 
+def display_error(error_msg: str, status: Status | None = None):
+    """Display an error message and stop the spinner.
+
+    Args:
+        error_msg: Error message to display
+        status: Optional Status spinner to stop before displaying error
+    """
+    # Stop spinner before error output
+    if status:
+        status.stop()
+
+    console.print(error_msg, style="red")
+
+
 def start_chat(
     model_path: Path,
     llm_model: str = "gpt-4",
@@ -127,9 +141,11 @@ def start_chat(
         status = Status(status_msg, console=console)
         status.start()
         try:
-            # Pass status to callback so it can stop the spinner
+            # Pass status to callbacks so they can stop the spinner
             _, agent_response = agent.query(
-                initial_query, on_tool_call=lambda fn, args: display_tool_call(fn, args, status)
+                initial_query,
+                on_tool_call=lambda fn, args: display_tool_call(fn, args, status),
+                on_error=lambda msg: display_error(msg, status),
             )
         finally:
             status.stop()
@@ -174,11 +190,12 @@ def start_chat(
             status = Status(status_msg, console=console)
             status.start()
             try:
-                # Pass status to callback so it can stop the spinner
+                # Pass status to callbacks so they can stop the spinner
                 # Use default argument to bind loop variable
                 _, agent_response = agent.query(
                     user_input,
                     on_tool_call=lambda fn, args, s=status: display_tool_call(fn, args, s),
+                    on_error=lambda msg, s=status: display_error(msg, s),
                 )
             finally:
                 status.stop()
