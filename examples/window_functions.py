@@ -12,7 +12,7 @@ from boring_semantic_layer import loader, to_semantic_table
 def main():
     # Load database connection from profile
     profile_file = Path(__file__).parent / "profiles.yml"
-    con = loader.load("example_db", profile_file=profile_file)
+    con = loader.get_connection("example_db", profile_file=profile_file)
 
     flights_tbl = con.table("flights_tbl")
 

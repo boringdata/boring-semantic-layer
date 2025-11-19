@@ -5,14 +5,13 @@ YAML loader for Boring Semantic Layer models using the semantic API.
 from collections.abc import Mapping
 from typing import Any
 
-import yaml
 from ibis import _
 
 from .api import to_semantic_table
 from .expr import SemanticModel, SemanticTable
 from .ops import Dimension, Measure
 from .profile import loader
-from .utils import safe_eval
+from .utils import read_yaml_file, safe_eval
 
 
 def _parse_dimension_or_measure(
@@ -142,8 +141,7 @@ def from_yaml(
     # Load tables from profile parameter (or BSL_PROFILE env var if profile is None)
     tables = {**tables, **loader.load_tables(profile, profile_file=profile_path)}
 
-    with open(yaml_path) as f:
-        yaml_configs = yaml.safe_load(f)
+    yaml_configs = read_yaml_file(yaml_path)
 
     # Load from YAML profile section if no tables loaded yet
     if "profile" in yaml_configs and not tables:

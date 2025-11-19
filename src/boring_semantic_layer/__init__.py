@@ -56,13 +56,8 @@ try:
 except ImportError:
     _MCP_AVAILABLE = False
 
-# Import xorq conversion functionality if xorq is available
-try:
-    from .xorq_convert import from_xorq, to_xorq  # noqa: F401
-
-    _XORQ_AVAILABLE = True
-except ImportError:
-    _XORQ_AVAILABLE = False
+# Import xorq conversion functionality
+from .xorq_convert import from_xorq, to_xorq  # noqa: F401
 
 
 def __getattr__(name):
@@ -70,10 +65,5 @@ def __getattr__(name):
         raise ImportError(
             "MCPSemanticModel requires the 'fastmcp' optional dependencies. "
             "Install with: pip install 'boring-semantic-layer[fastmcp]'"
-        )
-    if name in ("to_xorq", "from_xorq") and not _XORQ_AVAILABLE:
-        raise ImportError(
-            "Xorq conversion requires xorq to be installed. "
-            "This should not happen as xorq is now a required dependency."
         )
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
