@@ -20,6 +20,13 @@ from .expr import (
     SemanticTable,
     to_ibis,
 )
+from .graph_utils import (
+    graph_bfs,
+    graph_invert,
+    graph_predecessors,
+    graph_successors,
+    graph_to_dict,
+)
 from .ops import (
     Dimension,
     Measure,
@@ -40,6 +47,11 @@ __all__ = [
     "options",
     "to_xorq",
     "from_xorq",
+    "graph_predecessors",
+    "graph_successors",
+    "graph_bfs",
+    "graph_invert",
+    "graph_to_dict",
 ]
 
 # Import MCP functionality from separate module if available

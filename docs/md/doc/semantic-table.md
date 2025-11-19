@@ -165,15 +165,19 @@ flights_with_deps.get_graph()['avg_distance_per_flight']['deps']
 
 ### Graph Traversal
 
-Use `successors()` and `predecessors()` to navigate dependencies:
+Use `graph_predecessors()` and `graph_successors()` to navigate dependencies:
 
 ```graph_traversal
+from boring_semantic_layer import graph_predecessors, graph_successors
+
+graph = flights_with_deps.get_graph()
+
 # What does this field depend on? (predecessors)
-flights_with_deps.get_graph().predecessors('avg_distance_per_flight')
+graph_predecessors(graph, 'avg_distance_per_flight')
 # {'total_distance', 'flight_count'}
 
 # What depends on this field? (successors)
-flights_with_deps.get_graph().successors('total_distance')
+graph_successors(graph, 'total_distance')
 # {'avg_distance_per_flight'}
 ```
 <regularoutput code-block="graph_traversal"></regularoutput>
