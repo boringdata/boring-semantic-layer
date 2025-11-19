@@ -48,9 +48,9 @@ __all__ = [
     "loader",
 ]
 
-# Import MCP functionality from agents module if available
+# Import MCP functionality if available
 try:
-    from .agents.backends.mcp import MCPSemanticModel  # noqa: F401
+    from .mcp import MCPSemanticModel  # noqa: F401
 
     _MCP_AVAILABLE = True
 except ImportError:
