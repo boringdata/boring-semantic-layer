@@ -18,13 +18,23 @@ license-files = [
     "LICENSE",
 ]
 
+[project.scripts]
+bsl-agent = "boring_semantic_layer.agents.cli:main"
+
 [project.optional-dependencies]
 examples = ["xorq[duckdb]>=0.3.4", "xorq", "duckdb<1.4"]
 viz-altair = ["altair>=5.0.0", "vl-convert-python>=1.0.0"]
 viz-plotly = ["plotly>=6.3.0", "kaleido", "nbformat>=4.2.0"]
 viz-plotext = ["plotext>=5.0.0"]
+agents = [
+    "langchain>=0.3.0",
+    "langchain-openai>=0.3.0",
+    "langchain-anthropic>=0.3.0",
+    "rich>=13.0.0",
+    "python-dotenv>=1.0.0",
+]
 dev = [
-    "boring-semantic-layer[fastmcp,examples,viz-altair,viz-plotly,viz-plotext]",
+    "boring-semantic-layer[fastmcp,examples,agents,viz-altair,viz-plotly,viz-plotext]",
     "ruff>=0.6.7",
     "pre-commit>=4.2.0",
     "pytest",
