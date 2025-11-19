@@ -1,0 +1,1 @@
+List of dimension names to group by (e.g., ['flights.origin', 'flights.destination'])

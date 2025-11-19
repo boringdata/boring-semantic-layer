@@ -1,0 +1,1 @@
+Return the earliest and latest timestamps available for a model's time dimension.
