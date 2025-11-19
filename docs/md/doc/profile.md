@@ -13,23 +13,76 @@ BSL provides a profile system for managing database connections using configurat
 ### Python-Based
 
 ```python
-from boring_semantic_layer import load_profile, to_semantic_table
+from boring_semantic_layer import loader, to_semantic_table
 
 # Load connection directly by profile name
-
-con = load_profile('my_db')
+# Searches for 'my_db' profile in:
+#   1. ~/.config/bsl/profiles/my_db.yml
+#   2. ./profiles.yml (current directory)
+#   3. xorq profiles directory
+con = loader.load('my_db')
 
 # Load from a specific file
-con = load_profile('my_db', profile_file='config/profiles.yml')
+con = loader.load('my_db', profile_file='config/profiles.yml')
 
 # Use the connection to access tables and create semantic tables
 flights_table = con.table('flights')
 flights = to_semantic_table(flights_table)
 ```
 
+## Profile YAML Format
+
+Create a `profiles.yml` file in your project directory:
+
+```yaml
+dev_db:
+  type: duckdb
+  database: dev.db
+
+prod_db:
+  type: postgres
+  host: ${POSTGRES_HOST}
+  database: ${POSTGRES_DB}
+  user: ${POSTGRES_USER}
+  password: ${POSTGRES_PASSWORD}
+```
+
+**Notes:**
+- The `type` field corresponds to the ibis backend name. Each backend has specific required parameters - see the [Supported Backends](#supported-backends) section below for details.
+- Use `${VAR_NAME}` or `$VAR_NAME` syntax for environment variables (see `prod_db` example above for securing credentials). Environment variables are resolved at connection time from the OS environment.
+- The `tables` configuration automatically loads parquet files for any backend that supports `read_parquet()` (DuckDB, Polars, DataFusion, etc.). An error will be raised if the backend doesn't support this feature.
+
+### Auto-Loading Parquet Files 
+
+The `tables` configuration automatically creates database tables from parquet files when loading a profile:
+
+```python
+from boring_semantic_layer import loader
+
+con = loader.load('test_db')  # Creates 'flights' table
+print(con.list_tables())       # ['flights']
+```
+
+Supports both string paths and dict config:
+
+```yaml
+test_db:
+  type: duckdb
+  database: ":memory:"
+  tables:
+    # String format
+    flights: "data/flights.parquet"
+
+    # Dict format
+    carriers:
+      source: "data/carriers.parquet"
+```
+
+Ideal for testing, CI/CD, and prototyping. Supports local files, remote URLs, and S3 paths.
+
 ### YAML-Based
 
-**File-level profile** - all tables from one connection:
+**File-level profile** - all tables from one connection (must be defined in a profiles.yml file):
 
 ```yaml
 # flights_model.yml
@@ -73,65 +126,9 @@ models = from_yaml('multi_db_model.yml')
 models = from_yaml('model.yml', profile='my_db')
 ```
 
-## Profile YAML Format
-
-Create a `profiles.yml` file in your project directory:
-
-```yaml
-dev_db:
-  type: duckdb
-  database: dev.db
-
-prod_db:
-  type: postgres
-  host: ${POSTGRES_HOST}
-  database: ${POSTGRES_DB}
-  user: ${POSTGRES_USER}
-  password: ${POSTGRES_PASSWORD}
-
-test_db:
-  type: duckdb
-  database: ":memory:"
-  tables:
-    flights: "data/flights.parquet"
-```
-
-**Notes:**
-- The `type` field corresponds to the ibis backend name. Each backend has specific required parameters - see the [Supported Backends](#supported-backends) section below for details.
-- Use `${VAR_NAME}` or `$VAR_NAME` syntax for environment variables (see `prod_db` example above for securing credentials).
-- The `tables` configuration automatically loads parquet files for any backend that supports `read_parquet()` (DuckDB, Polars, DataFusion, etc.). An error will be raised if the backend doesn't support this feature.
-
-### Auto-Loading Parquet Files for Testing
-
-The `tables` configuration automatically creates database tables from parquet files when loading a profile:
-
-```python
-from boring_semantic_layer import load_profile
-
-con = load_profile('test_db')  # Creates 'flights' table
-print(con.list_tables())        # ['flights']
-```
-
-Supports both string paths and dict config:
-
-```yaml
-test_db:
-  type: duckdb
-  database: ":memory:"
-  tables:
-    # String format
-    flights: "data/flights.parquet"
-
-    # Dict format
-    carriers:
-      source: "data/carriers.parquet"
-```
-
-Ideal for testing, CI/CD, and prototyping. Supports local files, remote URLs, and S3 paths.
-
 ## Profile Resolution Order
 
-`load_profile('my_db')` searches in this order:
+`loader.load('my_db')` searches in this order:
 1. `~/.config/bsl/profiles/my_db.yml` (BSL-specific profiles)
 2. `./profiles.yml` (local project profiles)
 3. xorq profiles directory (system-wide xorq profiles)
@@ -139,14 +136,19 @@ Ideal for testing, CI/CD, and prototyping. Supports local files, remote URLs, an
 You can customize the search order:
 
 ```python
-# Search only BSL directory
-con = load_profile('my_db', search_locations=['bsl_dir'])
+from boring_semantic_layer import ProfileLoader
+
+# Create custom loader with specific search order
+custom_loader = ProfileLoader(search_locations=['bsl_dir'])
+con = custom_loader.load('my_db')
 
 # Search only local directory
-con = load_profile('my_db', search_locations=['local'])
+local_loader = ProfileLoader(search_locations=['local'])
+con = local_loader.load('my_db')
 
 # Custom order
-con = load_profile('my_db', search_locations=['local', 'bsl_dir', 'xorq_dir'])
+custom_order_loader = ProfileLoader(search_locations=['local', 'bsl_dir', 'xorq_dir'])
+con = custom_order_loader.load('my_db')
 ```
 
 `from_yaml()` resolves profiles in order:
@@ -159,6 +161,6 @@ con = load_profile('my_db', search_locations=['local', 'bsl_dir', 'xorq_dir'])
 
 BSL accepts both native ibis backends and xorq's vendored ibis backends. The `type` field in your profile corresponds to the ibis backend name, and the other fields are passed as connection parameters.
 
-**xorq's vendored backends are required to enable caching.** By default, BSL uses xorq's cached backends automatically via `load_profile()` for improved performance. If you need native ibis backends without caching, you can pass them directly to BSL functions.
+**xorq's vendored backends are required to enable caching.** By default, BSL uses xorq's cached backends automatically via `loader.load()` for improved performance. If you need native ibis backends without caching, you can pass them directly to BSL functions.
 
 See the [ibis backends documentation](https://ibis-project.org/backends/) for the complete list of supported backends and their required connection parameters.

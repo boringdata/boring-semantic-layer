@@ -25,7 +25,8 @@ from .ops import (
     Measure,
 )
 from .profile import (
-    load_profile,
+    ProfileLoader,
+    loader,
 )
 from .yaml import (
     from_yaml,
@@ -43,12 +44,13 @@ __all__ = [
     "options",
     "to_xorq",
     "from_xorq",
-    "load_profile",
+    "ProfileLoader",
+    "loader",
 ]
 
-# Import MCP functionality if available
+# Import MCP functionality from agents module if available
 try:
-    from .mcp import MCPSemanticModel  # noqa: F401
+    from .agents.backends.mcp import MCPSemanticModel  # noqa: F401
 
     _MCP_AVAILABLE = True
 except ImportError:

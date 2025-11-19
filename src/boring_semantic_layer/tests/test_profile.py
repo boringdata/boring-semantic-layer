@@ -7,7 +7,7 @@ import pytest
 
 from boring_semantic_layer.profile import (
     ProfileError,
-    load_profile,
+    loader,
 )
 
 
@@ -39,12 +39,12 @@ class TestProfileSaveLoad:
 
     def test_load_from_yaml_file(self, sample_profile_yaml):
         """Test loading profile from YAML file using profile_file parameter."""
-        con = load_profile("dev_db", profile_file=sample_profile_yaml)
+        con = loader.load("dev_db", profile_file=sample_profile_yaml)
         assert con.list_tables() is not None
 
     def test_load_from_yaml_with_profile_file(self, sample_profile_yaml):
         """Test loading specific profile from YAML file."""
-        con = load_profile("test_db", profile_file=sample_profile_yaml)
+        con = loader.load("test_db", profile_file=sample_profile_yaml)
         assert con.list_tables() is not None
 
     def test_load_from_local_profile_yml(self, temp_dir, monkeypatch):
@@ -58,7 +58,7 @@ local_db:
   database: "local.db"
 """)
 
-        con = load_profile("local_db")
+        con = loader.load("local_db")
         assert con.list_tables() is not None
 
     def test_load_from_bsl_profiles(self, temp_dir, monkeypatch):
@@ -75,13 +75,13 @@ saved_db:
   database: saved.db
 """)
 
-        con = load_profile("saved_db")
+        con = loader.load("saved_db")
         assert con.list_tables() is not None
 
     def test_load_nonexistent_profile(self):
         """Test loading a profile that doesn't exist."""
         with pytest.raises(ProfileError, match="not found"):
-            load_profile("nonexistent_profile_xyz")
+            loader.load("nonexistent_profile_xyz")
 
     def test_load_missing_type_field(self, temp_dir):
         """Test loading profile without type field."""
@@ -92,20 +92,20 @@ bad_db:
 """)
 
         with pytest.raises(ProfileError, match="must specify 'type' field"):
-            load_profile("bad_db", profile_file=profile_file)
+            loader.load("bad_db", profile_file=profile_file)
 
 
 class TestLoadProfileFunction:
-    """Test load_profile convenience function."""
+    """Test loader.load() function."""
 
     def test_load_profile_from_yaml(self, sample_profile_yaml):
-        """Test load_profile function."""
-        con = load_profile("dev_db", profile_file=sample_profile_yaml)
+        """Test loader.load() function."""
+        con = loader.load("dev_db", profile_file=sample_profile_yaml)
         assert con.list_tables() is not None
 
     def test_load_profile_from_path(self, sample_profile_yaml):
         """Test loading profile directly from file path."""
-        con = load_profile(str(sample_profile_yaml))
+        con = loader.load(str(sample_profile_yaml))
         assert con.list_tables() is not None
 
 
@@ -124,7 +124,7 @@ env_db:
   database: ${TEST_DB_PATH}
 """)
 
-        con = load_profile("env_db", profile_file=profile_file)
+        con = loader.load("env_db", profile_file=profile_file)
         assert con.list_tables() is not None
 
     def test_missing_env_var(self, temp_dir, monkeypatch):
@@ -139,7 +139,7 @@ env_db:
 """)
 
         with pytest.raises((ProfileError, KeyError)):
-            load_profile("env_db", profile_file=profile_file)
+            loader.load("env_db", profile_file=profile_file)
 
 
 class TestParquetLoading:
@@ -162,7 +162,7 @@ parquet_db:
     my_table: "{parquet_path}"
 """)
 
-        con = load_profile("parquet_db", profile_file=profile_file)
+        con = loader.load("parquet_db", profile_file=profile_file)
         tables = con.list_tables()
         assert "my_table" in tables
 
@@ -188,7 +188,7 @@ dict_db:
       source: "{parquet_path}"
 """)
 
-        con = load_profile("dict_db", profile_file=profile_file)
+        con = loader.load("dict_db", profile_file=profile_file)
         result = con.table("my_data").execute()
         assert len(result) == 3
         assert list(result["x"]) == [10, 20, 30]
@@ -205,7 +205,7 @@ unsupported_db:
 """)
 
         with pytest.raises(ProfileError) as exc_info:
-            load_profile("unsupported_db", profile_file=profile_file)
+            loader.load("unsupported_db", profile_file=profile_file)
 
         error_msg = str(exc_info.value)
         assert (
@@ -225,7 +225,7 @@ missing_file_db:
 """)
 
         with pytest.raises(ProfileError) as exc_info:
-            load_profile("missing_file_db", profile_file=profile_file)
+            loader.load("missing_file_db", profile_file=profile_file)
 
         error_msg = str(exc_info.value)
         assert "Failed to load parquet file" in error_msg
