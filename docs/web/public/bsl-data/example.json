@@ -3,7 +3,7 @@
   "queries": {
     "revenue_by_customer": {
       "code": "result = orders_st.group_by(\"customer\").aggregate(\n    \"total_orders\",\n    \"total_revenue\",\n    \"avg_order_value\"\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"customer\",\n    COUNT(*) AS \"total_orders\",\n    SUM(\"t1\".\"amount\") AS \"total_revenue\",\n    AVG(\"t1\".\"amount\") AS \"avg_order_value\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_dv7tvk7s65f4fjs3kudioehnca\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"customer\",\n    COUNT(*) AS \"total_orders\",\n    SUM(\"t1\".\"amount\") AS \"total_revenue\",\n    AVG(\"t1\".\"amount\") AS \"avg_order_value\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_725hnpv3ofexjbzkff5dfaioyq\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": "r0 := SemanticTableOp[orders]\n  2 dimensions: customer, product\n  4 measures: total_orders, total_revenue, total_quantity, ...\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['customer']\n  inherited dimensions: 2\n  inherited measures: 4\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['customer']\n  aggs: [total_orders, total_revenue, avg_order_value]",
       "table": {
         "columns": [
@@ -20,16 +20,16 @@
             125.0
           ],
           [
-            "Charlie",
-            2,
-            225,
-            112.5
-          ],
-          [
             "David",
             1,
             100,
             100.0
+          ],
+          [
+            "Charlie",
+            2,
+            225,
+            112.5
           ],
           [
             "Alice",
@@ -49,7 +49,7 @@
             }
           },
           "data": {
-            "name": "data-e6a2e97bb8df58131dd2d01a4f00c855"
+            "name": "data-546d79ef4037296695139b770369fa2e"
           },
           "mark": {
             "type": "bar"
@@ -103,7 +103,13 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-e6a2e97bb8df58131dd2d01a4f00c855": [
+            "data-546d79ef4037296695139b770369fa2e": [
+              {
+                "customer": "Bob",
+                "total_orders": 2,
+                "total_revenue": 250,
+                "avg_order_value": 125.0
+              },
               {
                 "customer": "Charlie",
                 "total_orders": 2,
@@ -115,12 +121,6 @@
                 "total_orders": 1,
                 "total_revenue": 100,
                 "avg_order_value": 100.0
-              },
-              {
-                "customer": "Bob",
-                "total_orders": 2,
-                "total_revenue": 250,
-                "avg_order_value": 125.0
               },
               {
                 "customer": "Alice",
@@ -135,7 +135,7 @@
     },
     "product_performance": {
       "code": "result = orders_st.group_by(\"product\").aggregate(\n    \"total_orders\",\n    \"total_quantity\",\n    \"total_revenue\"\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"product\",\n    COUNT(*) AS \"total_orders\",\n    SUM(\"t1\".\"quantity\") AS \"total_quantity\",\n    SUM(\"t1\".\"amount\") AS \"total_revenue\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_dv7tvk7s65f4fjs3kudioehnca\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"product\",\n    COUNT(*) AS \"total_orders\",\n    SUM(\"t1\".\"quantity\") AS \"total_quantity\",\n    SUM(\"t1\".\"amount\") AS \"total_revenue\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_725hnpv3ofexjbzkff5dfaioyq\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": "r0 := SemanticTableOp[orders]\n  2 dimensions: customer, product\n  4 measures: total_orders, total_revenue, total_quantity, ...\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['product']\n  inherited dimensions: 2\n  inherited measures: 4\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['product']\n  aggs: [total_orders, total_quantity, total_revenue]",
       "table": {
         "columns": [
@@ -146,10 +146,10 @@
         ],
         "data": [
           [
-            "Doohickey",
-            1,
+            "Gadget",
             3,
-            75
+            6,
+            450
           ],
           [
             "Widget",
@@ -158,10 +158,10 @@
             400
           ],
           [
-            "Gadget",
+            "Doohickey",
+            1,
             3,
-            6,
-            450
+            75
           ]
         ]
       },
@@ -175,7 +175,7 @@
             }
           },
           "data": {
-            "name": "data-65396652800538ed7d6b8820e15429b6"
+            "name": "data-b56de3f46015ba8dae8cc9832a1c65b1"
           },
           "mark": {
             "type": "bar"
@@ -229,13 +229,7 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-65396652800538ed7d6b8820e15429b6": [
-              {
-                "product": "Widget",
-                "total_orders": 4,
-                "total_quantity": 4,
-                "total_revenue": 400
-              },
+            "data-b56de3f46015ba8dae8cc9832a1c65b1": [
               {
                 "product": "Gadget",
                 "total_orders": 3,
@@ -247,6 +241,12 @@
                 "total_orders": 1,
                 "total_quantity": 3,
                 "total_revenue": 75
+              },
+              {
+                "product": "Widget",
+                "total_orders": 4,
+                "total_quantity": 4,
+                "total_revenue": 400
               }
             ]
           }

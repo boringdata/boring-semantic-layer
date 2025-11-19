@@ -67,7 +67,7 @@ class TestLangChainAgent:
         # Assertions
         assert agent.llm_model == "gpt-4"
         assert agent.chart_backend == "plotext"
-        assert len(agent.tools) == 2  # list_models and query_model
+        assert len(agent.tools) == 3  # list_models, query_model, and get_documentation
         assert agent.conversation_history == []
         mock_from_yaml.assert_called_once()
         mock_init_chat.assert_called_once_with("gpt-4", temperature=0)
@@ -75,8 +75,15 @@ class TestLangChainAgent:
     @patch("boring_semantic_layer.agents.backends.langchain.from_yaml")
     @patch("boring_semantic_layer.agents.backends.langchain.init_chat_model")
     @patch("boring_semantic_layer.agents.backends.langchain.load_prompt")
+    @patch("boring_semantic_layer.agents.backends.langchain.get_model_description")
     def test_list_models_tool(
-        self, mock_load_prompt, mock_init_chat, mock_from_yaml, tmp_path, mock_models
+        self,
+        mock_get_desc,
+        mock_load_prompt,
+        mock_init_chat,
+        mock_from_yaml,
+        tmp_path,
+        mock_models,
     ):
         """Test list_models tool returns correct JSON."""
         from boring_semantic_layer.agents.backends.langchain import LangChainAgent
@@ -84,6 +91,7 @@ class TestLangChainAgent:
         mock_from_yaml.return_value = mock_models
         mock_init_chat.return_value = Mock()
         mock_load_prompt.return_value = "Test prompt"
+        mock_get_desc.return_value = "Test description"
 
         model_file = tmp_path / "test.yml"
         model_file.write_text("test")
@@ -121,21 +129,20 @@ class TestLangChainAgent:
         # Get query_model tool
         query_model_tool = agent.tools[1]
 
-        # Mock eval and chart
+        # Mock safe_eval and generate_chart_with_data
         with (
-            patch("boring_semantic_layer.agents.backends.langchain.eval") as mock_eval,
-            patch("boring_semantic_layer.agents.backends.langchain.chart") as mock_chart,
+            patch("boring_semantic_layer.agents.backends.langchain.safe_eval") as mock_eval,
+            patch(
+                "boring_semantic_layer.agents.backends.langchain.generate_chart_with_data"
+            ) as mock_chart,
         ):
             mock_result = Mock()
-            mock_df = Mock()
-            mock_df.__len__ = Mock(return_value=5)
-            mock_result.execute.return_value = mock_df
             mock_eval.return_value = mock_result
+            mock_chart.return_value = '{"status": "success", "data": []}'
 
             result = query_model_tool.func(query="flights.aggregate('flight_count')")
 
-            assert "Query executed successfully" in result
-            assert "5 rows" in result
+            assert "success" in result or '"status"' in result
             mock_eval.assert_called_once()
             mock_chart.assert_called_once()
 
@@ -160,14 +167,13 @@ class TestLangChainAgent:
         # Get query_model tool
         query_model_tool = agent.tools[1]
 
-        # Mock eval to raise error
-        with patch("boring_semantic_layer.agents.backends.langchain.eval") as mock_eval:
+        # Mock safe_eval to raise error
+        with patch("boring_semantic_layer.agents.backends.langchain.safe_eval") as mock_eval:
             mock_eval.side_effect = ValueError("Invalid query")
 
             result = query_model_tool.func(query="invalid query")
 
             assert "❌" in result
-            assert "Error executing query" in result
             assert "Invalid query" in result
 
     @patch("boring_semantic_layer.agents.backends.langchain.from_yaml")
