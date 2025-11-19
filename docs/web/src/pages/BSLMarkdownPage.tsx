@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, useLocation } from 'react-router-dom'
+import { useParams, useLocation, Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import BSLQueryResult from '../components/BSLQueryResult'
@@ -224,10 +224,27 @@ export default function BSLMarkdownPage({ pageSlug }: BSLMarkdownPageProps = {})
               },
               // Links
               a({ href, children }) {
+                // Check if the link is internal (starts with /)
+                const isInternal = href && href.startsWith('/')
+
+                if (isInternal) {
+                  return (
+                    <Link
+                      to={href}
+                      className="text-primary underline decoration-primary/30 hover:decoration-primary transition-colors font-medium"
+                    >
+                      {children}
+                    </Link>
+                  )
+                }
+
+                // External links
                 return (
                   <a
                     href={href}
                     className="text-primary underline decoration-primary/30 hover:decoration-primary transition-colors font-medium"
+                    target="_blank"
+                    rel="noopener noreferrer"
                   >
                     {children}
                   </a>
