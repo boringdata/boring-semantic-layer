@@ -5,8 +5,10 @@ import sys
 from typing import Any
 
 import ibis
+from returns.result import Success
 
 from boring_semantic_layer import to_semantic_table
+from boring_semantic_layer.utils import safe_eval
 
 
 class QueryExecutor:
@@ -81,14 +83,16 @@ class QueryExecutor:
             exec(code, namespace)
             return None
 
-        # Try eval, fallback to exec
+        # Execute all lines except the last
         if code_without_last.strip():
             exec(code_without_last, namespace)
 
-        try:
-            result = eval(last_line, namespace)
-            return (result, "," in last_line)
-        except Exception:
+        # Try safe_eval for last expression, fallback to exec
+        result = safe_eval(last_line, context=namespace)
+        if isinstance(result, Success):
+            return (result.unwrap(), "," in last_line)
+        else:
+            # If safe_eval fails, fallback to exec (might be a statement)
             exec(last_line, namespace)
             return None
 
