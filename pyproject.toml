@@ -17,12 +17,21 @@ license-files = [
     "LICENSE",
 ]
 
+[project.scripts]
+bsl = "boring_semantic_layer.cli:main"
+
 [project.optional-dependencies]
 examples = ["ibis-framework[duckdb]>=10.6.0", "xorq", "duckdb<1.4"]
 xorq = ["xorq"]
 viz-altair = ["altair>=5.0.0", "vl-convert-python>=1.0.0"]
 viz-plotly = ["plotly>=6.3.0", "kaleido", "nbformat>=4.2.0"]
 viz-plotext = ["plotext>=5.0.0"]
+cli = [
+    "click>=8.0.0",
+    "markdown>=3.0.0",
+    "watchdog>=3.0.0",
+    "livereload>=2.6.0",
+]
 dev = [
     "boring-semantic-layer[fastmcp,examples,xorq,viz-altair,viz-plotly,viz-plotext]",
     "ruff>=0.6.7",

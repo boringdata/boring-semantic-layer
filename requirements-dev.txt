@@ -71,8 +71,9 @@ choreographer==1.2.0
     # via kaleido
 cityhash==0.4.10 ; python_full_version < '4'
     # via xorq
-click==8.3.0 ; python_full_version < '4' or sys_platform != 'emscripten'
+click==8.3.0
     # via
+    #   boring-semantic-layer
     #   dask
     #   uvicorn
 cloudpickle==3.1.2
@@ -240,6 +241,8 @@ kaleido==1.1.0
     # via boring-semantic-layer
 keyring==25.6.0
     # via py-key-value-aio
+livereload==2.7.1
+    # via boring-semantic-layer
 locket==1.0.0 ; python_full_version < '4'
     # via partd
 logistro==2.0.1
@@ -247,6 +250,8 @@ logistro==2.0.1
     #   choreographer
     #   kaleido
 malloy==2024.1096
+    # via boring-semantic-layer
+markdown==3.10
     # via boring-semantic-layer
 markdown-it-py==4.0.0
     # via rich
@@ -543,6 +548,8 @@ toolz==1.1.0
     #   ibis-framework
     #   partd
     #   xorq
+tornado==6.5.2
+    # via livereload
 traitlets==5.14.3
     # via
     #   ipython
@@ -599,6 +606,8 @@ uvicorn==0.38.0 ; sys_platform != 'emscripten'
 virtualenv==20.35.4
     # via pre-commit
 vl-convert-python==1.8.0
+    # via boring-semantic-layer
+watchdog==6.0.0
     # via boring-semantic-layer
 wcwidth==0.2.14
     # via prompt-toolkit
