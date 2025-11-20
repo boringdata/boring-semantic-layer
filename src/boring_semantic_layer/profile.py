@@ -41,7 +41,7 @@ class ProfileLoader:
 
         # Create from inline dict config
         if isinstance(profile, dict):
-            return self._create_ibis_connection(profile)
+            return self._create_connection_from_config(profile)
 
         # Load from file or search
         if not isinstance(profile, str):
@@ -109,6 +109,8 @@ class ProfileLoader:
 
             if location == "xorq_dir":
                 try:
+                    from xorq.vendor.ibis.backends.profiles import Profile as XorqProfile
+
                     xorq_profile = XorqProfile.load(profile_name)
                     return xorq_profile.get_con()
                 except Exception:
@@ -124,7 +126,7 @@ class ProfileLoader:
             raise ProfileError(str(e)) from e
 
         config = self._get_profile_config(profiles_config, profile_name, yaml_file)
-        return self._create_ibis_connection(config)
+        return self._create_connection_from_config(config)
 
     def _get_profile_config(
         self, profiles_config: dict, profile_name: str | None, yaml_file: Path
@@ -150,18 +152,51 @@ class ProfileLoader:
 
         return config
 
-    def _create_ibis_connection(self, config: dict) -> BaseBackend:
-        """Create connection from configuration dict."""
-        # Currently using legacy ibis connection
-        # TODO: Switch to xorq connection (see _create_xorq_connection below)
-        return _create_ibis_connection_legacy(self, config)
+    def _create_connection_from_config(self, config: dict) -> BaseBackend:
+        """Create connection from configuration dict using xorq.
+
+        Note: xorq handles environment variable substitution automatically.
+        """
+        config = config.copy()
+        conn_type = config.get("type")
+        if not conn_type:
+            raise ProfileError("Profile must specify 'type' field")
+
+        parquet_tables = config.pop("tables", None)
+
+        # Create xorq Profile with connection parameters
+        # xorq will handle ${VAR} substitution automatically when get_con() is called
+        kwargs_tuple = tuple(sorted((k, v) for k, v in config.items() if k != "type"))
+        xorq_profile = XorqProfile(con_name=conn_type, kwargs_tuple=kwargs_tuple)
+        connection = xorq_profile.get_con()
+
+        # Load parquet tables if specified
+        if parquet_tables:
+            self._load_parquet_tables(connection, parquet_tables, conn_type)
+
+        return connection
 
     def _get_tables_from_connection(
         self, connection: BaseBackend, table_filter: list[str] | None = None
     ) -> dict[str, Any]:
         """Get tables from connection, optionally filtered by name list."""
+        import ibis
+
         table_names = table_filter or connection.list_tables()
-        return {name: connection.table(name) for name in table_names}
+        tables = {}
+
+        for name in table_names:
+            table = connection.table(name)
+
+            # Check if this is a xorq vendored ibis table that needs conversion
+            if type(table).__module__.startswith("xorq.vendor.ibis"):
+                # TODO: REMOVE !!!!!
+                df = table.execute()
+                table = ibis.memtable(df)
+
+            tables[name] = table
+
+        return tables
 
     @staticmethod
     def _load_parquet_tables(connection: BaseBackend, tables_config: dict, conn_type: str) -> None:
@@ -191,101 +226,3 @@ class ProfileLoader:
 
 # Default loader instance
 loader = ProfileLoader()
-
-
-# =============================================================================
-# TO MIGRATE: Temporary code - will be replaced when fully migrated to xorq
-# =============================================================================
-
-
-def _substitute_env_vars(value: Any) -> Any:
-    """Recursively substitute environment variables in config values.
-
-    Supports both ${VAR} and $VAR formats.
-    Raises ProfileError if referenced environment variable is not set.
-
-    NOTE: This function will be replaced by xorq's environment variable handling.
-    """
-    import re
-
-    if isinstance(value, str):
-        # Support both ${VAR} and $VAR formats - process ${VAR} first to avoid conflicts
-        for pattern, fmt in [
-            (r"\$\{([^}]+)\}", lambda v: f"${{{v}}}"),  # ${VAR}
-            (r"\$([A-Z_][A-Z0-9_]*)", lambda v: f"${v}"),  # $VAR
-        ]:
-            for var_name in re.findall(pattern, value):
-                if var_name not in os.environ:
-                    raise ProfileError(
-                        f"Environment variable not set: {var_name}\n\n"
-                        f"Set it before running:\n"
-                        f"  export {var_name}=..."
-                    )
-                value = value.replace(fmt(var_name), os.environ[var_name])
-        return value
-
-    if isinstance(value, dict):
-        return {k: _substitute_env_vars(v) for k, v in value.items()}
-
-    if isinstance(value, list):
-        return [_substitute_env_vars(item) for item in value]
-
-    return value
-
-
-def _create_ibis_connection_legacy(loader: ProfileLoader, config: dict) -> BaseBackend:
-    """Currently used: Create native ibis connection directly.
-
-    TODO: Replace with _create_xorq_connection when ready.
-    """
-    import ibis
-
-    config = _substitute_env_vars(config.copy())
-
-    conn_type = config.get("type")
-    if not conn_type:
-        raise ProfileError("Profile must specify 'type' field")
-
-    parquet_tables = config.pop("tables", None)
-    kwargs = {k: v for k, v in config.items() if k != "type"}
-
-    # Create native ibis connection directly
-    backend_module = getattr(ibis, conn_type, None)
-    if not backend_module:
-        raise ProfileError(f"Unknown connection type: {conn_type}")
-
-    connect_method = getattr(backend_module, "connect", None)
-    if not connect_method:
-        raise ProfileError(f"Backend '{conn_type}' does not have a connect() method")
-
-    connection = connect_method(**kwargs)
-
-    # Load parquet tables if specified
-    if parquet_tables:
-        loader._load_parquet_tables(connection, parquet_tables, conn_type)
-
-    return connection
-
-
-def _create_xorq_connection(loader: ProfileLoader, config: dict) -> BaseBackend:
-    """Future: Create connection using xorq for better caching and management.
-
-    Uncomment and use this when ready to migrate to xorq.
-    """
-    config = config.copy()
-    conn_type = config.get("type")
-    if not conn_type:
-        raise ProfileError("Profile must specify 'type' field")
-
-    parquet_tables = config.pop("tables", None)
-
-    # Use xorq for connection management
-    kwargs_tuple = tuple(sorted((k, v) for k, v in config.items() if k != "type"))
-    xorq_profile = XorqProfile(con_name=conn_type, kwargs_tuple=kwargs_tuple)
-    connection = xorq_profile.get_con()
-
-    # Load parquet tables if specified
-    if parquet_tables:
-        loader._load_parquet_tables(connection, parquet_tables, conn_type)
-
-    return connection
