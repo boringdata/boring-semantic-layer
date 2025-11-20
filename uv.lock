@@ -227,11 +227,14 @@ cli = [
 ]
 dev = [
     { name = "altair" },
+    { name = "click" },
     { name = "duckdb" },
     { name = "fastmcp" },
     { name = "ibis-framework", extra = ["duckdb"] },
     { name = "kaleido" },
+    { name = "livereload" },
     { name = "malloy" },
+    { name = "markdown" },
     { name = "nbformat" },
     { name = "pandas" },
     { name = "plotext" },
@@ -242,6 +245,7 @@ dev = [
     { name = "ruff" },
     { name = "urllib3" },
     { name = "vl-convert-python" },
+    { name = "watchdog" },
     { name = "xorq" },
 ]
 examples = [
@@ -280,7 +284,7 @@ dev = [
 requires-dist = [
     { name = "altair", marker = "extra == 'viz-altair'", specifier = ">=5.0.0" },
     { name = "attrs", specifier = ">=25.3.0" },
-    { name = "boring-semantic-layer", extras = ["fastmcp", "examples", "xorq", "viz-altair", "viz-plotly", "viz-plotext"], marker = "extra == 'dev'" },
+    { name = "boring-semantic-layer", extras = ["fastmcp", "examples", "xorq", "viz-altair", "viz-plotly", "viz-plotext", "cli"], marker = "extra == 'dev'" },
     { name = "click", marker = "extra == 'cli'", specifier = ">=8.0.0" },
     { name = "duckdb", marker = "extra == 'examples'", specifier = "<1.4" },
     { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=2.12.4" },
