@@ -24,12 +24,12 @@
             33.33333333333333
           ],
           [
-            "DL",
+            "UA",
             1,
             33.33333333333333
           ],
           [
-            "UA",
+            "DL",
             1,
             33.33333333333333
           ]
@@ -45,7 +45,7 @@
             }
           },
           "data": {
-            "name": "data-957c443b2b52e9d52db460acc818b08e"
+            "name": "data-8463e963c810d6a835c03ff21b8c7ddf"
           },
           "mark": {
             "type": "bar"
@@ -98,7 +98,12 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-957c443b2b52e9d52db460acc818b08e": [
+            "data-8463e963c810d6a835c03ff21b8c7ddf": [
+              {
+                "carrier": "UA",
+                "flight_count": 1,
+                "market_share": 33.33333333333333
+              },
               {
                 "carrier": "AA",
                 "flight_count": 1,
@@ -106,11 +111,6 @@
               },
               {
                 "carrier": "DL",
-                "flight_count": 1,
-                "market_share": 33.33333333333333
-              },
-              {
-                "carrier": "UA",
                 "flight_count": 1,
                 "market_share": 33.33333333333333
               }
@@ -157,7 +157,7 @@
             }
           },
           "data": {
-            "name": "data-957c443b2b52e9d52db460acc818b08e"
+            "name": "data-8463e963c810d6a835c03ff21b8c7ddf"
           },
           "mark": {
             "type": "bar"
@@ -210,7 +210,12 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-957c443b2b52e9d52db460acc818b08e": [
+            "data-8463e963c810d6a835c03ff21b8c7ddf": [
+              {
+                "carrier": "UA",
+                "flight_count": 1,
+                "market_share": 33.33333333333333
+              },
               {
                 "carrier": "AA",
                 "flight_count": 1,
@@ -218,11 +223,6 @@
               },
               {
                 "carrier": "DL",
-                "flight_count": 1,
-                "market_share": 33.33333333333333
-              },
-              {
-                "carrier": "UA",
                 "flight_count": 1,
                 "market_share": 33.33333333333333
               }
@@ -243,7 +243,7 @@
         ],
         "data": [
           [
-            "DL",
+            "AA",
             1,
             33.33333333333333
           ],
@@ -253,7 +253,7 @@
             33.33333333333333
           ],
           [
-            "AA",
+            "DL",
             1,
             33.33333333333333
           ]
@@ -269,7 +269,7 @@
             }
           },
           "data": {
-            "name": "data-a098f4283cba9ac81fceb508a14e3c06"
+            "name": "data-444a8c980d5c591c007caa61dccef4bc"
           },
           "mark": {
             "type": "bar"
@@ -322,12 +322,7 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-a098f4283cba9ac81fceb508a14e3c06": [
-              {
-                "carrier": "DL",
-                "flight_count": 1,
-                "market_share": 33.33333333333333
-              },
+            "data-444a8c980d5c591c007caa61dccef4bc": [
               {
                 "carrier": "AA",
                 "flight_count": 1,
@@ -335,6 +330,11 @@
               },
               {
                 "carrier": "UA",
+                "flight_count": 1,
+                "market_share": 33.33333333333333
+              },
+              {
+                "carrier": "DL",
                 "flight_count": 1,
                 "market_share": 33.33333333333333
               }
