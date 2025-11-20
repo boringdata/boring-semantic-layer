@@ -1,6 +1,6 @@
 """Unit tests for BSL query executor module."""
 
-from boring_semantic_layer.chart.md_executor import QueryExecutor
+from boring_semantic_layer.chart.md_parser import QueryExecutor
 
 
 class TestQueryExecutor:
