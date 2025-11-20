@@ -18,7 +18,7 @@ license-files = [
 ]
 
 [project.scripts]
-bsl = "boring_semantic_layer.cli:main"
+bsl-render = "boring_semantic_layer.chart.cli:main"
 
 [project.optional-dependencies]
 examples = ["ibis-framework[duckdb]>=10.6.0", "xorq", "duckdb<1.4"]
