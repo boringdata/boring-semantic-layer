@@ -568,9 +568,31 @@ class DocBuilder:
 
 def main():
     """Main build script."""
+    import subprocess
+
+    # First, build the documentation
     builder = DocBuilder()
     success = builder.build()
-    return 0 if success else 1
+
+    if not success:
+        return 1
+
+    # Then validate all internal links
+    print("\n🔗 Validating internal links...")
+    print("=" * 60)
+    validate_script = Path(__file__).parent / "validate_links.py"
+
+    if not validate_script.exists():
+        print("⚠️  Link validation script not found, skipping validation")
+        return 0
+
+    result = subprocess.run([sys.executable, str(validate_script)], capture_output=False)
+
+    if result.returncode != 0:
+        print("\n❌ Link validation failed!")
+        return 1
+
+    return 0
 
 
 if __name__ == "__main__":

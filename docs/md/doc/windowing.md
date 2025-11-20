@@ -284,5 +284,4 @@ result = weekend_revenue.mutate(
 ## Next Steps
 
 - Explore [Percentage of Total](/advanced/percentage-total) for ratio calculations
-- Learn about [Nested Subtotals](/advanced/nested-subtotals) for hierarchical aggregations
-- Check out [Nesting](/advanced/nesting) for complex data structures
+- Learn about [Nested Subtotals](/advanced/nested-subtotals) for hierarchical aggregations and complex data structures
