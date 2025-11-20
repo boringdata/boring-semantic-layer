@@ -80,8 +80,17 @@ def validate_links(
             matched = False
             for route in routes:
                 if ":" in route:
-                    # Convert route pattern to regex
-                    pattern = route.replace(":", "[^/]+")
+                    # Convert route pattern to regex by processing each segment
+                    parts = route.split("/")
+                    regex_parts = []
+                    for part in parts:
+                        if part.startswith(":"):
+                            # Dynamic segment - match any non-slash characters
+                            regex_parts.append("[^/]+")
+                        else:
+                            # Static segment - escape special regex chars
+                            regex_parts.append(re.escape(part))
+                    pattern = "/".join(regex_parts)
                     if re.match(f"^{pattern}$", link):
                         matched = True
                         break
