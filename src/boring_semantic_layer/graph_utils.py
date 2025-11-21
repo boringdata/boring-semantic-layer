@@ -1,67 +1,130 @@
-from collections import deque
-from collections.abc import Iterable
+"""Graph utilities with functional programming support.
+
+This module re-exports xorq's graph utilities and adds functional wrappers
+using the returns library for safer error handling.
+"""
+
 from typing import Any
 
-from ibis.expr.operations.core import Node
-from ibis.expr.types import Expr
+# Import from xorq (we'll wrap some of these)
+from xorq.common.utils.graph_utils import (
+    gen_children_of as _xorq_gen_children_of,
+    replace_nodes as _xorq_replace_nodes,
+    to_node as _xorq_to_node,
+)
+from xorq.vendor.ibis.common.graph import Graph
+from xorq.vendor.ibis.expr.operations.core import Node
+from xorq.vendor.ibis.expr.types import Expr as XorqExpr
+
+# Regular ibis types
+from ibis.expr.operations.core import Node as IbisNode
+from ibis.expr.types import Expr as IbisExpr
+
+# Functional programming utilities
 from returns.maybe import Maybe, Nothing, Some
-from returns.result import Failure, Success
+from returns.result import Failure, Result, Success
+
+# Re-export for compatibility
+__all__ = [
+    "bfs",
+    "gen_children_of",
+    "replace_nodes",
+    "to_node",
+    "walk_nodes",
+    "to_node_safe",
+    "try_to_node",
+    "find_dimensions_and_measures",
+    "Graph",
+    "Node",
+]
 
 
 def to_node(maybe_expr: Any) -> Node:
-    return (
-        maybe_expr
-        if isinstance(maybe_expr, Node)
-        else maybe_expr.op()
-        if isinstance(maybe_expr, Expr)
-        else maybe_expr.op()
-        if hasattr(maybe_expr, "op") and callable(maybe_expr.op)
-        else (_ for _ in ()).throw(
-            ValueError(f"Cannot convert type {type(maybe_expr)} to Node"),
-        )
-    )
+    """Convert expression to Node, handling both ibis and xorq types.
 
+    This wrapper extends xorq's to_node to also handle regular ibis types.
 
-def to_node_safe(maybe_expr: Any) -> Success[Node] | Failure[ValueError]:
-    """Convert expression to Node, returning Result instead of raising."""
-    try:
-        return Success(to_node(maybe_expr))
-    except ValueError as e:
-        return Failure(e)
+    Args:
+        maybe_expr: Value to convert to a Node (can be Node, Expr from ibis or xorq)
 
+    Returns:
+        A Node instance
 
-def try_to_node(child: Any) -> Maybe[Node]:
-    """Try to convert child to Node, returning Maybe."""
-    return to_node_safe(child).map(Some).value_or(Nothing)
+    Raises:
+        ValueError: If the type cannot be converted to a Node
+    """
+    # First check if it's regular ibis types (since xorq's to_node doesn't handle them)
+    if isinstance(maybe_expr, IbisNode):
+        return maybe_expr
+    if isinstance(maybe_expr, IbisExpr):
+        return maybe_expr.op()
+
+    # Fall back to xorq's implementation for xorq types
+    return _xorq_to_node(maybe_expr)
 
 
 def gen_children_of(node: Node) -> tuple[Node, ...]:
-    """Generate children nodes, filtering out conversion failures."""
-    children = (try_to_node(c) for c in getattr(node, "__children__", ()))
-    return tuple(child.unwrap() for child in children if isinstance(child, Some))
+    """Generate children nodes from a node.
+
+    This wraps the node's __children__ and converts them to Nodes.
+
+    Args:
+        node: A Node to get children from
+
+    Returns:
+        Tuple of child Nodes
+    """
+    children = getattr(node, "__children__", ())
+    result = []
+    for child in children:
+        try:
+            result.append(to_node(child))
+        except (ValueError, AttributeError):
+            # Skip children that can't be converted
+            pass
+    return tuple(result)
 
 
-def bfs(expr: Expr) -> dict[Node, tuple[Node, ...]]:
-    """Perform a breadth-first traversal, returning a map of each node to its children."""
+def bfs(expr) -> Graph:
+    """Perform breadth-first search traversal.
+
+    Handles both ibis and xorq types by using our wrapped functions.
+
+    Args:
+        expr: An expression or node to traverse
+
+    Returns:
+        Graph mapping each node to its children
+    """
+    from collections import deque
+
     start = to_node(expr)
     queue = deque([start])
-    graph: dict[Node, tuple[Node, ...]] = {}
+    graph_dict = {}
     while queue:
         node = queue.popleft()
-        if node in graph:
+        if node in graph_dict:
             continue
         children = gen_children_of(node)
-        graph[node] = children
-        for c in children:
-            if c not in graph:
-                queue.append(c)
-    return graph
+        graph_dict[node] = children
+        for child in children:
+            if child not in graph_dict:
+                queue.append(child)
+    return Graph(graph_dict)
 
 
-def walk_nodes(
-    node_types: type[Any] | tuple[type[Any], ...],
-    expr: Expr,
-) -> Iterable[Node]:
+def walk_nodes(node_types, expr):
+    """Walk the expression tree yielding nodes of specified types.
+
+    Handles both ibis and xorq types.
+
+    Args:
+        node_types: Type or tuple of types to match
+        expr: Expression to walk
+
+    Yields:
+        Nodes matching the specified types
+    """
     start = to_node(expr)
     visited = set()
     stack = [start]
@@ -76,11 +139,65 @@ def walk_nodes(
         stack.extend(c for c in gen_children_of(node) if c not in visited)
 
 
-def replace_nodes(replacer, expr: Expr) -> Expr:
-    return to_node(expr).replace(lambda op, kwargs: replacer(op, kwargs)).to_expr()
+def replace_nodes(replacer, expr) -> IbisExpr | XorqExpr:
+    """Replace nodes in expression tree using a replacer function.
+
+    This wrapper ensures the result is converted back to an Expr.
+
+    Args:
+        replacer: Function taking (op, kwargs) and returning replacement op
+        expr: Expression to transform
+
+    Returns:
+        Transformed expression
+    """
+    node = to_node(expr)
+    result = _xorq_replace_nodes(replacer, node)
+    # xorq's replace_nodes returns a Node, we need to convert to Expr
+    return result.to_expr()
 
 
-def find_dimensions_and_measures(expr: Expr) -> tuple[dict[str, Any], dict[str, Any]]:
+def to_node_safe(maybe_expr: Any) -> Result[Node, ValueError]:
+    """Convert expression to Node, returning Result instead of raising.
+
+    This is a functional wrapper around to_node that returns a Result type
+    for safer error handling without exceptions.
+
+    Args:
+        maybe_expr: Value to convert to a Node
+
+    Returns:
+        Success[Node] if conversion succeeds, Failure[ValueError] otherwise
+    """
+    try:
+        return Success(to_node(maybe_expr))
+    except ValueError as e:
+        return Failure(e)
+
+
+def try_to_node(child: Any) -> Maybe[Node]:
+    """Try to convert child to Node, returning Maybe.
+
+    This is a functional wrapper that uses Maybe monad for optional values.
+
+    Args:
+        child: Value to try converting to a Node
+
+    Returns:
+        Some[Node] if conversion succeeds, Nothing otherwise
+    """
+    return to_node_safe(child).map(Some).value_or(Nothing)
+
+
+def find_dimensions_and_measures(expr: IbisExpr | XorqExpr) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Find all dimensions and measures in a semantic model expression.
+
+    Args:
+        expr: An ibis expression containing semantic model references
+
+    Returns:
+        Tuple of (dimensions_dict, measures_dict) extracted from the expression
+    """
     from .ops import (
         _find_all_root_models,
         _get_field_dict,

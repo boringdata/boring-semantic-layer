@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ibis.expr import format as fmt
+from xorq.vendor.ibis.expr import format as fmt
 
 from boring_semantic_layer.ops import (
     SemanticAggregateOp,

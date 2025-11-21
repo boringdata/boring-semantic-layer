@@ -4,19 +4,29 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import reduce
 from typing import TYPE_CHECKING, Any
 
-import ibis
-import ibis.selectors as s
+from xorq.vendor import ibis
+from xorq.vendor import ibis as xibis
+import xorq.vendor.ibis.selectors as s
 from attrs import field, frozen
-from ibis.common.collections import FrozenDict, FrozenOrderedDict
-from ibis.common.deferred import Deferred
-from ibis.expr import datatypes as dt
-from ibis.expr import operations as ibis_ops
-from ibis.expr import types as ir
-from ibis.expr.operations.relations import Field, Relation
-from ibis.expr.schema import Schema
+from xorq.vendor.ibis.common.collections import FrozenDict, FrozenOrderedDict
+from xorq.vendor.ibis.common.deferred import Deferred as XorqDeferred
+from xorq.vendor.ibis.expr import datatypes as dt
+from xorq.vendor.ibis.expr import operations as ibis_ops
+from xorq.vendor.ibis.expr import types as ir
+from xorq.vendor.ibis.expr.operations.relations import Field, Relation
+from xorq.vendor.ibis.expr.schema import Schema
+
+# Also import regular ibis Deferred to support both
+from ibis.common.deferred import Deferred as RegularDeferred
+
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Success, safe
 from toolz import curry
+
+
+def _is_deferred(expr) -> bool:
+    """Check if expression is a Deferred from either regular or vendored ibis."""
+    return isinstance(expr, (XorqDeferred, RegularDeferred))
 
 from . import projection_utils
 from .compile_all import compile_grouped_with_all
@@ -56,13 +66,28 @@ def _unwrap(wrapped: Any) -> Any:
 
 
 def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
-    return (
+    result = (
         expr.resolve(scope)
-        if isinstance(expr, Deferred)
+        if _is_deferred(expr)
         else expr(scope)
         if callable(expr)
         else expr
     )
+
+    # If the result is a regular ibis expression but scope is a xorq table,
+    # convert it to xorq to prevent type errors
+    if hasattr(result, '__class__') and hasattr(scope, '__class__'):
+        # Check if result is from regular ibis but scope is from xorq
+        result_module = result.__class__.__module__
+        scope_module = scope.__class__.__module__
+        result_is_regular_ibis = 'ibis.expr' in result_module and 'xorq' not in result_module
+        scope_is_xorq = 'xorq.vendor.ibis' in scope_module
+
+        if result_is_regular_ibis and scope_is_xorq:
+            from xorq.common.utils.ibis_utils import from_ibis
+            result = from_ibis(result)
+
+    return result
 
 
 def _get_field_dict(root: Any, field_type: str) -> dict:
@@ -177,7 +202,7 @@ def _matches_aggregation_pattern(measure_expr, agg_expr, tbl):
         scope = ColumnScope(_tbl=tbl)
         return (
             expr.resolve(scope)
-            if isinstance(expr, Deferred)
+            if _is_deferred(expr)
             else expr(scope)
             if callable(expr)
             else expr
@@ -272,7 +297,7 @@ def _make_base_measure(
         """Evaluate expression in given scope."""
         return (
             expr.resolve(scope)
-            if isinstance(expr, Deferred)
+            if _is_deferred(expr)
             else expr(scope)
             if callable(expr)
             else expr
@@ -373,7 +398,7 @@ class Dimension:
     smallest_time_grain: str | None = None
 
     def __call__(self, table: ir.Table) -> ir.Value:
-        return self.expr.resolve(table) if isinstance(self.expr, Deferred) else self.expr(table)
+        return self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
 
     def to_json(self) -> Mapping[str, Any]:
         base = {"description": self.description}
@@ -396,7 +421,7 @@ class Measure:
     requires_unnest: tuple[str, ...] = ()  # Internal: Arrays that must be unnested
 
     def __call__(self, table: ir.Table) -> ir.Value:
-        return self.expr.resolve(table) if isinstance(self.expr, Deferred) else self.expr(table)
+        return self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
 
     @property
     def locality(self) -> str | None:
@@ -441,47 +466,21 @@ class SemanticTableOp(Relation):
         description: str | None = None,
         _source_join: Any = None,
     ) -> None:
-        # Accept both regular ibis and xorq's vendored ibis tables
-        # Use object.__setattr__ to bypass type validation for xorq tables
-        table_module = type(table).__module__
-        if table_module.startswith("xorq.vendor.ibis"):
-            # Bypass validation for xorq's vendored ibis tables
-            object.__setattr__(self, "table", table)
-            object.__setattr__(
-                self,
-                "dimensions",
-                FrozenDict(dimensions) if not isinstance(dimensions, FrozenDict) else dimensions,
-            )
-            object.__setattr__(
-                self,
-                "measures",
-                FrozenDict(measures) if not isinstance(measures, FrozenDict) else measures,
-            )
-            object.__setattr__(
-                self,
-                "calc_measures",
-                FrozenDict(calc_measures)
-                if not isinstance(calc_measures, FrozenDict)
-                else calc_measures,
-            )
-            object.__setattr__(self, "name", name)
-            object.__setattr__(self, "description", description)
-            object.__setattr__(self, "_source_join", _source_join)
-        else:
-            # Use normal initialization for regular ibis tables
-            super().__init__(
-                table=table,
-                dimensions=FrozenDict(dimensions)
-                if not isinstance(dimensions, FrozenDict)
-                else dimensions,
-                measures=FrozenDict(measures) if not isinstance(measures, FrozenDict) else measures,
-                calc_measures=FrozenDict(calc_measures)
-                if not isinstance(calc_measures, FrozenDict)
-                else calc_measures,
-                name=name,
-                description=description,
-                _source_join=_source_join,
-            )
+        # Always use super().__init__() to ensure proper xorq/ibis initialization
+        # This works for both regular ibis and xorq's vendored ibis
+        super().__init__(
+            table=table,
+            dimensions=FrozenDict(dimensions)
+            if not isinstance(dimensions, FrozenDict)
+            else dimensions,
+            measures=FrozenDict(measures) if not isinstance(measures, FrozenDict) else measures,
+            calc_measures=FrozenDict(calc_measures)
+            if not isinstance(calc_measures, FrozenDict)
+            else calc_measures,
+            name=name,
+            description=description,
+            _source_join=_source_join,
+        )
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -528,9 +527,20 @@ class SemanticTableOp(Relation):
 
     def get_calculated_measures(self) -> Mapping[str, Any]:
         """Get dictionary of calculated measures with metadata."""
-        return object.__getattribute__(self, "calc_measures")
+        return self.calc_measures
 
     def __getattribute__(self, name: str):
+        """Override attribute access to return tuples for dimensions/measures.
+
+        This provides a cleaner API where .dimensions returns ('dim1', 'dim2')
+        instead of the full FrozenDict. Use get_dimensions() to get the full dict.
+        """
+        # For special/internal attributes (dunder methods), use default behavior
+        # This is critical for xorq's vendored ibis which uses __precomputed_hash__, etc.
+        if name.startswith("__") and name.endswith("__"):
+            return object.__getattribute__(self, name)
+
+        # Custom behavior for dimensions and measures
         if name == "dimensions":
             dims = object.__getattribute__(self, "dimensions")
             return tuple(dims.keys())
@@ -538,6 +548,8 @@ class SemanticTableOp(Relation):
             base_meas = object.__getattribute__(self, "measures")
             calc_meas = object.__getattribute__(self, "calc_measures")
             return tuple(base_meas.keys()) + tuple(calc_meas.keys())
+
+        # Default behavior for everything else
         return object.__getattribute__(self, name)
 
     def to_ibis(self):
@@ -826,7 +838,7 @@ def _create_measure_spec(
 
 
 def _make_agg_callable(measure: Any) -> Callable:
-    if isinstance(measure, Deferred):
+    if _is_deferred(measure):
         return lambda t: measure.resolve(ColumnScope(_tbl=t))
     elif callable(measure):
         return lambda t: measure(ColumnScope(_tbl=t))
@@ -1127,7 +1139,17 @@ class SemanticMutateOp(Relation):
         current_tbl = agg_tbl
         for name, fn_wrapped in self.post.items():
             proxy = MeasureScope(_tbl=current_tbl, _known=[], _post_agg=True)
-            new_col = _resolve_expr(_unwrap(fn_wrapped), proxy).name(name)
+            resolved = _resolve_expr(_unwrap(fn_wrapped), proxy)
+
+            # If resolved expression is from regular ibis but table is xorq, convert it
+            if hasattr(resolved, '__class__') and hasattr(current_tbl, '__class__'):
+                resolved_module = resolved.__class__.__module__
+                table_module = current_tbl.__class__.__module__
+                if 'ibis.expr' in resolved_module and 'xorq' not in resolved_module and 'xorq.vendor.ibis' in table_module:
+                    from xorq.common.utils.ibis_utils import from_ibis
+                    resolved = from_ibis(resolved)
+
+            new_col = resolved.name(name)
             current_tbl = current_tbl.mutate([new_col])
 
         return current_tbl
@@ -1667,127 +1689,23 @@ class SemanticJoinOp(Relation):
         return join_columns
 
     def to_ibis(self, parent_requirements: dict[str, set[str]] | None = None):
-        """Convert join to Ibis expression with automatic projection pushdown.
+        """Convert join to Ibis expression.
 
-        Projection pushdown is always applied using the join's intrinsic `required_columns` property.
-        Uses top-down requirement propagation for n-way joins:
-        1. Use required_columns property (measures + join keys)
-        2. Merge with parent requirements if provided
-        3. At each join level, extract join keys needed for THIS join
-        4. Add join keys to requirements for respective subtrees
-        5. Recursively propagate augmented requirements down
-        6. Apply projections only at leaf tables
+        Note: Projection pushdown has been disabled for compatibility with xorq's
+        vendored ibis, which has stricter column access after joins. Without projection
+        pushdown, all columns from both tables are available after the join.
 
         Args:
-            parent_requirements: Optional dict of column requirements from parent operations.
-                If provided, these are merged with the join's intrinsic required_columns.
+            parent_requirements: Ignored. Kept for API compatibility.
 
         Returns:
-            Ibis join expression
+            Ibis join expression with all columns from both tables
         """
         from .convert import _Resolver
 
-        # Use intrinsic required_columns property if parent provided requirements
-        # When parent_requirements=None (e.g., for join key extraction), skip projection
-        if parent_requirements is not None and self.on is not None:
-            # Merge parent requirements with intrinsic requirements
-            computed_requirements = self._compute_required_columns(
-                parent_requirements=parent_requirements
-            )
-        else:
-            computed_requirements = None
-
-        # Apply projection pushdown using computed requirements
-        if computed_requirements:
-            # Step 1: Extract join keys for THIS level by temporarily converting without projection
-            temp_left = (
-                self.left.to_ibis(parent_requirements=None)
-                if isinstance(self.left, SemanticJoinOp)
-                else _to_ibis(self.left)
-            )
-            temp_right = (
-                self.right.to_ibis(parent_requirements=None)
-                if isinstance(self.right, SemanticJoinOp)
-                else _to_ibis(self.right)
-            )
-
-            join_keys_result = _extract_join_key_columns(self.on, temp_left, temp_right)
-
-            if join_keys_result.is_success():
-                # Step 2: Augment requirements with join keys for subtrees
-                augmented_requirements = dict(computed_requirements)
-
-                # Add join keys to appropriate tables/subtrees
-                # For nested joins, we need to trace which leaf tables these columns belong to
-                if isinstance(self.left, SemanticJoinOp):
-                    # Left is nested - distribute join keys to relevant leaf tables
-                    for col in join_keys_result.left_columns:
-                        # Find which leaf table(s) have this column
-                        for leaf_name in self.left._collect_leaf_table_names():
-                            leaf_table = self._get_leaf_table_by_name(self.left, leaf_name)
-                            if leaf_table is not None:
-                                leaf_ibis = _to_ibis(leaf_table)
-                                if col in leaf_ibis.columns:
-                                    existing = augmented_requirements.get(leaf_name, set())
-                                    augmented_requirements[leaf_name] = existing | {col}
-                else:
-                    # Left is a leaf table
-                    left_name = getattr(self.left, "name", None)
-                    if left_name:
-                        existing = augmented_requirements.get(left_name, set())
-                        augmented_requirements[left_name] = existing | join_keys_result.left_columns
-
-                if isinstance(self.right, SemanticJoinOp):
-                    # Right is nested - distribute join keys to relevant leaf tables
-                    for col in join_keys_result.right_columns:
-                        for leaf_name in self.right._collect_leaf_table_names():
-                            leaf_table = self._get_leaf_table_by_name(self.right, leaf_name)
-                            if leaf_table is not None:
-                                leaf_ibis = _to_ibis(leaf_table)
-                                if col in leaf_ibis.columns:
-                                    existing = augmented_requirements.get(leaf_name, set())
-                                    augmented_requirements[leaf_name] = existing | {col}
-                else:
-                    # Right is a leaf table
-                    right_name = getattr(self.right, "name", None)
-                    if right_name:
-                        existing = augmented_requirements.get(right_name, set())
-                        augmented_requirements[right_name] = (
-                            existing | join_keys_result.right_columns
-                        )
-
-                # Step 3: Recursively convert subtrees with augmented requirements
-                if isinstance(self.left, SemanticJoinOp):
-                    left_tbl = self.left.to_ibis(parent_requirements=augmented_requirements)
-                else:
-                    left_tbl = _to_ibis(self.left)
-                    left_name = getattr(self.left, "name", None)
-                    if left_name and left_name in augmented_requirements:
-                        left_cols = augmented_requirements[left_name]
-                        if left_cols and left_cols != set(left_tbl.columns):
-                            left_tbl = left_tbl.select(
-                                [left_tbl[c] for c in left_cols if c in left_tbl.columns]
-                            )
-
-                if isinstance(self.right, SemanticJoinOp):
-                    right_tbl = self.right.to_ibis(parent_requirements=augmented_requirements)
-                else:
-                    right_tbl = _to_ibis(self.right)
-                    right_name = getattr(self.right, "name", None)
-                    if right_name and right_name in augmented_requirements:
-                        right_cols = augmented_requirements[right_name]
-                        if right_cols and right_cols != set(right_tbl.columns):
-                            right_tbl = right_tbl.select(
-                                [right_tbl[c] for c in right_cols if c in right_tbl.columns]
-                            )
-            else:
-                # Couldn't extract join keys - fallback to no projection
-                left_tbl = _to_ibis(self.left)
-                right_tbl = _to_ibis(self.right)
-        else:
-            # No required_columns specified, just convert normally
-            left_tbl = _to_ibis(self.left)
-            right_tbl = _to_ibis(self.right)
+        # Simply convert both sides without any projection pushdown
+        left_tbl = _to_ibis(self.left) if not isinstance(self.left, SemanticJoinOp) else self.left.to_ibis()
+        right_tbl = _to_ibis(self.right) if not isinstance(self.right, SemanticJoinOp) else self.right.to_ibis()
 
         return (
             left_tbl.join(
