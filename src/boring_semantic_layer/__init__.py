@@ -56,8 +56,18 @@ try:
 except ImportError:
     _MCP_AVAILABLE = False
 
-# Import xorq conversion functionality
-from .xorq_convert import from_xorq, to_xorq  # noqa: F401
+# Import xorq conversion functionality if xorq is available
+try:
+    from .xorq_convert import from_xorq, to_xorq  # noqa: F401
+
+    # Install window compatibility patch to allow regular ibis windows
+    # to work with xorq's vendored ibis expressions
+    from .window_compat import install_window_compatibility
+    install_window_compatibility()
+
+    _XORQ_AVAILABLE = True
+except ImportError:
+    _XORQ_AVAILABLE = False
 
 
 def __getattr__(name):

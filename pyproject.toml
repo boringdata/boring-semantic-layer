@@ -6,11 +6,10 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "attrs>=25.3.0",
-    "ibis-framework>=11.0.0", # required to install ibis-framework with no backend
     "packaging",
     "pyyaml>=6.0",
     "returns>=0.26.0",
-    "xorq>=0.3.3",  # Required for profile management
+    "xorq>=0.3.4"
 ]
 urls = { Homepage = "https://github.com/boringdata/boring-semantic-layer/tree/main" }
 license = "MIT"
@@ -19,7 +18,7 @@ license-files = [
 ]
 
 [project.optional-dependencies]
-examples = ["ibis-framework[duckdb]>=10.6.0", "duckdb<1.4"]
+examples = ["xorq[duckdb]>=0.3.4", "xorq", "duckdb<1.4"]
 viz-altair = ["altair>=5.0.0", "vl-convert-python>=1.0.0"]
 viz-plotly = ["plotly>=6.3.0", "kaleido", "nbformat>=4.2.0"]
 viz-plotext = ["plotext>=5.0.0"]

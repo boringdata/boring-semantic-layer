@@ -448,7 +448,7 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
         return expr
 
     def _reconstruct_table():
-        import ibis
+        from xorq.vendor import ibis
         from xorq.common.utils.graph_utils import walk_nodes
         from xorq.expr.relations import Read
         from xorq.vendor.ibis.expr.operations import relations as xorq_rel
@@ -481,9 +481,9 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
             backend = backend_class.from_connection(xorq_backend.con)
             return backend.table(table_name)
 
-        from xorq.common.utils.ibis_utils import to_ibis
-
-        return to_ibis(xorq_expr)
+        # If none of the above, just return the xorq expression as a table
+        # (it's already in xorq's vendored ibis land)
+        return xorq_expr.to_expr()
 
     dim_meta = _parse_field(metadata, "dimensions")
     meas_meta = _parse_field(metadata, "measures")

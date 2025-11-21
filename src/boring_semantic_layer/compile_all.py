@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from functools import reduce
 from typing import Any
 
-import ibis
+from xorq.vendor import ibis
 from attrs import frozen
 from toolz import curry, pipe
 

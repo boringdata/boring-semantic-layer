@@ -5,11 +5,11 @@ from functools import reduce
 from operator import attrgetter
 from typing import Any
 
-import ibis
-from ibis.common.collections import FrozenDict
-from ibis.expr import types as ir
-from ibis.expr.types import Table
-from ibis.expr.types.groupby import GroupedTable
+from xorq.vendor import ibis
+from xorq.vendor.ibis.common.collections import FrozenDict
+from xorq.vendor.ibis.expr import types as ir
+from xorq.vendor.ibis.expr.types import Table
+from xorq.vendor.ibis.expr.types.groupby import GroupedTable
 from returns.result import Success, safe
 
 from .chart import chart as create_chart
@@ -155,6 +155,15 @@ class SemanticModel(SemanticTable):
         description: str | None = None,
         _source_join: Any | None = None,
     ) -> None:
+        # Convert regular ibis tables to xorq vendored ibis to prevent type errors
+        from xorq.vendor.ibis.expr.types import Table as XorqTable
+
+        if hasattr(table, '__class__') and not isinstance(table, XorqTable):
+            # Check if this is a regular ibis table by checking module path
+            if hasattr(table, '__class__') and 'ibis.expr.types' in str(table.__class__.__module__):
+                from xorq.common.utils.ibis_utils import from_ibis
+                table = from_ibis(table)
+
         dims = FrozenDict(
             {dim_name: _create_dimension(dim) for dim_name, dim in (dimensions or {}).items()},
         )

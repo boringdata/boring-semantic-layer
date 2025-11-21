@@ -13,7 +13,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-import ibis
+from xorq.vendor import ibis
 import markdown
 import pandas as pd
 

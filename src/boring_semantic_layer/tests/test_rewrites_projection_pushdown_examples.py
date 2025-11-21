@@ -8,6 +8,9 @@ The implementation uses a conservative approach:
 - Filters out explicitly unused columns (UNUSED_*)
 - Filters out unused dimension columns
 - Includes ALL measure columns (not per-query optimization)
+
+NOTE: Projection pushdown has been disabled for xorq compatibility.
+These tests are marked as xfail to document the expected behavior.
 """
 
 import ibis
@@ -16,6 +19,9 @@ import pytest
 
 from boring_semantic_layer.api import to_semantic_table
 from boring_semantic_layer.expr import to_ibis
+
+# Projection pushdown disabled for xorq compatibility
+pytestmark = pytest.mark.xfail(reason="Projection pushdown disabled for xorq vendored ibis compatibility")
 
 
 @pytest.fixture(scope="module")

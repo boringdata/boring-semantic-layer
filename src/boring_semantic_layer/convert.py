@@ -9,11 +9,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
-import ibis
+from xorq.vendor import ibis
 from attrs import field, frozen
-from ibis.common.collections import FrozenOrderedDict
-from ibis.expr import types as ir
-from ibis.expr.sql import convert
+from xorq.vendor.ibis.common.collections import FrozenOrderedDict
+from xorq.vendor.ibis.expr import types as ir
+from xorq.vendor.ibis.expr.sql import convert
 
 from boring_semantic_layer.ops import (
     SemanticAggregateOp,

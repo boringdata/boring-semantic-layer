@@ -162,8 +162,8 @@ def _check_closure_vars(fn: Callable) -> Maybe[str]:
 
 @safe
 def _try_ibis_introspection(fn: Callable) -> Maybe[str]:
-    from ibis import _
-    from ibis.common.deferred import Deferred
+    from xorq.vendor.ibis import _
+    from xorq.vendor.ibis.common.deferred import Deferred
 
     result = fn(_)
     return Some(str(result)) if isinstance(result, Deferred) else Nothing

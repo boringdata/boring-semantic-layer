@@ -10,9 +10,9 @@ from collections.abc import Callable, Mapping, Sequence
 from operator import eq, ge, gt, le, lt, ne
 from typing import Any, ClassVar, Literal
 
-import ibis
+from xorq.vendor import ibis
 from attrs import frozen
-from ibis.common.collections import FrozenDict
+from xorq.vendor.ibis.common.collections import FrozenDict
 from toolz import curry
 
 from .utils import safe_eval

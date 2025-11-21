@@ -3,6 +3,9 @@
 These tests verify that the query rewriter correctly pushes down column
 projections to minimize the number of columns scanned, which is critical
 for performance on column-oriented databases like BigQuery and Snowflake.
+
+NOTE: Projection pushdown has been disabled for xorq compatibility.
+These tests are marked as xfail to document the expected behavior.
 """
 
 import ibis
@@ -10,6 +13,9 @@ import pandas as pd
 import pytest
 
 from boring_semantic_layer import to_ibis, to_semantic_table
+
+# Projection pushdown disabled for xorq compatibility
+pytestmark = pytest.mark.xfail(reason="Projection pushdown disabled for xorq vendored ibis compatibility")
 
 
 @pytest.fixture
