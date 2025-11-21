@@ -1,4 +1,4 @@
-.PHONY: test examples docs-build check clean help
+.PHONY: test examples docs-build skills-build skills-check check clean help
 
 # Default target - show help
 .DEFAULT_GOAL := help
@@ -8,7 +8,9 @@ help:
 	@echo "  make test         - Run pytest tests"
 	@echo "  make examples     - Run all example scripts"
 	@echo "  make docs-build   - Build documentation"
-	@echo "  make check        - Run all checks (tests + examples + docs build)"
+	@echo "  make skills-build - Build AI assistant skills from prompts"
+	@echo "  make skills-check - Check if skills are up to date"
+	@echo "  make check        - Run all checks (tests + examples + docs build + skills check)"
 	@echo "  make clean        - Clean build artifacts"
 
 # Run pytest
@@ -33,8 +35,18 @@ docs-build:
 	@echo "Building documentation..."
 	cd docs/web && npm run build
 
+# Build skills from prompts
+skills-build:
+	@echo "Building AI assistant skills..."
+	uv run python docs/md/skills_builder.py
+
+# Check if skills are up to date
+skills-check:
+	@echo "Checking if skills are up to date..."
+	uv run python docs/md/skills_builder.py --check
+
 # Run all checks (CI target)
-check: test examples docs-build
+check: test examples docs-build skills-check
 	@echo ""
 	@echo "========================================"
 	@echo "✓ All checks passed!"

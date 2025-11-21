@@ -6,11 +6,11 @@ they receive clear error messages indicating which dependency group to install.
 
 Dependency groups in pyproject.toml:
 - fastmcp: For MCP semantic model functionality (MCPSemanticModel)
+- agents: For LangChain-based query agents
 - viz-altair: For Altair visualization (chart with backend="altair")
 - viz-plotly: For Plotly visualization (chart with backend="plotly")
 
 Note: xorq is now a required dependency (in main dependencies list)
-Note: agents dependency group is only on bsl-agent branch, not bsl-profiles
 """
 
 import sys
@@ -44,13 +44,15 @@ class TestDependencyGroupDocumentation:
 
         optional_deps = pyproject["project"]["optional-dependencies"]
 
-        # Verify all expected groups exist (agents is only on bsl-agent branch)
+        # Verify all expected groups exist
         assert "fastmcp" in optional_deps, "fastmcp dependency group missing"
+        assert "agents" in optional_deps, "agents dependency group missing"
         assert "viz-altair" in optional_deps, "viz-altair dependency group missing"
         assert "viz-plotly" in optional_deps, "viz-plotly dependency group missing"
 
         # Verify key dependencies in each group
         assert any("fastmcp" in dep for dep in optional_deps["fastmcp"])
+        assert any("langchain" in dep for dep in optional_deps["agents"])
         assert any("altair" in dep for dep in optional_deps["viz-altair"])
         assert any("plotly" in dep for dep in optional_deps["viz-plotly"])
 
@@ -84,10 +86,11 @@ class TestDependencyGroupDocumentation:
 
         assert len(dev_with_extras) > 0, "Dev should include boring-semantic-layer with extras"
 
-        # The first dev dependency should include all the optional groups (not xorq, it's required; not agents, only on bsl-agent branch)
+        # The first dev dependency should include all the optional groups (not xorq, it's required)
         if dev_with_extras:
             first_dep = dev_with_extras[0]
             assert "fastmcp" in first_dep
+            assert "agents" in first_dep
             assert "viz-altair" in first_dep
             assert "viz-plotly" in first_dep
             assert "viz-plotext" in first_dep
@@ -214,8 +217,9 @@ class TestDependencyGroupCoverage:
         # Read this test file and verify it tests all groups
         test_file_content = Path(__file__).read_text()
 
-        # Should test all optional dependency groups (agents is only on bsl-agent branch)
+        # Should test all optional dependency groups
         assert "fastmcp" in test_file_content
+        assert "agents" in test_file_content
         assert "viz-altair" in test_file_content or "altair" in test_file_content
         assert "viz-plotly" in test_file_content or "plotly" in test_file_content
 

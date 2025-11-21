@@ -1,0 +1,1 @@
+List all available semantic model names. Call this first to understand what's queryable.

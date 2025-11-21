@@ -1,0 +1,1 @@
+**Required.** Full BSL expression to execute, e.g. `flights.with_dimensions(...).group_by(...).aggregate(...)`. The string should reference semantic model names exactly as defined in your YAML or Python definitions.

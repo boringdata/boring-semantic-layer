@@ -478,7 +478,7 @@ These tools are called by Claude through the MCP interface:
 
 **Example:**
 ```python
-from boring_semantic_layer.mcp import MCPSemanticModel
+from boring_semantic_layer import MCPSemanticModel
 
 # From dictionary
 server = MCPSemanticModel(

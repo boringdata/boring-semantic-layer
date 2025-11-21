@@ -1,0 +1,1 @@
+Execute semantic model queries with dimensions, measures, filters, ordering, time grain, and chart spec options.
