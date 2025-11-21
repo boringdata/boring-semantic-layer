@@ -485,6 +485,13 @@ class SemanticTableOp(Relation):
             _source_join=_source_join,
         )
 
+    def __repr__(self) -> str:
+        """Custom repr to avoid Ibis expression truthiness issues."""
+        name_part = f" '{self.name}'" if self.name else ""
+        dim_count = len(self.dimensions)
+        meas_count = len(self.measures) + len(self.calc_measures)
+        return f"SemanticTableOp{name_part}({dim_count} dimensions, {meas_count} measures)"
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         return FrozenOrderedDict(
@@ -497,7 +504,7 @@ class SemanticTableOp(Relation):
 
     @property
     def schema(self) -> Schema:
-        return Schema(FrozenOrderedDict({name: v.dtype for name, v in self.values.items()}))
+        return Schema(fields=FrozenOrderedDict((name, v.dtype) for name, v in self.values.items()))
 
     @property
     def json_definition(self) -> Mapping[str, Any]:
@@ -568,6 +575,10 @@ class SemanticFilterOp(Relation):
             source=Relation.__coerce__(source),
             predicate=_ensure_wrapped(predicate),
         )
+
+    def __repr__(self) -> str:
+        """Custom repr to avoid Ibis expression truthiness issues."""
+        return f"SemanticFilterOp(source={self.source.__class__.__name__})"
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -921,6 +932,12 @@ class SemanticAggregateOp(Relation):
             nested_columns=tuple(nested_columns or []),
         )
 
+    def __repr__(self) -> str:
+        """Custom repr to avoid Ibis expression truthiness issues."""
+        keys_str = f"{len(self.keys)} keys" if self.keys else "no grouping"
+        aggs_str = f"{len(self.aggs)} aggregations"
+        return f"SemanticAggregateOp({keys_str}, {aggs_str})"
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         all_roots = _find_all_root_models(self.source)
@@ -1233,6 +1250,10 @@ class SemanticJoinOp(Relation):
             on=on,
         )
 
+    def __repr__(self) -> str:
+        """Custom repr to avoid Ibis expression truthiness issues."""
+        return f"SemanticJoinOp({self.how} join: {self.left.__class__.__name__} × {self.right.__class__.__name__})"
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         vals: dict[str, Any] = {}
@@ -1242,7 +1263,7 @@ class SemanticJoinOp(Relation):
 
     @property
     def schema(self) -> Schema:
-        return Schema(FrozenOrderedDict({name: v.dtype for name, v in self.values.items()}))
+        return Schema(fields=FrozenOrderedDict((name, v.dtype) for name, v in self.values.items()))
 
     def get_dimensions(self) -> Mapping[str, Dimension]:
         """Get dictionary of dimensions with metadata."""
