@@ -180,20 +180,11 @@ class ProfileLoader:
         self, connection: BaseBackend, table_filter: list[str] | None = None
     ) -> dict[str, Any]:
         """Get tables from connection, optionally filtered by name list."""
-        import ibis
-
         table_names = table_filter or connection.list_tables()
         tables = {}
 
         for name in table_names:
             table = connection.table(name)
-
-            # Check if this is a xorq vendored ibis table that needs conversion
-            if type(table).__module__.startswith("xorq.vendor.ibis"):
-                # TODO: REMOVE !!!!!
-                df = table.execute()
-                table = ibis.memtable(df)
-
             tables[name] = table
 
         return tables
