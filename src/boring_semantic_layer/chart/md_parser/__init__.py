@@ -8,7 +8,6 @@ from .converter import ResultConverter
 from .core import CustomJSONEncoder, QueryParser
 from .executor import QueryExecutor
 from .parser import MarkdownParser
-from .renderer import cmd_render, render_to_html, render_to_markdown
 
 __all__ = [
     "CustomJSONEncoder",
@@ -16,7 +15,4 @@ __all__ = [
     "QueryExecutor",
     "ResultConverter",
     "MarkdownParser",
-    "cmd_render",
-    "render_to_html",
-    "render_to_markdown",
 ]
