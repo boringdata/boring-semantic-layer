@@ -9,7 +9,7 @@
     },
     "query_yaml_model": {
       "code": "# Query the YAML-defined model\nresult = (\n    flights_sm\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"avg_distance\")\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"distance\") AS \"avg_distance\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_a4ws2u5fovfuvpnwtdtjmagen4\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"distance\") AS \"avg_distance\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_gl7itpkcjnhtbplr2k72adneaq\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": "r0 := SemanticTableOp[flights]\n  4 dimensions: origin, destination, year, ...\n  3 measures: flight_count, total_distance, avg_distance\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['origin']\n  inherited dimensions: 4\n  inherited measures: 3\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['origin']\n  aggs: [flight_count, avg_distance]",
       "table": {
         "columns": [
@@ -19,11 +19,6 @@
         ],
         "data": [
           [
-            "SFO",
-            1,
-            382.0
-          ],
-          [
             "LAX",
             1,
             337.0
@@ -32,6 +27,11 @@
             "JFK",
             1,
             2475.0
+          ],
+          [
+            "SFO",
+            1,
+            382.0
           ]
         ]
       },

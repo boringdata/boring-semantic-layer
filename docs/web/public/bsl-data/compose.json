@@ -79,7 +79,7 @@
     },
     "composed_query": {
       "code": "# Query using dimensions and measures from all three tables\nresult = (\n    full_model\n    .group_by( \"aircraft.model\")\n    .aggregate(\"flight_count\", \"total_passengers\", \"total_capacity\")\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t10\".\"aircraft.model\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t10\".\"passengers\") AS \"total_passengers\",\n    SUM(\"t10\".\"capacity\") AS \"total_capacity\"\n  FROM (\n    SELECT\n      \"t9\".\"distance\",\n      \"t9\".\"aircraft_id\",\n      \"t9\".\"passengers\",\n      \"t9\".\"carrier_code\",\n      \"t9\".\"code\",\n      \"t9\".\"id\",\n      \"t9\".\"capacity\",\n      \"t9\".\"model\",\n      \"t9\".\"model\" AS \"aircraft.model\"\n    FROM (\n      SELECT\n        \"t6\".\"distance\",\n        \"t6\".\"aircraft_id\",\n        \"t6\".\"passengers\",\n        \"t6\".\"carrier_code\",\n        \"t7\".\"code\",\n        \"t8\".\"id\",\n        \"t8\".\"capacity\",\n        \"t8\".\"model\"\n      FROM (\n        SELECT\n          \"t0\".\"distance\",\n          \"t0\".\"aircraft_id\",\n          \"t0\".\"passengers\",\n          \"t0\".\"carrier_code\"\n        FROM \"memory\".\"main\".\"flights\" AS \"t0\"\n      ) AS \"t6\"\n      LEFT OUTER JOIN (\n        SELECT\n          \"t1\".\"code\"\n        FROM \"memory\".\"main\".\"carriers\" AS \"t1\"\n      ) AS \"t7\"\n        ON \"t6\".\"carrier_code\" = \"t7\".\"code\"\n      LEFT OUTER JOIN (\n        SELECT\n          \"t2\".\"id\",\n          \"t2\".\"capacity\",\n          \"t2\".\"model\"\n        FROM \"memory\".\"main\".\"aircraft\" AS \"t2\"\n      ) AS \"t8\"\n        ON \"t6\".\"aircraft_id\" = \"t8\".\"id\"\n    ) AS \"t9\"\n  ) AS \"t10\"\n  GROUP BY\n    1\n) AS \"t11\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t10\".\"aircraft.model\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t10\".\"passengers\") AS \"total_passengers\",\n    SUM(\"t10\".\"capacity\") AS \"total_capacity\"\n  FROM (\n    SELECT\n      \"t9\".\"distance\",\n      \"t9\".\"carrier_code\",\n      \"t9\".\"aircraft_id\",\n      \"t9\".\"passengers\",\n      \"t9\".\"code\",\n      \"t9\".\"model\",\n      \"t9\".\"capacity\",\n      \"t9\".\"id\",\n      \"t9\".\"model\" AS \"aircraft.model\"\n    FROM (\n      SELECT\n        \"t6\".\"distance\",\n        \"t6\".\"carrier_code\",\n        \"t6\".\"aircraft_id\",\n        \"t6\".\"passengers\",\n        \"t7\".\"code\",\n        \"t8\".\"model\",\n        \"t8\".\"capacity\",\n        \"t8\".\"id\"\n      FROM (\n        SELECT\n          \"t0\".\"distance\",\n          \"t0\".\"carrier_code\",\n          \"t0\".\"aircraft_id\",\n          \"t0\".\"passengers\"\n        FROM \"memory\".\"main\".\"flights\" AS \"t0\"\n      ) AS \"t6\"\n      LEFT OUTER JOIN (\n        SELECT\n          \"t1\".\"code\"\n        FROM \"memory\".\"main\".\"carriers\" AS \"t1\"\n      ) AS \"t7\"\n        ON \"t6\".\"carrier_code\" = \"t7\".\"code\"\n      LEFT OUTER JOIN (\n        SELECT\n          \"t2\".\"model\",\n          \"t2\".\"capacity\",\n          \"t2\".\"id\"\n        FROM \"memory\".\"main\".\"aircraft\" AS \"t2\"\n      ) AS \"t8\"\n        ON \"t6\".\"aircraft_id\" = \"t8\".\"id\"\n    ) AS \"t9\"\n  ) AS \"t10\"\n  GROUP BY\n    1\n) AS \"t11\"",
       "plan": "r0 := SemanticTableOp[aircraft]\n  2 dimensions: id, model\n  2 measures: aircraft_count, total_capacity\n\nr1 := SemanticTableOp[flights]\n  3 dimensions: flight_id, carrier_code, aircraft_id\n  3 measures: flight_count, total_distance, total_passengers\n\nr2 := SemanticTableOp[carriers]\n  3 dimensions: code, name, country\n  1 measure: carrier_count\n\nr3 := SemanticJoinOp\n  left: flights\n  right: carriers\n  how: 'left'\n  on: <function>\n\nr4 := SemanticJoinOp\n  left: SemanticJoinOp\n  right: aircraft\n  how: 'left'\n  on: <function>\n\nr5 := SemanticGroupByOp\n  source: SemanticJoinOp\n  keys: ['aircraft.model']\n  inherited dimensions: 8\n  inherited measures: 6\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['aircraft.model']\n  aggs: [flight_count, total_passengers, total_capacity]",
       "table": {
         "columns": [
@@ -89,12 +89,6 @@
           "total_capacity"
         ],
         "data": [
-          [
-            "Boeing 777",
-            1,
-            120,
-            350
-          ],
           [
             "Airbus A320",
             1,
@@ -106,6 +100,12 @@
             1,
             150,
             180
+          ],
+          [
+            "Boeing 777",
+            1,
+            120,
+            350
           ]
         ]
       },
@@ -119,7 +119,7 @@
             }
           },
           "data": {
-            "name": "data-f0a68cc4fa68ffbd859216926b5e49d6"
+            "name": "data-7e81fa099da273faf8fb9af08f53ae8a"
           },
           "mark": {
             "type": "bar"
@@ -173,7 +173,13 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-f0a68cc4fa68ffbd859216926b5e49d6": [
+            "data-7e81fa099da273faf8fb9af08f53ae8a": [
+              {
+                "aircraft_model": "Boeing 737",
+                "flight_count": 1,
+                "total_passengers": 150,
+                "total_capacity": 180
+              },
               {
                 "aircraft_model": "Boeing 777",
                 "flight_count": 1,
@@ -185,12 +191,6 @@
                 "flight_count": 1,
                 "total_passengers": 180,
                 "total_capacity": 200
-              },
-              {
-                "aircraft_model": "Boeing 737",
-                "flight_count": 1,
-                "total_passengers": 150,
-                "total_capacity": 180
               }
             ]
           }

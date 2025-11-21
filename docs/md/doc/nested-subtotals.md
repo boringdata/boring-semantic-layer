@@ -179,4 +179,4 @@ result = (
 ## Next Steps
 
 - Learn about [Percentage of Total](/advanced/percentage-total) calculations
-- Explore [Advanced Nesting](/advanced/nesting) for more complex hierarchical patterns
+- Explore [Bucketing](/advanced/bucketing) for categorizing continuous values

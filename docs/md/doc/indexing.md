@@ -232,5 +232,5 @@ When referencing dimensions from joined tables in the index, use dot notation wi
 
 ## Next Steps
 
-- Learn about [Nesting](/advanced/nesting) for hierarchical data structures
+- Learn about [Nested Subtotals](/advanced/nested-subtotals) for hierarchical data structures
 - Explore [Query Methods](/querying/methods) for more query patterns

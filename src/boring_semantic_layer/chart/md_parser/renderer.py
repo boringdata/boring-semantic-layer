@@ -8,207 +8,35 @@ import json
 import re
 import sys
 import time
-from datetime import date, datetime
-from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-import ibis
 import markdown
-import pandas as pd
 
-from boring_semantic_layer import to_semantic_table
-
-
-class CustomJSONEncoder(json.JSONEncoder):
-    """Custom JSON encoder to handle Decimal and datetime objects."""
-
-    def default(self, obj):
-        if isinstance(obj, Decimal):
-            return float(obj)
-        if isinstance(obj, datetime | date | pd.Timestamp):
-            return str(obj)
-        return super().default(obj)
+from .converter import CustomJSONEncoder
+from .executor import QueryExecutor
+from .parser import MarkdownParser
 
 
 def parse_markdown_with_queries(content: str) -> tuple[str, dict[str, str]]:
-    """
-    Parse markdown content and extract BSL query blocks.
-
-    Syntax: ```query_name
-            <BSL query code>
-            ```
-
-    Returns:
-        - Modified markdown (queries remain for display)
-        - Dictionary of query_name -> code
-    """
-    queries = {}
-
-    # Find code blocks with custom names (not standard language names)
-    pattern = r"```(\w+)\n(.*?)\n```"
-
-    def extract_query(match):
-        query_name = match.group(1)
-        query_code = match.group(2).strip()
-
-        # Skip if it's a standard language
-        if query_name.lower() in [
-            "python",
-            "sql",
-            "bash",
-            "javascript",
-            "typescript",
-            "js",
-            "ts",
-            "yaml",
-            "yml",
-            "json",
-            "toml",
-            "text",
-            "sh",
-        ]:
-            return match.group(0)  # Return original
-
-        # Store the query
-        queries[query_name] = query_code
-
-        # Keep the code block in markdown
-        return match.group(0)
-
-    modified_md = re.sub(pattern, extract_query, content, flags=re.DOTALL)
-
-    return modified_md, queries
+    """Parse markdown and extract BSL queries (delegates to MarkdownParser)."""
+    return MarkdownParser.extract_queries(content, include_hidden=False)
 
 
 def execute_bsl_query(
     query_code: str, context: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Execute BSL query and return (result_data, updated_context).
+
+    Uses QueryExecutor but wraps it to maintain backward compatibility.
     """
-    Execute BSL query code and return results.
+    executor = QueryExecutor(capture_output=True)
+    executor.context = context.copy()
 
-    Args:
-        query_code: The Python code to execute
-        context: The execution context with previous variables
+    result_data = executor.execute(query_code, is_chart_only=False)
+    updated_context = executor.context.copy()
 
-    Returns:
-        (result_data, updated_context)
-    """
-    try:
-        # Create a namespace with ibis and BSL imports
-        namespace = {
-            "ibis": ibis,
-            "to_semantic_table": to_semantic_table,
-            **context,
-        }
-
-        # Execute the code
-        exec(query_code, namespace)
-
-        # Update context with all new variables
-        updated_context = {**context}
-        for key, val in namespace.items():
-            if not key.startswith("_") and key not in ["ibis", "to_semantic_table"]:
-                updated_context[key] = val
-
-        # Get the result
-        result = None
-        for var_name in ["result", "q", "query"]:
-            if var_name in namespace:
-                result = namespace[var_name]
-                break
-
-        if result is None:
-            # Look for new variables
-            new_vars = {
-                k: v
-                for k, v in namespace.items()
-                if not k.startswith("_")
-                and k not in ["ibis", "to_semantic_table"]
-                and k not in context
-            }
-            if new_vars:
-                result = list(new_vars.values())[-1]
-
-        if result is None:
-            return {"error": "No result found in query"}, context
-
-        # Check if it's a semantic table definition (don't execute)
-        if hasattr(result, "group_by") and not hasattr(result, "execute"):
-            return {
-                "semantic_table": True,
-                "name": getattr(result, "name", "unknown"),
-            }, updated_context
-
-        # Check if it's a BSL query object (has .execute() method)
-        if hasattr(result, "execute"):
-            # Execute query to get dataframe
-            df = result.execute()
-
-            # Get SQL query
-            sql_query = None
-            try:
-                if hasattr(result, "sql"):
-                    sql_query = result.sql()
-            except Exception as e:
-                sql_query = f"Error generating SQL: {str(e)}"
-
-            # Get chart spec (Altair/Vega-Lite)
-            chart_spec = None
-            try:
-                if hasattr(result, "chart"):
-                    chart_obj = result.chart(backend="altair")
-                    # Set reasonable dimensions
-                    if hasattr(chart_obj, "properties"):
-                        chart_obj = chart_obj.properties(width=700, height=400)
-
-                    if hasattr(chart_obj, "to_dict"):
-                        chart_spec = chart_obj.to_dict()
-            except Exception as e:
-                print(f"    Warning: Could not generate chart: {str(e)}")
-
-            # Convert DataFrame to dict format
-            df_copy = df.copy()
-
-            # Handle datetime and Decimal columns
-            for col in df_copy.columns:
-                if df_copy[col].dtype == "datetime64[ns]" or df_copy[col].dtype.name.startswith(
-                    "datetime"
-                ):
-                    df_copy[col] = df_copy[col].astype(str)
-                elif df_copy[col].dtype == "object":
-                    try:
-                        if len(df_copy) > 0:
-                            first_val = df_copy[col].iloc[0]
-                            if isinstance(first_val, pd.Timestamp | datetime | date):
-                                df_copy[col] = df_copy[col].astype(str)
-                            elif isinstance(first_val, Decimal):
-                                df_copy[col] = df_copy[col].apply(
-                                    lambda x: float(x) if isinstance(x, Decimal) else x
-                                )
-                    except Exception:
-                        pass
-
-            # Replace NaN with None
-            df_copy = df_copy.replace({float("nan"): None})
-
-            result_data = {
-                "code": query_code,
-                "sql": sql_query,
-                "table": {"columns": list(df_copy.columns), "data": df_copy.values.tolist()},
-            }
-
-            if chart_spec:
-                result_data["chart"] = chart_spec
-
-            return result_data, updated_context
-
-        return {"error": "Unknown result type"}, context
-
-    except Exception as e:
-        import traceback
-
-        return {"error": str(e), "traceback": traceback.format_exc()}, context
+    return result_data, updated_context
 
 
 def render_table_html(table_data: dict) -> str:
