@@ -21,6 +21,7 @@ import Dimensions from "./pages/Dimensions";
 import Measures from "./pages/Measures";
 import Joins from "./pages/Joins";
 import ComposeModels from "./pages/ComposeModels";
+import Profile from "./pages/Profile";
 import YAMLConfig from "./pages/YAMLConfig";
 import QueryMethods from "./pages/QueryMethods";
 import MultiModelQuery from "./pages/MultiModelQuery";
@@ -122,6 +123,7 @@ const App = () => (
             {/* Building Section - New Consolidated Pages */}
             <Route path="/building/semantic-tables" element={<Layout><SemanticTable /></Layout>} />
             <Route path="/building/compose" element={<Layout><ComposeModels /></Layout>} />
+            <Route path="/building/profile" element={<Layout><Profile /></Layout>} />
             <Route path="/building/yaml" element={<Layout><YAMLConfig /></Layout>} />
 
             {/* Legacy routes - redirect to new consolidated pages */}

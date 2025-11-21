@@ -8,27 +8,26 @@ and maps it into sessions of flight_date, carrier, and tail_num. For each sessio
 a nested list of flight_legs by the aircraft on that day. The flight legs are numbered.
 """
 
+from pathlib import Path
+
 import ibis
 import pandas as pd
 
-from boring_semantic_layer import to_ibis, to_semantic_table
+from boring_semantic_layer import from_yaml, to_ibis
 
 # Show all columns in output
 pd.set_option("display.max_columns", None)
 pd.set_option("display.width", None)
 
-BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
-
 
 def main():
-    con = ibis.duckdb.connect(":memory:")
-    flights_tbl = con.read_parquet(f"{BASE_URL}/flights.parquet")
+    # Load semantic models from YAML with profile
+    yaml_path = Path(__file__).parent / "flights.yml"
+    profile_file = Path(__file__).parent / "profiles.yml"
+    models = from_yaml(str(yaml_path), profile="example_db", profile_path=str(profile_file))
 
-    flights = to_semantic_table(flights_tbl, name="flights").with_measures(
-        flight_count=lambda t: t.count(),
-        total_distance=lambda t: t.distance.sum(),
-        max_delay=lambda t: t.dep_delay.max(),
-    )
+    # Use flights model from YAML (already has all measures including max_delay)
+    flights = models["flights"]
 
     # Filter for carrier WN on 2002-03-03 and add flight_date column
     filtered_flights = flights.filter(

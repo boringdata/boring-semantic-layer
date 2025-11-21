@@ -1,0 +1,37 @@
+# Semantic model for order items
+# E-commerce order data for hierarchical analysis
+
+profile: example_db
+
+order_items:
+  table: order_items
+  description: "E-commerce order items with sales metrics"
+
+  dimensions:
+    order_id: _.order_id
+    created_at:
+      expr: _.created_at
+      description: "Order creation timestamp"
+      is_time_dimension: true
+      smallest_time_grain: "TIME_GRAIN_DAY"
+    created_year:
+      expr: _.created_at.year()
+      description: "Year of order creation"
+    created_month:
+      expr: _.created_at.month()
+      description: "Month of order creation"
+    status:
+      expr: _.status
+      description: "Order status (e.g., Complete, Cancelled, Processing)"
+    sale_price: _.sale_price
+
+  measures:
+    order_count:
+      expr: _.count()
+      description: "Total number of orders"
+    total_sales:
+      expr: _.sale_price.sum()
+      description: "Total sales revenue"
+    avg_price:
+      expr: _.sale_price.mean()
+      description: "Average sale price"

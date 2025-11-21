@@ -134,3 +134,7 @@ dmypy.json
 
 # Archived documentation
 docs-archive/
+*.db
+
+# xorq build artifacts
+builds/

@@ -119,3 +119,42 @@ def test_safe_dict_operations():
     result = safe_eval("{'a': 1, 'b': 2}")
     assert isinstance(result, Success)
     assert result.unwrap() == {"a": 1, "b": 2}
+
+
+def test_safe_eval_lambda_expression():
+    """Test that lambda expressions are allowed for BSL dynamic dimensions."""
+    result = safe_eval("lambda t: t.column")
+    assert isinstance(result, Success)
+    fn = result.unwrap()
+    assert callable(fn)
+
+
+def test_safe_eval_lambda_with_method_call():
+    """Test lambda with method calls for time truncation."""
+
+    # Create a mock object with a truncate method
+    class MockColumn:
+        def truncate(self, unit):
+            return f"truncated_{unit}"
+
+    class MockTable:
+        def __init__(self):
+            self.arr_time = MockColumn()
+
+    result = safe_eval("lambda t: t.arr_time.truncate('Y')")
+    assert isinstance(result, Success)
+    fn = result.unwrap()
+    assert callable(fn)
+
+    # Test that it works with a mock table
+    mock_table = MockTable()
+    output = fn(mock_table)
+    assert output == "truncated_Y"
+
+
+def test_safe_eval_lambda_in_context():
+    """Test lambda with ibis _ in context (realistic BSL use case)."""
+    result = safe_eval("lambda t: t.distance.mean()", context={"t": _}, allowed_names={"t"})
+    assert isinstance(result, Success)
+    fn = result.unwrap()
+    assert callable(fn)

@@ -24,6 +24,10 @@ from .ops import (
     Dimension,
     Measure,
 )
+from .profile import (
+    ProfileLoader,
+    loader,
+)
 from .yaml import (
     from_yaml,
 )
@@ -40,9 +44,11 @@ __all__ = [
     "options",
     "to_xorq",
     "from_xorq",
+    "ProfileLoader",
+    "loader",
 ]
 
-# Import MCP functionality from separate module if available
+# Import MCP functionality if available
 try:
     from .mcp import MCPSemanticModel  # noqa: F401
 
@@ -50,13 +56,8 @@ try:
 except ImportError:
     _MCP_AVAILABLE = False
 
-# Import xorq conversion functionality if xorq is available
-try:
-    from .xorq_convert import from_xorq, to_xorq  # noqa: F401
-
-    _XORQ_AVAILABLE = True
-except ImportError:
-    _XORQ_AVAILABLE = False
+# Import xorq conversion functionality
+from .xorq_convert import from_xorq, to_xorq  # noqa: F401
 
 
 def __getattr__(name):
@@ -64,10 +65,5 @@ def __getattr__(name):
         raise ImportError(
             "MCPSemanticModel requires the 'fastmcp' optional dependencies. "
             "Install with: pip install 'boring-semantic-layer[fastmcp]'"
-        )
-    if name in ("to_xorq", "from_xorq") and not _XORQ_AVAILABLE:
-        raise ImportError(
-            "Xorq conversion requires the 'xorq' optional dependency. "
-            "Install with: pip install 'boring-semantic-layer[xorq]'"
         )
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

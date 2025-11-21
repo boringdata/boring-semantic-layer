@@ -4,21 +4,22 @@
 Malloy: https://docs.malloydata.dev/documentation/patterns/other
 """
 
+from pathlib import Path
+
 import ibis
 from ibis import _
 
-from boring_semantic_layer import to_semantic_table
-
-BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
+from boring_semantic_layer import from_yaml
 
 
 def main():
-    con = ibis.duckdb.connect(":memory:")
-    airports_tbl = con.read_parquet(f"{BASE_URL}/airports.parquet")
+    # Load semantic models from YAML with profile
+    yaml_path = Path(__file__).parent / "flights.yml"
+    profile_file = Path(__file__).parent / "profiles.yml"
+    models = from_yaml(str(yaml_path), profile="example_db", profile_path=str(profile_file))
 
-    airports = to_semantic_table(airports_tbl, name="airports").with_measures(
-        avg_elevation=lambda t: t.elevation.mean(),
-    )
+    # Use airports model from YAML (already has avg_elevation measure)
+    airports = models["airports"]
 
     result = (
         airports.group_by("state")
