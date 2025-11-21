@@ -55,6 +55,9 @@ SAFE_NODES = {
     ast.Dict,
     ast.keyword,
     ast.IfExp,
+    ast.Lambda,  # Allow lambda expressions for ibis_string_to_expr
+    ast.arguments,  # Required for lambda function arguments
+    ast.arg,  # Required for individual lambda arguments
 }
 
 
@@ -197,10 +200,12 @@ def expr_to_ibis_string(fn: Callable) -> Result[str, Exception]:
                 return deferred_check.unwrap()
             raise ValueError(f"Expected callable or Deferred, got {type(fn)}")
 
+        # Prioritize source extraction to handle ibis.desc/asc properly
+        # Then fall back to introspection for simple deferred expressions
         checks = [
             lambda: _check_closure_vars(fn),
-            lambda: _try_ibis_introspection(fn).value_or(Nothing),
             lambda: _try_source_extraction(fn),
+            lambda: _try_ibis_introspection(fn).value_or(Nothing),
         ]
 
         for check in checks:
@@ -214,6 +219,8 @@ def expr_to_ibis_string(fn: Callable) -> Result[str, Exception]:
 
 
 def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
+    from returns.result import Failure, Success
+
     @safe
     def do_convert():
         # Parse the expression string and create a callable that works with BSL's resolver
@@ -224,9 +231,36 @@ def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
         # This allows it to work with BSL's _Resolver object
         lambda_str = f"lambda t: {t_expr}"
 
-        # Compile and return the lambda
-        code = compile(lambda_str, "<ibis_expr>", "eval")
-        return eval(code)  # noqa: S307
+        # Compile and return the lambda with necessary imports in context
+        # Import both regular ibis and xorq's vendored ibis for compatibility
+        import ibis
+        from ibis import _
+
+        try:
+            from xorq.vendor import ibis as xorq_ibis
+            from xorq.vendor.ibis import _ as xorq_deferred
+            eval_context = {
+                "ibis": ibis,
+                "_": _,
+                "xorq_ibis": xorq_ibis,
+            }
+            allowed_names = {"ibis", "_", "xorq_ibis", "t"}
+        except ImportError:
+            # xorq not available, use regular ibis only
+            eval_context = {
+                "ibis": ibis,
+                "_": _,
+            }
+            allowed_names = {"ibis", "_", "t"}
+
+        # Use safe_eval to prevent code injection
+        result = safe_eval(lambda_str, context=eval_context, allowed_names=allowed_names)
+        if isinstance(result, Success):
+            return result.unwrap()
+        elif isinstance(result, Failure):
+            raise result.failure()
+        else:
+            raise ValueError(f"Unexpected result type: {type(result)}")
 
     return do_convert()
 

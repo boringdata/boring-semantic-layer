@@ -9,11 +9,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
-from xorq.vendor import ibis
+import ibis
 from attrs import field, frozen
-from xorq.vendor.ibis.common.collections import FrozenOrderedDict
-from xorq.vendor.ibis.expr import types as ir
-from xorq.vendor.ibis.expr.sql import convert
+from ibis.common.collections import FrozenOrderedDict
+from ibis.expr import types as ir
+from ibis.expr.sql import convert
 
 from boring_semantic_layer.ops import (
     SemanticAggregateOp,
@@ -463,3 +463,4 @@ def _convert_semantic_unnest(node: SemanticUnnestOp, catalog, *args):
         raise ValueError(f"Failed to unnest column '{node.column}': {e}") from e
 
     return unpack_struct_if_needed(unnested, node.column)
+

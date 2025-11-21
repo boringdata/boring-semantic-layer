@@ -16,9 +16,15 @@ from xorq.vendor.ibis.common.graph import Graph
 from xorq.vendor.ibis.expr.operations.core import Node
 from xorq.vendor.ibis.expr.types import Expr as XorqExpr
 
-# Regular ibis types
-from ibis.expr.operations.core import Node as IbisNode
-from ibis.expr.types import Expr as IbisExpr
+# Regular ibis types (optional - for backward compatibility)
+try:
+    from ibis.expr.operations.core import Node as IbisNode
+    from ibis.expr.types import Expr as IbisExpr
+    _REGULAR_IBIS_AVAILABLE = True
+except ImportError:
+    IbisNode = None
+    IbisExpr = None
+    _REGULAR_IBIS_AVAILABLE = False
 
 # Functional programming utilities
 from returns.maybe import Maybe, Nothing, Some
@@ -54,10 +60,11 @@ def to_node(maybe_expr: Any) -> Node:
         ValueError: If the type cannot be converted to a Node
     """
     # First check if it's regular ibis types (since xorq's to_node doesn't handle them)
-    if isinstance(maybe_expr, IbisNode):
-        return maybe_expr
-    if isinstance(maybe_expr, IbisExpr):
-        return maybe_expr.op()
+    if _REGULAR_IBIS_AVAILABLE:
+        if isinstance(maybe_expr, IbisNode):
+            return maybe_expr
+        if isinstance(maybe_expr, IbisExpr):
+            return maybe_expr.op()
 
     # Fall back to xorq's implementation for xorq types
     return _xorq_to_node(maybe_expr)
@@ -139,7 +146,7 @@ def walk_nodes(node_types, expr):
         stack.extend(c for c in gen_children_of(node) if c not in visited)
 
 
-def replace_nodes(replacer, expr) -> IbisExpr | XorqExpr:
+def replace_nodes(replacer, expr):
     """Replace nodes in expression tree using a replacer function.
 
     This wrapper ensures the result is converted back to an Expr.

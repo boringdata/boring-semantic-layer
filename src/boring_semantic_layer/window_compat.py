@@ -1,15 +1,18 @@
-"""Compatibility layer for window functions between regular and vendored ibis (9.5.0)"""
+"""Compatibility layer for window functions between regular and vendored ibis.
+
+This compatibility layer is only needed for ibis version 10.0.0 and greater.
+"""
 
 from __future__ import annotations
 
-try:
-    import ibis
-    _IBIS_AVAILABLE = True
-except ImportError:
-    _IBIS_AVAILABLE = False
-
+import ibis
 import xorq.vendor.ibis as xibis
+from packaging.version import Version
 from xorq.vendor.ibis.expr.types.generic import Value as XorqValue
+
+# Check if ibis version is 10.0.0 or greater
+_IBIS_VERSION = Version(ibis.__version__)
+_NEEDS_COMPAT = _IBIS_VERSION >= Version("10.0.0")
 
 
 def _extract_value(boundary):
@@ -25,7 +28,6 @@ def _extract_value(boundary):
         return None
 
     value = boundary.value
-    # Handle nested value attribute (e.g., boundary.value.value)
     if hasattr(value, 'value'):
         value = value.value
 
@@ -33,18 +35,6 @@ def _extract_value(boundary):
 
 
 def _process_rows_frame(window, params):
-    """Process ROWS frame type window bounds.
-
-    For ROWS frames:
-    - start=0 means current row (no preceding needed)
-    - start<0 means N rows before current (preceding=abs(N))
-    - end=0 means current row (following=0)
-    - end>0 means N rows after current (following=N)
-
-    Args:
-        window: The ibis window object
-        params: Dictionary to populate with window parameters
-    """
     start_val = _extract_value(window.start)
     if start_val is not None and start_val != 0:
         params['preceding'] = abs(start_val)
@@ -55,16 +45,6 @@ def _process_rows_frame(window, params):
 
 
 def _process_range_frame(window, params):
-    """Process RANGE frame type window bounds.
-
-    For RANGE frames:
-    - bounds are relative to the current row's value in the ORDER BY expression
-    - start/end=0 means current value (no preceding/following)
-
-    Args:
-        window: The ibis window object
-        params: Dictionary to populate with window parameters
-    """
     start_val = _extract_value(window.start)
     if start_val is not None and start_val != 0:
         params['preceding'] = abs(start_val)
@@ -75,40 +55,20 @@ def _process_range_frame(window, params):
 
 
 def convert_window_to_xorq(window):
-    """Convert a regular ibis window to a xorq-compatible window.
-
-    This function handles conversion between regular ibis LegacyWindowBuilder
-    objects and xorq's vendored ibis window objects. It preserves:
-    - Group by columns
-    - Order by columns
-    - Frame type (ROWS vs RANGE)
-    - Frame bounds (preceding/following)
-
-    Args:
-        window: An ibis or xorq window object
-
-    Returns:
-        A xorq-compatible window object, or the original if already compatible
-        or if ibis is not available
-    """
-    # Already a xorq window - no conversion needed
     if isinstance(window, xibis.expr.builders.LegacyWindowBuilder):
         return window
 
-    # Only convert if ibis is available and window is a regular ibis window
-    if not (_IBIS_AVAILABLE and isinstance(window, ibis.expr.builders.LegacyWindowBuilder)):
+    if not (_NEEDS_COMPAT and isinstance(window, ibis.expr.builders.LegacyWindowBuilder)):
         return window
 
     params = {}
 
-    # Extract grouping and ordering columns
     if window.groupings:
         params['group_by'] = window.groupings
 
     if window.orderings:
         params['order_by'] = window.orderings
 
-    # Process frame bounds based on frame type
     if window.how == 'rows':
         _process_rows_frame(window, params)
     elif window.how == 'range':
@@ -117,32 +77,100 @@ def convert_window_to_xorq(window):
     return xibis.window(**params)
 
 
-# Store the original method before patching
-_original_over = XorqValue.over
+_original_xorq_over = XorqValue.over
+_original_ibis_over = None
 _patch_installed = False
 
+_original_ibis_window = ibis.window
+_original_ibis_desc = ibis.desc
+_original_ibis_asc = ibis.asc
 
-def _patched_over(self, window=None, *, rows=None, range=None, group_by=None, order_by=None):
-    """Patched version of .over() that accepts both regular and xorq windows.
 
-    This wrapper automatically converts regular ibis windows to xorq-compatible
-    windows before calling the original over() method.
+def _is_xorq_expr(expr):
+    if not hasattr(expr, '__class__'):
+        return False
 
-    Args:
-        self: The Value expression instance
-        window: A window specification (ibis or xorq)
-        rows: Optional row-based window frame specification
-        range: Optional range-based window frame specification
-        group_by: Optional grouping columns
-        order_by: Optional ordering columns
+    if isinstance(expr, XorqValue):
+        return True
 
-    Returns:
-        The result of calling the original over() method with converted window
-    """
+    import sys
+    if hasattr(expr, '__module__'):
+        expr_module_name = expr.__module__.split('.')[0]
+        if expr_module_name == 'ibis':
+            expr_module = sys.modules.get(expr.__module__)
+            if expr_module:
+                root_parts = expr.__module__.split('.')
+                root_module = sys.modules.get(root_parts[0])
+                return root_module is xibis
+
+    return False
+
+
+def _contains_xorq_exprs(*args, **kwargs):
+    def check_value(val):
+        if val is None:
+            return False
+        if _is_xorq_expr(val):
+            return True
+        if isinstance(val, (list, tuple)):
+            return any(check_value(v) for v in val)
+        return False
+
+    return any(check_value(arg) for arg in args) or any(check_value(v) for v in kwargs.values())
+
+
+def _patched_ibis_window(**kwargs):
+    if _contains_xorq_exprs(**kwargs):
+        return xibis.window(**kwargs)
+
+    return _original_ibis_window(**kwargs)
+
+
+def _patched_ibis_desc(expr):
+    if _is_xorq_expr(expr):
+        return xibis.desc(expr)
+    return _original_ibis_desc(expr)
+
+
+def _patched_ibis_asc(expr):
+    if _is_xorq_expr(expr):
+        return xibis.asc(expr)
+    return _original_ibis_asc(expr)
+
+
+def _is_xorq_window(window):
+    if window is None:
+        return False
+    return isinstance(window, xibis.expr.builders.LegacyWindowBuilder)
+
+
+def _patched_xorq_over(self, window=None, *, rows=None, range=None, group_by=None, order_by=None):
     if window is not None:
         window = convert_window_to_xorq(window)
 
-    return _original_over(
+    return _original_xorq_over(
+        self,
+        window=window,
+        rows=rows,
+        range=range,
+        group_by=group_by,
+        order_by=order_by
+    )
+
+
+def _patched_ibis_over(self, window=None, *, rows=None, range=None, group_by=None, order_by=None):
+    if window is not None and _is_xorq_window(window):
+        from xorq.common.utils.ibis_utils import from_ibis
+        xorq_expr = from_ibis(self)
+        return xorq_expr.over(
+            window=window,
+            rows=rows,
+            range=range,
+            group_by=group_by,
+            order_by=order_by
+        )
+
+    return _original_ibis_over(
         self,
         window=window,
         rows=rows,
@@ -155,40 +183,46 @@ def _patched_over(self, window=None, *, rows=None, range=None, group_by=None, or
 def install_window_compatibility():
     """Install the window compatibility monkey-patch.
 
-    This patches xorq's vendored ibis Value.over() method to automatically
-    convert regular ibis windows to xorq windows. This allows code written
-    with regular ibis to work seamlessly with xorq's vendored ibis.
+    This patches:
+    1. xorq's vendored ibis Value.over() method to accept regular ibis windows
+       (converts them to xorq windows using convert_window_to_xorq)
+    2. regular ibis.window() function to return xorq windows when xorq
+       expressions are detected in the arguments
+    3. regular ibis Value.over() method to accept xorq windows
+       (converts the expression to xorq using from_ibis)
+    4. regular ibis.desc() and ibis.asc() to accept xorq expressions
 
-    The patch is only installed if regular ibis is available in the environment.
-    If ibis is not available, the compatibility layer is not needed since there
-    are no regular ibis windows to convert.
-
-    Note:
-        This function is idempotent - calling it multiple times has no effect
-        after the first installation.
+    Only installs the patch if ibis version is 10.0.0 or greater.
     """
-    global _patch_installed
+    global _patch_installed, _original_ibis_over
 
-    if _IBIS_AVAILABLE and not _patch_installed:
-        XorqValue.over = _patched_over
+    if _NEEDS_COMPAT and not _patch_installed:
+        _original_ibis_over = ibis.expr.types.generic.Value.over
+
+        XorqValue.over = _patched_xorq_over
+
+        ibis.expr.types.generic.Value.over = _patched_ibis_over
+
+        ibis.window = _patched_ibis_window
+        ibis.desc = _patched_ibis_desc
+        ibis.asc = _patched_ibis_asc
+
         _patch_installed = True
 
 
 def uninstall_window_compatibility():
     """Uninstall the window compatibility monkey-patch.
 
-    Restores the original .over() method to xorq's vendored ibis Value class.
-    This is primarily useful for testing or cleanup purposes.
-
-    The uninstall only occurs if regular ibis is available and the patch
-    was previously installed.
-
-    Note:
-        This function is idempotent - calling it multiple times has no effect
-        after the first uninstallation.
+    Restores the original methods:
+    1. .over() methods to both xorq's and regular ibis Value classes
+    2. window(), desc(), asc() functions to regular ibis module
     """
     global _patch_installed
 
-    if _IBIS_AVAILABLE and _patch_installed:
-        XorqValue.over = _original_over
+    if _NEEDS_COMPAT and _patch_installed:
+        XorqValue.over = _original_xorq_over
+        ibis.expr.types.generic.Value.over = _original_ibis_over
+        ibis.window = _original_ibis_window
+        ibis.desc = _original_ibis_desc
+        ibis.asc = _original_ibis_asc
         _patch_installed = False

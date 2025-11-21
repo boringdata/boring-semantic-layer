@@ -4,20 +4,17 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import reduce
 from typing import TYPE_CHECKING, Any
 
-from xorq.vendor import ibis
-from xorq.vendor import ibis as xibis
-import xorq.vendor.ibis.selectors as s
+# Use regular ibis - works with both regular ibis and xorq backends
+import ibis
+import ibis.selectors as s
 from attrs import field, frozen
-from xorq.vendor.ibis.common.collections import FrozenDict, FrozenOrderedDict
-from xorq.vendor.ibis.common.deferred import Deferred as XorqDeferred
-from xorq.vendor.ibis.expr import datatypes as dt
-from xorq.vendor.ibis.expr import operations as ibis_ops
-from xorq.vendor.ibis.expr import types as ir
-from xorq.vendor.ibis.expr.operations.relations import Field, Relation
-from xorq.vendor.ibis.expr.schema import Schema
-
-# Also import regular ibis Deferred to support both
-from ibis.common.deferred import Deferred as RegularDeferred
+from ibis.common.collections import FrozenDict, FrozenOrderedDict
+from ibis.common.deferred import Deferred
+from ibis.expr import datatypes as dt
+from ibis.expr import operations as ibis_ops
+from ibis.expr import types as ir
+from ibis.expr.operations.relations import Field, Relation
+from ibis.expr.schema import Schema
 
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Success, safe
@@ -25,8 +22,9 @@ from toolz import curry
 
 
 def _is_deferred(expr) -> bool:
-    """Check if expression is a Deferred from either regular or vendored ibis."""
-    return isinstance(expr, (XorqDeferred, RegularDeferred))
+    """Check if expression is a Deferred."""
+    return isinstance(expr, Deferred)
+
 
 from . import projection_utils
 from .compile_all import compile_grouped_with_all
@@ -52,6 +50,10 @@ if TYPE_CHECKING:
 
 
 def _to_ibis(source: Any) -> ir.Table:
+    """Convert source to ibis table without forcing conversions.
+
+    Works with both regular ibis tables and xorq backend tables.
+    """
     return source.to_ibis() if hasattr(source, "to_ibis") else source.to_expr()
 
 
@@ -445,10 +447,11 @@ class SemanticTableOp(Relation):
 
     Stores ir.Table expression directly to avoid .op() → .to_expr() conversions.
 
-    Note: Also accepts xorq's vendored ibis tables to support optional xorq integration.
+    Note: Accepts both regular ibis.Table and xorq's vendored ibis.Table.
+    Regular ibis tables are automatically converted to xorq in __init__.
     """
 
-    table: ir.Table
+    table: Any  # Accepts both ir.Table and regular ibis.expr.types.Table
     dimensions: FrozenDict[str, Dimension]
     measures: FrozenDict[str, Measure]
     calc_measures: FrozenDict[str, Any]
@@ -466,8 +469,8 @@ class SemanticTableOp(Relation):
         description: str | None = None,
         _source_join: Any = None,
     ) -> None:
-        # Always use super().__init__() to ensure proper xorq/ibis initialization
-        # This works for both regular ibis and xorq's vendored ibis
+        # Accept both regular ibis and xorq tables without conversion
+        # This allows using regular ibis by default, xorq only when provided
         super().__init__(
             table=table,
             dimensions=FrozenDict(dimensions)

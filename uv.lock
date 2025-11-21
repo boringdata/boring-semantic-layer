@@ -260,6 +260,7 @@ viz-plotly = [
 [package.dev-dependencies]
 dev = [
     { name = "adbc-driver-sqlite" },
+    { name = "ibis-framework" },
     { name = "ipython", version = "8.37.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "ipython", version = "9.6.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "xorq" },
@@ -296,6 +297,7 @@ provides-extras = ["examples", "viz-altair", "viz-plotly", "viz-plotext", "dev",
 [package.metadata.requires-dev]
 dev = [
     { name = "adbc-driver-sqlite", specifier = ">=1.9.0" },
+    { name = "ibis-framework", specifier = ">=11.0.0" },
     { name = "ipython", specifier = ">=8.37.0" },
     { name = "xorq", specifier = ">=0.3.3" },
 ]
@@ -1153,6 +1155,24 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/0f/4c/751061ffa58615a32c31b2d82e8482be8dd4a89154f003147acee90f2be9/httpx_sse-0.4.3.tar.gz", hash = "sha256:9b1ed0127459a66014aec3c56bebd93da3c1bc8bb6618c8082039a44889a755d", size = 15943, upload-time = "2025-10-10T21:48:22.271Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d2/fd/6668e5aec43ab844de6fc74927e155a3b37bf40d7c3790e49fc0406b6578/httpx_sse-0.4.3-py3-none-any.whl", hash = "sha256:0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc", size = 8960, upload-time = "2025-10-10T21:48:21.158Z" },
+]
+
+[[package]]
+name = "ibis-framework"
+version = "11.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "atpublic" },
+    { name = "parsy" },
+    { name = "python-dateutil" },
+    { name = "sqlglot" },
+    { name = "toolz" },
+    { name = "typing-extensions" },
+    { name = "tzdata" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/93/c8/f03c7c6e8ab96e5efd67ea5ce6eaf575bde78b4bfb9115f283d5e6e19ea2/ibis_framework-11.0.0.tar.gz", hash = "sha256:0249185eaabb800e224f448cc06ce8ba168df00b269e132d62629f462eca8842", size = 1237767, upload-time = "2025-10-15T13:12:10.01Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/86/c0/2851a8a55d0fea03b80fd45815069b686e032938fc68fa9d91ac776c148c/ibis_framework-11.0.0-py3-none-any.whl", hash = "sha256:92ff82a96f4eac7f86fa9b6a315e04b5a8f9ed3d186539d88f48e628363f2e72", size = 1935652, upload-time = "2025-10-15T13:12:07.954Z" },
 ]
 
 [[package]]

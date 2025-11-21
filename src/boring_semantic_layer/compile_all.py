@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from functools import reduce
 from typing import Any
 
-from xorq.vendor import ibis
+import ibis
 from attrs import frozen
 from toolz import curry, pipe
 
@@ -67,12 +67,26 @@ def _compile_binop(by_tbl, all_tbl, op: str, left: Any, right: Any):
     return ops[op](left_val, right_val)
 
 
+def _get_ibis_module(table):
+    """Detect which ibis module the table is using (regular ibis or xorq's vendored ibis)."""
+    table_module = type(table).__module__
+    if table_module.startswith("xorq.vendor.ibis"):
+        # Table is from xorq's vendored ibis
+        from xorq.vendor import ibis as xorq_ibis
+        return xorq_ibis
+    else:
+        # Table is from regular ibis
+        return ibis
+
+
 def _compile_formula(expr: MeasureExpr, by_tbl, all_tbl):
     """Compile a measure expression to ibis, using functional dispatch for AggregationExpr."""
     from .measure_scope import AggregationExpr
 
     if isinstance(expr, int | float):
-        return ibis.literal(expr)
+        # Use the same ibis module as the table to avoid mixing regular and xorq ibis
+        ibis_module = _get_ibis_module(by_tbl)
+        return ibis_module.literal(expr)
     if isinstance(expr, MeasureRef):
         return by_tbl[expr.name]
     if isinstance(expr, AllOf):
@@ -211,7 +225,8 @@ def _build_level_aggregations(
 @curry
 def _make_grouped_table(agg_dict: dict[str, Any], by_cols: Iterable[str], table):
     group_exprs = [table[c] for c in by_cols]
-    return table.group_by(group_exprs).aggregate(**agg_dict)
+    # xorq requires at least one grouping expression, so handle empty case
+    return table.group_by(group_exprs).aggregate(**agg_dict) if group_exprs else table.aggregate(**agg_dict)
 
 
 def _build_session_table(base_tbl, by_cols: Iterable[str], regular_measures: dict) -> Any:

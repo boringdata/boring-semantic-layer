@@ -10,9 +10,9 @@ from collections.abc import Callable, Mapping, Sequence
 from operator import eq, ge, gt, le, lt, ne
 from typing import Any, ClassVar, Literal
 
-from xorq.vendor import ibis
+import ibis
 from attrs import frozen
-from xorq.vendor.ibis.common.collections import FrozenDict
+from ibis.common.collections import FrozenDict
 from toolz import curry
 
 from .utils import safe_eval
@@ -443,3 +443,4 @@ def query(
         result = result.limit(limit)
 
     return result
+

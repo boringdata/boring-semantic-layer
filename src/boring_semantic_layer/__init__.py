@@ -38,8 +38,6 @@ __all__ = [
     "from_yaml",
     "MCPSemanticModel",
     "options",
-    "to_xorq",
-    "from_xorq",
 ]
 
 # Import MCP functionality from separate module if available
@@ -50,12 +48,9 @@ try:
 except ImportError:
     _MCP_AVAILABLE = False
 
-# Import xorq conversion functionality if xorq is available
+# Install window compatibility if xorq is available
+# This allows users to use `import ibis` seamlessly with xorq backend
 try:
-    from .xorq_convert import from_xorq, to_xorq  # noqa: F401
-
-    # Install window compatibility patch to allow regular ibis windows
-    # to work with xorq's vendored ibis expressions
     from .window_compat import install_window_compatibility
     install_window_compatibility()
 
@@ -69,10 +64,5 @@ def __getattr__(name):
         raise ImportError(
             "MCPSemanticModel requires the 'fastmcp' optional dependencies. "
             "Install with: pip install 'boring-semantic-layer[fastmcp]'"
-        )
-    if name in ("to_xorq", "from_xorq") and not _XORQ_AVAILABLE:
-        raise ImportError(
-            "Xorq conversion requires the 'xorq' optional dependency. "
-            "Install with: pip install 'boring-semantic-layer[xorq]'"
         )
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
