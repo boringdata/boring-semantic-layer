@@ -457,7 +457,7 @@ class SemanticTableOp(Relation):
     calc_measures: FrozenDict[str, Any]
     name: str | None = None
     description: str | None = None
-    _source_join: Any = None  # Track if this wraps a join (SemanticJoinOp) for optimization
+    _source_join: Any = field(default=None, repr=False)  # Track if this wraps a join (SemanticJoinOp) for optimization
 
     def __init__(
         self,
@@ -497,7 +497,7 @@ class SemanticTableOp(Relation):
 
     @property
     def schema(self) -> Schema:
-        return Schema({name: v.dtype for name, v in self.values.items()})
+        return Schema(FrozenOrderedDict({name: v.dtype for name, v in self.values.items()}))
 
     @property
     def json_definition(self) -> Mapping[str, Any]:
@@ -1242,7 +1242,7 @@ class SemanticJoinOp(Relation):
 
     @property
     def schema(self) -> Schema:
-        return Schema({name: v.dtype for name, v in self.values.items()})
+        return Schema(FrozenOrderedDict({name: v.dtype for name, v in self.values.items()}))
 
     def get_dimensions(self) -> Mapping[str, Dimension]:
         """Get dictionary of dimensions with metadata."""
