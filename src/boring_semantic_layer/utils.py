@@ -108,12 +108,18 @@ def safe_eval(
 
 
 def _extract_lambda_from_source(source: str) -> str:
+    """Extract lambda from source - only used for special cases like ibis.desc/asc.
+
+    Primary serialization now uses xorq introspection (calling lambda with _),
+    so this is rarely needed. Kept for backwards compatibility and edge cases.
+    """
     if "lambda" not in source:
         return source
 
     lambda_start = source.index("lambda")
     lambda_expr = source[lambda_start:]
 
+    # Simple extraction for common cases
     for end_marker in [" #", "  #", ",\n", "\n"]:
         if end_marker in lambda_expr:
             end_idx = lambda_expr.index(end_marker)
@@ -200,12 +206,13 @@ def expr_to_ibis_string(fn: Callable) -> Result[str, Exception]:
                 return deferred_check.unwrap()
             raise ValueError(f"Expected callable or Deferred, got {type(fn)}")
 
-        # Prioritize source extraction to handle ibis.desc/asc properly
-        # Then fall back to introspection for simple deferred expressions
+        # Prioritize xorq introspection - just call the lambda with _ to get the expression!
+        # This avoids all the fragile source code parsing
+        # Only fall back to source extraction for special cases (ibis.desc/asc)
         checks = [
+            lambda: _try_ibis_introspection(fn).value_or(Nothing),
             lambda: _check_closure_vars(fn),
             lambda: _try_source_extraction(fn),
-            lambda: _try_ibis_introspection(fn).value_or(Nothing),
         ]
 
         for check in checks:

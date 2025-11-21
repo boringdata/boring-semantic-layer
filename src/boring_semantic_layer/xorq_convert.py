@@ -350,7 +350,19 @@ def _deserialize_expr(expr_str: str | None, fallback_name: str | None = None) ->
     if not expr_str:
         return lambda t, n=fallback_name: t[n] if n else t  # noqa: E731
     result = ibis_string_to_expr(expr_str)
-    return result.value_or(lambda t, n=fallback_name: t[n] if n else t)  # noqa: E731
+
+    # If deserialization succeeded, return the function
+    from returns.result import Success
+    if isinstance(result, Success):
+        return result.unwrap()
+
+    # If deserialization failed and we have a fallback name, try column access
+    # This is for dimensions that are just column references
+    if fallback_name:
+        return lambda t, n=fallback_name: t[n]  # noqa: E731
+
+    # Otherwise raise the error - don't silently fail
+    raise ValueError(f"Failed to deserialize expression: {expr_str}. Error: {result.failure()}")
 
 
 _RECONSTRUCTORS = {}
@@ -406,7 +418,7 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
 
     def _create_measure(name: str, meas_data: dict) -> ops.Measure:
         return ops.Measure(
-            expr=_deserialize_expr(meas_data.get("expr"), fallback_name=name),
+            expr=_deserialize_expr(meas_data.get("expr"), fallback_name=None),
             description=meas_data.get("description"),
             requires_unnest=tuple(meas_data.get("requires_unnest", [])),
         )
