@@ -101,8 +101,8 @@ class TestXorqErrorMessages:
 
         from boring_semantic_layer import xorq_convert
 
-        # Check that to_xorq raises ImportError with helpful message if xorq is not available
-        source = inspect.getsource(xorq_convert.to_xorq)
+        # Check that to_tagged raises ImportError with helpful message if xorq is not available
+        source = inspect.getsource(xorq_convert.to_tagged)
         assert "ImportError" in source
         # xorq is now a core dependency, so the error message should be generic
         assert "xorq" in source.lower()
@@ -182,8 +182,8 @@ class TestErrorMessageQuality:
 
         from boring_semantic_layer import xorq_convert
 
-        # Check to_xorq function
-        source = inspect.getsource(xorq_convert.to_xorq)
+        # Check to_tagged function
+        source = inspect.getsource(xorq_convert.to_tagged)
         assert "ImportError" in source
         # Should mention how to install
         assert "pip install" in source or "Install with" in source or "xorq" in source
@@ -250,22 +250,22 @@ class TestIntegrationWithRealDependencies:
 
         if xorq_available:
             # xorq is installed, verify it can be imported and used
-            # Note: to_xorq and from_xorq are internal functions, not public API
-            from boring_semantic_layer.xorq_convert import from_xorq, to_xorq
+            # Note: to_tagged and from_tagged are internal functions, not public API
+            from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
 
-            assert callable(to_xorq)
-            assert callable(from_xorq)
+            assert callable(to_tagged)
+            assert callable(from_tagged)
         else:
             # xorq not installed, verify we get helpful error
             with pytest.raises((ImportError, AttributeError)) as exc_info:
                 import ibis
 
                 from boring_semantic_layer import SemanticModel
-                from boring_semantic_layer.xorq_convert import to_xorq
+                from boring_semantic_layer.xorq_convert import to_tagged
 
                 table = ibis.memtable({"a": [1]})
                 model = SemanticModel(table=table, dimensions={}, measures={})
-                to_xorq(model)
+                to_tagged(model)
 
             # Should mention xorq in the error
             assert "xorq" in str(exc_info.value).lower() or "xorq" in str(exc_info.typename).lower()

@@ -3,7 +3,7 @@
 This module tests that BSL semantic models work correctly with various
 xorq backends (DuckDB, DataFusion, Pandas, etc.).
 
-**Important**: BSL's `to_xorq()` wraps expressions in xorq's `Tag` operations
+**Important**: BSL's `to_tagged()` wraps expressions in xorq's `Tag` operations
 to preserve metadata. These tagged expressions must be executed using `xo.execute()`
 rather than `backend.execute()`, because backends try to compile Tags to SQL which
 doesn't work. Use `xo.execute()` for BSL semantic models.
@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from boring_semantic_layer import SemanticModel
-from boring_semantic_layer.xorq_convert import from_xorq, to_xorq, try_import_xorq
+from boring_semantic_layer.xorq_convert import from_tagged, to_tagged, try_import_xorq
 
 # Check if xorq is available
 try:
@@ -44,10 +44,10 @@ class TestXorqDuckDBBackend:
         )
 
         # Convert to xorq
-        xorq_expr = to_xorq(model)
+        tagged_expr = to_tagged(model)
 
         # Execute with xorq (handles Tag operations properly)
-        df = xo.execute(xorq_expr)
+        df = xo.execute(tagged_expr)
 
         # Verify results
         assert len(df) == 5
@@ -69,8 +69,8 @@ class TestXorqDuckDBBackend:
         )
 
         # Convert to xorq and execute
-        xorq_expr = to_xorq(model)
-        df = xo.execute(xorq_expr)
+        tagged_expr = to_tagged(model)
+        df = xo.execute(tagged_expr)
 
         # Verify data is loaded
         assert len(df) == 5
@@ -92,8 +92,8 @@ class TestXorqDuckDBBackend:
         filtered = model.filter(lambda t: t.a > 2)
 
         # Convert and execute
-        xorq_expr = to_xorq(filtered)
-        df = xo.execute(xorq_expr)
+        tagged_expr = to_tagged(filtered)
+        df = xo.execute(tagged_expr)
 
         # Verify filter was applied
         assert len(df) == 3
@@ -109,10 +109,10 @@ class TestXorqDuckDBBackend:
             table=table, dimensions={"x": lambda t: t.x}, measures={}
         )
 
-        xorq_expr = to_xorq(model)
+        tagged_expr = to_tagged(model)
 
         # Get PyArrow batches using xorq API
-        batches = xo.to_pyarrow_batches(xorq_expr, chunk_size=10)
+        batches = xo.to_pyarrow_batches(tagged_expr, chunk_size=10)
         assert batches is not None
 
         # Read all batches
@@ -137,10 +137,10 @@ class TestXorqDataFusionBackend:
         table = ibis.memtable({"a": [1, 2, 3]})
         model = SemanticModel(table=table, dimensions={"a": lambda t: t.a}, measures={})
 
-        xorq_expr = to_xorq(model)
+        tagged_expr = to_tagged(model)
 
         # Execute (xorq uses DataFusion internally)
-        df = execute(xorq_expr)
+        df = execute(tagged_expr)
 
         assert len(df) == 3
         assert "a" in df.columns
@@ -156,9 +156,9 @@ class TestXorqDataFusionBackend:
             measures={"sum_val": lambda t: t.val.sum()},
         )
 
-        xorq_expr = to_xorq(model)
+        tagged_expr = to_tagged(model)
 
-        df = xo.execute(xorq_expr)
+        df = xo.execute(tagged_expr)
 
         assert len(df) == 3
         assert set(df["grp"]) == {"A", "B"}
@@ -187,8 +187,8 @@ class TestXorqPandasBackend:
             measures={"sum_y": lambda t: t.y.sum()},
         )
 
-        xorq_expr = to_xorq(model)
-        df = execute(xorq_expr)
+        tagged_expr = to_tagged(model)
+        df = execute(tagged_expr)
 
         assert len(df) == 3
         assert list(df["x"]) == [1, 2, 3]
@@ -237,10 +237,10 @@ class TestXorqBackendFeatures:
         table = ibis.memtable({"a": [1, 2, 3]})
         model = SemanticModel(table=table, dimensions={"a": lambda t: t.a}, measures={})
 
-        xorq_expr = to_xorq(model)
+        tagged_expr = to_tagged(model)
 
         # Tag for caching (noop for execution but useful for optimization layers)
-        cached_expr = xorq_expr.tag(tag="cache", cache_ttl="3600")
+        cached_expr = tagged_expr.tag(tag="cache", cache_ttl="3600")
 
         df = xo.execute(cached_expr)
 
@@ -259,7 +259,7 @@ class TestXorqBackendFeatures:
             measures={"sum_b": lambda t: t.b.sum()},
         )
 
-        xorq_expr = to_xorq(model)
+        tagged_expr = to_tagged(model)
 
         # Write to parquet
         with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
@@ -267,7 +267,7 @@ class TestXorqBackendFeatures:
 
         try:
             # Execute and convert to pandas, then save
-            df = xo.execute(xorq_expr)
+            df = xo.execute(tagged_expr)
             df.to_parquet(temp_path)
 
             # Read back with xorq
@@ -296,13 +296,13 @@ class TestXorqBackendFeatures:
         )
 
         # Convert to xorq
-        xorq_expr = to_xorq(model)
+        tagged_expr = to_tagged(model)
 
         # Execute with xorq
-        df = xo.execute(xorq_expr)
+        df = xo.execute(tagged_expr)
 
         # Convert back from xorq
-        restored_model = from_xorq(xorq_expr)
+        restored_model = from_tagged(tagged_expr)
 
         # Verify structure preserved
         assert "x" in restored_model.dimensions

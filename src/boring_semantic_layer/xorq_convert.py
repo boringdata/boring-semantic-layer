@@ -68,8 +68,15 @@ def serialize_predicate(predicate: Callable) -> Result[str, Exception]:
     return expr_to_ibis_string(predicate)
 
 
-def to_xorq(semantic_expr, aggregate_cache_storage=None):
-    """Convert BSL expression to xorq expression with metadata tags.
+def to_tagged(semantic_expr, aggregate_cache_storage=None):
+    """Tag a BSL expression with serialized metadata.
+
+    Takes a BSL semantic expression and tags it with serialized metadata
+    (dimensions, measures, etc.) in xorq format. The tagged expression can
+    later be reconstructed using from_tagged().
+
+    Note: The input can already be a xorq expression - this function tags it
+    with BSL metadata, it doesn't convert formats.
 
     Args:
         semantic_expr: BSL SemanticTable or expression
@@ -78,19 +85,19 @@ def to_xorq(semantic_expr, aggregate_cache_storage=None):
                                 .cache() at aggregation points for smart cube caching.
 
     Returns:
-       ir.Expr
+       xorq expression with BSL metadata tags
 
     Example:
         >>> from boring_semantic_layer import SemanticModel
         >>> model = SemanticModel(...)
-        >>> # Without caching:
-        >>> xorq_expr = to_xorq(model)
+        >>> # Tag with metadata:
+        >>> tagged_expr = to_tagged(model)
 
         >>> # With auto cube caching:
         >>> from xorq.caching import ParquetStorage
         >>> import xorq.api as xo
         >>> storage = ParquetStorage(source=xo.connect())
-        >>> xorq_expr = to_xorq(model, aggregate_cache_storage=storage)
+        >>> tagged_expr = to_tagged(model, aggregate_cache_storage=storage)
     """
     from . import expr as bsl_expr
     from .ops import SemanticAggregateOp
@@ -285,36 +292,36 @@ def _extract_op_metadata(op) -> dict[str, Any]:
     return metadata
 
 
-def from_xorq(xorq_expr):
-    """Reconstruct BSL expression from tagged xorq expression.
+def from_tagged(tagged_expr):
+    """Reconstruct BSL expression from tagged expression.
 
-    Extracts BSL metadata from xorq tags and reconstructs the original
+    Extracts BSL metadata from tags and reconstructs the original
     BSL operation chain.
 
     Args:
-        xorq_expr: Xorq expression with BSL metadata tags
+        tagged_expr: Expression with BSL metadata tags (created by to_tagged)
 
     Returns:
         BSL expression reconstructed from metadata
 
     Raises:
-        ValueError: If no BSL metadata found in xorq expression
+        ValueError: If no BSL metadata found in expression
         Exception: If reconstruction fails
 
     Example:
-        >>> xorq_expr = ...  # Tagged xorq expression
-        >>> bsl_expr = from_xorq(xorq_expr)  # No .unwrap() needed!
+        >>> tagged_expr = to_tagged(model)
+        >>> bsl_expr = from_tagged(tagged_expr)
         >>> # Use bsl_expr normally
     """
 
     @safe
     def do_convert():
-        metadata = _extract_xorq_metadata(xorq_expr)
+        metadata = _extract_xorq_metadata(tagged_expr)
 
         if not metadata:
-            raise ValueError("No BSL metadata found in xorq expression")
+            raise ValueError("No BSL metadata found in tagged expression")
 
-        return _reconstruct_bsl_operation(metadata, xorq_expr)
+        return _reconstruct_bsl_operation(metadata, tagged_expr)
 
     result = do_convert()
 
@@ -596,8 +603,8 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
 
 
 __all__ = [
-    "to_xorq",
-    "from_xorq",
+    "to_tagged",
+    "from_tagged",
     "try_import_xorq",
     "XorqModule",
 ]

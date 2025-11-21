@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from boring_semantic_layer.xorq_convert import from_xorq, to_xorq, try_import_xorq
+from boring_semantic_layer.xorq_convert import from_tagged, to_tagged, try_import_xorq
 
 # Check if xorq is available
 try:
@@ -64,10 +64,10 @@ class TestMalloyModelsRoundTrip:
         )
 
         # Test round-trip
-        xorq_expr = to_xorq(sessions_st)
+        tagged_expr = to_tagged(sessions_st)
 
         # Convert back
-        reconstructed = from_xorq(xorq_expr)
+        reconstructed = from_tagged(tagged_expr)
 
         # Verify structure preserved
         assert hasattr(reconstructed, "dimensions")
@@ -119,8 +119,8 @@ class TestMalloyModelsRoundTrip:
         )
 
         # Round-trip
-        xorq_expr = to_xorq(products_st)
-        reconstructed = from_xorq(xorq_expr)
+        tagged_expr = to_tagged(products_st)
+        reconstructed = from_tagged(tagged_expr)
 
         # Verify dimensions preserved
         assert "category" in reconstructed.dimensions
@@ -165,8 +165,8 @@ class TestMalloyModelsRoundTrip:
         )
 
         # Round-trip
-        xorq_expr = to_xorq(sales_st)
-        reconstructed = from_xorq(xorq_expr)
+        tagged_expr = to_tagged(sales_st)
+        reconstructed = from_tagged(tagged_expr)
 
         # Verify measures preserved
         assert hasattr(reconstructed, "measures")
@@ -211,8 +211,8 @@ class TestMalloyModelsRoundTrip:
         )
 
         # Round-trip
-        xorq_expr = to_xorq(category_st)
-        reconstructed = from_xorq(xorq_expr)
+        tagged_expr = to_tagged(category_st)
+        reconstructed = from_tagged(tagged_expr)
 
         # Verify structure
         assert "category" in reconstructed.dimensions
@@ -259,8 +259,8 @@ class TestMalloyModelsRoundTrip:
         )
 
         # Round-trip
-        xorq_expr = to_xorq(orders_st)
-        reconstructed = from_xorq(xorq_expr)
+        tagged_expr = to_tagged(orders_st)
+        reconstructed = from_tagged(tagged_expr)
 
         # Verify dimensions and measures preserved
         assert "customer_id" in reconstructed.dimensions
@@ -313,8 +313,8 @@ class TestMalloyModelsRoundTrip:
         )
 
         # Round-trip
-        xorq_expr = to_xorq(products_st)
-        reconstructed = from_xorq(xorq_expr)
+        tagged_expr = to_tagged(products_st)
+        reconstructed = from_tagged(tagged_expr)
 
         # Execute and verify
         original_data = (
@@ -363,8 +363,8 @@ class TestMalloyModelsRoundTrip:
         )
 
         # Round-trip
-        xorq_expr = to_xorq(sales_st)
-        reconstructed = from_xorq(xorq_expr)
+        tagged_expr = to_tagged(sales_st)
+        reconstructed = from_tagged(tagged_expr)
 
         # Verify structure
         assert "product" in reconstructed.dimensions
@@ -409,14 +409,14 @@ class TestMalloyXorqFeatures:
         )
 
         # Convert to xorq
-        xorq_expr = to_xorq(data_st)
+        tagged_expr = to_tagged(data_st)
 
         # Apply xorq-specific tags (caching hints)
-        cached_expr = xorq_expr.tag(tag="cache", strategy="memory", ttl="3600")
+        cached_expr = tagged_expr.tag(tag="cache", strategy="memory", ttl="3600")
         assert cached_expr is not None
 
         # Should still be convertible back
-        reconstructed = from_xorq(cached_expr)
+        reconstructed = from_tagged(cached_expr)
         assert reconstructed is not None
 
     def test_xorq_multi_engine_with_malloy_model(self):
@@ -446,10 +446,10 @@ class TestMalloyXorqFeatures:
         )
 
         # Convert to xorq (enables multi-engine support)
-        xorq_expr = to_xorq(events_st)
+        tagged_expr = to_tagged(events_st)
 
         # Verify BSL metadata is preserved in xorq tag
-        op = xorq_expr.op()
+        op = tagged_expr.op()
         assert hasattr(op, "metadata")
         metadata = dict(op.metadata)
         assert metadata["bsl_op_type"] == "SemanticTableOp"
