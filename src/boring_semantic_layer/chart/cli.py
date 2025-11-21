@@ -49,7 +49,7 @@ def render(md_path: Path, output: Path, format: str, watch: bool, serve: bool, p
         bsl render doc.md --serve            # Serve with live reload in browser
         bsl render doc.md -s -p 3000         # Serve on port 3000
     """
-    from boring_semantic_layer.chart.md_renderer import cmd_render
+    from boring_semantic_layer.chart.md_parser import cmd_render
 
     # Determine output path
     if output is None:
@@ -102,7 +102,7 @@ def _watch_and_render(md_path: Path, output: Path, format: str):
 
     import time
 
-    from boring_semantic_layer.chart.md_renderer import render_to_html
+    from boring_semantic_layer.chart.md_parser import render_to_html
 
     class MarkdownChangeHandler(FileSystemEventHandler):
         def __init__(self, target_path: Path):

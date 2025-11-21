@@ -13,7 +13,9 @@ from typing import Any
 
 import markdown
 
-from .md_parser import CustomJSONEncoder, MarkdownParser, QueryExecutor
+from .converter import CustomJSONEncoder
+from .executor import QueryExecutor
+from .parser import MarkdownParser
 
 
 def parse_markdown_with_queries(content: str) -> tuple[str, dict[str, str]]:
