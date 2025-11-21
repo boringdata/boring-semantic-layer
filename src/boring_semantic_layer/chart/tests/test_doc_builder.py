@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Tests for validate_links.py - Documentation link validation
+"""Tests for documentation builder and link validation.
 
 Tests cover:
 - Markdown link extraction
@@ -11,10 +10,14 @@ Tests cover:
 - Dynamic route matching
 """
 
+# Import from docs builder's validate_links module
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent / "docs" / "md"))
 from validate_links import (
     extract_markdown_links,
     extract_routes_from_app_tsx,
