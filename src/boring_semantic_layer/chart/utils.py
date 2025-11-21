@@ -80,6 +80,8 @@ def detect_time_dimension_from_graph(
         Name of time dimension if found, None otherwise
     """
     try:
+        from boring_semantic_layer.graph_utils import graph_predecessors
+
         graph = semantic_aggregate.graph
 
         for dim_name in dimensions:
@@ -87,7 +89,7 @@ def detect_time_dimension_from_graph(
                 continue
 
             # Check predecessors (dependencies)
-            for pred_name in graph.predecessors(dim_name):
+            for pred_name in graph_predecessors(graph, dim_name):
                 if pred_name not in dims_dict:
                     continue
 
