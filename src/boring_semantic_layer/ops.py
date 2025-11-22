@@ -527,18 +527,23 @@ class SemanticTableOp(Relation):
         )
 
     @property
-    def schema(self) -> Schema:
-        # Import FrozenOrderedDict from same module as Schema at runtime
-        # This ensures we get the correct one even if xorq is loaded after this module
-        schema_module = Schema.__module__
-        if 'vendor' in schema_module:
-            # xorq vendored ibis
-            from xorq.vendor.ibis.common.collections import FrozenOrderedDict as FOD
-        else:
-            # regular ibis
-            from ibis.common.collections import FrozenOrderedDict as FOD
+    def schema(self):
+        """Get schema of semantic table.
 
-        return Schema(fields=FOD({name: v.dtype for name, v in self.values.items()}))
+        Uses runtime imports to handle both regular ibis and xorq (which vendors ibis).
+        Converts dtypes to strings to allow Schema to parse them into the correct dtype objects.
+        """
+        # Build schema dict with string dtypes for cross-module compatibility
+        fields_dict = {name: str(v.dtype) for name, v in self.values.items()}
+
+        # Try xorq's vendored ibis first (for Snowflake/xorq backends)
+        try:
+            from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
+            return XorqSchema(fields_dict)
+        except (ImportError, ModuleNotFoundError):
+            # Fall back to regular ibis
+            from ibis.expr.schema import Schema as IbisSchema
+            return IbisSchema(fields_dict)
 
     @property
     def json_definition(self) -> Mapping[str, Any]:
@@ -744,11 +749,14 @@ class SemanticProjectOp(Relation):
     @property
     def schema(self) -> Schema:
         # Runtime import to handle xorq vendoring
-        if 'vendor' in Schema.__module__:
-            from xorq.vendor.ibis.common.collections import FrozenOrderedDict as FOD
-        else:
-            from ibis.common.collections import FrozenOrderedDict as FOD
-        return Schema(fields=FOD({k: v.dtype for k, v in self.values.items()}))
+        try:
+            from xorq.vendor.ibis.common.collections import FrozenOrderedDict
+            from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
+            return XorqSchema(fields=FrozenOrderedDict({k: v.dtype for k, v in self.values.items()}))
+        except (ImportError, ModuleNotFoundError):
+            from ibis.common.collections import FrozenOrderedDict
+            from ibis.expr.schema import Schema as IbisSchema
+            return IbisSchema(fields=FrozenOrderedDict({k: v.dtype for k, v in self.values.items()}))
 
     def to_ibis(self):
         all_roots = _find_all_root_models(self.source)
@@ -1001,11 +1009,14 @@ class SemanticAggregateOp(Relation):
     @property
     def schema(self) -> Schema:
         # Runtime import to handle xorq vendoring
-        if 'vendor' in Schema.__module__:
-            from xorq.vendor.ibis.common.collections import FrozenOrderedDict as FOD
-        else:
-            from ibis.common.collections import FrozenOrderedDict as FOD
-        return Schema(fields=FOD({n: v.dtype for n, v in self.values.items()}))
+        try:
+            from xorq.vendor.ibis.common.collections import FrozenOrderedDict
+            from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
+            return XorqSchema(fields=FrozenOrderedDict({n: v.dtype for n, v in self.values.items()}))
+        except (ImportError, ModuleNotFoundError):
+            from ibis.common.collections import FrozenOrderedDict
+            from ibis.expr.schema import Schema as IbisSchema
+            return IbisSchema(fields=FrozenOrderedDict({n: v.dtype for n, v in self.values.items()}))
 
     @property
     def measures(self) -> tuple[str, ...]:
@@ -1306,18 +1317,23 @@ class SemanticJoinOp(Relation):
         return FrozenOrderedDict(vals)
 
     @property
-    def schema(self) -> Schema:
-        # Import FrozenOrderedDict from same module as Schema at runtime
-        # This ensures we get the correct one even if xorq is loaded after this module
-        schema_module = Schema.__module__
-        if 'vendor' in schema_module:
-            # xorq vendored ibis
-            from xorq.vendor.ibis.common.collections import FrozenOrderedDict as FOD
-        else:
-            # regular ibis
-            from ibis.common.collections import FrozenOrderedDict as FOD
+    def schema(self):
+        """Get schema of semantic table.
 
-        return Schema(fields=FOD({name: v.dtype for name, v in self.values.items()}))
+        Uses runtime imports to handle both regular ibis and xorq (which vendors ibis).
+        Converts dtypes to strings to allow Schema to parse them into the correct dtype objects.
+        """
+        # Build schema dict with string dtypes for cross-module compatibility
+        fields_dict = {name: str(v.dtype) for name, v in self.values.items()}
+
+        # Try xorq's vendored ibis first (for Snowflake/xorq backends)
+        try:
+            from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
+            return XorqSchema(fields_dict)
+        except (ImportError, ModuleNotFoundError):
+            # Fall back to regular ibis
+            from ibis.expr.schema import Schema as IbisSchema
+            return IbisSchema(fields_dict)
 
     def get_dimensions(self) -> Mapping[str, Dimension]:
         """Get dictionary of dimensions with metadata."""
