@@ -91,14 +91,14 @@ def _unwrap(wrapped: Any) -> Any:
     return wrapped.unwrap if isinstance(wrapped, _CallableWrapper) else wrapped
 
 
-def _build_graph_repr(op: Relation) -> str:
-    """Build a stacked graph representation using Ibis's pretty formatter.
-
-    Uses Ibis's built-in formatting to display operations as r0, r1, r2, etc.
-    """
+def _semantic_repr(op: Relation) -> str:
+    """Generate repr for semantic operations using Ibis's pretty printer."""
     from ibis.expr.format import pretty
-
-    return pretty(op)
+    try:
+        return pretty(op)
+    except Exception:
+        # Fallback to default repr if pretty printing fails
+        return object.__repr__(op)
 
 
 def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
@@ -520,8 +520,7 @@ class SemanticTableOp(Relation):
         )
 
     def __repr__(self) -> str:
-        """Custom repr to avoid Ibis expression truthiness issues."""
-        return _build_graph_repr(self)
+        return _semantic_repr(self)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -623,8 +622,7 @@ class SemanticFilterOp(Relation):
         )
 
     def __repr__(self) -> str:
-        """Custom repr to avoid Ibis expression truthiness issues."""
-        return _build_graph_repr(self)
+        return _semantic_repr(self)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -746,6 +744,9 @@ class SemanticProjectOp(Relation):
     def __init__(self, source: Relation, fields: Iterable[str]) -> None:
         super().__init__(source=Relation.__coerce__(source), fields=tuple(fields))
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         src_vals = self.source.values
@@ -803,6 +804,9 @@ class SemanticGroupByOp(Relation):
 
     def __init__(self, source: Relation, keys: Iterable[str]) -> None:
         super().__init__(source=Relation.__coerce__(source), keys=tuple(keys))
+
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -987,8 +991,7 @@ class SemanticAggregateOp(Relation):
         )
 
     def __repr__(self) -> str:
-        """Custom repr to avoid Ibis expression truthiness issues."""
-        return _build_graph_repr(self)
+        return _semantic_repr(self)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -1203,6 +1206,9 @@ class SemanticMutateOp(Relation):
             nested_columns=source_nested,
         )
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         return self.source.values
@@ -1240,6 +1246,9 @@ class SemanticUnnestOp(Relation):
 
     source: Relation
     column: str
+
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
 
     @property
     def schema(self) -> Schema:
@@ -1311,8 +1320,7 @@ class SemanticJoinOp(Relation):
         )
 
     def __repr__(self) -> str:
-        """Custom repr to avoid Ibis expression truthiness issues."""
-        return _build_graph_repr(self)
+        return _semantic_repr(self)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -1871,6 +1879,9 @@ class SemanticOrderByOp(Relation):
             keys=tuple(wrap_key(k) for k in keys),
         )
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         return self.source.values
@@ -1905,6 +1916,9 @@ class SemanticLimitOp(Relation):
         if offset < 0:
             raise ValueError(f"offset must be non-negative, got {offset}")
         super().__init__(source=Relation.__coerce__(source), n=n, offset=offset)
+
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -2068,6 +2082,9 @@ class SemanticIndexOp(Relation):
             by=by,
             sample=sample,
         )
+
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:

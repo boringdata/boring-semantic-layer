@@ -35,22 +35,22 @@ def _format_semantic_table(op: SemanticTableOp, **kwargs):
 
 
 @fmt.register(SemanticFilterOp)
-def _format_semantic_filter(op: SemanticFilterOp, parent=None, **kwargs):
+def _format_semantic_filter(op: SemanticFilterOp, source=None, **kwargs):
     """Format SemanticFilterOp for pretty printing."""
-    if parent is None:
+    if source is None:
         top = "Filter\n"
     else:
-        top = f"Filter[{parent}]\n"
+        top = f"Filter[{source}]\n"
     return top + render_fields({"predicate": "<predicate>"}, 1)
 
 
 @fmt.register(SemanticAggregateOp)
-def _format_semantic_aggregate(op: SemanticAggregateOp, parent=None, **kwargs):
+def _format_semantic_aggregate(op: SemanticAggregateOp, source=None, **kwargs):
     """Format SemanticAggregateOp for pretty printing."""
-    if parent is None:
+    if source is None:
         top = "Aggregate\n"
     else:
-        top = f"Aggregate[{parent}]\n"
+        top = f"Aggregate[{source}]\n"
 
     fields = {}
     if op.keys:
@@ -85,12 +85,12 @@ def _format_semantic_join(op: SemanticJoinOp, left=None, right=None, **kwargs):
 
 
 @fmt.register(SemanticGroupByOp)
-def _format_semantic_groupby(op: SemanticGroupByOp, parent=None, **kwargs):
+def _format_semantic_groupby(op: SemanticGroupByOp, source=None, **kwargs):
     """Format SemanticGroupByOp for pretty printing."""
-    if parent is None:
+    if source is None:
         top = "GroupBy\n"
     else:
-        top = f"GroupBy[{parent}]\n"
+        top = f"GroupBy[{source}]\n"
 
     keys_to_show = list(op.keys[:3])
     if len(op.keys) > 3:
@@ -100,12 +100,12 @@ def _format_semantic_groupby(op: SemanticGroupByOp, parent=None, **kwargs):
 
 
 @fmt.register(SemanticProjectOp)
-def _format_semantic_project(op: SemanticProjectOp, parent=None, **kwargs):
+def _format_semantic_project(op: SemanticProjectOp, source=None, **kwargs):
     """Format SemanticProjectOp for pretty printing."""
-    if parent is None:
+    if source is None:
         top = "Project\n"
     else:
-        top = f"Project[{parent}]\n"
+        top = f"Project[{source}]\n"
 
     fields_to_show = list(op.fields[:3])
     if len(op.fields) > 3:
@@ -115,34 +115,34 @@ def _format_semantic_project(op: SemanticProjectOp, parent=None, **kwargs):
 
 
 @fmt.register(SemanticOrderByOp)
-def _format_semantic_orderby(op: SemanticOrderByOp, parent=None, **kwargs):
+def _format_semantic_orderby(op: SemanticOrderByOp, source=None, **kwargs):
     """Format SemanticOrderByOp for pretty printing."""
-    if parent is None:
+    if source is None:
         top = "OrderBy\n"
     else:
-        top = f"OrderBy[{parent}]\n"
+        top = f"OrderBy[{source}]\n"
 
     return top + render_fields({"sort_keys": list(op.keys)}, 1)
 
 
 @fmt.register(SemanticLimitOp)
-def _format_semantic_limit(op: SemanticLimitOp, parent=None, **kwargs):
+def _format_semantic_limit(op: SemanticLimitOp, source=None, **kwargs):
     """Format SemanticLimitOp for pretty printing."""
-    if parent is None:
+    if source is None:
         top = "Limit\n"
     else:
-        top = f"Limit[{parent}]\n"
+        top = f"Limit[{source}]\n"
 
     return top + render_fields({"n": op.n}, 1)
 
 
 @fmt.register(SemanticMutateOp)
-def _format_semantic_mutate(op: SemanticMutateOp, parent=None, **kwargs):
+def _format_semantic_mutate(op: SemanticMutateOp, source=None, **kwargs):
     """Format SemanticMutateOp for pretty printing."""
-    if parent is None:
+    if source is None:
         top = "Mutate\n"
     else:
-        top = f"Mutate[{parent}]\n"
+        top = f"Mutate[{source}]\n"
 
     exprs_to_show = list(op.exprs.keys())[:3]
     if len(op.exprs) > 3:
@@ -152,22 +152,22 @@ def _format_semantic_mutate(op: SemanticMutateOp, parent=None, **kwargs):
 
 
 @fmt.register(SemanticUnnestOp)
-def _format_semantic_unnest(op: SemanticUnnestOp, parent=None, **kwargs):
+def _format_semantic_unnest(op: SemanticUnnestOp, source=None, **kwargs):
     """Format SemanticUnnestOp for pretty printing."""
-    if parent is None:
+    if source is None:
         top = "Unnest\n"
     else:
-        top = f"Unnest[{parent}]\n"
+        top = f"Unnest[{source}]\n"
 
     return top
 
 
 @fmt.register(SemanticIndexOp)
-def _format_semantic_index(op: SemanticIndexOp, parent=None, **kwargs):
+def _format_semantic_index(op: SemanticIndexOp, source=None, **kwargs):
     """Format SemanticIndexOp for pretty printing."""
-    if parent is None:
+    if source is None:
         top = "Index\n"
     else:
-        top = f"Index[{parent}]\n"
+        top = f"Index[{source}]\n"
 
     return top + render_fields({"index": op.index}, 1)
