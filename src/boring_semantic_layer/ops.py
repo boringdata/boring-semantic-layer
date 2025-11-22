@@ -4,20 +4,41 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import reduce
 from typing import TYPE_CHECKING, Any
 
-from xorq.vendor import ibis
-from xorq.vendor import ibis as xibis
-import xorq.vendor.ibis.selectors as s
+# Use regular ibis - works with both regular ibis and xorq backends
+import ibis
+import ibis.selectors as s
 from attrs import field, frozen
-from xorq.vendor.ibis.common.collections import FrozenDict, FrozenOrderedDict
-from xorq.vendor.ibis.common.deferred import Deferred as XorqDeferred
-from xorq.vendor.ibis.expr import datatypes as dt
-from xorq.vendor.ibis.expr import operations as ibis_ops
-from xorq.vendor.ibis.expr import types as ir
-from xorq.vendor.ibis.expr.operations.relations import Field, Relation
-from xorq.vendor.ibis.expr.schema import Schema
+from ibis.common.deferred import Deferred
+from ibis.expr import datatypes as dt
+from ibis.expr import operations as ibis_ops
+from ibis.expr import types as ir
+from ibis.expr.operations.relations import Field, Relation
+from ibis.expr.schema import Schema
 
-# Also import regular ibis Deferred to support both
-from ibis.common.deferred import Deferred as RegularDeferred
+# Import FrozenDict and FrozenOrderedDict from the same module as Schema
+# This handles both regular ibis and xorq (which vendors ibis)
+# Schema is in ibis.expr.schema or xorq.vendor.ibis.expr.schema
+# We need ibis.common.collections or xorq.vendor.ibis.common.collections
+_schema_module_parts = Schema.__module__.split('.')
+if 'vendor' in _schema_module_parts:
+    # xorq: xorq.vendor.ibis.expr.schema -> xorq.vendor.ibis.common.collections
+    _collections_path = '.'.join(_schema_module_parts[:3]) + '.common.collections'
+else:
+    # regular ibis: ibis.expr.schema -> ibis.common.collections
+    _collections_path = _schema_module_parts[0] + '.common.collections'
+
+try:
+    _collections_module = __import__(_collections_path, fromlist=['FrozenDict', 'FrozenOrderedDict'])
+    FrozenDict = _collections_module.FrozenDict
+    FrozenOrderedDict = _collections_module.FrozenOrderedDict
+    # Debug: Verify correct module was loaded
+    # print(f"[BSL] Loaded FrozenOrderedDict from: {FrozenOrderedDict.__module__}")
+    # print(f"[BSL] Schema is from: {Schema.__module__}")
+except (ImportError, AttributeError) as e:
+    # Fallback to direct import if dynamic import fails
+    import warnings
+    warnings.warn(f"Failed to dynamically import from {_collections_path}: {e}. Falling back to direct import.")
+    from ibis.common.collections import FrozenDict, FrozenOrderedDict
 
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Success, safe
@@ -25,8 +46,9 @@ from toolz import curry
 
 
 def _is_deferred(expr) -> bool:
-    """Check if expression is a Deferred from either regular or vendored ibis."""
-    return isinstance(expr, (XorqDeferred, RegularDeferred))
+    """Check if expression is a Deferred."""
+    return isinstance(expr, Deferred)
+
 
 from . import projection_utils
 from .compile_all import compile_grouped_with_all
@@ -52,6 +74,10 @@ if TYPE_CHECKING:
 
 
 def _to_ibis(source: Any) -> ir.Table:
+    """Convert source to ibis table without forcing conversions.
+
+    Works with both regular ibis tables and xorq backend tables.
+    """
     return source.to_ibis() if hasattr(source, "to_ibis") else source.to_expr()
 
 
@@ -63,6 +89,16 @@ def _semantic_table(*args, **kwargs) -> SemanticTable:
 
 def _unwrap(wrapped: Any) -> Any:
     return wrapped.unwrap if isinstance(wrapped, _CallableWrapper) else wrapped
+
+
+def _semantic_repr(op: Relation) -> str:
+    """Generate repr for semantic operations using Ibis's pretty printer."""
+    from ibis.expr.format import pretty
+    try:
+        return pretty(op)
+    except Exception:
+        # Fallback to default repr if pretty printing fails
+        return object.__repr__(op)
 
 
 def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
@@ -445,16 +481,17 @@ class SemanticTableOp(Relation):
 
     Stores ir.Table expression directly to avoid .op() → .to_expr() conversions.
 
-    Note: Also accepts xorq's vendored ibis tables to support optional xorq integration.
+    Note: Accepts both regular ibis.Table and xorq's vendored ibis.Table.
+    Regular ibis tables are automatically converted to xorq in __init__.
     """
 
-    table: ir.Table
+    table: Any  # Accepts both ir.Table and regular ibis.expr.types.Table
     dimensions: FrozenDict[str, Dimension]
     measures: FrozenDict[str, Measure]
     calc_measures: FrozenDict[str, Any]
     name: str | None = None
     description: str | None = None
-    _source_join: Any = None  # Track if this wraps a join (SemanticJoinOp) for optimization
+    _source_join: Any = field(default=None, repr=False)  # Track if this wraps a join (SemanticJoinOp) for optimization
 
     def __init__(
         self,
@@ -466,8 +503,8 @@ class SemanticTableOp(Relation):
         description: str | None = None,
         _source_join: Any = None,
     ) -> None:
-        # Always use super().__init__() to ensure proper xorq/ibis initialization
-        # This works for both regular ibis and xorq's vendored ibis
+        # Accept both regular ibis and xorq tables without conversion
+        # This allows using regular ibis by default, xorq only when provided
         super().__init__(
             table=table,
             dimensions=FrozenDict(dimensions)
@@ -482,6 +519,9 @@ class SemanticTableOp(Relation):
             _source_join=_source_join,
         )
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         return FrozenOrderedDict(
@@ -493,8 +533,23 @@ class SemanticTableOp(Relation):
         )
 
     @property
-    def schema(self) -> Schema:
-        return Schema({name: v.dtype for name, v in self.values.items()})
+    def schema(self):
+        """Get schema of semantic table.
+
+        Uses runtime imports to handle both regular ibis and xorq (which vendors ibis).
+        Converts dtypes to strings to allow Schema to parse them into the correct dtype objects.
+        """
+        # Build schema dict with string dtypes for cross-module compatibility
+        fields_dict = {name: str(v.dtype) for name, v in self.values.items()}
+
+        # Try xorq's vendored ibis first (for Snowflake/xorq backends)
+        try:
+            from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
+            return XorqSchema(fields_dict)
+        except (ImportError, ModuleNotFoundError):
+            # Fall back to regular ibis
+            from ibis.expr.schema import Schema as IbisSchema
+            return IbisSchema(fields_dict)
 
     @property
     def json_definition(self) -> Mapping[str, Any]:
@@ -565,6 +620,9 @@ class SemanticFilterOp(Relation):
             source=Relation.__coerce__(source),
             predicate=_ensure_wrapped(predicate),
         )
+
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -686,6 +744,9 @@ class SemanticProjectOp(Relation):
     def __init__(self, source: Relation, fields: Iterable[str]) -> None:
         super().__init__(source=Relation.__coerce__(source), fields=tuple(fields))
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         src_vals = self.source.values
@@ -695,7 +756,15 @@ class SemanticProjectOp(Relation):
 
     @property
     def schema(self) -> Schema:
-        return Schema({k: v.dtype for k, v in self.values.items()})
+        # Runtime import to handle xorq vendoring
+        try:
+            from xorq.vendor.ibis.common.collections import FrozenOrderedDict
+            from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
+            return XorqSchema(fields=FrozenOrderedDict({k: v.dtype for k, v in self.values.items()}))
+        except (ImportError, ModuleNotFoundError):
+            from ibis.common.collections import FrozenOrderedDict
+            from ibis.expr.schema import Schema as IbisSchema
+            return IbisSchema(fields=FrozenOrderedDict({k: v.dtype for k, v in self.values.items()}))
 
     def to_ibis(self):
         all_roots = _find_all_root_models(self.source)
@@ -735,6 +804,9 @@ class SemanticGroupByOp(Relation):
 
     def __init__(self, source: Relation, keys: Iterable[str]) -> None:
         super().__init__(source=Relation.__coerce__(source), keys=tuple(keys))
+
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -918,6 +990,9 @@ class SemanticAggregateOp(Relation):
             nested_columns=tuple(nested_columns or []),
         )
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         all_roots = _find_all_root_models(self.source)
@@ -941,7 +1016,15 @@ class SemanticAggregateOp(Relation):
 
     @property
     def schema(self) -> Schema:
-        return Schema({n: v.dtype for n, v in self.values.items()})
+        # Runtime import to handle xorq vendoring
+        try:
+            from xorq.vendor.ibis.common.collections import FrozenOrderedDict
+            from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
+            return XorqSchema(fields=FrozenOrderedDict({n: v.dtype for n, v in self.values.items()}))
+        except (ImportError, ModuleNotFoundError):
+            from ibis.common.collections import FrozenOrderedDict
+            from ibis.expr.schema import Schema as IbisSchema
+            return IbisSchema(fields=FrozenOrderedDict({n: v.dtype for n, v in self.values.items()}))
 
     @property
     def measures(self) -> tuple[str, ...]:
@@ -1123,6 +1206,9 @@ class SemanticMutateOp(Relation):
             nested_columns=source_nested,
         )
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         return self.source.values
@@ -1160,6 +1246,9 @@ class SemanticUnnestOp(Relation):
 
     source: Relation
     column: str
+
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
 
     @property
     def schema(self) -> Schema:
@@ -1230,6 +1319,9 @@ class SemanticJoinOp(Relation):
             on=on,
         )
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         vals: dict[str, Any] = {}
@@ -1238,8 +1330,23 @@ class SemanticJoinOp(Relation):
         return FrozenOrderedDict(vals)
 
     @property
-    def schema(self) -> Schema:
-        return Schema({name: v.dtype for name, v in self.values.items()})
+    def schema(self):
+        """Get schema of semantic table.
+
+        Uses runtime imports to handle both regular ibis and xorq (which vendors ibis).
+        Converts dtypes to strings to allow Schema to parse them into the correct dtype objects.
+        """
+        # Build schema dict with string dtypes for cross-module compatibility
+        fields_dict = {name: str(v.dtype) for name, v in self.values.items()}
+
+        # Try xorq's vendored ibis first (for Snowflake/xorq backends)
+        try:
+            from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
+            return XorqSchema(fields_dict)
+        except (ImportError, ModuleNotFoundError):
+            # Fall back to regular ibis
+            from ibis.expr.schema import Schema as IbisSchema
+            return IbisSchema(fields_dict)
 
     def get_dimensions(self) -> Mapping[str, Dimension]:
         """Get dictionary of dimensions with metadata."""
@@ -1772,6 +1879,9 @@ class SemanticOrderByOp(Relation):
             keys=tuple(wrap_key(k) for k in keys),
         )
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         return self.source.values
@@ -1806,6 +1916,9 @@ class SemanticLimitOp(Relation):
         if offset < 0:
             raise ValueError(f"offset must be non-negative, got {offset}")
         super().__init__(source=Relation.__coerce__(source), n=n, offset=offset)
+
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -1969,6 +2082,9 @@ class SemanticIndexOp(Relation):
             by=by,
             sample=sample,
         )
+
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:

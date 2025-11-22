@@ -5,11 +5,11 @@ from functools import reduce
 from operator import attrgetter
 from typing import Any
 
-from xorq.vendor import ibis
-from xorq.vendor.ibis.common.collections import FrozenDict
-from xorq.vendor.ibis.expr import types as ir
-from xorq.vendor.ibis.expr.types import Table
-from xorq.vendor.ibis.expr.types.groupby import GroupedTable
+import ibis
+from ibis.common.collections import FrozenDict
+from ibis.expr import types as ir
+from ibis.expr.types import Table
+from ibis.expr.types.groupby import GroupedTable
 from returns.result import Success, safe
 
 from .chart import chart as create_chart
@@ -80,8 +80,24 @@ class SemanticTable(ir.Table):
     def unnest(self, column: str) -> SemanticUnnest:
         return SemanticUnnest(source=self.op(), column=column)
 
+    def select(self, *args, **kwargs):
+        """Prevent select() on semantic tables.
+
+        The semantic layer works with dimensions and measures, not arbitrary column selection.
+        Use .to_ibis().select() if you need to perform Ibis operations.
+        """
+        raise NotImplementedError(
+            "select() is not supported on semantic tables. "
+            "Use group_by() and aggregate() to work with dimensions and measures, "
+            "or call .to_ibis().select() to convert to an Ibis table first."
+        )
+
     def pipe(self, func, *args, **kwargs):
         return func(self, *args, **kwargs)
+
+    def __repr__(self) -> str:
+        """Return the graph repr of the underlying operation."""
+        return repr(self.op())
 
     def to_ibis(self):
         return self.op().to_ibis()
@@ -155,14 +171,7 @@ class SemanticModel(SemanticTable):
         description: str | None = None,
         _source_join: Any | None = None,
     ) -> None:
-        # Convert regular ibis tables to xorq vendored ibis to prevent type errors
-        from xorq.vendor.ibis.expr.types import Table as XorqTable
-
-        if hasattr(table, '__class__') and not isinstance(table, XorqTable):
-            # Check if this is a regular ibis table by checking module path
-            if hasattr(table, '__class__') and 'ibis.expr.types' in str(table.__class__.__module__):
-                from xorq.common.utils.ibis_utils import from_ibis
-                table = from_ibis(table)
+        # Keep tables in regular ibis - only convert to xorq at execution time if needed
 
         dims = FrozenDict(
             {dim_name: _create_dimension(dim) for dim_name, dim in (dimensions or {}).items()},
@@ -1160,3 +1169,4 @@ class SemanticProject(SemanticTable):
         return _build_semantic_model_from_roots(
             self.op().to_ibis(), all_roots, field_filter=set(self.fields)
         )
+
