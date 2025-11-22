@@ -165,14 +165,17 @@ def _format_semantic_limit(op: SemanticLimitOp, source=None, **kwargs):
 @fmt.register(SemanticMutateOp)
 def _format_semantic_mutate(op: SemanticMutateOp, source=None, **kwargs):
     """Format SemanticMutateOp for pretty printing."""
+    # Access the actual operation field
+    post = object.__getattribute__(op, 'post')
+
     if source is None:
         top = "Mutate\n"
     else:
         top = f"Mutate[{source}]\n"
 
-    exprs_to_show = list(op.exprs.keys())[:3]
-    if len(op.exprs) > 3:
-        exprs_to_show.append(f"... and {len(op.exprs) - 3} more")
+    exprs_to_show = list(post.keys())[:3]
+    if len(post) > 3:
+        exprs_to_show.append(f"... and {len(post) - 3} more")
 
     return top + render_fields({"new_columns": exprs_to_show}, 1)
 
