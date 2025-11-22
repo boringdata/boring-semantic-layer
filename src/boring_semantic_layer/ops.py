@@ -1448,12 +1448,13 @@ class SemanticJoinOp(Relation):
 
         return SemanticFilter(source=self, predicate=predicate)
 
-    def join(
+    def join_one(
         self,
         other: SemanticTable,
-        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
+        on: Callable[[Any, Any], ir.BooleanValue],
         how: str = "inner",
     ):
+        """Join with one-to-one relationship semantics."""
         from .expr import SemanticJoin
 
         return SemanticJoin(
@@ -1463,34 +1464,20 @@ class SemanticJoinOp(Relation):
             how=how,
         )
 
-    def join_one(
-        self,
-        other: SemanticTable,
-        left_on: str,
-        right_on: str,
-    ):
-        from .expr import SemanticJoin
-
-        return SemanticJoin(
-            left=self,
-            right=other.op(),
-            on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
-            how="inner",
-        )
-
     def join_many(
         self,
         other: SemanticTable,
-        left_on: str,
-        right_on: str,
+        on: Callable[[Any, Any], ir.BooleanValue],
+        how: str = "left",
     ):
+        """Join with one-to-many relationship semantics."""
         from .expr import SemanticJoin
 
         return SemanticJoin(
             left=self,
             right=other.op(),
-            on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
-            how="left",
+            on=on,
+            how=how,
         )
 
     def index(

@@ -215,7 +215,7 @@ class TestIndexOnJoin:
 
     def test_index_after_join_one(self, flights_semantic, airports_semantic):
         """Test index on SemanticJoin created by join_one."""
-        joined = flights_semantic.join_one(airports_semantic, left_on="origin", right_on="code")
+        joined = flights_semantic.join_one(airports_semantic, lambda f, a: f.origin == a.code)
 
         # This should work now (previously failed with AttributeError)
         # Note: When indexing specific field, it doesn't include table prefix in result
@@ -227,7 +227,7 @@ class TestIndexOnJoin:
 
     def test_index_join_with_both_table_dimensions(self, flights_semantic, airports_semantic):
         """Test indexing dimensions from both joined tables."""
-        joined = flights_semantic.join_one(airports_semantic, left_on="origin", right_on="code")
+        joined = flights_semantic.join_one(airports_semantic, lambda f, a: f.origin == a.code)
 
         result = joined.index(["flights.carrier", "airports.state"]).execute()
 
@@ -239,7 +239,7 @@ class TestIndexOnJoin:
 
     def test_index_after_join_many(self, flights_semantic, airports_semantic):
         """Test index after join_many (left join)."""
-        joined = flights_semantic.join_many(airports_semantic, left_on="origin", right_on="code")
+        joined = flights_semantic.join_many(airports_semantic, lambda f, a: f.origin == a.code)
 
         result = joined.index("flights.carrier").execute()
 
@@ -257,14 +257,15 @@ class TestIndexOnJoin:
         a_sem = to_semantic_table(a_table, name="a").with_dimensions(name=lambda t: t.name)
         b_sem = to_semantic_table(b_table, name="b").with_dimensions(value=lambda t: t.value)
 
-        joined = a_sem.join_cross(b_sem)
+        # Cross join removed - using cartesian product via join_many with always-true condition
+        joined = a_sem.join_many(b_sem, lambda a, b: ibis.literal(True))
         result = joined.index("a.name").execute()
 
         assert len(result) > 0
 
     def test_index_join_with_order_and_limit(self, flights_semantic, airports_semantic):
         """Test index on join with order_by and limit."""
-        joined = flights_semantic.join_one(airports_semantic, left_on="origin", right_on="code")
+        joined = flights_semantic.join_one(airports_semantic, lambda f, a: f.origin == a.code)
 
         result = (
             joined.index(["flights.carrier", "airports.state"])
@@ -308,7 +309,7 @@ class TestIndexAccessMethods:
 
     def test_join_has_to_untagged(self, flights_semantic, airports_semantic):
         """Test that SemanticJoin has to_untagged() method."""
-        joined = flights_semantic.join_one(airports_semantic, left_on="origin", right_on="code")
+        joined = flights_semantic.join_one(airports_semantic, lambda f, a: f.origin == a.code)
 
         ibis_table = joined.to_untagged()
         assert ibis_table is not None
@@ -317,7 +318,7 @@ class TestIndexAccessMethods:
 
     def test_join_has_as_expr(self, flights_semantic, airports_semantic):
         """Test that SemanticJoin has as_expr() method."""
-        joined = flights_semantic.join_one(airports_semantic, left_on="origin", right_on="code")
+        joined = flights_semantic.join_one(airports_semantic, lambda f, a: f.origin == a.code)
 
         expr = joined.as_expr()
         assert expr is not None
@@ -325,7 +326,7 @@ class TestIndexAccessMethods:
 
     def test_join_has_getitem(self, flights_semantic, airports_semantic):
         """Test that SemanticJoin has __getitem__() method."""
-        joined = flights_semantic.join_one(airports_semantic, left_on="origin", right_on="code")
+        joined = flights_semantic.join_one(airports_semantic, lambda f, a: f.origin == a.code)
 
         # Should be able to access dimensions by key
         carrier_dim = joined["flights.carrier"]
@@ -336,7 +337,7 @@ class TestIndexAccessMethods:
 
     def test_join_getitem_invalid_key(self, flights_semantic, airports_semantic):
         """Test that __getitem__ raises KeyError for invalid keys."""
-        joined = flights_semantic.join_one(airports_semantic, left_on="origin", right_on="code")
+        joined = flights_semantic.join_one(airports_semantic, lambda f, a: f.origin == a.code)
 
         with pytest.raises(KeyError, match="not found in dimensions"):
             _ = joined["nonexistent_field"]

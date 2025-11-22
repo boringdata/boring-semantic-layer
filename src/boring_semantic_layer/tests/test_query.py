@@ -340,7 +340,7 @@ class TestFiltersWithJoins:
         )
 
         # Join orders with customers
-        return orders_st.join_one(customers_st, left_on="customer_id", right_on="customer_id")
+        return orders_st.join_one(customers_st, lambda o, c: o.customer_id == c.customer_id)
 
     def test_filter_on_joined_dimension(self, joined_model):
         """Test filtering on a dimension from joined table."""

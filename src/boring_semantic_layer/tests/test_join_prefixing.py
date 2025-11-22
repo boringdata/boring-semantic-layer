@@ -89,7 +89,7 @@ class TestBasicPrefixing:
             record_count=lambda t: t.count(),
         )
 
-        joined = orders_st.join(items_st, on=lambda o, i: o.order_id == i.order_id)
+        joined = orders_st.join_many(items_st, lambda o, i: o.order_id == i.order_id)
 
         result = (
             joined.group_by("orders.customer_id")
@@ -123,9 +123,9 @@ class TestBasicPrefixing:
             .with_measures(total=lambda t: t.count())  # Different meaning of "total"
         )
 
-        joined = orders_st.join(
+        joined = orders_st.join_many(
             customers_st,
-            on=lambda o, c: o.customer_id == c.customer_id,
+            lambda o, c: o.customer_id == c.customer_id,
         )
 
         # Short name should resolve to orders.total (first match)
@@ -157,9 +157,9 @@ class TestBasicPrefixing:
             .with_measures(item_count=lambda t: t.count())
         )
 
-        joined = orders_st.join(
+        joined = orders_st.join_many(
             customers_st,
-            on=lambda o, c: o.customer_id == c.customer_id,
+            lambda o, c: o.customer_id == c.customer_id,
         )
 
         # Both explicit prefixed names should work
@@ -195,9 +195,9 @@ class TestDotAndBracketNotation:
             .with_measures(customer_count=lambda t: t.count())
         )
 
-        joined = orders_st.join(
+        joined = orders_st.join_many(
             customers_st,
-            on=lambda o, c: o.customer_id == c.customer_id,
+            lambda o, c: o.customer_id == c.customer_id,
         )
 
         # Use bracket notation for accessing prefixed measures (dots not allowed in Python identifiers)
@@ -230,9 +230,9 @@ class TestDotAndBracketNotation:
             .with_measures(customer_count=lambda t: t.count())
         )
 
-        joined = orders_st.join(
+        joined = orders_st.join_many(
             customers_st,
-            on=lambda o, c: o.customer_id == c.customer_id,
+            lambda o, c: o.customer_id == c.customer_id,
         )
 
         # Use bracket notation in with_measures
@@ -264,9 +264,9 @@ class TestDotAndBracketNotation:
             .with_measures(customer_count=lambda t: t.count())
         )
 
-        joined = orders_st.join(
+        joined = orders_st.join_many(
             customers_st,
-            on=lambda o, c: o.customer_id == c.customer_id,
+            lambda o, c: o.customer_id == c.customer_id,
         )
 
         # Use bracket notation for accessing prefixed measures
@@ -313,10 +313,10 @@ class TestMultipleJoins:
         )
 
         # Join all three tables - use raw column access in join predicates
-        joined = orders_st.join(
+        joined = orders_st.join_many(
             customers_st,
-            on=lambda o, c: o.customer_id == c.customer_id,
-        ).join(items_st, on=lambda oc, i: oc.order_id == i.order_id)
+            lambda o, c: o.customer_id == c.customer_id,
+        ).join_many(items_st, lambda oc, i: oc.order_id == i.order_id)
 
         # All three measures should be accessible with prefixes
         # After multiple joins, dimension names also get nested prefixes
@@ -369,10 +369,10 @@ class TestMultipleJoins:
         )
 
         # Chain joins - use raw column access in join predicates
-        joined = orders_st.join(
+        joined = orders_st.join_many(
             items_st,
-            on=lambda o, i: o.order_id == i.order_id,
-        ).join(products_st, on=lambda oi, p: oi.product_id == p.product_id)
+            lambda o, i: o.order_id == i.order_id,
+        ).join_many(products_st, lambda oi, p: oi.product_id == p.product_id)
 
         # Access measures from all three tables using bracket notation
         result = (
@@ -416,7 +416,7 @@ class TestCalculatedMeasuresWithPrefixes:
             )
         )
 
-        joined = orders_st.join(items_st, on=lambda o, i: o.order_id == i.order_id)
+        joined = orders_st.join_many(items_st, lambda o, i: o.order_id == i.order_id)
 
         # The calculated measure should be properly prefixed
         assert "orders.avg_order_value" in joined._calc_measures
@@ -445,9 +445,9 @@ class TestCalculatedMeasuresWithPrefixes:
             .with_measures(customer_count=lambda t: t.count())
         )
 
-        joined = orders_st.join(
+        joined = orders_st.join_many(
             customers_st,
-            on=lambda o, c: o.customer_id == c.customer_id,
+            lambda o, c: o.customer_id == c.customer_id,
         )
 
         # Create new calculated measure using prefixed measures from both tables (use bracket notation)
@@ -492,9 +492,9 @@ class TestDimensionPrefixing:
             .with_measures(customer_count=lambda t: t.count())
         )
 
-        joined = orders_st.join(
+        joined = orders_st.join_many(
             customers_st,
-            on=lambda o, c: o.customer_id == c.customer_id,
+            lambda o, c: o.customer_id == c.customer_id,
         )
 
         # Both customer_id dimensions should be prefixed
@@ -522,9 +522,9 @@ class TestDimensionPrefixing:
             .with_measures(customer_count=lambda t: t.count())
         )
 
-        joined = orders_st.join(
+        joined = orders_st.join_many(
             customers_st,
-            on=lambda o, c: o.customer_id == c.customer_id,
+            lambda o, c: o.customer_id == c.customer_id,
         )
 
         # Group by prefixed dimension from customers table
@@ -582,8 +582,7 @@ class TestJoinOneMethod:
 
         joined = orders.join_one(
             customers,
-            left_on="customer_id",
-            right_on="customer_id",
+            lambda o, c: o.customer_id == c.customer_id,
         )
 
         # Create a group_by operation
@@ -638,8 +637,7 @@ class TestJoinOneMethod:
 
         joined = orders.join_one(
             customers,
-            right_on="customer_id",
-            left_on="customer_id",
+            lambda o, c: o.customer_id == c.customer_id,
         )
 
         # Check that dimensions are properly prefixed
@@ -701,8 +699,7 @@ class TestJoinOneMethod:
 
         joined = orders.join_one(
             customers,
-            right_on="customer_id",
-            left_on="customer_id",
+            lambda o, c: o.customer_id == c.customer_id,
         )
 
         # Test with multiple dimensions and measures (the failing notebook case)
@@ -768,10 +765,10 @@ class TestChainedJoinsProjection:
         )
 
         # Chain joins: orders -> customers -> items
-        joined = orders_st.join(
+        joined = orders_st.join_many(
             customers_st,
-            on=lambda o, c: o.customer_id == c.customer_id,
-        ).join(items_st, on=lambda oc, i: oc.order_id == i.order_id)
+            lambda o, c: o.customer_id == c.customer_id,
+        ).join_many(items_st, lambda oc, i: oc.order_id == i.order_id)
 
         # Query that only needs country and revenue
         result = joined.group_by("customers.country").aggregate("orders.revenue")
@@ -819,10 +816,10 @@ class TestChainedJoinsProjection:
         )
 
         # Chain joins
-        joined = orders_st.join(
+        joined = orders_st.join_many(
             customers_st,
-            on=lambda o, c: o.customer_id == c.customer_id,
-        ).join(items_st, on=lambda oc, i: oc.order_id == i.order_id)
+            lambda o, c: o.customer_id == c.customer_id,
+        ).join_many(items_st, lambda oc, i: oc.order_id == i.order_id)
 
         # Query all measures from all tables
         result = joined.group_by("customers.country").aggregate(
@@ -888,9 +885,9 @@ class TestChainedJoinsProjection:
 
         # Chain all four tables: A -> B -> C -> D
         joined = (
-            st_a.join(st_b, on=lambda a, b: a.b_id == b.b_id)
-            .join(st_c, on=lambda ab, c: ab.c_id == c.c_id)
-            .join(st_d, on=lambda abc, d: abc.d_id == d.d_id)
+            st_a.join_many(st_b, lambda a, b: a.b_id == b.b_id)
+            .join_many(st_c, lambda ab, c: ab.c_id == c.c_id)
+            .join_many(st_d, lambda abc, d: abc.d_id == d.d_id)
         )
 
         # Query only needs measures from first and last table
@@ -919,7 +916,7 @@ class TestEdgeCases:
         st1 = to_semantic_table(tbl1).with_measures(count1=lambda t: t.count())
         st2 = to_semantic_table(tbl2).with_measures(count2=lambda t: t.count())
 
-        joined = st1.join(st2, on=lambda a, b: a.id == b.id)
+        joined = st1.join_many(st2, lambda a, b: a.id == b.id)
 
         # With auto-detected names (tbl1, tbl2), both measures should be prefixed
         measure_names = list(joined._base_measures.keys())
@@ -951,7 +948,7 @@ class TestEdgeCases:
 
         # Self-join on customer_id
         # Use bitwise & instead of 'and' for combining ibis expressions
-        joined = orders1.join(
+        joined = orders1.join_many(
             orders2,
             on=lambda left, right: (left.order_id != right.order_id)
             & (left.customer_id == right.customer_id),
@@ -988,9 +985,9 @@ class TestEdgeCases:
             .with_measures(customer_count=lambda t: t.count())
         )
 
-        joined = orders_st.join(
+        joined = orders_st.join_many(
             customers_st,
-            on=lambda o, c: o.customer_id == c.customer_id,
+            lambda o, c: o.customer_id == c.customer_id,
         )
 
         # Calculate percent of total revenue using prefixed measure (use bracket notation)
