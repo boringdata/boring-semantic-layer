@@ -417,6 +417,21 @@ class SemanticModel(SemanticTable):
         other_op = other.op() if isinstance(other, SemanticModel) else other
         return SemanticJoin(left=self.op(), right=other_op, on=on, how=how)
 
+    def join_cross(self, other: SemanticModel) -> SemanticJoin:
+        """Cross join (Cartesian product) with another semantic model.
+
+        Args:
+            other: The semantic model to cross join with
+
+        Returns:
+            SemanticJoin: The joined semantic model
+
+        Examples:
+            >>> table_a.join_cross(table_b)  # Cartesian product of all rows
+        """
+        other_op = other.op() if isinstance(other, SemanticModel) else other
+        return SemanticJoin(left=self.op(), right=other_op, on=None, how="cross")
+
     def index(
         self,
         selector: str | list[str] | Callable | None = None,
@@ -718,6 +733,15 @@ class SemanticJoin(SemanticTable):
             how=how,
         )
 
+    def join_cross(self, other: SemanticModel) -> SemanticJoin:
+        """Cross join (Cartesian product) with another semantic model."""
+        return SemanticJoin(
+            left=self.op(),
+            right=other.op() if isinstance(other, SemanticModel) else other,
+            on=None,
+            how="cross",
+        )
+
     def group_by(self, *keys: str):
         return self.op().group_by(*keys)
 
@@ -974,6 +998,15 @@ class SemanticAggregate(SemanticTable):
             right=other.op(),
             on=on,
             how=how,
+        )
+
+    def join_cross(self, other: SemanticModel) -> SemanticJoin:
+        """Cross join (Cartesian product) with another semantic model."""
+        return SemanticJoin(
+            left=self.op(),
+            right=other.op() if isinstance(other, SemanticModel) else other,
+            on=None,
+            how="cross",
         )
 
     def as_table(self) -> SemanticModel:

@@ -1,0 +1,866 @@
+definitions:
+  schemas:
+    schema_0:
+      carrier:
+        op: DataType
+        type: String
+        nullable:
+          op: bool
+          value: true
+      origin:
+        op: DataType
+        type: String
+        nullable:
+          op: bool
+          value: true
+      flight_count:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+      total_distance:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+      avg_delay:
+        op: DataType
+        type: Float64
+        nullable:
+          op: bool
+          value: true
+    schema_1:
+      carrier:
+        op: DataType
+        type: String
+        nullable:
+          op: bool
+          value: true
+      origin:
+        op: DataType
+        type: String
+        nullable:
+          op: bool
+          value: true
+      destination:
+        op: DataType
+        type: String
+        nullable:
+          op: bool
+          value: true
+      flight_num:
+        op: DataType
+        type: String
+        nullable:
+          op: bool
+          value: true
+      flight_time:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+      tail_num:
+        op: DataType
+        type: String
+        nullable:
+          op: bool
+          value: true
+      dep_time:
+        op: DataType
+        type: Timestamp
+        timezone: null
+        scale:
+          op: int
+          value: '6'
+        nullable:
+          op: bool
+          value: true
+      arr_time:
+        op: DataType
+        type: Timestamp
+        timezone: null
+        scale:
+          op: int
+          value: '6'
+        nullable:
+          op: bool
+          value: true
+      dep_delay:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+      arr_delay:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+      taxi_out:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+      taxi_in:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+      distance:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+      cancelled:
+        op: DataType
+        type: String
+        nullable:
+          op: bool
+          value: true
+      diverted:
+        op: DataType
+        type: String
+        nullable:
+          op: bool
+          value: true
+      id2:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+  nodes:
+    27bc29ee8b39c8f1e2ce3f516d5aa511:
+      op: Field
+      name: distance
+      relation:
+        op: Read
+        method_name: read_parquet
+        name: ibis_read_parquet_sqpt7b3levfubgjqv4cn37vxxa
+        schema_ref: schema_1
+        profile: 2eca7579af9a9d8e315faf6af1ddb59a_2
+        read_kwargs:
+        - - source_list
+          - builds/ed5d24437d70/database_tables/1eaf6c62c5763815e289525d085e10e9.parquet
+        - - table_name
+          - ibis_read_parquet_sqpt7b3levfubgjqv4cn37vxxa
+        normalize_method: gAWVWAAAAAAAAACMNXhvcnEuY29tbW9uLnV0aWxzLmRhc2tfbm9ybWFsaXplLmRhc2tfbm9ybWFsaXplX3V0aWxzlIwabm9ybWFsaXplX3JlYWRfcGF0aF9tZDVzdW2Uk5Qu
+      type:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+    6d96c9eae8eec75d7fb8740d7049acfe:
+      op: Filter
+      parent:
+        op: Read
+        method_name: read_parquet
+        name: ibis_read_parquet_sqpt7b3levfubgjqv4cn37vxxa
+        schema_ref: schema_1
+        profile: 2eca7579af9a9d8e315faf6af1ddb59a_2
+        read_kwargs:
+        - - source_list
+          - builds/ed5d24437d70/database_tables/1eaf6c62c5763815e289525d085e10e9.parquet
+        - - table_name
+          - ibis_read_parquet_sqpt7b3levfubgjqv4cn37vxxa
+        normalize_method: gAWVWAAAAAAAAACMNXhvcnEuY29tbW9uLnV0aWxzLmRhc2tfbm9ybWFsaXplLmRhc2tfbm9ybWFsaXplX3V0aWxzlIwabm9ybWFsaXplX3JlYWRfcGF0aF9tZDVzdW2Uk5Qu
+      predicates:
+      - op: Greater
+        args:
+        - node_ref: 27bc29ee8b39c8f1e2ce3f516d5aa511
+        - op: Literal
+          value: 500
+          type:
+            op: DataType
+            type: Int16
+            nullable:
+              op: bool
+              value: true
+        type:
+          op: DataType
+          type: Boolean
+          nullable:
+            op: bool
+            value: true
+    b81f920d90eee6856c4ff5b4be91ca2a:
+      op: Field
+      name: carrier
+      relation:
+        node_ref: 6d96c9eae8eec75d7fb8740d7049acfe
+      type:
+        op: DataType
+        type: String
+        nullable:
+          op: bool
+          value: true
+    d1c7cebf85918734236bdb07491a058b:
+      op: Field
+      name: origin
+      relation:
+        node_ref: 6d96c9eae8eec75d7fb8740d7049acfe
+      type:
+        op: DataType
+        type: String
+        nullable:
+          op: bool
+          value: true
+    7a0681fa2d6416106eff43a68b943c75:
+      op: Field
+      name: distance
+      relation:
+        node_ref: 6d96c9eae8eec75d7fb8740d7049acfe
+      type:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+    7ceab14abb8264cd0ff1510499c09af5:
+      op: Field
+      name: dep_delay
+      relation:
+        node_ref: 6d96c9eae8eec75d7fb8740d7049acfe
+      type:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+    fa5851ef760cf1e13360b3cda3a42353:
+      op: Field
+      name: carrier
+      relation:
+        op: Aggregate
+        parent:
+          node_ref: 6d96c9eae8eec75d7fb8740d7049acfe
+        by:
+          carrier:
+            node_ref: b81f920d90eee6856c4ff5b4be91ca2a
+          origin:
+            node_ref: d1c7cebf85918734236bdb07491a058b
+        metrics:
+          flight_count:
+            arg:
+              node_ref: 6d96c9eae8eec75d7fb8740d7049acfe
+            where: null
+            op: CountStar
+          total_distance:
+            arg:
+              node_ref: 7a0681fa2d6416106eff43a68b943c75
+            where: null
+            op: Sum
+          avg_delay:
+            arg:
+              node_ref: 7ceab14abb8264cd0ff1510499c09af5
+            where: null
+            op: Mean
+      type:
+        op: DataType
+        type: String
+        nullable:
+          op: bool
+          value: true
+    bd5d7b2815c965d909aeea04e484cba0:
+      op: Field
+      name: origin
+      relation:
+        op: Aggregate
+        parent:
+          node_ref: 6d96c9eae8eec75d7fb8740d7049acfe
+        by:
+          carrier:
+            node_ref: b81f920d90eee6856c4ff5b4be91ca2a
+          origin:
+            node_ref: d1c7cebf85918734236bdb07491a058b
+        metrics:
+          flight_count:
+            arg:
+              node_ref: 6d96c9eae8eec75d7fb8740d7049acfe
+            where: null
+            op: CountStar
+          total_distance:
+            arg:
+              node_ref: 7a0681fa2d6416106eff43a68b943c75
+            where: null
+            op: Sum
+          avg_delay:
+            arg:
+              node_ref: 7ceab14abb8264cd0ff1510499c09af5
+            where: null
+            op: Mean
+      type:
+        op: DataType
+        type: String
+        nullable:
+          op: bool
+          value: true
+    08a914c6263cc0946870a6cdb7a02aa7:
+      op: Field
+      name: flight_count
+      relation:
+        op: Aggregate
+        parent:
+          node_ref: 6d96c9eae8eec75d7fb8740d7049acfe
+        by:
+          carrier:
+            node_ref: b81f920d90eee6856c4ff5b4be91ca2a
+          origin:
+            node_ref: d1c7cebf85918734236bdb07491a058b
+        metrics:
+          flight_count:
+            arg:
+              node_ref: 6d96c9eae8eec75d7fb8740d7049acfe
+            where: null
+            op: CountStar
+          total_distance:
+            arg:
+              node_ref: 7a0681fa2d6416106eff43a68b943c75
+            where: null
+            op: Sum
+          avg_delay:
+            arg:
+              node_ref: 7ceab14abb8264cd0ff1510499c09af5
+            where: null
+            op: Mean
+      type:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+    c1b2a93fbf0fa370eeded897692202fa:
+      op: Field
+      name: total_distance
+      relation:
+        op: Aggregate
+        parent:
+          node_ref: 6d96c9eae8eec75d7fb8740d7049acfe
+        by:
+          carrier:
+            node_ref: b81f920d90eee6856c4ff5b4be91ca2a
+          origin:
+            node_ref: d1c7cebf85918734236bdb07491a058b
+        metrics:
+          flight_count:
+            arg:
+              node_ref: 6d96c9eae8eec75d7fb8740d7049acfe
+            where: null
+            op: CountStar
+          total_distance:
+            arg:
+              node_ref: 7a0681fa2d6416106eff43a68b943c75
+            where: null
+            op: Sum
+          avg_delay:
+            arg:
+              node_ref: 7ceab14abb8264cd0ff1510499c09af5
+            where: null
+            op: Mean
+      type:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+    8be1ca9f52b7b3929161cf1076895c3b:
+      op: Field
+      name: avg_delay
+      relation:
+        op: Aggregate
+        parent:
+          node_ref: 6d96c9eae8eec75d7fb8740d7049acfe
+        by:
+          carrier:
+            node_ref: b81f920d90eee6856c4ff5b4be91ca2a
+          origin:
+            node_ref: d1c7cebf85918734236bdb07491a058b
+        metrics:
+          flight_count:
+            arg:
+              node_ref: 6d96c9eae8eec75d7fb8740d7049acfe
+            where: null
+            op: CountStar
+          total_distance:
+            arg:
+              node_ref: 7a0681fa2d6416106eff43a68b943c75
+            where: null
+            op: Sum
+          avg_delay:
+            arg:
+              node_ref: 7ceab14abb8264cd0ff1510499c09af5
+            where: null
+            op: Mean
+      type:
+        op: DataType
+        type: Float64
+        nullable:
+          op: bool
+          value: true
+    f105549dd12c7afd619ec112c586a9a0:
+      op: Project
+      parent:
+        op: Aggregate
+        parent:
+          node_ref: 6d96c9eae8eec75d7fb8740d7049acfe
+        by:
+          carrier:
+            node_ref: b81f920d90eee6856c4ff5b4be91ca2a
+          origin:
+            node_ref: d1c7cebf85918734236bdb07491a058b
+        metrics:
+          flight_count:
+            arg:
+              node_ref: 6d96c9eae8eec75d7fb8740d7049acfe
+            where: null
+            op: CountStar
+          total_distance:
+            arg:
+              node_ref: 7a0681fa2d6416106eff43a68b943c75
+            where: null
+            op: Sum
+          avg_delay:
+            arg:
+              node_ref: 7ceab14abb8264cd0ff1510499c09af5
+            where: null
+            op: Mean
+      values:
+        carrier:
+          node_ref: fa5851ef760cf1e13360b3cda3a42353
+        origin:
+          node_ref: bd5d7b2815c965d909aeea04e484cba0
+        flight_count:
+          node_ref: 08a914c6263cc0946870a6cdb7a02aa7
+        total_distance:
+          node_ref: c1b2a93fbf0fa370eeded897692202fa
+        avg_delay:
+          node_ref: 8be1ca9f52b7b3929161cf1076895c3b
+    4d0a5d522ea3a4e5919622adc4821f4a:
+      op: Field
+      name: carrier
+      relation:
+        node_ref: f105549dd12c7afd619ec112c586a9a0
+      type:
+        op: DataType
+        type: String
+        nullable:
+          op: bool
+          value: true
+    c51dc9e7549d3af32a75c4e7baf0aaf7:
+      op: Field
+      name: origin
+      relation:
+        node_ref: f105549dd12c7afd619ec112c586a9a0
+      type:
+        op: DataType
+        type: String
+        nullable:
+          op: bool
+          value: true
+    fc7697eeeac3c9c121c5f2093e141bf6:
+      op: Field
+      name: flight_count
+      relation:
+        node_ref: f105549dd12c7afd619ec112c586a9a0
+      type:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+    7638620dcec02d6da7235159da7995b0:
+      op: Field
+      name: total_distance
+      relation:
+        node_ref: f105549dd12c7afd619ec112c586a9a0
+      type:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+    6303151f0ca96d53e8f4ec2335b581fe:
+      op: Field
+      name: avg_delay
+      relation:
+        node_ref: f105549dd12c7afd619ec112c586a9a0
+      type:
+        op: DataType
+        type: Float64
+        nullable:
+          op: bool
+          value: true
+    8d65de1ec607e6a4f995849be2ac3991:
+      op: Project
+      parent:
+        node_ref: f105549dd12c7afd619ec112c586a9a0
+      values:
+        carrier:
+          node_ref: 4d0a5d522ea3a4e5919622adc4821f4a
+        origin:
+          node_ref: c51dc9e7549d3af32a75c4e7baf0aaf7
+        flight_count:
+          node_ref: fc7697eeeac3c9c121c5f2093e141bf6
+        total_distance:
+          node_ref: 7638620dcec02d6da7235159da7995b0
+        avg_delay:
+          node_ref: 6303151f0ca96d53e8f4ec2335b581fe
+    6869fdd8d14932cc43f2820dae457338:
+      op: Field
+      name: flight_count
+      relation:
+        node_ref: 8d65de1ec607e6a4f995849be2ac3991
+      type:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+    7a18c119e7b621bd295429c20c76ba56:
+      op: Filter
+      parent:
+        node_ref: 8d65de1ec607e6a4f995849be2ac3991
+      predicates:
+      - op: Greater
+        args:
+        - node_ref: 6869fdd8d14932cc43f2820dae457338
+        - op: Literal
+          value: 50
+          type:
+            op: DataType
+            type: Int8
+            nullable:
+              op: bool
+              value: true
+        type:
+          op: DataType
+          type: Boolean
+          nullable:
+            op: bool
+            value: true
+    6cc49bfc2c5c2b8c3199aae43051eea9:
+      op: Field
+      name: total_distance
+      relation:
+        node_ref: 7a18c119e7b621bd295429c20c76ba56
+      type:
+        op: DataType
+        type: Int64
+        nullable:
+          op: bool
+          value: true
+expression:
+  op: Tag
+  schema_ref: schema_0
+  parent:
+    op: Limit
+    parent:
+      op: Sort
+      parent:
+        node_ref: 7a18c119e7b621bd295429c20c76ba56
+      keys:
+      - op: SortKey
+        arg:
+          node_ref: 6cc49bfc2c5c2b8c3199aae43051eea9
+        ascending: false
+        nulls_first: false
+        type:
+          op: DataType
+          type: Int64
+          nullable:
+            op: bool
+            value: true
+    n: 20
+    offset: 0
+  metadata:
+    op: FrozenOrderedDict
+    tag:
+      op: str
+      value: bsl
+    bsl_op_type:
+      op: str
+      value: SemanticLimitOp
+    bsl_version:
+      op: str
+      value: '1.0'
+    n:
+      op: int
+      value: '20'
+    offset:
+      op: int
+      value: '0'
+    source:
+      op: tuple
+      values:
+      - op: tuple
+        values:
+        - op: str
+          value: bsl_op_type
+        - op: str
+          value: SemanticOrderByOp
+      - op: tuple
+        values:
+        - op: str
+          value: bsl_version
+        - op: str
+          value: '1.0'
+      - op: tuple
+        values:
+        - op: str
+          value: order_keys
+        - op: tuple
+          values:
+          - op: tuple
+            values:
+            - op: tuple
+              values:
+              - op: str
+                value: type
+              - op: str
+                value: callable
+            - op: tuple
+              values:
+              - op: str
+                value: value
+              - op: str
+                value: ibis.desc(_.total_distance))
+      - op: tuple
+        values:
+        - op: str
+          value: source
+        - op: tuple
+          values:
+          - op: tuple
+            values:
+            - op: str
+              value: bsl_op_type
+            - op: str
+              value: SemanticFilterOp
+          - op: tuple
+            values:
+            - op: str
+              value: bsl_version
+            - op: str
+              value: '1.0'
+          - op: tuple
+            values:
+            - op: str
+              value: predicate
+            - op: str
+              value: _.flight_count > 50)
+          - op: tuple
+            values:
+            - op: str
+              value: source
+            - op: tuple
+              values:
+              - op: tuple
+                values:
+                - op: str
+                  value: bsl_op_type
+                - op: str
+                  value: SemanticAggregateOp
+              - op: tuple
+                values:
+                - op: str
+                  value: bsl_version
+                - op: str
+                  value: '1.0'
+              - op: tuple
+                values:
+                - op: str
+                  value: by
+                - op: tuple
+                  values:
+                  - op: str
+                    value: carrier
+                  - op: str
+                    value: origin
+              - op: tuple
+                values:
+                - op: str
+                  value: aggs
+                - op: tuple
+                  values:
+                  - op: tuple
+                    values:
+                    - op: str
+                      value: flight_count
+                    - op: str
+                      value: t[n]
+                  - op: tuple
+                    values:
+                    - op: str
+                      value: total_distance
+                    - op: str
+                      value: t[n]
+                  - op: tuple
+                    values:
+                    - op: str
+                      value: avg_delay
+                    - op: str
+                      value: t[n]
+              - op: tuple
+                values:
+                - op: str
+                  value: source
+                - op: tuple
+                  values:
+                  - op: tuple
+                    values:
+                    - op: str
+                      value: bsl_op_type
+                    - op: str
+                      value: SemanticGroupByOp
+                  - op: tuple
+                    values:
+                    - op: str
+                      value: bsl_version
+                    - op: str
+                      value: '1.0'
+                  - op: tuple
+                    values:
+                    - op: str
+                      value: keys
+                    - op: tuple
+                      values:
+                      - op: str
+                        value: carrier
+                      - op: str
+                        value: origin
+                  - op: tuple
+                    values:
+                    - op: str
+                      value: source
+                    - op: tuple
+                      values:
+                      - op: tuple
+                        values:
+                        - op: str
+                          value: bsl_op_type
+                        - op: str
+                          value: SemanticFilterOp
+                      - op: tuple
+                        values:
+                        - op: str
+                          value: bsl_version
+                        - op: str
+                          value: '1.0'
+                      - op: tuple
+                        values:
+                        - op: str
+                          value: predicate
+                        - op: str
+                          value: _.distance > 500)
+                      - op: tuple
+                        values:
+                        - op: str
+                          value: source
+                        - op: tuple
+                          values:
+                          - op: tuple
+                            values:
+                            - op: str
+                              value: bsl_op_type
+                            - op: str
+                              value: SemanticTableOp
+                          - op: tuple
+                            values:
+                            - op: str
+                              value: bsl_version
+                            - op: str
+                              value: '1.0'
+                          - op: tuple
+                            values:
+                            - op: str
+                              value: dimensions
+                            - op: tuple
+                              values: []
+                          - op: tuple
+                            values:
+                            - op: str
+                              value: measures
+                            - op: tuple
+                              values:
+                              - op: tuple
+                                values:
+                                - op: str
+                                  value: flight_count
+                                - op: tuple
+                                  values:
+                                  - op: tuple
+                                    values:
+                                    - op: str
+                                      value: description
+                                    - null
+                                  - op: tuple
+                                    values:
+                                    - op: str
+                                      value: requires_unnest
+                                    - op: tuple
+                                      values: []
+                                  - op: tuple
+                                    values:
+                                    - op: str
+                                      value: expr
+                                    - op: str
+                                      value: _.count()
+                              - op: tuple
+                                values:
+                                - op: str
+                                  value: total_distance
+                                - op: tuple
+                                  values:
+                                  - op: tuple
+                                    values:
+                                    - op: str
+                                      value: description
+                                    - null
+                                  - op: tuple
+                                    values:
+                                    - op: str
+                                      value: requires_unnest
+                                    - op: tuple
+                                      values: []
+                                  - op: tuple
+                                    values:
+                                    - op: str
+                                      value: expr
+                                    - op: str
+                                      value: _.distance.sum()
+                              - op: tuple
+                                values:
+                                - op: str
+                                  value: avg_delay
+                                - op: tuple
+                                  values:
+                                  - op: tuple
+                                    values:
+                                    - op: str
+                                      value: description
+                                    - null
+                                  - op: tuple
+                                    values:
+                                    - op: str
+                                      value: requires_unnest
+                                    - op: tuple
+                                      values: []
+                                  - op: tuple
+                                    values:
+                                    - op: str
+                                      value: expr
+                                    - op: str
+                                      value: _.dep_delay.mean()
+                          - op: tuple
+                            values:
+                            - op: str
+                              value: name
+                            - op: str
+                              value: flights
