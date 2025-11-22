@@ -63,12 +63,12 @@ def test_bracket_filter_after_join_and_aggregate():
         country=lambda t: t.country,
     )
 
-    step1 = join_one(model_a, model_b, "order_id", "order_id")
+    step1 = join_one(model_a, model_b, lambda a, b: a.order_id == b.order_id)
     step2 = aggregate_(
         group_by_(step1, "orders.region", "orders.customer_id"),
         lambda t: t["orders.order_count"],
     )
-    final = join_one(step2, model_c, "orders.customer_id", "customer_id")
+    final = join_one(step2, model_c, lambda s, c: s["orders.customer_id"] == c.customer_id)
 
     df = final.filter(lambda t: t["orders.region"] == "North").execute()
     assert df.shape[0] == 2
@@ -126,7 +126,7 @@ def test_filter_before_aggregation_on_joined_table():
     )
 
     # Join orders with customers
-    joined = join_one(orders_sm, customers_sm, "customer_id", "customer_id")
+    joined = join_one(orders_sm, customers_sm, lambda o, c: o.customer_id == c.customer_id)
 
     # Filter THEN aggregate - this is the critical pattern that was broken
     filtered = joined.filter(lambda t: t.country == "US")

@@ -151,6 +151,7 @@ def _parse_joins(
                 )
 
         join_type = join_config.get("type", "one")
+        how = join_config.get("how")  # Optional join method override
 
         if join_type == "one":
             left_on = join_config.get("left_on")
@@ -159,10 +160,12 @@ def _parse_joins(
                 raise ValueError(
                     f"Join '{alias}' of type 'one' must specify 'left_on' and 'right_on' fields",
                 )
+            # Convert left_on/right_on to lambda condition
+            on_condition = lambda left, right, l=left_on, r=right_on: getattr(left, l) == getattr(right, r)
             result_model = result_model.join_one(
                 join_model,
-                left_on=left_on,
-                right_on=right_on,
+                on=on_condition,
+                how=how if how else "inner",
             )
         elif join_type == "many":
             left_on = join_config.get("left_on")
@@ -171,16 +174,16 @@ def _parse_joins(
                 raise ValueError(
                     f"Join '{alias}' of type 'many' must specify 'left_on' and 'right_on' fields",
                 )
+            # Convert left_on/right_on to lambda condition
+            on_condition = lambda left, right, l=left_on, r=right_on: getattr(left, l) == getattr(right, r)
             result_model = result_model.join_many(
                 join_model,
-                left_on=left_on,
-                right_on=right_on,
+                on=on_condition,
+                how=how if how else "left",
             )
-        elif join_type == "cross":
-            result_model = result_model.join_cross(join_model)
         else:
             raise ValueError(
-                f"Invalid join type '{join_type}'. Must be 'one', 'many', or 'cross'",
+                f"Invalid join type '{join_type}'. Must be 'one' or 'many'",
             )
 
     return result_model

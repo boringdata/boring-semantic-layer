@@ -7,7 +7,7 @@ semantic tables. All functions are thin wrappers around SemanticModel methods.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ibis.expr import types as ir
@@ -45,54 +45,51 @@ def to_semantic_table(
 def join_one(
     left: SemanticModel,
     other: SemanticModel,
-    left_on: str,
-    right_on: str,
+    on: Callable[[Any, Any], ir.BooleanValue],
+    how: str = "inner",
 ) -> SemanticModel:
     """Join two semantic tables with a one-to-one relationship.
 
     Args:
         left: Left semantic table
         other: Right semantic table
-        left_on: Column name in left table
-        right_on: Column name in right table
+        on: Lambda function taking (left, right) tables and returning a boolean condition
+        how: Join type - "inner", "left", "right", or "outer" (default: "inner")
 
     Returns:
         Joined SemanticModel
+
+    Examples:
+        >>> join_one(orders, customers, lambda o, c: o.customer_id == c.customer_id)
+        >>> join_one(orders, customers, lambda o, c: o.customer_id == c.customer_id, how="left")
+        >>> join_one(orders, customers, lambda o, c: o.customer_id == c.customer_id, how="outer")
     """
-    return left.join_one(other, left_on, right_on)
+    return left.join_one(other, on, how)
 
 
 def join_many(
     left: SemanticModel,
     other: SemanticModel,
-    left_on: str,
-    right_on: str,
+    on: Callable[[Any, Any], ir.BooleanValue],
+    how: str = "left",
 ) -> SemanticModel:
     """Join two semantic tables with a one-to-many relationship.
 
     Args:
         left: Left semantic table
         other: Right semantic table
-        left_on: Column name in left table
-        right_on: Column name in right table
+        on: Lambda function taking (left, right) tables and returning a boolean condition
+        how: Join type - "inner", "left", "right", or "outer" (default: "left")
 
     Returns:
         Joined SemanticModel
+
+    Examples:
+        >>> join_many(customer, orders, lambda c, o: c.customer_id == o.customer_id)
+        >>> join_many(customer, orders, lambda c, o: c.customer_id == o.customer_id, how="inner")
+        >>> join_many(customer, orders, lambda c, o: c.customer_id == o.customer_id, how="right")
     """
-    return left.join_many(other, left_on, right_on)
-
-
-def join_cross(left: SemanticModel, other: SemanticModel) -> SemanticModel:
-    """Cross join two semantic tables.
-
-    Args:
-        left: Left semantic table
-        other: Right semantic table
-
-    Returns:
-        Cross-joined SemanticModel
-    """
-    return left.join_cross(other)
+    return left.join_many(other, on, how)
 
 
 def filter_(
