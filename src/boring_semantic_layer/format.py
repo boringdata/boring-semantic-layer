@@ -33,14 +33,15 @@ def _format_semantic_table(op: SemanticTableOp, **kwargs):
     calc_measures = object.__getattribute__(op, 'calc_measures')
     name = object.__getattribute__(op, 'name')
 
-    name_part = f": {name}" if name else ""
-    lines = [f"SemanticTable{name_part}"]
-
     # ANSI color codes for terminal output
     DIM_COLOR = "\033[36m"      # Cyan for dimensions
     MEASURE_COLOR = "\033[35m"  # Magenta for measures
     CALC_COLOR = "\033[33m"     # Yellow for calculated measures
+    HEADER_COLOR = "\033[1;34m" # Bold Blue for headers
     RESET = "\033[0m"
+
+    name_part = f": {HEADER_COLOR}{name}{RESET}" if name else ""
+    lines = [f"{HEADER_COLOR}SemanticTable{RESET}{name_part}"]
 
     # Show dimensions with color coding
     if dims:
@@ -63,37 +64,68 @@ def _format_semantic_table(op: SemanticTableOp, **kwargs):
 @fmt.register(SemanticFilterOp)
 def _format_semantic_filter(op: SemanticFilterOp, source=None, **kwargs):
     """Format SemanticFilterOp for pretty printing."""
+    OP_COLOR = "\033[1;32m"  # Bold Green for operation names
+    REF_COLOR = "\033[93m"   # Bright Yellow for references
+    RESET = "\033[0m"
+
+    # Access the predicate
+    predicate = object.__getattribute__(op, 'predicate')
+
+    # Try to get a readable representation of the predicate
+    pred_repr = "<predicate>"
+    if hasattr(predicate, '__name__'):
+        pred_repr = f"λ {predicate.__name__}"
+    elif hasattr(predicate, 'unwrap'):
+        # It's a wrapped callable
+        unwrapped = predicate.unwrap
+        if hasattr(unwrapped, '__name__'):
+            pred_repr = f"λ {unwrapped.__name__}"
+
     if source is None:
-        top = "Filter\n"
+        top = f"{OP_COLOR}Filter{RESET}\n"
     else:
-        top = f"Filter[{source}]\n"
-    return top + render_fields({"predicate": "<predicate>"}, 1)
+        top = f"{OP_COLOR}Filter{RESET}[{REF_COLOR}{source}{RESET}]\n"
+    return top + render_fields({"predicate": pred_repr}, 1)
 
 
 @fmt.register(SemanticAggregateOp)
 def _format_semantic_aggregate(op: SemanticAggregateOp, source=None, **kwargs):
     """Format SemanticAggregateOp for pretty printing."""
+    OP_COLOR = "\033[1;32m"   # Bold Green for operation names
+    REF_COLOR = "\033[93m"    # Bright Yellow for references
+    DIM_COLOR = "\033[36m"    # Cyan for dimensions (groups)
+    MEASURE_COLOR = "\033[35m" # Magenta for measures (metrics)
+    RESET = "\033[0m"
+
+    # Access the actual operation fields
+    aggs = object.__getattribute__(op, 'aggs')
+    keys = object.__getattribute__(op, 'keys')
+
     if source is None:
-        top = "Aggregate\n"
+        top = f"{OP_COLOR}Aggregate{RESET}\n"
     else:
-        top = f"Aggregate[{source}]\n"
+        top = f"{OP_COLOR}Aggregate{RESET}[{REF_COLOR}{source}{RESET}]\n"
 
-    fields = {}
-    if op.keys:
-        # Only show first few keys
-        keys_to_show = list(op.keys[:3])
-        if len(op.keys) > 3:
-            keys_to_show.append(f"... and {len(op.keys) - 3} more")
-        fields["groups"] = keys_to_show
+    # Build colored output manually instead of using render_fields
+    lines = [top.rstrip()]
 
-    if op.aggs:
-        # Only show first few aggregations
-        agg_names = list(op.aggs.keys())[:3]
-        if len(op.aggs) > 3:
-            agg_names.append(f"... and {len(op.aggs) - 3} more")
-        fields["metrics"] = agg_names
+    if keys:
+        lines.append("  groups:")
+        keys_to_show = list(keys[:3])
+        for key in keys_to_show:
+            lines.append(f"    {DIM_COLOR}{key}{RESET}")
+        if len(keys) > 3:
+            lines.append(f"    ... and {len(keys) - 3} more")
 
-    return top + render_fields(fields, 1)
+    if aggs:
+        lines.append("  metrics:")
+        agg_names = list(aggs.keys())[:3]
+        for metric in agg_names:
+            lines.append(f"    {MEASURE_COLOR}{metric}{RESET}")
+        if len(aggs) > 3:
+            lines.append(f"    ... and {len(aggs) - 3} more")
+
+    return "\n".join(lines)
 
 
 @fmt.register(SemanticJoinOp)
@@ -113,16 +145,29 @@ def _format_semantic_join(op: SemanticJoinOp, left=None, right=None, **kwargs):
 @fmt.register(SemanticGroupByOp)
 def _format_semantic_groupby(op: SemanticGroupByOp, source=None, **kwargs):
     """Format SemanticGroupByOp for pretty printing."""
+    OP_COLOR = "\033[1;32m"  # Bold Green for operation names
+    REF_COLOR = "\033[93m"   # Bright Yellow for references
+    DIM_COLOR = "\033[36m"   # Cyan for dimensions (keys)
+    RESET = "\033[0m"
+
+    keys = object.__getattribute__(op, 'keys')
+
     if source is None:
-        top = "GroupBy\n"
+        top = f"{OP_COLOR}GroupBy{RESET}\n"
     else:
-        top = f"GroupBy[{source}]\n"
+        top = f"{OP_COLOR}GroupBy{RESET}[{REF_COLOR}{source}{RESET}]\n"
 
-    keys_to_show = list(op.keys[:3])
-    if len(op.keys) > 3:
-        keys_to_show.append(f"... and {len(op.keys) - 3} more")
+    # Build colored output manually
+    lines = [top.rstrip()]
+    lines.append("  keys:")
 
-    return top + render_fields({"keys": keys_to_show}, 1)
+    keys_to_show = list(keys[:3])
+    for key in keys_to_show:
+        lines.append(f"    {DIM_COLOR}{key}{RESET}")
+    if len(keys) > 3:
+        lines.append(f"    ... and {len(keys) - 3} more")
+
+    return "\n".join(lines)
 
 
 @fmt.register(SemanticProjectOp)
@@ -165,13 +210,17 @@ def _format_semantic_limit(op: SemanticLimitOp, source=None, **kwargs):
 @fmt.register(SemanticMutateOp)
 def _format_semantic_mutate(op: SemanticMutateOp, source=None, **kwargs):
     """Format SemanticMutateOp for pretty printing."""
+    OP_COLOR = "\033[1;32m"  # Bold Green for operation names
+    REF_COLOR = "\033[93m"   # Bright Yellow for references
+    RESET = "\033[0m"
+
     # Access the actual operation field
     post = object.__getattribute__(op, 'post')
 
     if source is None:
-        top = "Mutate\n"
+        top = f"{OP_COLOR}Mutate{RESET}\n"
     else:
-        top = f"Mutate[{source}]\n"
+        top = f"{OP_COLOR}Mutate{RESET}[{REF_COLOR}{source}{RESET}]\n"
 
     exprs_to_show = list(post.keys())[:3]
     if len(post) > 3:

@@ -80,6 +80,18 @@ class SemanticTable(ir.Table):
     def unnest(self, column: str) -> SemanticUnnest:
         return SemanticUnnest(source=self.op(), column=column)
 
+    def select(self, *args, **kwargs):
+        """Prevent select() on semantic tables.
+
+        The semantic layer works with dimensions and measures, not arbitrary column selection.
+        Use .to_ibis().select() if you need to perform Ibis operations.
+        """
+        raise NotImplementedError(
+            "select() is not supported on semantic tables. "
+            "Use group_by() and aggregate() to work with dimensions and measures, "
+            "or call .to_ibis().select() to convert to an Ibis table first."
+        )
+
     def pipe(self, func, *args, **kwargs):
         return func(self, *args, **kwargs)
 
