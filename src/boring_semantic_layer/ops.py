@@ -1523,6 +1523,18 @@ class SemanticJoinOp(Relation):
             how="cross",
         )
 
+    def join(self, *args, **kwargs):
+        """Deprecated: Use join_one(), join_many(), or join_cross() instead."""
+        raise TypeError(
+            "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
+            "For one-to-one relationships:\n"
+            "  table.join_one(other, lambda l, r: l.id == r.id, how='inner')\n\n"
+            "For one-to-many relationships:\n"
+            "  table.join_many(other, lambda l, r: l.id == r.id, how='left')\n\n"
+            "For Cartesian product:\n"
+            "  table.join_cross(other)"
+        )
+
     def index(
         self,
         selector: str | list[str] | Callable | None = None,
