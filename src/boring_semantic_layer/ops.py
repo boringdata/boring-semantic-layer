@@ -1512,6 +1512,17 @@ class SemanticJoinOp(Relation):
             how=how,
         )
 
+    def join_cross(self, other: SemanticTable):
+        """Cross join (Cartesian product) with another semantic model."""
+        from .expr import SemanticJoin
+
+        return SemanticJoin(
+            left=self,
+            right=other.op(),
+            on=None,
+            how="cross",
+        )
+
     def index(
         self,
         selector: str | list[str] | Callable | None = None,

@@ -92,6 +92,22 @@ def join_many(
     return left.join_many(other, on, how)
 
 
+def join_cross(left: SemanticModel, other: SemanticModel) -> SemanticModel:
+    """Cross join (Cartesian product) two semantic tables.
+
+    Args:
+        left: Left semantic table
+        other: Right semantic table
+
+    Returns:
+        Joined SemanticModel (Cartesian product of all rows)
+
+    Examples:
+        >>> join_cross(table_a, table_b)  # All combinations of rows
+    """
+    return left.join_cross(other)
+
+
 def filter_(
     table: SemanticModel,
     predicate: Callable[[ir.Table], ir.BooleanValue],
