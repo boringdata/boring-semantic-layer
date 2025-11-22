@@ -91,6 +91,16 @@ def _unwrap(wrapped: Any) -> Any:
     return wrapped.unwrap if isinstance(wrapped, _CallableWrapper) else wrapped
 
 
+def _build_graph_repr(op: Relation) -> str:
+    """Build a stacked graph representation using Ibis's pretty formatter.
+
+    Uses Ibis's built-in formatting to display operations as r0, r1, r2, etc.
+    """
+    from ibis.expr.format import pretty
+
+    return pretty(op)
+
+
 def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
     result = (
         expr.resolve(scope)
@@ -511,10 +521,7 @@ class SemanticTableOp(Relation):
 
     def __repr__(self) -> str:
         """Custom repr to avoid Ibis expression truthiness issues."""
-        name_part = f" '{self.name}'" if self.name else ""
-        dim_count = len(self.dimensions)
-        meas_count = len(self.measures) + len(self.calc_measures)
-        return f"SemanticTableOp{name_part}({dim_count} dimensions, {meas_count} measures)"
+        return _build_graph_repr(self)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -617,7 +624,7 @@ class SemanticFilterOp(Relation):
 
     def __repr__(self) -> str:
         """Custom repr to avoid Ibis expression truthiness issues."""
-        return f"SemanticFilterOp(source={self.source.__class__.__name__})"
+        return _build_graph_repr(self)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -981,9 +988,7 @@ class SemanticAggregateOp(Relation):
 
     def __repr__(self) -> str:
         """Custom repr to avoid Ibis expression truthiness issues."""
-        keys_str = f"{len(self.keys)} keys" if self.keys else "no grouping"
-        aggs_str = f"{len(self.aggs)} aggregations"
-        return f"SemanticAggregateOp({keys_str}, {aggs_str})"
+        return _build_graph_repr(self)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -1307,7 +1312,7 @@ class SemanticJoinOp(Relation):
 
     def __repr__(self) -> str:
         """Custom repr to avoid Ibis expression truthiness issues."""
-        return f"SemanticJoinOp({self.how} join: {self.left.__class__.__name__} × {self.right.__class__.__name__})"
+        return _build_graph_repr(self)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
