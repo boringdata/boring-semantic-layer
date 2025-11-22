@@ -346,12 +346,36 @@ class SemanticModel(SemanticTable):
         other_op = other.op() if isinstance(other, SemanticModel) else other
         return SemanticJoin(left=self.op(), right=other_op, on=on, how=how)
 
+    def _make_join_condition(self, left_on: str, right_on: str, left_op, right_op) -> Callable:
+        """Create a join condition with enhanced error handling for dimension names."""
+
+        def _safe_join_condition(left, right):
+            try:
+                return getattr(left, left_on) == getattr(right, right_on)
+            except AttributeError as e:
+                # Check if it's a dimension name that can't be resolved
+                if right_on in right_op.dimensions and not hasattr(right, right_on):
+                    raise ValueError(
+                        f"'{right_on}' is a dimension, not a column. "
+                        f"Use the underlying column name instead (issue #43)."
+                    ) from e
+
+                if left_on in left_op.dimensions and not hasattr(left, left_on):
+                    raise ValueError(
+                        f"'{left_on}' is a dimension, not a column. "
+                        f"Use the underlying column name instead (issue #43)."
+                    ) from e
+
+                raise
+
+        return _safe_join_condition
+
     def join_one(self, other: SemanticModel, left_on: str, right_on: str) -> SemanticJoin:
         other_op = other.op() if isinstance(other, SemanticModel) else other
         return SemanticJoin(
             left=self.op(),
             right=other_op,
-            on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
+            on=self._make_join_condition(left_on, right_on, self.op(), other_op),
             how="inner",
         )
 
@@ -360,7 +384,7 @@ class SemanticModel(SemanticTable):
         return SemanticJoin(
             left=self.op(),
             right=other_op,
-            on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
+            on=self._make_join_condition(left_on, right_on, self.op(), other_op),
             how="left",
         )
 
