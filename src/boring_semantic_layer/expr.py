@@ -298,14 +298,21 @@ class SemanticModel(SemanticTable):
 
         Args:
             other: The semantic model to join with
-            on: Lambda function taking (left, right) tables and returning a boolean condition
+            on: Lambda function taking (left, right) tables and returning a boolean condition.
+                Can reference both semantic dimensions and raw table columns.
             how: Join type - "inner", "left", "right", or "outer" (default: "inner")
 
         Returns:
             SemanticJoin: The joined semantic model
 
         Examples:
+            Join on semantic dimensions:
             >>> orders.join_one(customers, lambda o, c: o.customer_id == c.customer_id)
+
+            Join on raw columns (not defined as dimensions):
+            >>> orders.join_one(customers, lambda o, c: o.raw_id == c.raw_id)
+
+            Different join types:
             >>> orders.join_one(customers, lambda o, c: o.customer_id == c.customer_id, how="left")
             >>> orders.join_one(customers, lambda o, c: o.customer_id == c.customer_id, how="outer")
         """
@@ -322,14 +329,21 @@ class SemanticModel(SemanticTable):
 
         Args:
             other: The semantic model to join with
-            on: Lambda function taking (left, right) tables and returning a boolean condition
+            on: Lambda function taking (left, right) tables and returning a boolean condition.
+                Can reference both semantic dimensions and raw table columns.
             how: Join type - "inner", "left", "right", or "outer" (default: "left")
 
         Returns:
             SemanticJoin: The joined semantic model
 
         Examples:
+            Join on semantic dimensions:
             >>> customer.join_many(orders, lambda c, o: c.customer_id == o.customer_id)
+
+            Join on raw columns:
+            >>> customer.join_many(orders, lambda c, o: c.external_id == o.account_ref)
+
+            Different join types:
             >>> customer.join_many(orders, lambda c, o: c.customer_id == o.customer_id, how="inner")
             >>> customer.join_many(orders, lambda c, o: c.customer_id == o.customer_id, how="right")
         """
