@@ -84,43 +84,8 @@ class SemanticTable(ir.Table):
         return func(self, *args, **kwargs)
 
     def __repr__(self) -> str:
-        """Custom repr to avoid Ibis expression truthiness issues.
-
-        Provides a clean, informative representation for IPython display.
-        """
-        op = self.op()
-        op_name = op.__class__.__name__
-
-        # Get dimensions and measures from the operation
-        if hasattr(op, 'get_dimensions') and hasattr(op, 'get_measures'):
-            try:
-                dims = op.get_dimensions()
-                measures = op.get_measures()
-                dim_names = list(dims.keys())[:3]  # Show first 3
-                meas_names = list(measures.keys())[:3]  # Show first 3
-
-                dim_str = ", ".join(dim_names)
-                if len(dims) > 3:
-                    dim_str += f", ... ({len(dims)} total)"
-
-                meas_str = ", ".join(meas_names)
-                if len(measures) > 3:
-                    meas_str += f", ... ({len(measures)} total)"
-
-                parts = []
-                if dims:
-                    parts.append(f"dimensions=[{dim_str}]")
-                if measures:
-                    parts.append(f"measures=[{meas_str}]")
-
-                details = ", ".join(parts) if parts else "no dimensions or measures"
-                return f"{self.__class__.__name__}({details})"
-            except Exception:
-                # Fallback if get_dimensions/get_measures fails
-                return f"{self.__class__.__name__}({op_name})"
-        else:
-            # For operations without dimensions/measures
-            return f"{self.__class__.__name__}({op_name})"
+        """Return the graph repr of the underlying operation."""
+        return repr(self.op())
 
     def to_ibis(self):
         return self.op().to_ibis()

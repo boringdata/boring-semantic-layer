@@ -27,11 +27,37 @@ from boring_semantic_layer.ops import (
 @fmt.register(SemanticTableOp)
 def _format_semantic_table(op: SemanticTableOp, **kwargs):
     """Format SemanticTableOp for pretty printing."""
-    name_part = f": {op.name}" if op.name else ""
-    schema = render_schema(op.schema, indent_level=1)
-    dim_count = len(op.dimensions)
-    meas_count = len(op.measures) + len(op.calc_measures)
-    return f"SemanticTable{name_part}\n  {dim_count} dimensions, {meas_count} measures\n{schema}"
+    # Access the actual operation fields using object.__getattribute__ to avoid any __getattr__ issues
+    dims = object.__getattribute__(op, 'dimensions')
+    measures = object.__getattribute__(op, 'measures')
+    calc_measures = object.__getattribute__(op, 'calc_measures')
+    name = object.__getattribute__(op, 'name')
+
+    name_part = f": {name}" if name else ""
+    lines = [f"SemanticTable{name_part}"]
+
+    # ANSI color codes for terminal output
+    DIM_COLOR = "\033[36m"      # Cyan for dimensions
+    MEASURE_COLOR = "\033[35m"  # Magenta for measures
+    CALC_COLOR = "\033[33m"     # Yellow for calculated measures
+    RESET = "\033[0m"
+
+    # Show dimensions with color coding
+    if dims:
+        for dim_name in dims.keys():
+            lines.append(f"  {DIM_COLOR}{dim_name} [dim]{RESET}")
+
+    # Show measures with color coding
+    all_measures = {**measures, **calc_measures}
+    if all_measures:
+        for meas_name in all_measures.keys():
+            # Distinguish between base measures and calculated measures
+            if meas_name in calc_measures:
+                lines.append(f"  {CALC_COLOR}{meas_name} [calc]{RESET}")
+            else:
+                lines.append(f"  {MEASURE_COLOR}{meas_name} [measure]{RESET}")
+
+    return "\n".join(lines)
 
 
 @fmt.register(SemanticFilterOp)
