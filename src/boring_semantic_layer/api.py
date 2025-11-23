@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ibis.expr import types as ir
 
 from .expr import SemanticModel
+from .ops import Dimension
 
 
 def to_semantic_table(
@@ -195,3 +196,74 @@ def limit_(table: SemanticModel, n: int) -> SemanticModel:
         Limited SemanticModel
     """
     return table.limit(n)
+
+
+def entity_dimension(
+    expr: Callable[[ir.Table], ir.Value],
+    description: str | None = None,
+) -> Dimension:
+    """Create an entity dimension (join key/identifier).
+
+    Entity dimensions represent the primary entities in your feature view,
+    similar to Feast's entity concept. These are typically used as join keys
+    (e.g., business_id, user_id, customer_id).
+
+    Args:
+        expr: Lambda function that extracts the entity column from a table
+        description: Optional description of the entity dimension
+
+    Returns:
+        Dimension marked as an entity
+
+    Examples:
+        >>> from boring_semantic_layer import entity_dimension, to_semantic_table
+        >>> model = (
+        ...     to_semantic_table(table, name="features")
+        ...     .with_dimensions(
+        ...         business_id=entity_dimension(lambda t: t.business_id),
+        ...         user_id=entity_dimension(lambda t: t.user_id, "User identifier"),
+        ...     )
+        ... )
+    """
+    return Dimension(
+        expr=expr,
+        description=description,
+        is_entity=True,
+    )
+
+
+def time_dimension(
+    expr: Callable[[ir.Table], ir.Value],
+    description: str | None = None,
+    smallest_time_grain: str | None = None,
+) -> Dimension:
+    """Create an event timestamp dimension for point-in-time correctness.
+
+    Args:
+        expr: Lambda function that extracts the timestamp column from a table
+        description: Optional description of the time dimension
+        smallest_time_grain: Optional time granularity (e.g., "TIME_GRAIN_DAY", "TIME_GRAIN_HOUR")
+
+    Returns:
+        Dimension marked as an event timestamp
+
+    Examples:
+        >>> from boring_semantic_layer import time_dimension, to_semantic_table
+        >>> model = (
+        ...     to_semantic_table(table, name="features")
+        ...     .with_dimensions(
+        ...         statement_date=time_dimension(
+        ...             lambda t: t.statement_date,
+        ...             "Statement date for balance features",
+        ...             smallest_time_grain="TIME_GRAIN_DAY",
+        ...         ),
+        ...     )
+        ... )
+    """
+    return Dimension(
+        expr=expr,
+        description=description,
+        is_event_timestamp=True,
+        is_time_dimension=True if smallest_time_grain else False,
+        smallest_time_grain=smallest_time_grain,
+    )

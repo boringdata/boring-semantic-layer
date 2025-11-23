@@ -4,7 +4,6 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import reduce
 from typing import TYPE_CHECKING, Any
 
-# Use regular ibis - works with both regular ibis and xorq backends
 import ibis
 import ibis.selectors as s
 from attrs import field, frozen
@@ -15,27 +14,18 @@ from ibis.expr import types as ir
 from ibis.expr.operations.relations import Field, Relation
 from ibis.expr.schema import Schema
 
-# Import FrozenDict and FrozenOrderedDict from the same module as Schema
-# This handles both regular ibis and xorq (which vendors ibis)
-# Schema is in ibis.expr.schema or xorq.vendor.ibis.expr.schema
-# We need ibis.common.collections or xorq.vendor.ibis.common.collections
 _schema_module_parts = Schema.__module__.split('.')
+
 if 'vendor' in _schema_module_parts:
-    # xorq: xorq.vendor.ibis.expr.schema -> xorq.vendor.ibis.common.collections
     _collections_path = '.'.join(_schema_module_parts[:3]) + '.common.collections'
 else:
-    # regular ibis: ibis.expr.schema -> ibis.common.collections
     _collections_path = _schema_module_parts[0] + '.common.collections'
 
 try:
     _collections_module = __import__(_collections_path, fromlist=['FrozenDict', 'FrozenOrderedDict'])
     FrozenDict = _collections_module.FrozenDict
     FrozenOrderedDict = _collections_module.FrozenOrderedDict
-    # Debug: Verify correct module was loaded
-    # print(f"[BSL] Loaded FrozenOrderedDict from: {FrozenOrderedDict.__module__}")
-    # print(f"[BSL] Schema is from: {Schema.__module__}")
 except (ImportError, AttributeError) as e:
-    # Fallback to direct import if dynamic import fails
     import warnings
     warnings.warn(f"Failed to dynamically import from {_collections_path}: {e}. Falling back to direct import.")
     from ibis.common.collections import FrozenDict, FrozenOrderedDict
@@ -416,6 +406,12 @@ def _build_json_definition(
     result = {
         "dimensions": {n: spec.to_json() for n, spec in dims_dict.items()},
         "measures": {n: spec.to_json() for n, spec in meas_dict.items()},
+        "entity_dimensions": {
+            n: spec.to_json() for n, spec in dims_dict.items() if spec.is_entity
+        },
+        "event_timestamp": {
+            n: spec.to_json() for n, spec in dims_dict.items() if spec.is_event_timestamp
+        },
         "time_dimensions": {
             n: spec.to_json() for n, spec in dims_dict.items() if spec.is_time_dimension
         },
@@ -430,7 +426,9 @@ def _build_json_definition(
 class Dimension:
     expr: Callable[[ir.Table], ir.Value] | Deferred
     description: str | None = None
+    is_entity: bool = False
     is_time_dimension: bool = False
+    is_event_timestamp: bool = False
     smallest_time_grain: str | None = None
 
     def __call__(self, table: ir.Table) -> ir.Value:
@@ -438,15 +436,17 @@ class Dimension:
 
     def to_json(self) -> Mapping[str, Any]:
         base = {"description": self.description}
-        return (
-            {**base, "smallest_time_grain": self.smallest_time_grain}
-            if self.is_time_dimension
-            else base
-        )
+        if self.is_entity:
+            base["is_entity"] = True
+        if self.is_event_timestamp:
+            base["is_event_timestamp"] = True
+        if self.is_time_dimension:
+            base["smallest_time_grain"] = self.smallest_time_grain
+        return base
 
     def __hash__(self) -> int:
         return hash(
-            (self.description, self.is_time_dimension, self.smallest_time_grain),
+            (self.description, self.is_entity, self.is_event_timestamp, self.is_time_dimension, self.smallest_time_grain),
         )
 
 

@@ -10,6 +10,8 @@ from . import (
 
 # Main API exports
 from .api import (
+    entity_dimension,
+    time_dimension,
     to_semantic_table,
 )
 from .config import (
@@ -30,6 +32,8 @@ from .yaml import (
 
 __all__ = [
     "to_semantic_table",
+    "entity_dimension",
+    "time_dimension",
     "to_ibis",
     "SemanticModel",
     "SemanticTable",

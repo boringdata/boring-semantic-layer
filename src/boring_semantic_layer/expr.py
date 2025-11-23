@@ -119,6 +119,8 @@ def _create_dimension(expr: Dimension | Callable | dict) -> Dimension:
         return Dimension(
             expr=expr["expr"],
             description=expr.get("description"),
+            is_entity=expr.get("is_entity", False),
+            is_event_timestamp=expr.get("is_event_timestamp", False),
             is_time_dimension=expr.get("is_time_dimension", False),
             smallest_time_grain=expr.get("smallest_time_grain"),
         )
