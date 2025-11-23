@@ -14,15 +14,15 @@ from ibis.expr import types as ir
 from ibis.expr.operations.relations import Field, Relation
 from ibis.expr.schema import Schema
 
-_schema_module_parts = Schema.__module__.split('.')
-if 'vendor' in _schema_module_parts:
-    _collections_path = '.'.join(_schema_module_parts[:3]) + '.common.collections'
-else:
-    _collections_path = _schema_module_parts[0] + '.common.collections'
-
-_collections_module = __import__(_collections_path, fromlist=['FrozenDict', 'FrozenOrderedDict'])
-FrozenDict = _collections_module.FrozenDict
-FrozenOrderedDict = _collections_module.FrozenOrderedDict
+try:
+    from xorq.vendor.ibis.common.collections import FrozenDict, FrozenOrderedDict
+    from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
+    _SchemaClass = XorqSchema
+    _FrozenOrderedDict = FrozenOrderedDict
+except ImportError:
+    from ibis.common.collections import FrozenDict, FrozenOrderedDict
+    _SchemaClass = Schema
+    _FrozenOrderedDict = FrozenOrderedDict
 
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Success, safe
@@ -79,12 +79,8 @@ def _semantic_repr(op: Relation) -> str:
 
 
 def _make_schema(fields_dict: dict[str, str]):
-    """Create Schema instance from fields dict, using the same ibis module as Schema import."""
-    if 'xorq' in Schema.__module__:
-        from xorq.vendor.ibis.expr.schema import Schema as SchemaClass
-    else:
-        from ibis.expr.schema import Schema as SchemaClass
-    return SchemaClass(fields_dict)
+    """Create Schema instance from fields dict."""
+    return _SchemaClass(fields_dict)
 
 
 def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
@@ -723,13 +719,7 @@ class SemanticProjectOp(Relation):
 
     @property
     def schema(self) -> Schema:
-        if 'xorq' in Schema.__module__:
-            from xorq.vendor.ibis.common.collections import FrozenOrderedDict as FOD
-            from xorq.vendor.ibis.expr.schema import Schema as SchemaClass
-        else:
-            FOD = FrozenOrderedDict
-            from ibis.expr.schema import Schema as SchemaClass
-        return SchemaClass(fields=FOD({k: v.dtype for k, v in self.values.items()}))
+        return _SchemaClass(fields=_FrozenOrderedDict({k: v.dtype for k, v in self.values.items()}))
 
     def to_ibis(self):
         all_roots = _find_all_root_models(self.source)
@@ -981,13 +971,7 @@ class SemanticAggregateOp(Relation):
 
     @property
     def schema(self) -> Schema:
-        if 'xorq' in Schema.__module__:
-            from xorq.vendor.ibis.common.collections import FrozenOrderedDict as FOD
-            from xorq.vendor.ibis.expr.schema import Schema as SchemaClass
-        else:
-            FOD = FrozenOrderedDict
-            from ibis.expr.schema import Schema as SchemaClass
-        return SchemaClass(fields=FOD({n: v.dtype for n, v in self.values.items()}))
+        return _SchemaClass(fields=_FrozenOrderedDict({n: v.dtype for n, v in self.values.items()}))
 
     @property
     def measures(self) -> tuple[str, ...]:
