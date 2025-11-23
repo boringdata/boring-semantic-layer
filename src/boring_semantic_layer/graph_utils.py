@@ -10,16 +10,8 @@ from xorq.common.utils.graph_utils import (
 from xorq.vendor.ibis.common.graph import Graph
 from xorq.vendor.ibis.expr.operations.core import Node
 from xorq.vendor.ibis.expr.types import Expr as XorqExpr
-
-try:
-    from ibis.expr.operations.core import Node as IbisNode
-    from ibis.expr.types import Expr as IbisExpr
-    _REGULAR_IBIS_AVAILABLE = True
-except ImportError:
-    IbisNode = None
-    IbisExpr = None
-    _REGULAR_IBIS_AVAILABLE = False
-
+from ibis.expr.operations.core import Node as IbisNode
+from ibis.expr.types import Expr as IbisExpr
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Failure, Result, Success
 
@@ -38,11 +30,10 @@ __all__ = [
 
 
 def to_node(maybe_expr: Any) -> Node:
-    if _REGULAR_IBIS_AVAILABLE:
-        if isinstance(maybe_expr, IbisNode):
-            return maybe_expr
-        if isinstance(maybe_expr, IbisExpr):
-            return maybe_expr.op()
+    if isinstance(maybe_expr, IbisNode):
+        return maybe_expr
+    if isinstance(maybe_expr, IbisExpr):
+        return maybe_expr.op()
     return _xorq_to_node(maybe_expr)
 
 
