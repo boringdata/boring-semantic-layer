@@ -4,7 +4,6 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import reduce
 from typing import TYPE_CHECKING, Any
 
-# Use regular ibis - works with both regular ibis and xorq backends
 import ibis
 import ibis.selectors as s
 from attrs import field, frozen
@@ -15,27 +14,17 @@ from ibis.expr import types as ir
 from ibis.expr.operations.relations import Field, Relation
 from ibis.expr.schema import Schema
 
-# Import FrozenDict and FrozenOrderedDict from the same module as Schema
-# This handles both regular ibis and xorq (which vendors ibis)
-# Schema is in ibis.expr.schema or xorq.vendor.ibis.expr.schema
-# We need ibis.common.collections or xorq.vendor.ibis.common.collections
 _schema_module_parts = Schema.__module__.split('.')
 if 'vendor' in _schema_module_parts:
-    # xorq: xorq.vendor.ibis.expr.schema -> xorq.vendor.ibis.common.collections
     _collections_path = '.'.join(_schema_module_parts[:3]) + '.common.collections'
 else:
-    # regular ibis: ibis.expr.schema -> ibis.common.collections
     _collections_path = _schema_module_parts[0] + '.common.collections'
 
 try:
     _collections_module = __import__(_collections_path, fromlist=['FrozenDict', 'FrozenOrderedDict'])
     FrozenDict = _collections_module.FrozenDict
     FrozenOrderedDict = _collections_module.FrozenOrderedDict
-    # Debug: Verify correct module was loaded
-    # print(f"[BSL] Loaded FrozenOrderedDict from: {FrozenOrderedDict.__module__}")
-    # print(f"[BSL] Schema is from: {Schema.__module__}")
 except (ImportError, AttributeError) as e:
-    # Fallback to direct import if dynamic import fails
     import warnings
     warnings.warn(f"Failed to dynamically import from {_collections_path}: {e}. Falling back to direct import.")
     from ibis.common.collections import FrozenDict, FrozenOrderedDict
@@ -46,7 +35,6 @@ from toolz import curry
 
 
 def _is_deferred(expr) -> bool:
-    """Check if expression is a Deferred."""
     return isinstance(expr, Deferred)
 
 
@@ -74,10 +62,6 @@ if TYPE_CHECKING:
 
 
 def _to_ibis(source: Any) -> ir.Table:
-    """Convert source to ibis table without forcing conversions.
-
-    Works with both regular ibis tables and xorq backend tables.
-    """
     return source.to_ibis() if hasattr(source, "to_ibis") else source.to_expr()
 
 
@@ -92,12 +76,10 @@ def _unwrap(wrapped: Any) -> Any:
 
 
 def _semantic_repr(op: Relation) -> str:
-    """Generate repr for semantic operations using Ibis's pretty printer."""
     from ibis.expr.format import pretty
     try:
         return pretty(op)
     except Exception:
-        # Fallback to default repr if pretty printing fails
         return object.__repr__(op)
 
 
@@ -110,10 +92,7 @@ def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
         else expr
     )
 
-    # If the result is a regular ibis expression but scope is a xorq table,
-    # convert it to xorq to prevent type errors
     if hasattr(result, '__class__') and hasattr(scope, '__class__'):
-        # Check if result is from regular ibis but scope is from xorq
         result_module = result.__class__.__module__
         scope_module = scope.__class__.__module__
         result_is_regular_ibis = 'ibis.expr' in result_module and 'xorq' not in result_module
@@ -675,12 +654,10 @@ def _process_nested_access_marker(
     if marker.operation == "count":
         return unnested, unnested.count().name(name)
 
-    # Build expression accessing nested fields
     expr = getattr(unnested, marker.array_path[0])
     for field_name in marker.field_path:
         expr = getattr(expr, field_name)
 
-    # Apply aggregation
     if marker.operation in ("sum", "mean", "min", "max", "nunique"):
         agg_fn = getattr(expr, marker.operation)
         return unnested, agg_fn().name(name)
@@ -2027,18 +2004,15 @@ def _get_fields_to_index(
     merged_dimensions: dict,
     base_tbl: ir.Table,
 ) -> tuple[str, ...]:
-    # Handle None as "all fields"
     if selector is None:
         selector = s.all()
 
     raw_fields = _resolve_selector(selector, base_tbl)
 
-    # If raw_fields is empty (selector failed to resolve), include all fields
     if not raw_fields:
         result = list(merged_dimensions.keys())
         result.extend(col for col in base_tbl.columns if col not in result)
     else:
-        # Only include selected fields that exist in dimensions or base table
         result = [col for col in raw_fields if col in merged_dimensions or col in base_tbl.columns]
 
     return result
@@ -2233,11 +2207,9 @@ def _find_all_root_models(node: Any) -> tuple[SemanticTableOp, ...]:
 
     roots = []
 
-    # Handle joins with left/right sides
     if hasattr(node, "left") and hasattr(node, "right"):
         roots.extend(_find_all_root_models(node.left))
         roots.extend(_find_all_root_models(node.right))
-    # Handle single-source operations
     elif hasattr(node, "source") and node.source is not None:
         roots.extend(_find_all_root_models(node.source))
 
@@ -2292,8 +2264,6 @@ def _merge_fields_with_prefixing(
 
     merged_fields = {}
 
-    # Special handling for calculated measures - need to update internal MeasureRefs
-    # Determine if we're processing calc measures by checking the field type
     is_calc_measures = False
     if all_roots:
         sample_fields = field_accessor(all_roots[0])
@@ -2306,7 +2276,6 @@ def _merge_fields_with_prefixing(
                 MeasureRef | AllOf | BinOp | int | float,
             )
 
-    # Always prefix fields with table name for consistency
     for root in all_roots:
         root_name = root.name
         fields_dict = field_accessor(root)
@@ -2473,11 +2442,9 @@ def _extract_columns_from_callable(
     if not callable(fn):
         return ColumnExtractionResult.success(frozenset())
 
-    # Use list as reference cell for immutable tracker
     tracker_ref = [ColumnTracker()]
 
     def on_column_access(col_name: str) -> None:
-        """Callback that updates tracker reference."""
         tracker_ref[0] = tracker_ref[0].with_column(col_name)
 
     try:
@@ -2494,20 +2461,13 @@ def _extract_join_key_columns(
     left_table: ir.Table,
     right_table: ir.Table,
 ) -> JoinColumnExtractionResult:
-    """Extract column names used in join predicate.
-
-    Uses immutable trackers for both tables.
-    """
-    # Use lists as reference cells for immutable trackers
     left_tracker_ref = [ColumnTracker()]
     right_tracker_ref = [ColumnTracker()]
 
     def on_left_access(col_name: str) -> None:
-        """Callback for left table column access."""
         left_tracker_ref[0] = left_tracker_ref[0].with_column(col_name)
 
     def on_right_access(col_name: str) -> None:
-        """Callback for right table column access."""
         right_tracker_ref[0] = right_tracker_ref[0].with_column(col_name)
 
     try:

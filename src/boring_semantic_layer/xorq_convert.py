@@ -358,17 +358,13 @@ def _deserialize_expr(expr_str: str | None, fallback_name: str | None = None) ->
         return lambda t, n=fallback_name: t[n] if n else t  # noqa: E731
     result = ibis_string_to_expr(expr_str)
 
-    # If deserialization succeeded, return the function
     from returns.result import Success
     if isinstance(result, Success):
         return result.unwrap()
 
-    # If deserialization failed and we have a fallback name, try column access
-    # This is for dimensions that are just column references
     if fallback_name:
         return lambda t, n=fallback_name: t[n]  # noqa: E731
 
-    # Otherwise raise the error - don't silently fail
     raise ValueError(f"Failed to deserialize expression: {expr_str}. Error: {result.failure()}")
 
 
