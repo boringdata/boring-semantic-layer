@@ -38,9 +38,17 @@ def _format_semantic_table(op: SemanticTableOp, **kwargs):
     name_part = f": {HEADER_COLOR}{name}{RESET}" if name else ""
     lines = [f"{HEADER_COLOR}SemanticTable{RESET}{name_part}"]
 
+    # Show dimensions with color coding and special markers
     if dims:
-        for dim_name in dims.keys():
-            lines.append(f"  {DIM_COLOR}{dim_name} [dim]{RESET}")
+        for dim_name, dim_obj in dims.items():
+            # Add unicode markers for special dimension types
+            marker = ""
+            if dim_obj.is_entity:
+                marker = "🔑 "  # Key emoji for entity dimensions
+            elif dim_obj.is_event_timestamp:
+                marker = "⏱️ "  # Stopwatch for event timestamp dimensions
+
+            lines.append(f"  {marker}{DIM_COLOR}{dim_name} [dim]{RESET}")
 
     all_measures = {**measures, **calc_measures}
     if all_measures:

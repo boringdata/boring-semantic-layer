@@ -415,6 +415,12 @@ def _build_json_definition(
     result = {
         "dimensions": {n: spec.to_json() for n, spec in dims_dict.items()},
         "measures": {n: spec.to_json() for n, spec in meas_dict.items()},
+        "entity_dimensions": {
+            n: spec.to_json() for n, spec in dims_dict.items() if spec.is_entity
+        },
+        "event_timestamp": {
+            n: spec.to_json() for n, spec in dims_dict.items() if spec.is_event_timestamp
+        },
         "time_dimensions": {
             n: spec.to_json() for n, spec in dims_dict.items() if spec.is_time_dimension
         },
@@ -429,7 +435,9 @@ def _build_json_definition(
 class Dimension:
     expr: Callable[[ir.Table], ir.Value] | Deferred
     description: str | None = None
+    is_entity: bool = False
     is_time_dimension: bool = False
+    is_event_timestamp: bool = False
     smallest_time_grain: str | None = None
 
     def __call__(self, table: ir.Table) -> ir.Value:
@@ -437,15 +445,17 @@ class Dimension:
 
     def to_json(self) -> Mapping[str, Any]:
         base = {"description": self.description}
-        return (
-            {**base, "smallest_time_grain": self.smallest_time_grain}
-            if self.is_time_dimension
-            else base
-        )
+        if self.is_entity:
+            base["is_entity"] = True
+        if self.is_event_timestamp:
+            base["is_event_timestamp"] = True
+        if self.is_time_dimension:
+            base["smallest_time_grain"] = self.smallest_time_grain
+        return base
 
     def __hash__(self) -> int:
         return hash(
-            (self.description, self.is_time_dimension, self.smallest_time_grain),
+            (self.description, self.is_entity, self.is_event_timestamp, self.is_time_dimension, self.smallest_time_grain),
         )
 
 
