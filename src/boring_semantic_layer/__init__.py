@@ -25,8 +25,9 @@ from .ops import (
     Measure,
 )
 from .profile import (
-    ProfileLoader,
-    loader,
+    ProfileError,
+    get_connection,
+    get_tables,
 )
 from .yaml import (
     from_yaml,
@@ -44,8 +45,9 @@ __all__ = [
     "options",
     "to_xorq",
     "from_xorq",
-    "ProfileLoader",
-    "loader",
+    "ProfileError",
+    "get_connection",
+    "get_tables",
 ]
 
 # Import MCP functionality if available

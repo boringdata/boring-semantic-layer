@@ -13,17 +13,17 @@ BSL provides a profile system for managing database connections using configurat
 ### Python-Based
 
 ```python
-from boring_semantic_layer import loader, to_semantic_table
+from boring_semantic_layer import get_connection, to_semantic_table
 
 # Load connection directly by profile name
 # Searches for 'my_db' profile in:
 #   1. ~/.config/bsl/profiles/my_db.yml
 #   2. ./profiles.yml (current directory)
 #   3. xorq profiles directory
-con = loader.load('my_db')
+con = get_connection('my_db')
 
 # Load from a specific file
-con = loader.load('my_db', profile_file='config/profiles.yml')
+con = get_connection('my_db', profile_file='config/profiles.yml')
 
 # Use the connection to access tables and create semantic tables
 flights_table = con.table('flights')
@@ -99,7 +99,7 @@ models = from_yaml('model.yml', profile='my_db')
 
 ## Profile Resolution Order
 
-`loader.load('my_db')` searches in this order:
+`get_connection('my_db')` searches in this order:
 1. `~/.config/bsl/profiles/my_db.yml` (BSL-specific profiles)
 2. `./profiles.yml` (local project profiles)
 3. xorq profiles directory (system-wide xorq profiles)
@@ -107,19 +107,16 @@ models = from_yaml('model.yml', profile='my_db')
 You can customize the search order:
 
 ```python
-from boring_semantic_layer import ProfileLoader
+from boring_semantic_layer import get_connection
 
-# Create custom loader with specific search order
-custom_loader = ProfileLoader(search_locations=['bsl_dir'])
-con = custom_loader.load('my_db')
+# Specify custom search order
+con = get_connection('my_db', search_locations=['bsl_dir'])
 
 # Search only local directory
-local_loader = ProfileLoader(search_locations=['local'])
-con = local_loader.load('my_db')
+con = get_connection('my_db', search_locations=['local'])
 
 # Custom order
-custom_order_loader = ProfileLoader(search_locations=['local', 'bsl_dir', 'xorq_dir'])
-con = custom_order_loader.load('my_db')
+con = get_connection('my_db', search_locations=['local', 'bsl_dir', 'xorq_dir'])
 ```
 
 `from_yaml()` resolves profiles in order:
@@ -132,7 +129,7 @@ con = custom_order_loader.load('my_db')
 
 BSL accepts both native ibis backends and xorq's vendored ibis backends. The `type` field in your profile corresponds to the ibis backend name, and the other fields are passed as connection parameters.
 
-**xorq's vendored backends are required to enable caching.** By default, BSL uses xorq's cached backends automatically via `loader.load()` for improved performance. If you need native ibis backends without caching, you can pass them directly to BSL functions.
+**xorq's vendored backends are required to enable caching.** By default, BSL uses xorq's cached backends automatically via `get_connection()` for improved performance. If you need native ibis backends without caching, pass `use_xorq=False` to `get_connection()`.
 
 See the [ibis backends documentation](https://ibis-project.org/backends/) for the complete list of supported backends and their required connection parameters.
 
@@ -141,10 +138,10 @@ See the [ibis backends documentation](https://ibis-project.org/backends/) for th
 The `tables` configuration automatically creates database tables from parquet files when loading a profile:
 
 ```python
-from boring_semantic_layer import loader
+from boring_semantic_layer import get_connection
 
-con = loader.load('test_db')  # Creates 'flights' table
-print(con.list_tables())       # ['flights']
+con = get_connection('test_db')  # Creates 'flights' table
+print(con.list_tables())         # ['flights']
 ```
 
 Supports both string paths and dict config:

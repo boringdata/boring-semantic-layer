@@ -10,7 +10,7 @@ from ibis import _
 from .api import to_semantic_table
 from .expr import SemanticModel, SemanticTable
 from .ops import Dimension, Measure
-from .profile import loader
+from .profile import get_connection, get_tables
 from .utils import read_yaml_file, safe_eval
 
 
@@ -114,19 +114,89 @@ def _parse_joins(
     return result_model
 
 
-def _resolve_table_references(tables: Mapping[str, Any], profile_loader) -> dict[str, Any]:
-    """Resolve tuple table references like ("profile", "table") or ("profile", "table", "file")."""
+def _load_tables_from_references(
+    table_refs: dict[str, tuple[str, str] | tuple[str, str, str] | Any],
+) -> dict[str, Any]:
+    """Load tables from mixed references (tuples for remote profiles, or direct table objects).
+
+    Supports loading tables from remote profiles using tuple notation:
+    - (profile_name, table_name) - Load table from profile
+    - (profile_name, table_name, profile_file) - Load table from specific profile file
+
+    Args:
+        table_refs: Dictionary mapping table names to either:
+            - Tuple[str, str]: (profile_name, table_name) - Load from profile
+            - Tuple[str, str, str]: (profile_name, table_name, profile_file) - Load from specific file
+            - Table object: Already loaded ibis table
+
+    Returns:
+        dict[str, Table]: Dictionary mapping names to loaded ibis tables
+
+    Example:
+        >>> table_refs = {
+        ...     "prod_users": ("prod_db", "users"),  # Load from prod_db profile
+        ...     "staging_orders": ("staging", "orders", "staging.yml"),  # Load from specific file
+        ...     "local_data": ibis_table,  # Use existing table
+        ... }
+        >>> tables = _load_tables_from_references(table_refs)
+        >>> # {"prod_users": <Table>, "staging_orders": <Table>, "local_data": <Table>}
+    """
     resolved = {}
-    for name, ref in tables.items():
-        # Handle tuple references: (profile, table_name) or (profile, table_name, profile_file)
+    for name, ref in table_refs.items():
         if isinstance(ref, tuple) and len(ref) in (2, 3):
             profile_name, remote_table = ref[0], ref[1]
             profile_file = ref[2] if len(ref) == 3 else None
-            con = profile_loader.load(profile_name, profile_file=profile_file)
+            con = get_connection(profile_name, profile_file=profile_file)
             resolved[name] = con.table(remote_table)
         else:
             resolved[name] = ref
     return resolved
+
+
+def _load_table_for_yaml_model(
+    model_config: dict[str, Any],
+    existing_tables: dict[str, Any],
+    table_name: str,
+) -> dict[str, Any]:
+    """Load table for a semantic model definition, handling profile configs.
+
+    Args:
+        model_config: Model configuration dict (may contain 'profile' key)
+        existing_tables: Already loaded tables
+        table_name: Name of the table to load
+
+    Returns:
+        dict: Updated tables dictionary with new table loaded if needed
+
+    Raises:
+        ValueError: If table name conflicts with existing tables
+        KeyError: If required table not found
+
+    Example:
+        >>> config = {"table": "users", "profile": {"name": "prod_db"}}
+        >>> tables = _load_table_for_yaml_model(config, {}, "users")
+    """
+    tables = existing_tables.copy()
+
+    # Load table from model-specific profile if needed
+    if "profile" in model_config:
+        profile_config = model_config["profile"]
+        connection = get_connection(profile_config)
+        model_tables = get_tables(connection, [table_name])
+
+        # Check for duplicates
+        duplicates = set(tables.keys()) & set(model_tables.keys())
+        if duplicates:
+            raise ValueError(f"Table name conflict: {', '.join(sorted(duplicates))} already exists")
+
+        tables.update(model_tables)
+
+    # Verify table exists
+    if table_name not in tables:
+        available = ", ".join(sorted(tables.keys()))
+        raise KeyError(f"Table '{table_name}' not found. Available: {available}")
+
+    return tables
 
 
 def from_yaml(
@@ -136,56 +206,36 @@ def from_yaml(
     profile_path: str | None = None,
 ) -> dict[str, SemanticModel]:
     """Load semantic models from a YAML file with optional profile-based table loading."""
-    tables = _resolve_table_references(tables or {}, loader)
-
-    # Load tables from profile parameter only if explicitly requested OR no tables provided yet
-    # Don't auto-load from env vars when explicit tables are provided
-    if profile is not None or profile_path is not None or not tables:
-        tables = {**tables, **loader.load_tables(profile, profile_file=profile_path)}
-
+    tables = _load_tables_from_references(tables or {})
     yaml_configs = read_yaml_file(yaml_path)
 
-    # Load from YAML profile section if no tables loaded yet
-    if "profile" in yaml_configs and not tables:
-        tables = {**tables, **loader.load_tables(yaml_configs["profile"])}
+    # Load tables from profile if not provided
+    if not tables:
+        profile_config = profile or yaml_configs.get("profile")
+        if profile_config or profile_path:
+            connection = get_connection(
+                profile_config or profile_path,
+                profile_file=profile_path if profile_config else None,
+            )
+            tables = get_tables(connection)
+
+    # Filter to only model definitions (exclude 'profile' key and non-dict values)
+    model_configs = {
+        name: config
+        for name, config in yaml_configs.items()
+        if name != "profile" and isinstance(config, dict)
+    }
 
     models: dict[str, SemanticModel] = {}
 
-    # First pass: create models without joins
-    for name, config in yaml_configs.items():
-        # Skip special sections
-        if name == "profile":
-            continue
-
-        if not isinstance(config, dict):
-            continue
-
+    # First pass: create models
+    for name, config in model_configs.items():
         table_name = config.get("table")
         if not table_name:
             raise ValueError(f"Model '{name}' must specify 'table' field")
 
-        # Check if this model has its own profile (table-level)
-        if "profile" in config:
-            # Load only the specific table needed
-            all_tables = loader.load_tables(config["profile"])
-            profile_tables = {table_name: all_tables[table_name]}
-            # Check for duplicate table names before merging
-            duplicates = set(tables.keys()) & set(profile_tables.keys())
-            if duplicates:
-                raise ValueError(
-                    f"Table name conflict: {', '.join(sorted(duplicates))} already exists. "
-                    f"Tables loaded from profiles must have unique names."
-                )
-            tables = {**tables, **profile_tables}
-
-        if table_name not in tables:
-            available = ", ".join(
-                sorted(k for k in tables if hasattr(tables[k], "execute")),
-            )
-            raise KeyError(
-                f"Table '{table_name}' not found in tables.\nAvailable tables: {available}",
-            )
-
+        # Load table if needed and verify it exists
+        tables = _load_table_for_yaml_model(config, tables, table_name)
         table = tables[table_name]
 
         # Parse dimensions and measures
@@ -207,10 +257,7 @@ def from_yaml(
         models[name] = semantic_table
 
     # Second pass: add joins now that all models exist
-    for name, config in yaml_configs.items():
-        if not isinstance(config, dict):
-            continue
-
+    for name, config in model_configs.items():
         if "joins" in config and config["joins"]:
             models[name] = _parse_joins(
                 config["joins"],

@@ -7,7 +7,7 @@ import pytest
 
 from boring_semantic_layer.profile import (
     ProfileError,
-    loader,
+    get_connection,
 )
 
 
@@ -39,12 +39,12 @@ class TestProfileSaveLoad:
 
     def test_load_from_yaml_file(self, sample_profile_yaml):
         """Test loading profile from YAML file using profile_file parameter."""
-        con = loader.get_connection("dev_db", profile_file=sample_profile_yaml)
+        con = get_connection("dev_db", profile_file=sample_profile_yaml)
         assert con.list_tables() is not None
 
     def test_load_from_yaml_with_profile_file(self, sample_profile_yaml):
         """Test loading specific profile from YAML file."""
-        con = loader.get_connection("test_db", profile_file=sample_profile_yaml)
+        con = get_connection("test_db", profile_file=sample_profile_yaml)
         assert con.list_tables() is not None
 
     def test_load_from_local_profile_yml(self, temp_dir, monkeypatch):
@@ -58,7 +58,7 @@ local_db:
   database: "local.db"
 """)
 
-        con = loader.get_connection("local_db")
+        con = get_connection("local_db")
         assert con.list_tables() is not None
 
     def test_load_from_bsl_profiles(self, temp_dir, monkeypatch):
@@ -75,13 +75,13 @@ saved_db:
   database: saved.db
 """)
 
-        con = loader.get_connection("saved_db")
+        con = get_connection("saved_db")
         assert con.list_tables() is not None
 
     def test_load_nonexistent_profile(self):
         """Test loading a profile that doesn't exist."""
         with pytest.raises(ProfileError, match="not found"):
-            loader.get_connection("nonexistent_profile_xyz")
+            get_connection("nonexistent_profile_xyz")
 
     def test_load_missing_type_field(self, temp_dir):
         """Test loading profile without type field."""
@@ -92,20 +92,20 @@ bad_db:
 """)
 
         with pytest.raises(ProfileError, match="must specify 'type' field"):
-            loader.get_connection("bad_db", profile_file=profile_file)
+            get_connection("bad_db", profile_file=profile_file)
 
 
 class TestLoadProfileFunction:
-    """Test loader.get_connection() function."""
+    """Test get_connection() function."""
 
     def test_load_profile_from_yaml(self, sample_profile_yaml):
-        """Test loader.get_connection() function."""
-        con = loader.get_connection("dev_db", profile_file=sample_profile_yaml)
+        """Test get_connection() function."""
+        con = get_connection("dev_db", profile_file=sample_profile_yaml)
         assert con.list_tables() is not None
 
     def test_load_profile_from_path(self, sample_profile_yaml):
         """Test loading profile directly from file path."""
-        con = loader.get_connection(str(sample_profile_yaml))
+        con = get_connection(str(sample_profile_yaml))
         assert con.list_tables() is not None
 
 
@@ -124,7 +124,7 @@ env_db:
   database: ${TEST_DB_PATH}
 """)
 
-        con = loader.get_connection("env_db", profile_file=profile_file)
+        con = get_connection("env_db", profile_file=profile_file)
         assert con.list_tables() is not None
 
     def test_missing_env_var(self, temp_dir, monkeypatch):
@@ -139,7 +139,7 @@ env_db:
 """)
 
         with pytest.raises((ProfileError, KeyError)):
-            loader.get_connection("env_db", profile_file=profile_file)
+            get_connection("env_db", profile_file=profile_file)
 
     def test_bsl_profile_file_env_var(self, temp_dir, monkeypatch):
         """Test BSL_PROFILE_FILE environment variable for profile file path."""
@@ -152,10 +152,11 @@ test_profile:
 
         monkeypatch.setenv("BSL_PROFILE_FILE", str(profile_file))
 
-        # load_tables should use BSL_PROFILE_FILE when profile_file is not provided
-        tables = loader.load_tables(profile="test_profile")
+        # get_connection should use BSL_PROFILE_FILE when profile_file is not provided
+        connection = get_connection(profile="test_profile")
         # Should not raise an error - the file path was read from env var
-        assert isinstance(tables, dict)
+        assert connection is not None
+        assert hasattr(connection, "list_tables")
 
 
 class TestParquetLoading:
@@ -178,7 +179,7 @@ parquet_db:
     my_table: "{parquet_path}"
 """)
 
-        con = loader.get_connection("parquet_db", profile_file=profile_file)
+        con = get_connection("parquet_db", profile_file=profile_file)
         tables = con.list_tables()
         assert "my_table" in tables
 
@@ -204,7 +205,7 @@ dict_db:
       source: "{parquet_path}"
 """)
 
-        con = loader.get_connection("dict_db", profile_file=profile_file)
+        con = get_connection("dict_db", profile_file=profile_file)
         result = con.table("my_data").execute()
         assert len(result) == 3
         assert list(result["x"]) == [10, 20, 30]
@@ -221,7 +222,7 @@ unsupported_db:
 """)
 
         with pytest.raises(ProfileError) as exc_info:
-            loader.get_connection("unsupported_db", profile_file=profile_file)
+            get_connection("unsupported_db", profile_file=profile_file)
 
         error_msg = str(exc_info.value)
         assert (
@@ -241,7 +242,7 @@ missing_file_db:
 """)
 
         with pytest.raises(ProfileError) as exc_info:
-            loader.get_connection("missing_file_db", profile_file=profile_file)
+            get_connection("missing_file_db", profile_file=profile_file)
 
         error_msg = str(exc_info.value)
         assert "Failed to load parquet file" in error_msg

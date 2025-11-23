@@ -181,23 +181,18 @@ def test_xorq_profile_with_real_data():
 
 
 def test_profile_loader_with_xorq():
-    """Test 3: Use BSL ProfileLoader to get connection from xorq profile."""
+    """Test 3: Use BSL get_connection to load profile from xorq."""
     print("=" * 80)
-    print("TEST 3: BSL ProfileLoader with xorq backend")
+    print("TEST 3: BSL get_connection with xorq backend")
     print("=" * 80)
 
-    from boring_semantic_layer.profile import ProfileLoader
-
-    loader = ProfileLoader()
-
-    # Check if xorq_dir is in search locations
-    print(f"ProfileLoader search locations: {loader.search_locations}")
+    from boring_semantic_layer.profile import get_connection
 
     # Try to load a profile via xorq
     try:
-        # This will search xorq profiles directory
-        connection = loader.get_connection("default")
-        print("✓ Loaded connection via ProfileLoader")
+        # This will search xorq profiles directory (including xorq_dir location)
+        connection = get_connection("default")
+        print("✓ Loaded connection via get_connection")
         print(f"  Connection type: {type(connection)}")
 
         # List tables available
@@ -237,7 +232,7 @@ def test_profile_loader_with_xorq():
             print("\n⚠ Test 3 skipped (no tables)\n")
 
     except Exception as e:
-        print(f"⚠ Could not load profile via ProfileLoader: {e}")
+        print(f"⚠ Could not load profile via get_connection: {e}")
         print("  This is expected if no xorq profiles are configured")
         print("\n⚠ Test 3 skipped\n")
 
