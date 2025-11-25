@@ -599,9 +599,16 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
     return reconstructor(metadata, xorq_expr, source)
 
 
+# Backward compatibility aliases
+to_xorq = to_tagged
+from_xorq = from_tagged
+
+
 __all__ = [
     "to_tagged",
     "from_tagged",
+    "to_xorq",
+    "from_xorq",
     "try_import_xorq",
     "XorqModule",
 ]
