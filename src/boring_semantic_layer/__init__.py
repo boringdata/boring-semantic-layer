@@ -43,8 +43,8 @@ __all__ = [
     "from_yaml",
     "MCPSemanticModel",
     "options",
-    "to_xorq",
-    "from_xorq",
+    "to_tagged",
+    "from_tagged",
     "ProfileError",
     "get_connection",
     "get_tables",
@@ -59,7 +59,7 @@ except ImportError:
     _MCP_AVAILABLE = False
 
 # Import xorq conversion functionality
-from .xorq_convert import from_xorq, to_xorq  # noqa: F401
+from .xorq_convert import from_tagged, to_tagged  # noqa: F401
 
 # Install window compatibility if xorq is available
 # This allows users to use `import ibis` seamlessly with xorq backend
