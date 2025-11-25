@@ -12,7 +12,7 @@ except ImportError:
     exit(1)
 
 from boring_semantic_layer import SemanticModel
-from boring_semantic_layer.xorq_convert import to_xorq
+from boring_semantic_layer.xorq_convert import to_tagged
 
 
 def test_xorq_profile_basic():
@@ -91,7 +91,7 @@ def test_xorq_profile_basic():
 
         # Convert to xorq and execute
         print("\n--- Same query executed via xorq ---")
-        xorq_expr = to_xorq(query)
+        xorq_expr = to_tagged(query)
         from xorq.api import execute as xo_execute
 
         result_xorq = xo_execute(xorq_expr)
@@ -167,7 +167,7 @@ def test_xorq_profile_with_real_data():
 
         # Execute with xorq
         print("(Executing via xorq backend)")
-        xorq_expr2 = to_xorq(query2)
+        xorq_expr2 = to_tagged(query2)
         from xorq.api import execute as xo_execute
 
         result2_xorq = xo_execute(xorq_expr2)

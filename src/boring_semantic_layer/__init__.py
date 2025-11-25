@@ -45,8 +45,6 @@ __all__ = [
     "options",
     "to_tagged",
     "from_tagged",
-    "to_xorq",
-    "from_xorq",
     "ProfileError",
     "get_connection",
     "get_tables",
@@ -61,7 +59,7 @@ except ImportError:
     _MCP_AVAILABLE = False
 
 # Import xorq conversion functionality
-from .xorq_convert import from_tagged, from_xorq, to_tagged, to_xorq  # noqa: F401
+from .xorq_convert import from_tagged, to_tagged  # noqa: F401
 
 # Install window compatibility if xorq is available
 # This allows users to use `import ibis` seamlessly with xorq backend

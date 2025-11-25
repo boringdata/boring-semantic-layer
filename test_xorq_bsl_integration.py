@@ -13,7 +13,7 @@ except ImportError:
     exit(1)
 
 from boring_semantic_layer import SemanticModel
-from boring_semantic_layer.xorq_convert import from_xorq, to_xorq
+from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
 
 
 def test_basic_xorq_table():
@@ -63,7 +63,7 @@ def test_basic_xorq_table():
 
     # Convert to xorq and execute
     print("\n--- Query 1: Sales by product (xorq execution) ---")
-    xorq_query1 = to_xorq(query1)
+    xorq_query1 = to_tagged(query1)
     from xorq.api import execute as xo_execute
 
     result1_xorq = xo_execute(xorq_query1)
@@ -78,7 +78,7 @@ def test_basic_xorq_table():
     )
 
     # Execute with xorq
-    xorq_query2 = to_xorq(query2)
+    xorq_query2 = to_tagged(query2)
     result2_xorq = xo_execute(xorq_query2)
     print(result2_xorq)
 
@@ -115,7 +115,7 @@ def test_xorq_conversion():
     print("✓ Created BSL model")
 
     # Convert to xorq
-    xorq_expr = to_xorq(products_model)
+    xorq_expr = to_tagged(products_model)
     print("✓ Converted BSL → xorq")
 
     # Verify xorq expression has metadata
@@ -126,7 +126,7 @@ def test_xorq_conversion():
     print(f"  Metadata: {metadata}")
 
     # Convert back to BSL
-    reconstructed_model = from_xorq(xorq_expr)
+    reconstructed_model = from_tagged(xorq_expr)
     print("✓ Converted xorq → BSL")
 
     # Test that reconstructed model works
@@ -181,7 +181,7 @@ def test_xorq_caching():
     print("\n--- With manual caching (xorq execution) ---")
     xo_con = xo.connect()
     storage = SourceStorage(source=xo_con)
-    xorq_expr = to_xorq(query).cache(storage=storage)
+    xorq_expr = to_tagged(query).cache(storage=storage)
     from xorq.api import execute as xo_execute
 
     result2 = xo_execute(xorq_expr)
@@ -247,7 +247,7 @@ def test_complex_query():
     print(result)
 
     print("\n--- Complex query result (xorq execution) ---")
-    xorq_expr = to_xorq(query)
+    xorq_expr = to_tagged(query)
     from xorq.api import execute as xo_execute
 
     result_xorq = xo_execute(xorq_expr)
