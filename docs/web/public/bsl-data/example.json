@@ -3,8 +3,8 @@
   "queries": {
     "revenue_by_customer": {
       "code": "result = orders_st.group_by(\"customer\").aggregate(\n    \"total_orders\",\n    \"total_revenue\",\n    \"avg_order_value\"\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"customer\",\n    COUNT(*) AS \"total_orders\",\n    SUM(\"t1\".\"amount\") AS \"total_revenue\",\n    AVG(\"t1\".\"amount\") AS \"avg_order_value\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_e2z2tqajdrh6jfoi2peg2dqmqi\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
-      "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34morders\u001b[0m\n  \u001b[36mcustomer [dim]\u001b[0m\n  \u001b[36mproduct [dim]\u001b[0m\n  \u001b[35mtotal_orders [measure]\u001b[0m\n  \u001b[35mtotal_revenue [measure]\u001b[0m\n  \u001b[35mtotal_quantity [measure]\u001b[0m\n  \u001b[35mavg_order_value [measure]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n    \u001b[36mcustomer\u001b[0m\n\n\u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  groups:\n    \u001b[36mcustomer\u001b[0m\n  metrics:\n    \u001b[35mtotal_orders\u001b[0m\n    \u001b[35mtotal_revenue\u001b[0m\n    \u001b[35mavg_order_value\u001b[0m",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"customer\",\n    COUNT(*) AS \"total_orders\",\n    SUM(\"t1\".\"amount\") AS \"total_revenue\",\n    AVG(\"t1\".\"amount\") AS \"avg_order_value\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_27cnnrxi5feglaeo67v5g2ylgu\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "plan": "r0 := SemanticTableOp[orders]\n  2 dimensions: customer, product\n  4 measures: total_orders, total_revenue, total_quantity, ...\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['customer']\n  inherited dimensions: 2\n  inherited measures: 4\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['customer']\n  aggs: [total_orders, total_revenue, avg_order_value]",
       "table": {
         "columns": [
           "customer",
@@ -20,12 +20,6 @@
             112.5
           ],
           [
-            "Alice",
-            3,
-            350,
-            116.66666666666667
-          ],
-          [
             "Bob",
             2,
             250,
@@ -36,6 +30,12 @@
             1,
             100,
             100.0
+          ],
+          [
+            "Alice",
+            3,
+            350,
+            116.66666666666667
           ]
         ]
       },
@@ -49,7 +49,7 @@
             }
           },
           "data": {
-            "name": "data-b2c9c391e9ca04a86ac10062c3cc1b63"
+            "name": "data-942237f81005ad8a1f22bf533c36f807"
           },
           "mark": {
             "type": "bar"
@@ -103,12 +103,12 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-b2c9c391e9ca04a86ac10062c3cc1b63": [
+            "data-942237f81005ad8a1f22bf533c36f807": [
               {
-                "customer": "David",
-                "total_orders": 1,
-                "total_revenue": 100,
-                "avg_order_value": 100.0
+                "customer": "Charlie",
+                "total_orders": 2,
+                "total_revenue": 225,
+                "avg_order_value": 112.5
               },
               {
                 "customer": "Alice",
@@ -123,10 +123,10 @@
                 "avg_order_value": 125.0
               },
               {
-                "customer": "Charlie",
-                "total_orders": 2,
-                "total_revenue": 225,
-                "avg_order_value": 112.5
+                "customer": "David",
+                "total_orders": 1,
+                "total_revenue": 100,
+                "avg_order_value": 100.0
               }
             ]
           }
@@ -135,8 +135,8 @@
     },
     "product_performance": {
       "code": "result = orders_st.group_by(\"product\").aggregate(\n    \"total_orders\",\n    \"total_quantity\",\n    \"total_revenue\"\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"product\",\n    COUNT(*) AS \"total_orders\",\n    SUM(\"t1\".\"quantity\") AS \"total_quantity\",\n    SUM(\"t1\".\"amount\") AS \"total_revenue\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_e2z2tqajdrh6jfoi2peg2dqmqi\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
-      "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34morders\u001b[0m\n  \u001b[36mcustomer [dim]\u001b[0m\n  \u001b[36mproduct [dim]\u001b[0m\n  \u001b[35mtotal_orders [measure]\u001b[0m\n  \u001b[35mtotal_revenue [measure]\u001b[0m\n  \u001b[35mtotal_quantity [measure]\u001b[0m\n  \u001b[35mavg_order_value [measure]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n    \u001b[36mproduct\u001b[0m\n\n\u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  groups:\n    \u001b[36mproduct\u001b[0m\n  metrics:\n    \u001b[35mtotal_orders\u001b[0m\n    \u001b[35mtotal_quantity\u001b[0m\n    \u001b[35mtotal_revenue\u001b[0m",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"product\",\n    COUNT(*) AS \"total_orders\",\n    SUM(\"t1\".\"quantity\") AS \"total_quantity\",\n    SUM(\"t1\".\"amount\") AS \"total_revenue\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_27cnnrxi5feglaeo67v5g2ylgu\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "plan": "r0 := SemanticTableOp[orders]\n  2 dimensions: customer, product\n  4 measures: total_orders, total_revenue, total_quantity, ...\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['product']\n  inherited dimensions: 2\n  inherited measures: 4\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['product']\n  aggs: [total_orders, total_quantity, total_revenue]",
       "table": {
         "columns": [
           "product",
@@ -175,7 +175,7 @@
             }
           },
           "data": {
-            "name": "data-1ec1f0150d675fc7c8bcfbf66cd77da0"
+            "name": "data-6991e3d3e667615e632b8261337a1da8"
           },
           "mark": {
             "type": "bar"
@@ -229,7 +229,13 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-1ec1f0150d675fc7c8bcfbf66cd77da0": [
+            "data-6991e3d3e667615e632b8261337a1da8": [
+              {
+                "product": "Gadget",
+                "total_orders": 3,
+                "total_quantity": 6,
+                "total_revenue": 450
+              },
               {
                 "product": "Widget",
                 "total_orders": 4,
@@ -241,12 +247,6 @@
                 "total_orders": 1,
                 "total_quantity": 3,
                 "total_revenue": 75
-              },
-              {
-                "product": "Gadget",
-                "total_orders": 3,
-                "total_quantity": 6,
-                "total_revenue": 450
               }
             ]
           }

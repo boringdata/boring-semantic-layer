@@ -314,7 +314,7 @@ result = (
 - **Drill-down analysis**: Keep detailed records available in aggregated views
 
 <note type="info">
-For more complex nesting patterns and multi-level hierarchies, see [Advanced Nesting Patterns](/advanced/nesting).
+For more complex nesting patterns and multi-level hierarchies, see [Nested Subtotals](/advanced/nested-subtotals).
 </note>
 
 ## mutate()

@@ -4,7 +4,7 @@
     "setup_chart_data": {
       "code": "import ibis\nfrom boring_semantic_layer import to_semantic_table\n\ncon = ibis.duckdb.connect(\":memory:\")\nflights_data = ibis.memtable({\n    \"origin\": [\"JFK\", \"LAX\", \"SFO\", \"ORD\", \"DFW\", \"ATL\", \"DEN\"],\n    \"flight_count\": [150, 135, 89, 112, 98, 145, 78],\n    \"avg_distance\": [2475, 1850, 1200, 950, 1100, 1650, 900]\n})\nflights_tbl = con.create_table(\"flights\", flights_data)\n\nflights_st = (\n    to_semantic_table(flights_tbl, name=\"flights\")\n    .with_dimensions(\n        origin=lambda t: t.origin\n    )\n    .with_measures(\n        flight_count=lambda t: t.flight_count.sum(),\n        avg_distance=lambda t: t.avg_distance.mean()\n    )\n)",
       "sql": "SELECT\n  *\nFROM \"memory\".\"main\".\"flights\"",
-      "plan": "\u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36morigin [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mavg_distance [measure]\u001b[0m",
+      "plan": "SemanticTableOp[flights]\n  1 dimension: origin\n  2 measures: flight_count, avg_distance",
       "table": {
         "columns": [
           "origin",
@@ -191,7 +191,7 @@
     "setup_timeseries": {
       "code": "import ibis\nfrom boring_semantic_layer import to_semantic_table\n\ncon = ibis.duckdb.connect(\":memory:\")\ntimeseries_data = ibis.memtable({\n    \"date\": [\"2024-01-01\", \"2024-01-02\", \"2024-01-03\", \"2024-01-04\", \"2024-01-05\", \"2024-01-06\", \"2024-01-07\"],\n    \"flight_count\": [145, 152, 148, 139, 156, 161, 143]\n})\ntimeseries_tbl = con.create_table(\"daily_flights\", timeseries_data)\n\ndaily_flights_st = (\n    to_semantic_table(timeseries_tbl, name=\"daily_flights\")\n    .with_dimensions(\n        date={\n            \"expr\": lambda t: t.date.cast(\"date\"),\n            \"is_time_dimension\": True,\n            \"smallest_time_grain\": \"TIME_GRAIN_DAY\"\n        }\n    )\n    .with_measures(\n        flight_count=lambda t: t.flight_count.sum()\n    )\n)",
       "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    SUM(\"t1\".\"flight_count\") AS \"flight_count\"\n  FROM (\n    SELECT\n      *\n    FROM \"memory\".\"main\".\"flights\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"\nORDER BY\n  \"t2\".\"flight_count\" DESC",
-      "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36morigin [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mavg_distance [measure]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n    \u001b[36morigin\u001b[0m\n\nr2 := \u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  groups:\n    \u001b[36morigin\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m\n\nOrderBy[r2]\n  sort_keys:\n    _CallableWrapper(_fn=_['flight_count'].desc(nulls_first=False))",
+      "plan": "r0 := SemanticTableOp[flights]\n  1 dimension: origin\n  2 measures: flight_count, avg_distance\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['origin']\n  inherited dimensions: 1\n  inherited measures: 2\n\nr2 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['origin']\n  aggs: [flight_count]\n\nSemanticOrderByOp\n  source: SemanticAggregateOp\n  keys: [<expr>]",
       "table": {
         "columns": [
           "origin",
@@ -311,7 +311,7 @@
           }
         },
         "data": {
-          "name": "data-ea4be2a1fa18a8ca64751d9eb49a4f3c"
+          "name": "data-ae0e4064b6838a7e781b80ba7a2a6667"
         },
         "mark": {
           "type": "line"
@@ -345,7 +345,19 @@
         "width": 700,
         "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
         "datasets": {
-          "data-ea4be2a1fa18a8ca64751d9eb49a4f3c": [
+          "data-ae0e4064b6838a7e781b80ba7a2a6667": [
+            {
+              "date": "2024-01-06T00:00:00",
+              "flight_count": 161
+            },
+            {
+              "date": "2024-01-01T00:00:00",
+              "flight_count": 145
+            },
+            {
+              "date": "2024-01-07T00:00:00",
+              "flight_count": 143
+            },
             {
               "date": "2024-01-02T00:00:00",
               "flight_count": 152
@@ -359,20 +371,8 @@
               "flight_count": 156
             },
             {
-              "date": "2024-01-06T00:00:00",
-              "flight_count": 161
-            },
-            {
               "date": "2024-01-04T00:00:00",
               "flight_count": 139
-            },
-            {
-              "date": "2024-01-01T00:00:00",
-              "flight_count": 145
-            },
-            {
-              "date": "2024-01-07T00:00:00",
-              "flight_count": 143
             }
           ]
         }
@@ -382,7 +382,7 @@
     "setup_heatmap": {
       "code": "import ibis\nfrom boring_semantic_layer import to_semantic_table\n\ncon = ibis.duckdb.connect(\":memory:\")\nroute_data = ibis.memtable({\n    \"origin\": [\"JFK\", \"JFK\", \"LAX\", \"LAX\", \"SFO\", \"SFO\"],\n    \"dest\": [\"LAX\", \"SFO\", \"JFK\", \"SFO\", \"JFK\", \"LAX\"],\n    \"flight_count\": [45, 32, 43, 28, 31, 27]\n})\nroute_tbl = con.create_table(\"routes\", route_data)\n\nroutes_st = (\n    to_semantic_table(route_tbl, name=\"routes\")\n    .with_dimensions(\n        origin=lambda t: t.origin,\n        dest=lambda t: t.dest\n    )\n    .with_measures(\n        flight_count=lambda t: t.flight_count.sum()\n    )\n)",
       "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"date\",\n    SUM(\"t1\".\"flight_count\") AS \"flight_count\"\n  FROM (\n    SELECT\n      CAST(\"t0\".\"date\" AS DATE) AS \"date\",\n      \"t0\".\"flight_count\"\n    FROM \"memory\".\"main\".\"daily_flights\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
-      "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mdaily_flights\u001b[0m\n  \u001b[36mdate [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n    \u001b[36mdate\u001b[0m\n\n\u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  groups:\n    \u001b[36mdate\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m",
+      "plan": "r0 := SemanticTableOp[daily_flights]\n  1 dimension: date\n  1 measure: flight_count\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['date']\n  inherited dimensions: 1\n  inherited measures: 1\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['date']\n  aggs: [flight_count]",
       "table": {
         "columns": [
           "date",
@@ -390,16 +390,8 @@
         ],
         "data": [
           [
-            "2024-01-07",
-            143
-          ],
-          [
-            "2024-01-06",
-            161
-          ],
-          [
-            "2024-01-01",
-            145
+            "2024-01-04",
+            139
           ],
           [
             "2024-01-02",
@@ -414,8 +406,16 @@
             156
           ],
           [
-            "2024-01-04",
-            139
+            "2024-01-06",
+            161
+          ],
+          [
+            "2024-01-07",
+            143
+          ],
+          [
+            "2024-01-01",
+            145
           ]
         ]
       },
@@ -429,7 +429,7 @@
             }
           },
           "data": {
-            "name": "data-2d5d79399a4dd380ca929a8d96d2bfd3"
+            "name": "data-021d4ac8214fccc560add59e93f30050"
           },
           "mark": {
             "type": "line"
@@ -463,10 +463,18 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-2d5d79399a4dd380ca929a8d96d2bfd3": [
+            "data-021d4ac8214fccc560add59e93f30050": [
               {
-                "date": "2024-01-06T00:00:00",
-                "flight_count": 161
+                "date": "2024-01-07T00:00:00",
+                "flight_count": 143
+              },
+              {
+                "date": "2024-01-01T00:00:00",
+                "flight_count": 145
+              },
+              {
+                "date": "2024-01-04T00:00:00",
+                "flight_count": 139
               },
               {
                 "date": "2024-01-02T00:00:00",
@@ -481,16 +489,8 @@
                 "flight_count": 156
               },
               {
-                "date": "2024-01-07T00:00:00",
-                "flight_count": 143
-              },
-              {
-                "date": "2024-01-04T00:00:00",
-                "flight_count": 139
-              },
-              {
-                "date": "2024-01-01T00:00:00",
-                "flight_count": 145
+                "date": "2024-01-06T00:00:00",
+                "flight_count": 161
               }
             ]
           }
@@ -506,7 +506,7 @@
           }
         },
         "data": {
-          "name": "data-5a5fecb590ef7e78b2d414510210fe85"
+          "name": "data-1e92210aeff880050b614be97a609de3"
         },
         "mark": {
           "type": "rect"
@@ -545,21 +545,21 @@
         "width": 700,
         "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
         "datasets": {
-          "data-5a5fecb590ef7e78b2d414510210fe85": [
-            {
-              "origin": "SFO",
-              "dest": "JFK",
-              "flight_count": 31
-            },
+          "data-1e92210aeff880050b614be97a609de3": [
             {
               "origin": "JFK",
               "dest": "SFO",
               "flight_count": 32
             },
             {
-              "origin": "JFK",
-              "dest": "LAX",
-              "flight_count": 45
+              "origin": "SFO",
+              "dest": "JFK",
+              "flight_count": 31
+            },
+            {
+              "origin": "LAX",
+              "dest": "SFO",
+              "flight_count": 28
             },
             {
               "origin": "LAX",
@@ -567,9 +567,9 @@
               "flight_count": 43
             },
             {
-              "origin": "LAX",
-              "dest": "SFO",
-              "flight_count": 28
+              "origin": "JFK",
+              "dest": "LAX",
+              "flight_count": 45
             },
             {
               "origin": "SFO",
@@ -590,7 +590,7 @@
           }
         },
         "data": {
-          "name": "data-0b1c29dd1a238fa08e118a46cef1df11"
+          "name": "data-b1072243ceb8f53a3454c845515b3ffa"
         },
         "mark": {
           "type": "bar"
@@ -643,7 +643,12 @@
         "width": 700,
         "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
         "datasets": {
-          "data-0b1c29dd1a238fa08e118a46cef1df11": [
+          "data-b1072243ceb8f53a3454c845515b3ffa": [
+            {
+              "origin": "JFK",
+              "flight_count": 150,
+              "avg_distance": 2475.0
+            },
             {
               "origin": "ATL",
               "flight_count": 145,
@@ -658,11 +663,6 @@
               "origin": "LAX",
               "flight_count": 135,
               "avg_distance": 1850.0
-            },
-            {
-              "origin": "JFK",
-              "flight_count": 150,
-              "avg_distance": 2475.0
             },
             {
               "origin": "SFO",

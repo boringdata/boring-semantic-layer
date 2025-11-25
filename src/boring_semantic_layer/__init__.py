@@ -20,6 +20,13 @@ from .expr import (
     SemanticTable,
     to_ibis,
 )
+from .graph_utils import (
+    graph_bfs,
+    graph_invert,
+    graph_predecessors,
+    graph_successors,
+    graph_to_dict,
+)
 from .ops import (
     Dimension,
     Measure,
@@ -45,9 +52,16 @@ __all__ = [
     "options",
     "to_tagged",
     "from_tagged",
+    "to_xorq",
+    "from_xorq",
     "ProfileError",
     "get_connection",
     "get_tables",
+    "graph_predecessors",
+    "graph_successors",
+    "graph_bfs",
+    "graph_invert",
+    "graph_to_dict",
 ]
 
 # Import MCP functionality if available
@@ -60,6 +74,19 @@ except ImportError:
 
 # Import xorq conversion functionality
 from .xorq_convert import from_tagged, to_tagged  # noqa: F401
+
+# Backward compatibility aliases
+to_xorq = to_tagged
+from_xorq = from_tagged
+
+# Import graph utilities
+from .graph_utils import (  # noqa: F401
+    bfs as graph_bfs,
+    invert as graph_invert,
+    predecessors as graph_predecessors,
+    successors as graph_successors,
+    to_dict as graph_to_dict,
+)
 
 # Install window compatibility if xorq is available
 # This allows users to use `import ibis` seamlessly with xorq backend
