@@ -65,8 +65,8 @@ xorq = pytest.importorskip("xorq", reason="xorq not installed")
 
 
 @pytest.mark.skipif(not xorq, reason="xorq not available")
-def test_to_xorq_with_string_metadata(flights_data):
-    from boring_semantic_layer.xorq_convert import to_xorq
+def test_to_tagged_with_string_metadata(flights_data):
+    from boring_semantic_layer.xorq_convert import to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -80,9 +80,9 @@ def test_to_xorq_with_string_metadata(flights_data):
         )
     )
 
-    xorq_expr = to_xorq(flights)
+    tagged_expr = to_tagged(flights)
 
-    op = xorq_expr.op()
+    op = tagged_expr.op()
     metadata = dict(op.metadata)
 
     # metadata is stored as nested tuples, convert to dict
@@ -104,8 +104,8 @@ def test_to_xorq_with_string_metadata(flights_data):
 
 
 @pytest.mark.skipif(not xorq, reason="xorq not available")
-def test_from_xorq_deserialization(flights_data):
-    from boring_semantic_layer.xorq_convert import from_xorq, to_xorq
+def test_from_tagged_deserialization(flights_data):
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -113,8 +113,8 @@ def test_from_xorq_deserialization(flights_data):
         .with_measures(avg_distance=lambda t: t.distance.mean())
     )
 
-    xorq_expr = to_xorq(flights)
-    reconstructed = from_xorq(xorq_expr)
+    tagged_expr = to_tagged(flights)
+    reconstructed = from_tagged(tagged_expr)
 
     result = reconstructed.group_by("origin").aggregate("avg_distance").execute()
 

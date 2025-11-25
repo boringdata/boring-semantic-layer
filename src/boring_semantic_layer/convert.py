@@ -463,3 +463,4 @@ def _convert_semantic_unnest(node: SemanticUnnestOp, catalog, *args):
         raise ValueError(f"Failed to unnest column '{node.column}': {e}") from e
 
     return unpack_struct_if_needed(unnested, node.column)
+

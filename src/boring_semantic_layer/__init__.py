@@ -61,6 +61,17 @@ except ImportError:
 # Import xorq conversion functionality
 from .xorq_convert import from_xorq, to_xorq  # noqa: F401
 
+# Install window compatibility if xorq is available
+# This allows users to use `import ibis` seamlessly with xorq backend
+try:
+    from .window_compat import install_window_compatibility
+
+    install_window_compatibility()
+
+    _XORQ_AVAILABLE = True
+except ImportError:
+    _XORQ_AVAILABLE = False
+
 
 def __getattr__(name):
     if name == "MCPSemanticModel" and not _MCP_AVAILABLE:

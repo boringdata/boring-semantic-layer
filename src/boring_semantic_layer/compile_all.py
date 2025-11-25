@@ -67,12 +67,27 @@ def _compile_binop(by_tbl, all_tbl, op: str, left: Any, right: Any):
     return ops[op](left_val, right_val)
 
 
+def _get_ibis_module(table):
+    """Detect which ibis module the table is using (regular ibis or xorq's vendored ibis)."""
+    table_module = type(table).__module__
+    if table_module.startswith("xorq.vendor.ibis"):
+        # Table is from xorq's vendored ibis
+        from xorq.vendor import ibis as xorq_ibis
+
+        return xorq_ibis
+    else:
+        # Table is from regular ibis
+        return ibis
+
+
 def _compile_formula(expr: MeasureExpr, by_tbl, all_tbl):
     """Compile a measure expression to ibis, using functional dispatch for AggregationExpr."""
     from .measure_scope import AggregationExpr
 
     if isinstance(expr, int | float):
-        return ibis.literal(expr)
+        # Use the same ibis module as the table to avoid mixing regular and xorq ibis
+        ibis_module = _get_ibis_module(by_tbl)
+        return ibis_module.literal(expr)
     if isinstance(expr, MeasureRef):
         return by_tbl[expr.name]
     if isinstance(expr, AllOf):
@@ -133,6 +148,56 @@ class MeasureClassification:
     nested_measures: dict[tuple[str, ...], dict[str, tuple[callable, Any]]]
 
 
+def _fix_relation_mismatch(result, base_tbl):
+    """Fix measure results that belong to a different table relation.
+
+    When a measure uses filtering (like `t[t.x > 5].count()`), it creates
+    a new table relation. This causes ibis integrity errors when trying to
+    use it in an aggregation. We detect this and wrap it in a scalar subquery.
+
+    Args:
+        result: The measure result expression
+        base_tbl: The table we're aggregating on
+
+    Returns:
+        Fixed expression that belongs to base_tbl's relation
+    """
+    # Check if result is an expression
+    if not hasattr(result, "op"):
+        return result
+
+    result_op = result.op()
+    base_tbl_op = base_tbl.op()
+
+    # Check if the result's immediate table relation matches base_tbl
+    def get_immediate_table(op):
+        """Get the immediate table that an aggregation operates on.
+
+        For aggregations like CountStar, the immediate table is the first
+        argument in __args__.
+        """
+        from ibis.expr.operations.reductions import Reduction
+        from ibis.expr.operations.relations import Relation
+
+        # For reductions (count, sum, etc), the first arg is usually the table
+        if isinstance(op, Reduction) and hasattr(op, "__args__") and op.__args__:
+            first_arg = op.__args__[0]
+            if isinstance(first_arg, Relation):
+                return first_arg
+
+        return None
+
+    immediate_table = get_immediate_table(result_op)
+
+    # If the aggregation operates on a different table than base_tbl,
+    # wrap it in a scalar subquery
+    if immediate_table is not None and immediate_table != base_tbl_op:
+        # Convert to scalar subquery
+        return result.as_scalar()
+
+    return result
+
+
 def make_measure_classification(
     base_tbl,
     agg_specs: dict[str, callable],
@@ -152,6 +217,8 @@ def make_measure_classification(
                 nested[array_path] = {}
             nested[array_path][name] = (agg_fn, result)
         else:
+            # Fix relation mismatches (e.g., measures that filter the table)
+            result = _fix_relation_mismatch(result, base_tbl)
             # Regular session-level measure
             regular[name] = (agg_fn, result)
 
@@ -211,7 +278,12 @@ def _build_level_aggregations(
 @curry
 def _make_grouped_table(agg_dict: dict[str, Any], by_cols: Iterable[str], table):
     group_exprs = [table[c] for c in by_cols]
-    return table.group_by(group_exprs).aggregate(**agg_dict)
+    # xorq requires at least one grouping expression, so handle empty case
+    return (
+        table.group_by(group_exprs).aggregate(**agg_dict)
+        if group_exprs
+        else table.aggregate(**agg_dict)
+    )
 
 
 def _build_session_table(base_tbl, by_cols: Iterable[str], regular_measures: dict) -> Any:

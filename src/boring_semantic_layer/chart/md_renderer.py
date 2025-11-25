@@ -13,9 +13,9 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-import ibis
 import markdown
 import pandas as pd
+from xorq.vendor import ibis
 
 from boring_semantic_layer import to_semantic_table
 

@@ -20,8 +20,8 @@ from __future__ import annotations
 from typing import Any
 
 from attrs import frozen
-from ibis.expr import types as ir
 from toolz import curry
+from xorq.vendor.ibis.expr import types as ir
 
 
 @frozen

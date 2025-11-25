@@ -138,3 +138,4 @@ docs-archive/
 
 # xorq build artifacts
 builds/
+.direnv

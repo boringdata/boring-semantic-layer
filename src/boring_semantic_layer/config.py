@@ -9,7 +9,7 @@ Relation operations. It automatically filters out unused columns before joins
 to reduce data scanned, which is especially beneficial for wide tables.
 """
 
-from ibis.config import Config
+from xorq.vendor.ibis.config import Config
 
 
 class Options(Config):

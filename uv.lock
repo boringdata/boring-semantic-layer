@@ -224,7 +224,6 @@ dev = [
     { name = "altair" },
     { name = "duckdb" },
     { name = "fastmcp" },
-    { name = "ibis-framework", extra = ["duckdb"] },
     { name = "kaleido" },
     { name = "malloy" },
     { name = "nbformat" },
@@ -237,10 +236,11 @@ dev = [
     { name = "ruff" },
     { name = "urllib3" },
     { name = "vl-convert-python" },
+    { name = "xorq", extra = ["duckdb"] },
 ]
 examples = [
     { name = "duckdb" },
-    { name = "ibis-framework", extra = ["duckdb"] },
+    { name = "xorq", extra = ["duckdb"] },
 ]
 fastmcp = [
     { name = "fastmcp" },
@@ -261,6 +261,7 @@ viz-plotly = [
 [package.dev-dependencies]
 dev = [
     { name = "adbc-driver-sqlite" },
+    { name = "ibis-framework" },
     { name = "ipython", version = "8.37.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "ipython", version = "9.6.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "xorq" },
@@ -274,7 +275,6 @@ requires-dist = [
     { name = "duckdb", marker = "extra == 'examples'", specifier = "<1.4" },
     { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=2.12.4" },
     { name = "ibis-framework", specifier = ">=11.0.0" },
-    { name = "ibis-framework", extras = ["duckdb"], marker = "extra == 'examples'", specifier = ">=10.6.0" },
     { name = "kaleido", marker = "extra == 'viz-plotly'" },
     { name = "malloy", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "nbformat", marker = "extra == 'viz-plotly'", specifier = ">=4.2.0" },
@@ -290,13 +290,16 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.7" },
     { name = "urllib3", marker = "extra == 'dev'", specifier = ">=2.2.3" },
     { name = "vl-convert-python", marker = "extra == 'viz-altair'", specifier = ">=1.0.0" },
-    { name = "xorq", specifier = ">=0.3.3" },
+    { name = "xorq", specifier = ">=0.3.4" },
+    { name = "xorq", marker = "extra == 'examples'" },
+    { name = "xorq", extras = ["duckdb"], marker = "extra == 'examples'", specifier = ">=0.3.4" },
 ]
 provides-extras = ["examples", "viz-altair", "viz-plotly", "viz-plotext", "dev", "fastmcp"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "adbc-driver-sqlite", specifier = ">=1.9.0" },
+    { name = "ibis-framework", specifier = ">=11.0.0" },
     { name = "ipython", specifier = ">=8.37.0" },
     { name = "xorq", specifier = ">=0.3.3" },
 ]
@@ -1172,18 +1175,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/93/c8/f03c7c6e8ab96e5efd67ea5ce6eaf575bde78b4bfb9115f283d5e6e19ea2/ibis_framework-11.0.0.tar.gz", hash = "sha256:0249185eaabb800e224f448cc06ce8ba168df00b269e132d62629f462eca8842", size = 1237767, upload-time = "2025-10-15T13:12:10.01Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/86/c0/2851a8a55d0fea03b80fd45815069b686e032938fc68fa9d91ac776c148c/ibis_framework-11.0.0-py3-none-any.whl", hash = "sha256:92ff82a96f4eac7f86fa9b6a315e04b5a8f9ed3d186539d88f48e628363f2e72", size = 1935652, upload-time = "2025-10-15T13:12:07.954Z" },
-]
-
-[package.optional-dependencies]
-duckdb = [
-    { name = "duckdb" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "packaging" },
-    { name = "pandas" },
-    { name = "pyarrow" },
-    { name = "pyarrow-hotfix" },
-    { name = "rich" },
 ]
 
 [[package]]
@@ -3555,7 +3546,7 @@ wheels = [
 
 [[package]]
 name = "xorq"
-version = "0.3.3"
+version = "0.3.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "atpublic" },
@@ -3588,9 +3579,14 @@ dependencies = [
     { name = "uv" },
     { name = "xorq-datafusion" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ac/c3/142018531d77fd7fa50a2b05d0eddf5b131a49f75a9d56588950e1be062d/xorq-0.3.3.tar.gz", hash = "sha256:d1c0e83cb001108a23d3a682d96ada06dc27343508ee447987060e41921eb1d4", size = 1412954, upload-time = "2025-11-11T13:41:08.99Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cf/b4/8b15aa105b966290d650666f213052633c0c3874e507bfaa945205a67229/xorq-0.3.4.tar.gz", hash = "sha256:f47c417bcc23dd33501f87fd5386f9d2513f6b5e59c91b27267153a94db868cb", size = 1413906, upload-time = "2025-11-19T16:50:07.802Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/42/40b32def56921f73b28bcc81c0790d044d9f26bfa20e9b5f33d76418881e/xorq-0.3.3-py3-none-any.whl", hash = "sha256:aaab2b96c314fc90ac514681d0e3cc567096ac6c417ddb920911ddc29efa7149", size = 1632779, upload-time = "2025-11-11T13:41:07.184Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/9a/3462e33887935096419f40a6985b630ed865a65b473c3498fb360e5a90c8/xorq-0.3.4-py3-none-any.whl", hash = "sha256:a950778e080a6a2f94f4171b2963b6a4ca066f4cd0f5be8d9497040aebce4c9d", size = 1633356, upload-time = "2025-11-19T16:50:05.102Z" },
+]
+
+[package.optional-dependencies]
+duckdb = [
+    { name = "duckdb" },
 ]
 
 [[package]]

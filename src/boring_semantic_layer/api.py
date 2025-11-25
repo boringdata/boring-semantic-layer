@@ -10,7 +10,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import ibis.expr.types as ir
+    from ibis.expr import types as ir
 
 from .expr import SemanticModel
 
@@ -21,12 +21,16 @@ def to_semantic_table(
     """Create a SemanticModel from an Ibis table.
 
     Args:
-        ibis_table: An Ibis table expression
+        ibis_table: An Ibis table expression (can be regular ibis or xorq vendored ibis)
         name: Optional name for the semantic table
         description: Optional description for the semantic table
 
     Returns:
         A new SemanticModel wrapping the table
+
+    Note:
+        Tables are kept in their original form (regular ibis or xorq vendored ibis)
+        throughout semantic operations. Conversion only happens if needed at execution time.
     """
     return SemanticModel(
         table=ibis_table,
@@ -146,7 +150,7 @@ def mutate_(
 
     Args:
         table: Semantic table to mutate
-        **kwargs: Named column expressions
+        **kwargs: Named column expressions (xorq vendored ibis expressions)
 
     Returns:
         Mutated SemanticModel

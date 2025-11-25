@@ -3,10 +3,8 @@ from __future__ import annotations
 import ast
 import inspect
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
-import yaml
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Result, safe
 from toolz import curry
@@ -57,9 +55,9 @@ SAFE_NODES = {
     ast.Dict,
     ast.keyword,
     ast.IfExp,
-    ast.Lambda,
-    ast.arguments,
-    ast.arg,
+    ast.Lambda,  # Allow lambda expressions for ibis_string_to_expr
+    ast.arguments,  # Required for lambda function arguments
+    ast.arg,  # Required for individual lambda arguments
 }
 
 
@@ -162,8 +160,8 @@ def _check_closure_vars(fn: Callable) -> Maybe[str]:
 
 @safe
 def _try_ibis_introspection(fn: Callable) -> Maybe[str]:
-    from ibis import _
-    from ibis.common.deferred import Deferred
+    from xorq.vendor.ibis import _
+    from xorq.vendor.ibis.common.deferred import Deferred
 
     result = fn(_)
     return Some(str(result)) if isinstance(result, Deferred) else Nothing
@@ -203,8 +201,8 @@ def expr_to_ibis_string(fn: Callable) -> Result[str, Exception]:
             raise ValueError(f"Expected callable or Deferred, got {type(fn)}")
 
         checks = [
-            lambda: _check_closure_vars(fn),
             lambda: _try_ibis_introspection(fn).value_or(Nothing),
+            lambda: _check_closure_vars(fn),
             lambda: _try_source_extraction(fn),
         ]
 
@@ -219,41 +217,42 @@ def expr_to_ibis_string(fn: Callable) -> Result[str, Exception]:
 
 
 def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
+    from returns.result import Failure, Success
+
     @safe
     def do_convert():
-        # Parse the expression string and create a callable that works with BSL's resolver
-        # Replace _ with t in the expression
         t_expr = expr_str.replace("_.", "t.")
-
-        # Create a lambda from the expression string
-        # This allows it to work with BSL's _Resolver object
         lambda_str = f"lambda t: {t_expr}"
 
-        # Compile and return the lambda
-        code = compile(lambda_str, "<ibis_expr>", "eval")
-        return eval(code)  # noqa: S307
+        import ibis
+        from ibis import _
+
+        try:
+            from xorq.vendor import ibis as xorq_ibis
+            from xorq.vendor.ibis import _ as xorq_deferred
+
+            eval_context = {
+                "ibis": ibis,
+                "_": _,
+                "xorq_ibis": xorq_ibis,
+            }
+            allowed_names = {"ibis", "_", "xorq_ibis", "t"}
+        except ImportError:
+            eval_context = {
+                "ibis": ibis,
+                "_": _,
+            }
+            allowed_names = {"ibis", "_", "t"}
+
+        result = safe_eval(lambda_str, context=eval_context, allowed_names=allowed_names)
+        if isinstance(result, Success):
+            return result.unwrap()
+        elif isinstance(result, Failure):
+            raise result.failure()
+        else:
+            raise ValueError(f"Unexpected result type: {type(result)}")
 
     return do_convert()
-
-
-def read_yaml_file(yaml_path: str | Path) -> dict:
-    """Read and parse YAML file into dict."""
-    yaml_path = Path(yaml_path)
-    if not yaml_path.exists():
-        raise FileNotFoundError(f"YAML file not found: {yaml_path}")
-
-    try:
-        with open(yaml_path) as f:
-            content = yaml.safe_load(f)
-
-        if not isinstance(content, dict):
-            raise ValueError(f"YAML file must contain a dict, got: {type(content)}")
-
-        return content
-    except (FileNotFoundError, ValueError):
-        raise
-    except Exception as e:
-        raise ValueError(f"Failed to read YAML file {yaml_path}: {type(e).__name__}: {e}") from e
 
 
 __all__ = [
@@ -261,5 +260,4 @@ __all__ = [
     "SafeEvalError",
     "expr_to_ibis_string",
     "ibis_string_to_expr",
-    "read_yaml_file",
 ]
