@@ -39,7 +39,7 @@ def _format_semantic_table(op: SemanticTableOp, **kwargs):
     lines = [f"{HEADER_COLOR}SemanticTable{RESET}{name_part}"]
 
     if dims:
-        for dim_name in dims.keys():
+        for dim_name in dims:
             lines.append(f"  {DIM_COLOR}{dim_name} [dim]{RESET}")
 
     all_measures = {**measures, **calc_measures}

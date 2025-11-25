@@ -21,7 +21,9 @@ from boring_semantic_layer.api import to_semantic_table
 from boring_semantic_layer.expr import to_ibis
 
 # Projection pushdown disabled for xorq compatibility
-pytestmark = pytest.mark.xfail(reason="Projection pushdown disabled for xorq vendored ibis compatibility")
+pytestmark = pytest.mark.xfail(
+    reason="Projection pushdown disabled for xorq vendored ibis compatibility"
+)
 
 
 @pytest.fixture(scope="module")

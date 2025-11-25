@@ -1,5 +1,6 @@
 """Graph utilities with functional programming support."""
 
+import contextlib
 from typing import Any
 
 from ibis.expr.operations.core import Node as IbisNode
@@ -42,10 +43,8 @@ def gen_children_of(node: Node) -> tuple[Node, ...]:
     children = getattr(node, "__children__", ())
     result = []
     for child in children:
-        try:
+        with contextlib.suppress(ValueError, AttributeError):
             result.append(to_node(child))
-        except (ValueError, AttributeError):
-            pass
     return tuple(result)
 
 

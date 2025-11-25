@@ -297,7 +297,7 @@ class TestXorqBackendFeatures:
         tagged_expr = to_tagged(model)
 
         # Execute with xorq
-        df = xo.execute(tagged_expr)
+        xo.execute(tagged_expr)
 
         # Convert back from xorq
         restored_model = from_tagged(tagged_expr)
