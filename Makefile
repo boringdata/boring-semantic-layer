@@ -4,7 +4,7 @@
 .DEFAULT_GOAL := help
 
 # Ibis versions to test against (last 3 major versions)
-ALL_IBIS_VERSIONS := 9.5.0 10.6.0 11.0.0
+ALL_IBIS_VERSIONS := 9.5.0 10.8.0 11.0.0
 
 # Default to current version if not specified
 IBIS_VERSION ?=
