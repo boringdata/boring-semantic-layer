@@ -44,7 +44,7 @@ pprint(dict(flights.get_graph()))
 
 # Get graph for joined model
 print("\n\n=== Joined graph (flights with carriers) ===\n")
-joined = flights.join_one(carriers, left_on="carrier", right_on="code")
+joined = flights.join_one(carriers, lambda f, c: f.carrier == c.code)
 pprint(dict(joined.get_graph()))
 
 print("\n\n=== Graph export to JSON format ===\n")

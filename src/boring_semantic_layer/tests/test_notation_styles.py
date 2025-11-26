@@ -251,7 +251,7 @@ class TestEndToEndNotationConsistency:
         flights_st_dot = (
             to_semantic_table(flights_tbl, "flights")
             .with_measures(flight_count=lambda t: t.count())
-            .join(carriers_st_dot, on=lambda f, c: f.carrier == c.code)
+            .join_many(carriers_st_dot, lambda f, c: f.carrier == c.code)
             .with_dimensions(nickname=lambda t: t.nickname)
             .with_measures(pct=lambda t: t.flight_count / t.all(t.flight_count))
         )
@@ -272,7 +272,7 @@ class TestEndToEndNotationConsistency:
         flights_st_bracket = (
             to_semantic_table(flights_tbl, "flights")
             .with_measures(flight_count=lambda t: t.count())
-            .join(carriers_st_bracket, on=lambda f, c: f["carrier"] == c["code"])
+            .join_many(carriers_st_bracket, lambda f, c: f["carrier"] == c["code"])
             .with_dimensions(nickname=lambda t: t["nickname"])
             .with_measures(pct=lambda t: t["flight_count"] / t.all(t["flight_count"]))
         )
@@ -508,7 +508,7 @@ class TestDictBasedMetadata:
         )
 
         # Join and verify descriptions are preserved with prefixes
-        joined = flights_st.join_one(carriers_st, "carrier", "code")
+        joined = flights_st.join_one(carriers_st, lambda f, c: f.carrier == c.code)
         assert joined.get_dimensions()["flights.carrier"].description == "Airline carrier code"
         assert joined.get_dimensions()["carriers.code"].description == "Carrier code for joining"
         assert (

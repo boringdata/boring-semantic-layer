@@ -136,7 +136,7 @@ class TestProjectionPushdownDemo:
             manufacturer=lambda t: t.manufacturer,
         )
 
-        joined = flights.join(aircraft, lambda f, a: f.tail_num == a.tail_num)
+        joined = flights.join_many(aircraft, lambda f, a: f.tail_num == a.tail_num)
         query = joined.group_by("flights.origin").aggregate("flights.flight_count")
 
         sql = str(ibis.to_sql(to_untagged(query)))
@@ -226,7 +226,7 @@ class TestProjectionPushdownDemo:
         )
 
         # Three-way join
-        joined = orders.join(customers, lambda o, c: o.customer_id == c.customer_id).join(
+        joined = orders.join_many(customers, lambda o, c: o.customer_id == c.customer_id).join_many(
             items, lambda oc, i: oc.order_id == i.order_id
         )
 
@@ -281,7 +281,7 @@ class TestProjectionPushdownDemo:
             tail_num=lambda t: t.tail_num,
         )
 
-        joined = flights.join(aircraft, lambda f, a: f.tail_num == a.tail_num)
+        joined = flights.join_many(aircraft, lambda f, a: f.tail_num == a.tail_num)
         # Only use flight_count, not total_distance
         query = joined.group_by("flights.origin").aggregate("flights.flight_count")
 

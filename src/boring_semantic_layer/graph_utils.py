@@ -2,18 +2,19 @@
 
 from typing import Any
 
+from ibis.expr.operations.core import Node as IbisNode
+from ibis.expr.types import Expr as IbisExpr
+from returns.maybe import Maybe, Nothing, Some
+from returns.result import Failure, Result, Success
 from xorq.common.utils.graph_utils import (
-    gen_children_of as _xorq_gen_children_of,
     replace_nodes as _xorq_replace_nodes,
+)
+from xorq.common.utils.graph_utils import (
     to_node as _xorq_to_node,
 )
 from xorq.vendor.ibis.common.graph import Graph
 from xorq.vendor.ibis.expr.operations.core import Node
 from xorq.vendor.ibis.expr.types import Expr as XorqExpr
-from ibis.expr.operations.core import Node as IbisNode
-from ibis.expr.types import Expr as IbisExpr
-from returns.maybe import Maybe, Nothing, Some
-from returns.result import Failure, Result, Success
 
 __all__ = [
     "bfs",
@@ -24,6 +25,9 @@ __all__ = [
     "to_node_safe",
     "try_to_node",
     "find_dimensions_and_measures",
+    "find_entity_dimensions",
+    "find_event_timestamp_dimensions",
+    "is_feature_view",
     "Graph",
     "Node",
     "graph_predecessors",
@@ -116,6 +120,35 @@ def find_dimensions_and_measures(expr: IbisExpr | XorqExpr) -> tuple[dict[str, A
         _merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, "dimensions")),
         _merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, "measures")),
     )
+
+
+def find_entity_dimensions(expr: IbisExpr | XorqExpr) -> dict[str, Any]:
+    """Find all entity dimensions in the expression tree."""
+    dimensions, _ = find_dimensions_and_measures(expr)
+    return {
+        name: dim for name, dim in dimensions.items()
+        if getattr(dim, 'is_entity', False)
+    }
+
+
+def find_event_timestamp_dimensions(expr: IbisExpr | XorqExpr) -> dict[str, Any]:
+    """Find all event timestamp dimensions in the expression tree."""
+    dimensions, _ = find_dimensions_and_measures(expr)
+    return {
+        name: dim for name, dim in dimensions.items()
+        if getattr(dim, 'is_event_timestamp', False)
+    }
+
+
+def is_feature_view(expr: IbisExpr | XorqExpr) -> bool:
+    """
+    Check if the expression is a valid FeatureView.
+
+    A FeatureView must have exactly 1 entity dimension and exactly 1 event timestamp dimension.
+    """
+    entities = find_entity_dimensions(expr)
+    timestamps = find_event_timestamp_dimensions(expr)
+    return len(entities) == 1 and len(timestamps) == 1
 
 
 def graph_predecessors(graph: dict[str, dict], node: str) -> set[str]:

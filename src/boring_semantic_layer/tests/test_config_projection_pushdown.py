@@ -86,7 +86,7 @@ class TestProjectionPushdown:
         )
 
         # Join and query - only using customer_id, name, and total_amount
-        joined = customers.join(orders, lambda c, o: c.customer_id == o.customer_id)
+        joined = customers.join_many(orders, lambda c, o: c.customer_id == o.customer_id)
         result = joined.group_by("customers.customer_id", "customers.name").aggregate(
             "total_amount"
         )
@@ -135,7 +135,7 @@ class TestProjectionPushdown:
             )
         )
 
-        joined = customers.join(orders, lambda c, o: c.customer_id == o.customer_id)
+        joined = customers.join_many(orders, lambda c, o: c.customer_id == o.customer_id)
         result = joined.group_by("customers.customer_id", "customers.name").aggregate(
             "total_amount"
         )

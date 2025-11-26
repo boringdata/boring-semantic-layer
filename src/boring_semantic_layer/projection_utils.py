@@ -6,9 +6,9 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from xorq.vendor.ibis.expr import types as ir
 from attrs import frozen
 from returns.result import Failure, Success
+from xorq.vendor.ibis.expr import types as ir
 
 from .graph_utils import walk_nodes
 

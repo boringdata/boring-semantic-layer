@@ -10,7 +10,7 @@ from packaging.version import Version
 from xorq.vendor.ibis.expr.types.generic import Value as XorqValue
 
 _IBIS_VERSION = Version(ibis.__version__)
-_NEEDS_COMPAT = _IBIS_VERSION >= Version("10.0.0")
+_NEEDS_COMPAT = Version("10.0.0") <= _IBIS_VERSION
 
 
 def _extract_value(boundary):

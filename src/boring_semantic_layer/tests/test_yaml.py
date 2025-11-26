@@ -622,3 +622,180 @@ model1:
         # Should raise error about duplicate table name
         with pytest.raises(ValueError, match="Table name conflict"):
             from_yaml(yaml_path, tables={"my_table": manual_table})
+
+
+def test_load_model_with_entity_dimensions(sample_tables):
+    """Test loading a model with entity dimension metadata."""
+    yaml_content = """
+flights:
+  table: flights_tbl
+
+  dimensions:
+    origin:
+      expr: _.origin
+      description: "Origin airport"
+      is_entity: true
+    tail_num:
+      expr: _.tail_num
+      description: "Aircraft tail number"
+      is_entity: true
+    destination: _.destination
+
+  measures:
+    flight_count: _.count()
+"""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = f.name
+
+    try:
+        models = from_yaml(yaml_path, tables=sample_tables)
+        model = models["flights"]
+
+        # Verify entity dimension metadata
+        origin_dim = model.get_dimensions()["origin"]
+        assert origin_dim.is_entity is True
+        assert origin_dim.description == "Origin airport"
+
+        tail_num_dim = model.get_dimensions()["tail_num"]
+        assert tail_num_dim.is_entity is True
+        assert tail_num_dim.description == "Aircraft tail number"
+
+        # Regular dimension should not be an entity
+        dest_dim = model.get_dimensions()["destination"]
+        assert dest_dim.is_entity is False
+
+        # Verify json_definition includes entity dimensions
+        json_def = model.json_definition
+        assert "entity_dimensions" in json_def
+        assert "origin" in json_def["entity_dimensions"]
+        assert "tail_num" in json_def["entity_dimensions"]
+        assert json_def["dimensions"]["origin"]["is_entity"] is True
+        assert json_def["dimensions"]["tail_num"]["is_entity"] is True
+
+    finally:
+        os.unlink(yaml_path)
+
+
+def test_load_model_with_event_timestamp(sample_tables):
+    """Test loading a model with event timestamp dimension metadata."""
+    yaml_content = """
+flights:
+  table: flights_tbl
+
+  dimensions:
+    origin: _.origin
+    arr_time:
+      expr: _.arr_time
+      description: "Arrival timestamp"
+      is_event_timestamp: true
+      is_time_dimension: true
+      smallest_time_grain: "TIME_GRAIN_MINUTE"
+    dep_time:
+      expr: _.dep_time
+      description: "Departure time (regular time dim)"
+      is_time_dimension: true
+      smallest_time_grain: "TIME_GRAIN_MINUTE"
+
+  measures:
+    flight_count: _.count()
+"""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = f.name
+
+    try:
+        models = from_yaml(yaml_path, tables=sample_tables)
+        model = models["flights"]
+
+        # Verify event timestamp dimension metadata
+        arr_time_dim = model.get_dimensions()["arr_time"]
+        assert arr_time_dim.is_event_timestamp is True
+        assert arr_time_dim.is_time_dimension is True
+        assert arr_time_dim.smallest_time_grain == "TIME_GRAIN_MINUTE"
+        assert arr_time_dim.description == "Arrival timestamp"
+
+        # Regular time dimension should not be event timestamp
+        dep_time_dim = model.get_dimensions()["dep_time"]
+        assert dep_time_dim.is_event_timestamp is False
+        assert dep_time_dim.is_time_dimension is True
+        assert dep_time_dim.smallest_time_grain == "TIME_GRAIN_MINUTE"
+
+        # Verify json_definition includes event timestamp
+        json_def = model.json_definition
+        assert "event_timestamp" in json_def
+        assert "arr_time" in json_def["event_timestamp"]
+        assert json_def["dimensions"]["arr_time"]["is_event_timestamp"] is True
+        # dep_time should NOT be in event_timestamp
+        assert "dep_time" not in json_def["event_timestamp"]
+
+    finally:
+        os.unlink(yaml_path)
+
+
+def test_load_model_with_entity_and_event_timestamp(sample_tables):
+    """Test loading a model with both entity and event timestamp dimensions (Feast-like FeatureView)."""
+    yaml_content = """
+balance_features:
+  table: flights_tbl
+
+  dimensions:
+    origin:
+      expr: _.origin
+      description: "Airport code (entity)"
+      is_entity: true
+    tail_num:
+      expr: _.tail_num
+      description: "Aircraft tail number (entity)"
+      is_entity: true
+    arr_time:
+      expr: _.arr_time
+      description: "Event timestamp for point-in-time correctness"
+      is_event_timestamp: true
+      is_time_dimension: true
+      smallest_time_grain: "TIME_GRAIN_MINUTE"
+    destination: _.destination
+
+  measures:
+    total_distance: _.distance.sum()
+    avg_delay: _.dep_delay.mean()
+"""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = f.name
+
+    try:
+        models = from_yaml(yaml_path, tables=sample_tables)
+        model = models["balance_features"]
+
+        # Verify entity dimensions
+        assert model.get_dimensions()["origin"].is_entity is True
+        assert model.get_dimensions()["tail_num"].is_entity is True
+
+        # Verify event timestamp dimension
+        assert model.get_dimensions()["arr_time"].is_event_timestamp is True
+        assert model.get_dimensions()["arr_time"].is_time_dimension is True
+
+        # Verify regular dimension is neither
+        assert model.get_dimensions()["destination"].is_entity is False
+        assert model.get_dimensions()["destination"].is_event_timestamp is False
+
+        # Verify json_definition has all sections
+        json_def = model.json_definition
+        assert "entity_dimensions" in json_def
+        assert "event_timestamp" in json_def
+        assert len(json_def["entity_dimensions"]) == 2
+        assert len(json_def["event_timestamp"]) == 1
+
+        # Verify entity dimensions in json
+        assert "origin" in json_def["entity_dimensions"]
+        assert "tail_num" in json_def["entity_dimensions"]
+
+        # Verify event timestamp in json
+        assert "arr_time" in json_def["event_timestamp"]
+
+    finally:
+        os.unlink(yaml_path)

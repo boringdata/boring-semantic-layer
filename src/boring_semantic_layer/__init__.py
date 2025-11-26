@@ -10,6 +10,8 @@ from . import (
 
 # Main API exports
 from .api import (
+    entity_dimension,
+    time_dimension,
     to_semantic_table,
 )
 from .config import (
@@ -42,6 +44,8 @@ from .yaml import (
 __all__ = [
     "to_semantic_table",
     "to_untagged",
+    "entity_dimension",
+    "time_dimension",
     "SemanticModel",
     "SemanticTable",
     "Dimension",
@@ -49,6 +53,13 @@ __all__ = [
     "from_yaml",
     "MCPSemanticModel",
     "options",
+    "graph_bfs",
+    "graph_invert",
+    "graph_predecessors",
+    "graph_successors",
+    "graph_to_dict",
+    "ProfileError",
+    "get_connection",
 ]
 
 # Import MCP functionality from separate module if available
@@ -63,6 +74,7 @@ except ImportError:
 # This allows users to use `import ibis` seamlessly with xorq backend
 try:
     from .window_compat import install_window_compatibility
+
     install_window_compatibility()
 
     _XORQ_AVAILABLE = True

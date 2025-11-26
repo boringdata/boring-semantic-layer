@@ -5,7 +5,7 @@ from __future__ import annotations
 try:
     from ibis.expr.format import fmt, render_fields, render_schema
 except ImportError:
-    from xorq.vendor.ibis.expr.format import fmt, render_fields, render_schema
+    from xorq.vendor.ibis.expr.format import fmt, render_fields
 
 from boring_semantic_layer.ops import (
     SemanticAggregateOp,
@@ -38,13 +38,21 @@ def _format_semantic_table(op: SemanticTableOp, **kwargs):
     name_part = f": {HEADER_COLOR}{name}{RESET}" if name else ""
     lines = [f"{HEADER_COLOR}SemanticTable{RESET}{name_part}"]
 
+    # Show dimensions with color coding and special markers
     if dims:
-        for dim_name in dims.keys():
-            lines.append(f"  {DIM_COLOR}{dim_name} [dim]{RESET}")
+        for dim_name, dim_obj in dims.items():
+            # Add unicode markers for special dimension types
+            marker = ""
+            if dim_obj.is_entity:
+                marker = "🔑 "  # Key emoji for entity dimensions
+            elif dim_obj.is_event_timestamp:
+                marker = "⏱️ "  # Stopwatch for event timestamp dimensions
+
+            lines.append(f"  {marker}{DIM_COLOR}{dim_name} [dim]{RESET}")
 
     all_measures = {**measures, **calc_measures}
     if all_measures:
-        for meas_name in all_measures.keys():
+        for meas_name in all_measures:
             if meas_name in calc_measures:
                 lines.append(f"  {CALC_COLOR}{meas_name} [calc]{RESET}")
             else:

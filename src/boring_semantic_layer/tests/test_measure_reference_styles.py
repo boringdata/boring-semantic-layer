@@ -187,7 +187,7 @@ def test_prefixed_measures_with_string():
     )
 
     joined = (
-        flights_st.join(carriers_st, on=lambda f, c: f.carrier == c.code)
+        flights_st.join_many(carriers_st, lambda f, c: f.carrier == c.code)
         .with_dimensions(name=lambda t: t.name)
         .with_measures(
             # Reference prefixed measure with bracket notation (dots not allowed in Python identifiers)

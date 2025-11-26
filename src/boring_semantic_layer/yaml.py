@@ -17,7 +17,19 @@ from .utils import read_yaml_file, safe_eval
 def _parse_dimension_or_measure(
     name: str, config: str | dict, metric_type: str
 ) -> Dimension | Measure:
-    """Parse a single dimension or measure configuration."""
+    """Parse a single dimension or measure configuration.
+
+    Supports two formats:
+    1. Simple format (backwards compatible): name: expression_string
+    2. Extended format with descriptions and metadata:
+        name:
+          expr: expression_string
+          description: "description text"
+          is_entity: true/false (dimensions only)
+          is_event_timestamp: true/false (dimensions only)
+          is_time_dimension: true/false (dimensions only)
+          smallest_time_grain: "TIME_GRAIN_DAY" (dimensions only)
+    """
     # Parse expression and description
     if isinstance(config, str):
         expr_str = config
@@ -32,6 +44,8 @@ def _parse_dimension_or_measure(
         description = config.get("description")
         extra_kwargs = {}
         if metric_type == "dimension":
+            extra_kwargs["is_entity"] = config.get("is_entity", False)
+            extra_kwargs["is_event_timestamp"] = config.get("is_event_timestamp", False)
             extra_kwargs["is_time_dimension"] = config.get("is_time_dimension", False)
             extra_kwargs["smallest_time_grain"] = config.get("smallest_time_grain")
     else:
@@ -93,21 +107,45 @@ def _parse_joins(
 
         # Apply the join based on type
         join_type = join_config.get("type", "one")  # Default to one-to-one
+        how = join_config.get("how")  # Optional join method override
 
         if join_type == "cross":
             # Cross join - no keys needed
             result_model = result_model.join_cross(join_model)
-        elif join_type in ("one", "many"):
-            # One-to-one or one-to-many join - requires keys
-            left_on, right_on = join_config.get("left_on"), join_config.get("right_on")
+        elif join_type == "one":
+            left_on = join_config.get("left_on")
+            right_on = join_config.get("right_on")
             if not left_on or not right_on:
                 raise ValueError(
-                    f"Join '{alias}' type '{join_type}' requires 'left_on' and 'right_on'"
+                    f"Join '{alias}' of type 'one' must specify 'left_on' and 'right_on' fields",
                 )
+            # Convert left_on/right_on to lambda condition
+            def make_join_condition(left_col, right_col):
+                return lambda left, right: getattr(left, left_col) == getattr(right, right_col)
 
-            # Select join method based on type
-            join_method = result_model.join_one if join_type == "one" else result_model.join_many
-            result_model = join_method(join_model, left_on=left_on, right_on=right_on)
+            on_condition = make_join_condition(left_on, right_on)
+            result_model = result_model.join_one(
+                join_model,
+                on=on_condition,
+                how=how if how else "inner",
+            )
+        elif join_type == "many":
+            left_on = join_config.get("left_on")
+            right_on = join_config.get("right_on")
+            if not left_on or not right_on:
+                raise ValueError(
+                    f"Join '{alias}' of type 'many' must specify 'left_on' and 'right_on' fields",
+                )
+            # Convert left_on/right_on to lambda condition
+            def make_join_condition(left_col, right_col):
+                return lambda left, right: getattr(left, left_col) == getattr(right, right_col)
+
+            on_condition = make_join_condition(left_on, right_on)
+            result_model = result_model.join_many(
+                join_model,
+                on=on_condition,
+                how=how if how else "left",
+            )
         else:
             raise ValueError(f"Invalid join type '{join_type}'. Must be 'one', 'many', or 'cross'")
 
@@ -160,7 +198,48 @@ def from_yaml(
     profile: str | None = None,
     profile_path: str | None = None,
 ) -> dict[str, SemanticModel]:
-    """Load semantic models from a YAML file with optional profile-based table loading."""
+    """
+    Load semantic tables from a YAML file with optional profile-based table loading.
+
+    Args:
+        yaml_path: Path to the YAML configuration file
+        tables: Optional mapping of table names to ibis table expressions
+        profile: Optional profile name to load tables from
+        profile_path: Optional path to profile file
+
+    Returns:
+        Dict mapping model names to SemanticModel instances
+
+    Example YAML format:
+        flights:
+          table: flights_tbl
+          description: "Flight data model"
+          dimensions:
+            origin:
+              expr: _.origin
+              description: "Origin airport code"
+              is_entity: true
+            destination: _.destination
+            carrier: _.carrier
+            arr_time:
+              expr: _.arr_time
+              description: "Arrival time"
+              is_event_timestamp: true
+              is_time_dimension: true
+              smallest_time_grain: "TIME_GRAIN_DAY"
+          measures:
+            flight_count: _.count()
+            avg_distance: _.distance.mean()
+            total_distance:
+              expr: _.distance.sum()
+              description: "Total distance flown"
+          joins:
+            carriers:
+              model: carriers
+              type: one
+              left_on: carrier
+              right_on: code
+    """
     tables = _load_tables_from_references(tables or {})
     yaml_configs = read_yaml_file(yaml_path)
 
