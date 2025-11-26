@@ -42,17 +42,17 @@ def main():
             "max_delay",
             "total_distance",
             nest={
-                "flight_legs": lambda t: t.select(
+                "flight_legs": lambda t: t.group_by([
                     "tail_num",
                     "dep_time",
                     "origin",
                     "destination",
                     "dep_delay",
                     "arr_delay",
-                ),
+                ]),
             },
         )
-        .mutate(session_id=lambda t: ibis.row_number().over(ibis.window()))
+        .mutate(session_id=ibis.row_number().over(ibis.window()))
         .order_by("session_id")
     )
 

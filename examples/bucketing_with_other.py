@@ -28,11 +28,13 @@ def main():
             nest={"data": lambda t: t.group_by(["code", "elevation"])},
         )
         .mutate(
-            rank=ibis.row_number().over(
-                ibis.window(order_by=ibis.desc("avg_elevation")),
+            rank=lambda t: ibis.row_number().over(
+                ibis.window(order_by=t.avg_elevation.desc()),
             ),
-            is_other=_.rank > 4,
-            state_grouped=ibis.cases((_.is_other, "OTHER"), else_=_.state),
+        )
+        .mutate(
+            is_other=lambda t: t.rank > 4,
+            state_grouped=lambda t: (t.rank > 4).ifelse("OTHER", t.state),
         )
         .group_by("state_grouped")
         .aggregate(
