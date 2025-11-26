@@ -47,6 +47,73 @@ def to_untagged(expr):
 
 
 class SemanticTable(ir.Table):
+    def get_graph(self):
+        """Get the dependency graph for this semantic table.
+
+        Returns the dependency graph showing how dimensions and measures
+        relate to each other. This works on all semantic table types
+        (SemanticModel, joins, filters, group_by, etc.).
+
+        For joins, this merges graphs from both left and right sides.
+        For filters/limits/ordering, this returns the graph from the source.
+
+        Returns:
+            dict: Dependency graph mapping field names to metadata with "deps" and "type" keys.
+                  Use graph utility functions for traversal:
+                  - graph_predecessors(graph, field): direct dependencies
+                  - graph_successors(graph, field): direct dependents
+                  - graph_bfs(graph, field): breadth-first traversal
+                  - graph_invert(graph): reverse dependencies
+                  - graph_to_dict(graph): export to JSON format
+        """
+        op = self.op()
+
+        # For SemanticModel, get cached graph from the op
+        if hasattr(op, "get_graph"):
+            return op.get_graph()
+
+        # For joins, merge graphs from left and right ops with prefixing
+        if hasattr(op, "left") and hasattr(op, "right"):
+            merged = {}
+
+            # Add left graph with prefixes (both field names and their dependencies)
+            if hasattr(op.left, "get_graph") and hasattr(op.left, "name"):
+                left_name = op.left.name
+                for field_name, field_data in op.left.get_graph().items():
+                    prefixed_name = f"{left_name}.{field_name}" if left_name else field_name
+                    # Also prefix the dependencies
+                    prefixed_deps = {
+                        f"{left_name}.{dep_name}" if left_name else dep_name: dep_type
+                        for dep_name, dep_type in field_data["deps"].items()
+                    }
+                    merged[prefixed_name] = {"deps": prefixed_deps, "type": field_data["type"]}
+
+            # Add right graph with prefixes (both field names and their dependencies)
+            if hasattr(op.right, "get_graph") and hasattr(op.right, "name"):
+                right_name = op.right.name
+                for field_name, field_data in op.right.get_graph().items():
+                    prefixed_name = f"{right_name}.{field_name}" if right_name else field_name
+                    # Also prefix the dependencies
+                    prefixed_deps = {
+                        f"{right_name}.{dep_name}" if right_name else dep_name: dep_type
+                        for dep_name, dep_type in field_data["deps"].items()
+                    }
+                    merged[prefixed_name] = {"deps": prefixed_deps, "type": field_data["type"]}
+
+            return merged
+
+        # For pass-through nodes (filter, limit, order_by, group_by, aggregate), get graph from source
+        # Walk the node tree to find any node with a graph attribute
+        from .graph_utils import walk_nodes
+        from .ops import SemanticTableOp
+
+        for node in walk_nodes((SemanticTableOp,), self):
+            if hasattr(node, "get_graph"):
+                return node.get_graph()
+
+        # Fallback to empty graph
+        return {}
+
     def filter(self, predicate: Callable) -> SemanticFilter:
         return SemanticFilter(source=self.op(), predicate=predicate)
 

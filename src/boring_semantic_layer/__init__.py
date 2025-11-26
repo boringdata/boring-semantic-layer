@@ -20,6 +20,13 @@ from .expr import (
     SemanticTable,
     to_untagged,
 )
+from .graph_utils import (
+    graph_bfs,
+    graph_invert,
+    graph_predecessors,
+    graph_successors,
+    graph_to_dict,
+)
 from .ops import (
     Dimension,
     Measure,
