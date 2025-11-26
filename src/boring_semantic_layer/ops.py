@@ -7,16 +7,31 @@ from typing import TYPE_CHECKING, Any
 import ibis
 import ibis.selectors as s
 from attrs import field, frozen
-from ibis.common.collections import FrozenDict, FrozenOrderedDict
 from ibis.common.deferred import Deferred
 from ibis.expr import datatypes as dt
 from ibis.expr import operations as ibis_ops
 from ibis.expr import types as ir
 from ibis.expr.operations.relations import Field, Relation
 from ibis.expr.schema import Schema
+
+try:
+    from xorq.vendor.ibis.common.collections import FrozenDict, FrozenOrderedDict
+    from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
+    _SchemaClass = XorqSchema
+    _FrozenOrderedDict = FrozenOrderedDict
+except ImportError:
+    from ibis.common.collections import FrozenDict, FrozenOrderedDict
+    _SchemaClass = Schema
+    _FrozenOrderedDict = FrozenOrderedDict
+
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Success, safe
 from toolz import curry
+
+
+def _is_deferred(expr) -> bool:
+    return isinstance(expr, Deferred)
+
 
 from . import projection_utils
 from .compile_all import compile_grouped_with_all
@@ -41,8 +56,8 @@ if TYPE_CHECKING:
     )
 
 
-def _to_ibis(source: Any) -> ir.Table:
-    return source.to_ibis() if hasattr(source, "to_ibis") else source.to_expr()
+def _to_untagged(source: Any) -> ir.Table:
+    return source.to_untagged() if hasattr(source, "to_untagged") else source.to_expr()
 
 
 def _semantic_table(*args, **kwargs) -> SemanticTable:
@@ -55,14 +70,39 @@ def _unwrap(wrapped: Any) -> Any:
     return wrapped.unwrap if isinstance(wrapped, _CallableWrapper) else wrapped
 
 
+def _semantic_repr(op: Relation) -> str:
+    from ibis.expr.format import pretty
+    try:
+        return pretty(op)
+    except Exception:
+        return object.__repr__(op)
+
+
+def _make_schema(fields_dict: dict[str, str]):
+    """Create Schema instance from fields dict."""
+    return _SchemaClass(fields_dict)
+
+
 def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
-    return (
+    result = (
         expr.resolve(scope)
-        if isinstance(expr, Deferred)
+        if _is_deferred(expr)
         else expr(scope)
         if callable(expr)
         else expr
     )
+
+    if hasattr(result, '__class__') and hasattr(scope, '__class__'):
+        result_module = result.__class__.__module__
+        scope_module = scope.__class__.__module__
+        result_is_regular_ibis = 'ibis.expr' in result_module and 'xorq' not in result_module
+        scope_is_xorq = 'xorq.vendor.ibis' in scope_module
+
+        if result_is_regular_ibis and scope_is_xorq:
+            from xorq.common.utils.ibis_utils import from_ibis
+            result = from_ibis(result)
+
+    return result
 
 
 def _get_field_dict(root: Any, field_type: str) -> dict:
@@ -197,7 +237,7 @@ def _matches_aggregation_pattern(measure_expr, agg_expr, tbl):
         scope = ColumnScope(_tbl=tbl)
         return (
             expr.resolve(scope)
-            if isinstance(expr, Deferred)
+            if _is_deferred(expr)
             else expr(scope)
             if callable(expr)
             else expr
@@ -292,7 +332,7 @@ def _make_base_measure(
         """Evaluate expression in given scope."""
         return (
             expr.resolve(scope)
-            if isinstance(expr, Deferred)
+            if _is_deferred(expr)
             else expr(scope)
             if callable(expr)
             else expr
@@ -393,7 +433,7 @@ class Dimension:
     smallest_time_grain: str | None = None
 
     def __call__(self, table: ir.Table) -> ir.Value:
-        return self.expr.resolve(table) if isinstance(self.expr, Deferred) else self.expr(table)
+        return self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
 
     def to_json(self) -> Mapping[str, Any]:
         base = {"description": self.description}
@@ -416,7 +456,7 @@ class Measure:
     requires_unnest: tuple[str, ...] = ()  # Internal: Arrays that must be unnested
 
     def __call__(self, table: ir.Table) -> ir.Value:
-        return self.expr.resolve(table) if isinstance(self.expr, Deferred) else self.expr(table)
+        return self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
 
     @property
     def locality(self) -> str | None:
@@ -440,16 +480,17 @@ class SemanticTableOp(Relation):
 
     Stores ir.Table expression directly to avoid .op() → .to_expr() conversions.
 
-    Note: Also accepts xorq's vendored ibis tables to support optional xorq integration.
+    Note: Accepts both regular ibis.Table and xorq's vendored ibis.Table.
+    Regular ibis tables are automatically converted to xorq in __init__.
     """
 
-    table: ir.Table
+    table: Any  # Accepts both ir.Table and regular ibis.expr.types.Table
     dimensions: FrozenDict[str, Dimension]
     measures: FrozenDict[str, Measure]
     calc_measures: FrozenDict[str, Any]
     name: str | None = None
     description: str | None = None
-    _source_join: Any = None  # Track if this wraps a join (SemanticJoinOp) for optimization
+    _source_join: Any = field(default=None, repr=False)  # Track if this wraps a join (SemanticJoinOp) for optimization
 
     def __init__(
         self,
@@ -461,47 +502,24 @@ class SemanticTableOp(Relation):
         description: str | None = None,
         _source_join: Any = None,
     ) -> None:
-        # Accept both regular ibis and xorq's vendored ibis tables
-        # Use object.__setattr__ to bypass type validation for xorq tables
-        table_module = type(table).__module__
-        if table_module.startswith("xorq.vendor.ibis"):
-            # Bypass validation for xorq's vendored ibis tables
-            object.__setattr__(self, "table", table)
-            object.__setattr__(
-                self,
-                "dimensions",
-                FrozenDict(dimensions) if not isinstance(dimensions, FrozenDict) else dimensions,
-            )
-            object.__setattr__(
-                self,
-                "measures",
-                FrozenDict(measures) if not isinstance(measures, FrozenDict) else measures,
-            )
-            object.__setattr__(
-                self,
-                "calc_measures",
-                FrozenDict(calc_measures)
-                if not isinstance(calc_measures, FrozenDict)
-                else calc_measures,
-            )
-            object.__setattr__(self, "name", name)
-            object.__setattr__(self, "description", description)
-            object.__setattr__(self, "_source_join", _source_join)
-        else:
-            # Use normal initialization for regular ibis tables
-            super().__init__(
-                table=table,
-                dimensions=FrozenDict(dimensions)
-                if not isinstance(dimensions, FrozenDict)
-                else dimensions,
-                measures=FrozenDict(measures) if not isinstance(measures, FrozenDict) else measures,
-                calc_measures=FrozenDict(calc_measures)
-                if not isinstance(calc_measures, FrozenDict)
-                else calc_measures,
-                name=name,
-                description=description,
-                _source_join=_source_join,
-            )
+        # Accept both regular ibis and xorq tables without conversion
+        # This allows using regular ibis by default, xorq only when provided
+        super().__init__(
+            table=table,
+            dimensions=FrozenDict(dimensions)
+            if not isinstance(dimensions, FrozenDict)
+            else dimensions,
+            measures=FrozenDict(measures) if not isinstance(measures, FrozenDict) else measures,
+            calc_measures=FrozenDict(calc_measures)
+            if not isinstance(calc_measures, FrozenDict)
+            else calc_measures,
+            name=name,
+            description=description,
+            _source_join=_source_join,
+        )
+
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
@@ -514,8 +532,9 @@ class SemanticTableOp(Relation):
         )
 
     @property
-    def schema(self) -> Schema:
-        return Schema({name: v.dtype for name, v in self.values.items()})
+    def schema(self):
+        fields_dict = {name: str(v.dtype) for name, v in self.values.items()}
+        return _make_schema(fields_dict)
 
     @property
     def json_definition(self) -> Mapping[str, Any]:
@@ -548,7 +567,7 @@ class SemanticTableOp(Relation):
 
     def get_calculated_measures(self) -> Mapping[str, Any]:
         """Get dictionary of calculated measures with metadata."""
-        return object.__getattribute__(self, "calc_measures")
+        return self.calc_measures
 
     def get_graph(self) -> dict[str, dict[str, Any]]:
         from .graph_utils import build_dependency_graph
@@ -561,6 +580,17 @@ class SemanticTableOp(Relation):
         )
 
     def __getattribute__(self, name: str):
+        """Override attribute access to return tuples for dimensions/measures.
+
+        This provides a cleaner API where .dimensions returns ('dim1', 'dim2')
+        instead of the full FrozenDict. Use get_dimensions() to get the full dict.
+        """
+        # For special/internal attributes (dunder methods), use default behavior
+        # This is critical for xorq's vendored ibis which uses __precomputed_hash__, etc.
+        if name.startswith("__") and name.endswith("__"):
+            return object.__getattribute__(self, name)
+
+        # Custom behavior for dimensions and measures
         if name == "dimensions":
             dims = object.__getattribute__(self, "dimensions")
             return tuple(dims.keys())
@@ -568,9 +598,11 @@ class SemanticTableOp(Relation):
             base_meas = object.__getattribute__(self, "measures")
             calc_meas = object.__getattribute__(self, "calc_measures")
             return tuple(base_meas.keys()) + tuple(calc_meas.keys())
+
+        # Default behavior for everything else
         return object.__getattribute__(self, name)
 
-    def to_ibis(self):
+    def to_untagged(self):
         return self.table
 
 
@@ -584,6 +616,9 @@ class SemanticFilterOp(Relation):
             predicate=_ensure_wrapped(predicate),
         )
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         return self.source.values
@@ -592,11 +627,11 @@ class SemanticFilterOp(Relation):
     def schema(self) -> Schema:
         return self.source.schema
 
-    def to_ibis(self):
+    def to_untagged(self):
         from .convert import _Resolver
 
         all_roots = _find_all_root_models(self.source)
-        base_tbl = _to_ibis(self.source)
+        base_tbl = _to_untagged(self.source)
         dim_map = (
             {}
             if isinstance(self.source, SemanticAggregateOp)
@@ -635,12 +670,10 @@ def _process_nested_access_marker(
     if marker.operation == "count":
         return unnested, unnested.count().name(name)
 
-    # Build expression accessing nested fields
     expr = getattr(unnested, marker.array_path[0])
     for field_name in marker.field_path:
         expr = getattr(expr, field_name)
 
-    # Apply aggregation
     if marker.operation in ("sum", "mean", "min", "max", "nunique"):
         agg_fn = getattr(expr, marker.operation)
         return unnested, agg_fn().name(name)
@@ -704,6 +737,9 @@ class SemanticProjectOp(Relation):
     def __init__(self, source: Relation, fields: Iterable[str]) -> None:
         super().__init__(source=Relation.__coerce__(source), fields=tuple(fields))
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         src_vals = self.source.values
@@ -713,11 +749,11 @@ class SemanticProjectOp(Relation):
 
     @property
     def schema(self) -> Schema:
-        return Schema({k: v.dtype for k, v in self.values.items()})
+        return _SchemaClass(fields=_FrozenOrderedDict({k: v.dtype for k, v in self.values.items()}))
 
-    def to_ibis(self):
+    def to_untagged(self):
         all_roots = _find_all_root_models(self.source)
-        tbl = _to_ibis(self.source)
+        tbl = _to_untagged(self.source)
 
         if not all_roots:
             return tbl.select([getattr(tbl, f) for f in self.fields])
@@ -754,6 +790,9 @@ class SemanticGroupByOp(Relation):
     def __init__(self, source: Relation, keys: Iterable[str]) -> None:
         super().__init__(source=Relation.__coerce__(source), keys=tuple(keys))
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         return self.source.values
@@ -762,8 +801,8 @@ class SemanticGroupByOp(Relation):
     def schema(self) -> Schema:
         return self.source.schema
 
-    def to_ibis(self):
-        return _to_ibis(self.source)
+    def to_untagged(self):
+        return _to_untagged(self.source)
 
 
 @frozen
@@ -856,7 +895,7 @@ def _create_measure_spec(
 
 
 def _make_agg_callable(measure: Any) -> Callable:
-    if isinstance(measure, Deferred):
+    if _is_deferred(measure):
         return lambda t: measure.resolve(ColumnScope(_tbl=t))
     elif callable(measure):
         return lambda t: measure(ColumnScope(_tbl=t))
@@ -936,6 +975,9 @@ class SemanticAggregateOp(Relation):
             nested_columns=tuple(nested_columns or []),
         )
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         all_roots = _find_all_root_models(self.source)
@@ -959,7 +1001,7 @@ class SemanticAggregateOp(Relation):
 
     @property
     def schema(self) -> Schema:
-        return Schema({n: v.dtype for n, v in self.values.items()})
+        return _SchemaClass(fields=_FrozenOrderedDict({n: v.dtype for n, v in self.values.items()}))
 
     @property
     def measures(self) -> tuple[str, ...]:
@@ -980,7 +1022,7 @@ class SemanticAggregateOp(Relation):
         merged_dimensions = _get_merged_fields(all_roots, "dimensions")
 
         base_tbl = (
-            self.source.to_expr() if hasattr(self.source, "to_expr") else _to_ibis(self.source)
+            self.source.to_expr() if hasattr(self.source, "to_expr") else _to_untagged(self.source)
         )
 
         table_names = []
@@ -1013,7 +1055,7 @@ class SemanticAggregateOp(Relation):
 
         return combined.to_dict()
 
-    def to_ibis(self):
+    def to_untagged(self):
         all_roots = _find_all_root_models(self.source)
 
         def find_join_in_tree(node):
@@ -1055,9 +1097,9 @@ class SemanticAggregateOp(Relation):
         # Only use the join optimization if there are no filters after the join
         # Otherwise we'd skip the filter operations
         if join_op is not None and not has_filter_after_join(self.source):
-            tbl = join_op.to_ibis(parent_requirements=self.required_columns)
+            tbl = join_op.to_untagged(parent_requirements=self.required_columns)
         else:
-            tbl = _to_ibis(self.source)
+            tbl = _to_untagged(self.source)
 
         def has_prior_aggregate(node):
             """Recursively check if there's a SemanticAggregateOp before any mutate."""
@@ -1141,6 +1183,9 @@ class SemanticMutateOp(Relation):
             nested_columns=source_nested,
         )
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         return self.source.values
@@ -1149,15 +1194,25 @@ class SemanticMutateOp(Relation):
     def schema(self) -> Schema:
         return self.source.schema
 
-    def to_ibis(self):
-        agg_tbl = _to_ibis(self.source)
+    def to_untagged(self):
+        agg_tbl = _to_untagged(self.source)
 
         # Process mutations incrementally so each can reference previous ones
         # This allows: .mutate(rank=..., is_other=lambda t: t["rank"] > 5)
         current_tbl = agg_tbl
         for name, fn_wrapped in self.post.items():
             proxy = MeasureScope(_tbl=current_tbl, _known=[], _post_agg=True)
-            new_col = _resolve_expr(_unwrap(fn_wrapped), proxy).name(name)
+            resolved = _resolve_expr(_unwrap(fn_wrapped), proxy)
+
+            # If resolved expression is from regular ibis but table is xorq, convert it
+            if hasattr(resolved, '__class__') and hasattr(current_tbl, '__class__'):
+                resolved_module = resolved.__class__.__module__
+                table_module = current_tbl.__class__.__module__
+                if 'ibis.expr' in resolved_module and 'xorq' not in resolved_module and 'xorq.vendor.ibis' in table_module:
+                    from xorq.common.utils.ibis_utils import from_ibis
+                    resolved = from_ibis(resolved)
+
+            new_col = resolved.name(name)
             current_tbl = current_tbl.mutate([new_col])
 
         return current_tbl
@@ -1169,6 +1224,9 @@ class SemanticUnnestOp(Relation):
     source: Relation
     column: str
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def schema(self) -> Schema:
         # After unnesting, the schema changes - the array column is replaced by its element schema
@@ -1179,7 +1237,7 @@ class SemanticUnnestOp(Relation):
     def values(self) -> FrozenDict:
         return FrozenDict({})
 
-    def to_ibis(self):
+    def to_untagged(self):
         """Convert to Ibis expression with functional struct unpacking.
 
         Uses pure helper functions to extract struct fields when unnesting
@@ -1205,7 +1263,7 @@ class SemanticUnnestOp(Relation):
 
             return unnested_tbl
 
-        tbl = _to_ibis(self.source)
+        tbl = _to_untagged(self.source)
 
         if self.column not in tbl.columns:
             raise ValueError(f"Column '{self.column}' not found in table")
@@ -1238,6 +1296,9 @@ class SemanticJoinOp(Relation):
             on=on,
         )
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         vals: dict[str, Any] = {}
@@ -1246,8 +1307,14 @@ class SemanticJoinOp(Relation):
         return FrozenOrderedDict(vals)
 
     @property
-    def schema(self) -> Schema:
-        return Schema({name: v.dtype for name, v in self.values.items()})
+    def schema(self):
+        """Get schema of semantic table.
+
+        Uses runtime imports to handle both regular ibis and xorq (which vendors ibis).
+        Converts dtypes to strings to allow Schema to parse them into the correct dtype objects.
+        """
+        fields_dict = {name: str(v.dtype) for name, v in self.values.items()}
+        return _make_schema(fields_dict)
 
     def get_dimensions(self) -> Mapping[str, Dimension]:
         """Get dictionary of dimensions with metadata."""
@@ -1311,7 +1378,7 @@ class SemanticJoinOp(Relation):
 
     @property
     def table(self):
-        return self.to_ibis()
+        return self.to_untagged()
 
     def query(
         self,
@@ -1338,7 +1405,7 @@ class SemanticJoinOp(Relation):
 
     def with_dimensions(self, **dims) -> SemanticTable:
         return _semantic_table(
-            table=self.to_ibis(),
+            table=self.to_untagged(),
             dimensions={**self.get_dimensions(), **dims},
             measures=self.get_measures(),
             calc_measures=self.get_calculated_measures(),
@@ -1346,7 +1413,7 @@ class SemanticJoinOp(Relation):
         )
 
     def with_measures(self, **meas) -> SemanticTable:
-        joined_tbl = self.to_ibis()
+        joined_tbl = self.to_untagged()
         all_known = (
             list(self.get_measures().keys())
             + list(self.get_calculated_measures().keys())
@@ -1513,7 +1580,7 @@ class SemanticJoinOp(Relation):
             if isinstance(node, SemanticJoinOp):
                 return collect_leaf_tables(node.left) + collect_leaf_tables(node.right)
             table_name = getattr(node, "name", None)
-            return [(table_name, _to_ibis(node))] if table_name else []
+            return [(table_name, _to_untagged(node))] if table_name else []
 
         leaf_tables = collect_leaf_tables(self)
 
@@ -1549,14 +1616,14 @@ class SemanticJoinOp(Relation):
         if self.on is not None:
             # Get full schema for join key extraction
             temp_left = (
-                self.left.to_ibis()
+                self.left.to_untagged()
                 if isinstance(self.left, SemanticJoinOp)
-                else _to_ibis(self.left)
+                else _to_untagged(self.left)
             )
             temp_right = (
-                self.right.to_ibis()
+                self.right.to_untagged()
                 if isinstance(self.right, SemanticJoinOp)
-                else _to_ibis(self.right)
+                else _to_untagged(self.right)
             )
 
             join_keys_result = _extract_join_key_columns(self.on, temp_left, temp_right)
@@ -1567,7 +1634,7 @@ class SemanticJoinOp(Relation):
                     for col in join_keys_result.left_columns:
                         for leaf_name in self.left._collect_leaf_table_names():
                             leaf_table = self._get_leaf_table_by_name(self.left, leaf_name)
-                            if leaf_table and col in _to_ibis(leaf_table).columns:
+                            if leaf_table and col in _to_untagged(leaf_table).columns:
                                 requirements = requirements.add_columns(leaf_name, {col})
                 else:
                     left_name = getattr(self.left, "name", None)
@@ -1580,7 +1647,7 @@ class SemanticJoinOp(Relation):
                     for col in join_keys_result.right_columns:
                         for leaf_name in self.right._collect_leaf_table_names():
                             leaf_table = self._get_leaf_table_by_name(self.right, leaf_name)
-                            if leaf_table and col in _to_ibis(leaf_table).columns:
+                            if leaf_table and col in _to_untagged(leaf_table).columns:
                                 requirements = requirements.add_columns(leaf_name, {col})
                 else:
                     right_name = getattr(self.right, "name", None)
@@ -1638,14 +1705,14 @@ class SemanticJoinOp(Relation):
         if self.on is not None:
             # Convert without projection to get full schema
             temp_left = (
-                self.left.to_ibis(parent_requirements=None)
+                self.left.to_untagged(parent_requirements=None)
                 if isinstance(self.left, SemanticJoinOp)
-                else _to_ibis(self.left)
+                else _to_untagged(self.left)
             )
             temp_right = (
-                self.right.to_ibis(parent_requirements=None)
+                self.right.to_untagged(parent_requirements=None)
                 if isinstance(self.right, SemanticJoinOp)
-                else _to_ibis(self.right)
+                else _to_untagged(self.right)
             )
 
             join_keys = _extract_join_key_columns(self.on, temp_left, temp_right)
@@ -1670,7 +1737,7 @@ class SemanticJoinOp(Relation):
                                 # We do this by converting the table and checking its schema
                                 leaf_table = self._get_leaf_table_by_name(self.left, table_name)
                                 if leaf_table is not None:
-                                    leaf_ibis = _to_ibis(leaf_table)
+                                    leaf_ibis = _to_untagged(leaf_table)
                                     if col in leaf_ibis.columns:
                                         existing = join_columns.get(table_name, set())
                                         join_columns[table_name] = existing | {col}
@@ -1689,135 +1756,31 @@ class SemanticJoinOp(Relation):
                             if table_name:
                                 leaf_table = self._get_leaf_table_by_name(self.right, table_name)
                                 if leaf_table is not None:
-                                    leaf_ibis = _to_ibis(leaf_table)
+                                    leaf_ibis = _to_untagged(leaf_table)
                                     if col in leaf_ibis.columns:
                                         existing = join_columns.get(table_name, set())
                                         join_columns[table_name] = existing | {col}
 
         return join_columns
 
-    def to_ibis(self, parent_requirements: dict[str, set[str]] | None = None):
-        """Convert join to Ibis expression with automatic projection pushdown.
+    def to_untagged(self, parent_requirements: dict[str, set[str]] | None = None):
+        """Convert join to Ibis expression.
 
-        Projection pushdown is always applied using the join's intrinsic `required_columns` property.
-        Uses top-down requirement propagation for n-way joins:
-        1. Use required_columns property (measures + join keys)
-        2. Merge with parent requirements if provided
-        3. At each join level, extract join keys needed for THIS join
-        4. Add join keys to requirements for respective subtrees
-        5. Recursively propagate augmented requirements down
-        6. Apply projections only at leaf tables
+        Note: Projection pushdown has been disabled for compatibility with xorq's
+        vendored ibis, which has stricter column access after joins. Without projection
+        pushdown, all columns from both tables are available after the join.
 
         Args:
-            parent_requirements: Optional dict of column requirements from parent operations.
-                If provided, these are merged with the join's intrinsic required_columns.
+            parent_requirements: Ignored. Kept for API compatibility.
 
         Returns:
-            Ibis join expression
+            Ibis join expression with all columns from both tables
         """
         from .convert import _Resolver
 
-        # Use intrinsic required_columns property if parent provided requirements
-        # When parent_requirements=None (e.g., for join key extraction), skip projection
-        if parent_requirements is not None and self.on is not None:
-            # Merge parent requirements with intrinsic requirements
-            computed_requirements = self._compute_required_columns(
-                parent_requirements=parent_requirements
-            )
-        else:
-            computed_requirements = None
-
-        # Apply projection pushdown using computed requirements
-        if computed_requirements:
-            # Step 1: Extract join keys for THIS level by temporarily converting without projection
-            temp_left = (
-                self.left.to_ibis(parent_requirements=None)
-                if isinstance(self.left, SemanticJoinOp)
-                else _to_ibis(self.left)
-            )
-            temp_right = (
-                self.right.to_ibis(parent_requirements=None)
-                if isinstance(self.right, SemanticJoinOp)
-                else _to_ibis(self.right)
-            )
-
-            join_keys_result = _extract_join_key_columns(self.on, temp_left, temp_right)
-
-            if join_keys_result.is_success():
-                # Step 2: Augment requirements with join keys for subtrees
-                augmented_requirements = dict(computed_requirements)
-
-                # Add join keys to appropriate tables/subtrees
-                # For nested joins, we need to trace which leaf tables these columns belong to
-                if isinstance(self.left, SemanticJoinOp):
-                    # Left is nested - distribute join keys to relevant leaf tables
-                    for col in join_keys_result.left_columns:
-                        # Find which leaf table(s) have this column
-                        for leaf_name in self.left._collect_leaf_table_names():
-                            leaf_table = self._get_leaf_table_by_name(self.left, leaf_name)
-                            if leaf_table is not None:
-                                leaf_ibis = _to_ibis(leaf_table)
-                                if col in leaf_ibis.columns:
-                                    existing = augmented_requirements.get(leaf_name, set())
-                                    augmented_requirements[leaf_name] = existing | {col}
-                else:
-                    # Left is a leaf table
-                    left_name = getattr(self.left, "name", None)
-                    if left_name:
-                        existing = augmented_requirements.get(left_name, set())
-                        augmented_requirements[left_name] = existing | join_keys_result.left_columns
-
-                if isinstance(self.right, SemanticJoinOp):
-                    # Right is nested - distribute join keys to relevant leaf tables
-                    for col in join_keys_result.right_columns:
-                        for leaf_name in self.right._collect_leaf_table_names():
-                            leaf_table = self._get_leaf_table_by_name(self.right, leaf_name)
-                            if leaf_table is not None:
-                                leaf_ibis = _to_ibis(leaf_table)
-                                if col in leaf_ibis.columns:
-                                    existing = augmented_requirements.get(leaf_name, set())
-                                    augmented_requirements[leaf_name] = existing | {col}
-                else:
-                    # Right is a leaf table
-                    right_name = getattr(self.right, "name", None)
-                    if right_name:
-                        existing = augmented_requirements.get(right_name, set())
-                        augmented_requirements[right_name] = (
-                            existing | join_keys_result.right_columns
-                        )
-
-                # Step 3: Recursively convert subtrees with augmented requirements
-                if isinstance(self.left, SemanticJoinOp):
-                    left_tbl = self.left.to_ibis(parent_requirements=augmented_requirements)
-                else:
-                    left_tbl = _to_ibis(self.left)
-                    left_name = getattr(self.left, "name", None)
-                    if left_name and left_name in augmented_requirements:
-                        left_cols = augmented_requirements[left_name]
-                        if left_cols and left_cols != set(left_tbl.columns):
-                            left_tbl = left_tbl.select(
-                                [left_tbl[c] for c in left_cols if c in left_tbl.columns]
-                            )
-
-                if isinstance(self.right, SemanticJoinOp):
-                    right_tbl = self.right.to_ibis(parent_requirements=augmented_requirements)
-                else:
-                    right_tbl = _to_ibis(self.right)
-                    right_name = getattr(self.right, "name", None)
-                    if right_name and right_name in augmented_requirements:
-                        right_cols = augmented_requirements[right_name]
-                        if right_cols and right_cols != set(right_tbl.columns):
-                            right_tbl = right_tbl.select(
-                                [right_tbl[c] for c in right_cols if c in right_tbl.columns]
-                            )
-            else:
-                # Couldn't extract join keys - fallback to no projection
-                left_tbl = _to_ibis(self.left)
-                right_tbl = _to_ibis(self.right)
-        else:
-            # No required_columns specified, just convert normally
-            left_tbl = _to_ibis(self.left)
-            right_tbl = _to_ibis(self.right)
+        # Simply convert both sides without any projection pushdown
+        left_tbl = _to_untagged(self.left) if not isinstance(self.left, SemanticJoinOp) else self.left.to_untagged()
+        right_tbl = _to_untagged(self.right) if not isinstance(self.right, SemanticJoinOp) else self.right.to_untagged()
 
         return (
             left_tbl.join(
@@ -1830,13 +1793,13 @@ class SemanticJoinOp(Relation):
         )
 
     def execute(self):
-        return self.to_ibis().execute()
+        return self.to_untagged().execute()
 
     def compile(self, **kwargs):
-        return self.to_ibis().compile(**kwargs)
+        return self.to_untagged().compile(**kwargs)
 
     def sql(self, **kwargs):
-        return ibis.to_sql(self.to_ibis(), **kwargs)
+        return ibis.to_sql(self.to_untagged(), **kwargs)
 
     def __getitem__(self, key):
         dims_dict = self.get_dimensions()
@@ -1861,7 +1824,7 @@ class SemanticJoinOp(Relation):
     def as_table(self) -> SemanticTable:
         """Convert to SemanticTable, preserving merged metadata from both sides."""
         return _semantic_table(
-            table=self.to_ibis(),
+            table=self.to_untagged(),
             dimensions=self.get_dimensions(),
             measures=self.get_measures(),
             calc_measures=self.get_calculated_measures(),
@@ -1884,6 +1847,9 @@ class SemanticOrderByOp(Relation):
             keys=tuple(wrap_key(k) for k in keys),
         )
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         return self.source.values
@@ -1892,8 +1858,8 @@ class SemanticOrderByOp(Relation):
     def schema(self) -> Schema:
         return self.source.schema
 
-    def to_ibis(self):
-        tbl = _to_ibis(self.source)
+    def to_untagged(self):
+        tbl = _to_untagged(self.source)
 
         def resolve_order_key(key):
             if isinstance(key, str):
@@ -1919,6 +1885,9 @@ class SemanticLimitOp(Relation):
             raise ValueError(f"offset must be non-negative, got {offset}")
         super().__init__(source=Relation.__coerce__(source), n=n, offset=offset)
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         return self.source.values
@@ -1927,8 +1896,8 @@ class SemanticLimitOp(Relation):
     def schema(self) -> Schema:
         return self.source.schema
 
-    def to_ibis(self):
-        tbl = _to_ibis(self.source)
+    def to_untagged(self):
+        tbl = _to_untagged(self.source)
         return tbl.limit(self.n) if self.offset == 0 else tbl.limit(self.n, offset=self.offset)
 
 
@@ -2026,18 +1995,15 @@ def _get_fields_to_index(
     merged_dimensions: dict,
     base_tbl: ir.Table,
 ) -> tuple[str, ...]:
-    # Handle None as "all fields"
     if selector is None:
         selector = s.all()
 
     raw_fields = _resolve_selector(selector, base_tbl)
 
-    # If raw_fields is empty (selector failed to resolve), include all fields
     if not raw_fields:
         result = list(merged_dimensions.keys())
         result.extend(col for col in base_tbl.columns if col not in result)
     else:
-        # Only include selected fields that exist in dimensions or base table
         result = [col for col in raw_fields if col in merged_dimensions or col in base_tbl.columns]
 
     return result
@@ -2082,6 +2048,9 @@ class SemanticIndexOp(Relation):
             sample=sample,
         )
 
+    def __repr__(self) -> str:
+        return _semantic_repr(self)
+
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
         return FrozenOrderedDict(
@@ -2114,10 +2083,10 @@ class SemanticIndexOp(Relation):
     def aggs(self) -> dict[str, Any]:
         return {"weight": lambda t: t.weight}
 
-    def to_ibis(self):
+    def to_untagged(self):
         all_roots = _find_all_root_models(self.source)
         base_tbl = (
-            _to_ibis(self.source).limit(self.sample) if self.sample else _to_ibis(self.source)
+            _to_untagged(self.source).limit(self.sample) if self.sample else _to_untagged(self.source)
         )
 
         merged_dimensions = _get_merged_fields(all_roots, "dimensions")
@@ -2192,20 +2161,20 @@ class SemanticIndexOp(Relation):
         return SemanticLimit(source=self, n=n, offset=offset)
 
     def execute(self):
-        return self.to_ibis().execute()
+        return self.to_untagged().execute()
 
     def as_expr(self):
         """Return self as expression."""
         return self
 
     def compile(self, **kwargs):
-        return self.to_ibis().compile(**kwargs)
+        return self.to_untagged().compile(**kwargs)
 
     def sql(self, **kwargs):
-        return ibis.to_sql(self.to_ibis(), **kwargs)
+        return ibis.to_sql(self.to_untagged(), **kwargs)
 
     def __getitem__(self, key):
-        return self.to_ibis()[key]
+        return self.to_untagged()[key]
 
     def pipe(self, func, *args, **kwargs):
         return func(self, *args, **kwargs)
@@ -2229,11 +2198,9 @@ def _find_all_root_models(node: Any) -> tuple[SemanticTableOp, ...]:
 
     roots = []
 
-    # Handle joins with left/right sides
     if hasattr(node, "left") and hasattr(node, "right"):
         roots.extend(_find_all_root_models(node.left))
         roots.extend(_find_all_root_models(node.right))
-    # Handle single-source operations
     elif hasattr(node, "source") and node.source is not None:
         roots.extend(_find_all_root_models(node.source))
 
@@ -2288,8 +2255,6 @@ def _merge_fields_with_prefixing(
 
     merged_fields = {}
 
-    # Special handling for calculated measures - need to update internal MeasureRefs
-    # Determine if we're processing calc measures by checking the field type
     is_calc_measures = False
     if all_roots:
         sample_fields = field_accessor(all_roots[0])
@@ -2302,7 +2267,6 @@ def _merge_fields_with_prefixing(
                 MeasureRef | AllOf | BinOp | int | float,
             )
 
-    # Always prefix fields with table name for consistency
     for root in all_roots:
         root_name = root.name
         fields_dict = field_accessor(root)
@@ -2469,11 +2433,9 @@ def _extract_columns_from_callable(
     if not callable(fn):
         return ColumnExtractionResult.success(frozenset())
 
-    # Use list as reference cell for immutable tracker
     tracker_ref = [ColumnTracker()]
 
     def on_column_access(col_name: str) -> None:
-        """Callback that updates tracker reference."""
         tracker_ref[0] = tracker_ref[0].with_column(col_name)
 
     try:
@@ -2490,20 +2452,13 @@ def _extract_join_key_columns(
     left_table: ir.Table,
     right_table: ir.Table,
 ) -> JoinColumnExtractionResult:
-    """Extract column names used in join predicate.
-
-    Uses immutable trackers for both tables.
-    """
-    # Use lists as reference cells for immutable trackers
     left_tracker_ref = [ColumnTracker()]
     right_tracker_ref = [ColumnTracker()]
 
     def on_left_access(col_name: str) -> None:
-        """Callback for left table column access."""
         left_tracker_ref[0] = left_tracker_ref[0].with_column(col_name)
 
     def on_right_access(col_name: str) -> None:
-        """Callback for right table column access."""
         right_tracker_ref[0] = right_tracker_ref[0].with_column(col_name)
 
     try:

@@ -5,10 +5,10 @@ from returns.result import Failure, Success
 
 from boring_semantic_layer.utils import expr_to_ibis_string, ibis_string_to_expr
 from boring_semantic_layer.xorq_convert import (
-    from_xorq,
+    from_tagged,
     serialize_dimensions,
     serialize_measures,
-    to_xorq,
+    to_tagged,
     try_import_xorq,
 )
 
@@ -164,9 +164,9 @@ def test_to_xorq_returns_xorq_expr():
         measures={"sum_b": lambda t: t.b.sum()},
     )
 
-    xorq_expr = to_xorq(model)
-    assert xorq_expr is not None
-    assert hasattr(xorq_expr, "op")
+    tagged_expr = to_tagged(model)
+    assert tagged_expr is not None
+    assert hasattr(tagged_expr, "op")
 
 
 @pytest.mark.skipif(not xorq, reason="xorq not available")
@@ -176,7 +176,7 @@ def test_from_xorq_returns_bsl_expr():
     xorq_table = memtable({"a": [1, 2, 3]})
 
     with pytest.raises(ValueError, match="No BSL metadata found"):
-        from_xorq(xorq_table)
+        from_tagged(xorq_table)
 
 
 @pytest.mark.skipif(not xorq, reason="xorq not available")
@@ -192,7 +192,7 @@ def test_from_xorq_with_tagged_table():
         measures=(),
     )
 
-    bsl_expr = from_xorq(xorq_table)
+    bsl_expr = from_tagged(xorq_table)
     assert bsl_expr is not None
     assert hasattr(bsl_expr, "dimensions")
 
@@ -204,4 +204,4 @@ def test_from_xorq_without_tags():
     xorq_table = memtable({"a": [1, 2, 3]})
 
     with pytest.raises(ValueError, match="No BSL metadata found"):
-        from_xorq(xorq_table)
+        from_tagged(xorq_table)

@@ -134,3 +134,4 @@ dmypy.json
 
 # Archived documentation
 docs-archive/
+.direnv

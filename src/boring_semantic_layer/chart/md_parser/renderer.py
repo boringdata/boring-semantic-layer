@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from xorq.vendor import ibis
 import markdown
 
 from .converter import CustomJSONEncoder

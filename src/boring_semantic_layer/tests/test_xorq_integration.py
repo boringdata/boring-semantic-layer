@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 from boring_semantic_layer import SemanticModel
-from boring_semantic_layer.xorq_convert import from_xorq, to_xorq, try_import_xorq
+from boring_semantic_layer.xorq_convert import from_tagged, to_tagged, try_import_xorq
 
 # Check if xorq is available
 try:
@@ -37,13 +37,13 @@ class TestXorqIntegration:
         )
 
         # Convert to xorq
-        xorq_expr = to_xorq(model)
+        tagged_expr = to_tagged(model)
 
         # Verify it's a xorq table with tag method
-        assert hasattr(xorq_expr, "tag")
+        assert hasattr(tagged_expr, "tag")
 
         # Verify metadata is present
-        op = xorq_expr.op()
+        op = tagged_expr.op()
         assert hasattr(op, "metadata")
         metadata = dict(op.metadata)
         assert "bsl_op_type" in metadata
@@ -61,12 +61,12 @@ class TestXorqIntegration:
         )
 
         # Convert to xorq
-        xorq_expr = to_xorq(model)
+        tagged_expr = to_tagged(model)
 
         # Execute xorq expression
         from xorq.api import execute
 
-        df = execute(xorq_expr)
+        df = execute(tagged_expr)
 
         # Verify data is preserved
         assert len(df) == 3
@@ -88,10 +88,10 @@ class TestXorqIntegration:
         )
 
         # Convert to xorq
-        xorq_expr = to_xorq(original_model)
+        tagged_expr = to_tagged(original_model)
 
         # Convert back to BSL
-        reconstructed_model = from_xorq(xorq_expr)
+        reconstructed_model = from_tagged(tagged_expr)
 
         # Verify structure is preserved
         assert hasattr(reconstructed_model, "dimensions")
@@ -133,10 +133,10 @@ class TestXorqIntegration:
         )
 
         # Convert to xorq
-        xorq_expr = to_xorq(model)
+        tagged_expr = to_tagged(model)
 
         # Extract metadata
-        op = xorq_expr.op()
+        op = tagged_expr.op()
         metadata = dict(op.metadata)
 
         # Verify BSL metadata is present
@@ -169,14 +169,14 @@ class TestXorqIntegration:
         )
 
         # Convert to xorq
-        xorq_expr = to_xorq(model)
+        tagged_expr = to_tagged(model)
 
         # Verify xorq-specific methods are available
         # (These are xorq features not available in regular ibis)
-        assert hasattr(xorq_expr, "tag"), "Xorq tables should have tag method"
+        assert hasattr(tagged_expr, "tag"), "Xorq tables should have tag method"
 
         # We can add more xorq tags (e.g., for caching hints)
-        cached_expr = xorq_expr.tag(tag="cache", cache_strategy="aggressive")
+        cached_expr = tagged_expr.tag(tag="cache", cache_strategy="aggressive")
         assert cached_expr is not None
 
     def test_filtered_expression_to_xorq(self):
@@ -194,12 +194,12 @@ class TestXorqIntegration:
         filtered = model.filter(lambda t: t.a > 2)
 
         # Convert to xorq
-        xorq_expr = to_xorq(filtered)
+        tagged_expr = to_tagged(filtered)
 
         # Execute and verify filter was applied
         from xorq.api import execute
 
-        df = execute(xorq_expr)
+        df = execute(tagged_expr)
         assert len(df) == 3  # Only values > 2
         assert min(df["a"]) > 2
 
@@ -220,10 +220,10 @@ class TestXorqFeatures:
         )
 
         # Convert to xorq
-        xorq_expr = to_xorq(model)
+        tagged_expr = to_tagged(model)
 
         # Add multiple tags
-        tagged = xorq_expr.tag(tag="cache", cache_ttl="3600")
+        tagged = tagged_expr.tag(tag="cache", cache_ttl="3600")
         tagged = tagged.tag(tag="monitoring", track_queries="true")
 
         # Both tags should be preserved

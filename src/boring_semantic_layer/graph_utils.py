@@ -1,67 +1,78 @@
-from collections import deque
-from collections.abc import Iterable
+"""Graph utilities with functional programming support."""
+
 from typing import Any
 
-from ibis.expr.operations.core import Node
-from ibis.expr.types import Expr
+from xorq.common.utils.graph_utils import (
+    gen_children_of as _xorq_gen_children_of,
+    replace_nodes as _xorq_replace_nodes,
+    to_node as _xorq_to_node,
+)
+from xorq.vendor.ibis.common.graph import Graph
+from xorq.vendor.ibis.expr.operations.core import Node
+from xorq.vendor.ibis.expr.types import Expr as XorqExpr
+from ibis.expr.operations.core import Node as IbisNode
+from ibis.expr.types import Expr as IbisExpr
 from returns.maybe import Maybe, Nothing, Some
-from returns.result import Failure, Success
+from returns.result import Failure, Result, Success
+
+__all__ = [
+    "bfs",
+    "gen_children_of",
+    "replace_nodes",
+    "to_node",
+    "walk_nodes",
+    "to_node_safe",
+    "try_to_node",
+    "find_dimensions_and_measures",
+    "Graph",
+    "Node",
+    "graph_predecessors",
+    "graph_successors",
+    "graph_bfs",
+    "graph_invert",
+    "graph_to_dict",
+    "build_dependency_graph",
+]
 
 
 def to_node(maybe_expr: Any) -> Node:
-    return (
-        maybe_expr
-        if isinstance(maybe_expr, Node)
-        else maybe_expr.op()
-        if isinstance(maybe_expr, Expr)
-        else maybe_expr.op()
-        if hasattr(maybe_expr, "op") and callable(maybe_expr.op)
-        else (_ for _ in ()).throw(
-            ValueError(f"Cannot convert type {type(maybe_expr)} to Node"),
-        )
-    )
-
-
-def to_node_safe(maybe_expr: Any) -> Success[Node] | Failure[ValueError]:
-    """Convert expression to Node, returning Result instead of raising."""
-    try:
-        return Success(to_node(maybe_expr))
-    except ValueError as e:
-        return Failure(e)
-
-
-def try_to_node(child: Any) -> Maybe[Node]:
-    """Try to convert child to Node, returning Maybe."""
-    return to_node_safe(child).map(Some).value_or(Nothing)
+    if isinstance(maybe_expr, IbisNode):
+        return maybe_expr
+    if isinstance(maybe_expr, IbisExpr):
+        return maybe_expr.op()
+    return _xorq_to_node(maybe_expr)
 
 
 def gen_children_of(node: Node) -> tuple[Node, ...]:
-    """Generate children nodes, filtering out conversion failures."""
-    children = (try_to_node(c) for c in getattr(node, "__children__", ()))
-    return tuple(child.unwrap() for child in children if isinstance(child, Some))
+    children = getattr(node, "__children__", ())
+    result = []
+    for child in children:
+        try:
+            result.append(to_node(child))
+        except (ValueError, AttributeError):
+            pass
+    return tuple(result)
 
 
-def bfs(expr: Expr) -> dict[Node, tuple[Node, ...]]:
-    """Perform a breadth-first traversal, returning a map of each node to its children."""
+def bfs(expr) -> Graph:
+    from collections import deque
+
     start = to_node(expr)
     queue = deque([start])
-    graph: dict[Node, tuple[Node, ...]] = {}
+    graph_dict = {}
     while queue:
         node = queue.popleft()
-        if node in graph:
+        if node in graph_dict:
             continue
         children = gen_children_of(node)
-        graph[node] = children
-        for c in children:
-            if c not in graph:
-                queue.append(c)
-    return graph
+        graph_dict[node] = children
+        for child in children:
+            if child not in graph_dict:
+                queue.append(child)
+    return Graph(graph_dict)
 
 
-def walk_nodes(
-    node_types: type[Any] | tuple[type[Any], ...],
-    expr: Expr,
-) -> Iterable[Node]:
+def walk_nodes(node_types, expr):
     start = to_node(expr)
     visited = set()
     stack = [start]
@@ -76,8 +87,35 @@ def walk_nodes(
         stack.extend(c for c in gen_children_of(node) if c not in visited)
 
 
-def replace_nodes(replacer, expr: Expr) -> Expr:
-    return to_node(expr).replace(lambda op, kwargs: replacer(op, kwargs)).to_expr()
+def replace_nodes(replacer, expr):
+    node = to_node(expr)
+    result = _xorq_replace_nodes(replacer, node)
+    return result.to_expr()
+
+
+def to_node_safe(maybe_expr: Any) -> Result[Node, ValueError]:
+    try:
+        return Success(to_node(maybe_expr))
+    except ValueError as e:
+        return Failure(e)
+
+
+def try_to_node(child: Any) -> Maybe[Node]:
+    return to_node_safe(child).map(Some).value_or(Nothing)
+
+
+def find_dimensions_and_measures(expr: IbisExpr | XorqExpr) -> tuple[dict[str, Any], dict[str, Any]]:
+    from .ops import (
+        _find_all_root_models,
+        _get_field_dict,
+        _merge_fields_with_prefixing,
+    )
+
+    roots = _find_all_root_models(to_node(expr))
+    return (
+        _merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, "dimensions")),
+        _merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, "measures")),
+    )
 
 
 def graph_predecessors(graph: dict[str, dict], node: str) -> set[str]:
@@ -93,7 +131,7 @@ def graph_successors(graph: dict[str, dict], node: str) -> set[str]:
 def graph_bfs(
     graph: dict[str, dict],
     start: str | list[str],
-) -> Iterable[str]:
+):
     """
     Perform BFS on a dependency graph, yielding node names in order.
 
@@ -104,6 +142,8 @@ def graph_bfs(
     Yields:
         Node names in breadth-first order
     """
+    from collections import deque
+
     start_names = [start] if isinstance(start, str) else start
     queue = deque(start_names)
     visited = set()
@@ -199,7 +239,11 @@ def build_dependency_graph(
     Returns:
         Dictionary mapping field names to metadata with "deps" and "type" keys
     """
-    from ibis.expr.operations.relations import Field
+    from xorq.vendor.ibis.expr.operations.relations import Field as XorqField
+    try:
+        from ibis.expr.operations.relations import Field as IbisField
+    except ImportError:
+        IbisField = None
 
     from .ops import _collect_measure_refs
 
@@ -217,11 +261,18 @@ def build_dependency_graph(
 
             resolved = _resolve_expr(obj.expr, table)
             table_op = to_node(table)
-            fields = [
-                f
-                for f in walk_nodes(Field, resolved)
-                if hasattr(f, "name") and hasattr(f, "rel") and f.rel == table_op
-            ]
+
+            # Collect Field nodes from both ibis and xorq
+            fields = []
+            for f in walk_nodes((XorqField,), resolved):
+                if hasattr(f, "name") and hasattr(f, "rel") and f.rel == table_op:
+                    fields.append(f)
+
+            # Also try ibis Field if available
+            if IbisField is not None:
+                for f in walk_nodes((IbisField,), resolved):
+                    if hasattr(f, "name") and hasattr(f, "rel") and f.rel == table_op:
+                        fields.append(f)
 
             deps_with_types = _classify_dependencies(
                 fields, dimensions, measures, calc_measures, current_field=name
@@ -294,17 +345,3 @@ def _classify_dependencies(
         )
         for f in fields
     }
-
-
-def find_dimensions_and_measures(expr: Expr) -> tuple[dict[str, Any], dict[str, Any]]:
-    from .ops import (
-        _find_all_root_models,
-        _get_field_dict,
-        _merge_fields_with_prefixing,
-    )
-
-    roots = _find_all_root_models(to_node(expr))
-    return (
-        _merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, "dimensions")),
-        _merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, "measures")),
-    )

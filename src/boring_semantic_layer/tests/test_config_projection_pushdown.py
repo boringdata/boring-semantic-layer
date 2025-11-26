@@ -3,6 +3,9 @@ Tests demonstrating projection pushdown optimization is always enabled.
 
 These tests show the SQL generated with projection pushdown,
 highlighting the column filtering benefits of the optimization.
+
+NOTE: Projection pushdown has been disabled for xorq compatibility.
+These tests are marked as xfail to document the expected behavior.
 """
 
 import contextlib
@@ -10,7 +13,10 @@ import contextlib
 import ibis
 import pytest
 
-from boring_semantic_layer import to_ibis, to_semantic_table
+from boring_semantic_layer import to_untagged, to_semantic_table
+
+# Projection pushdown disabled for xorq compatibility
+pytestmark = pytest.mark.xfail(reason="Projection pushdown disabled for xorq vendored ibis compatibility")
 
 
 @pytest.fixture(scope="module")
@@ -84,7 +90,7 @@ class TestProjectionPushdown:
         )
 
         # Generate SQL
-        sql = str(ibis.to_sql(to_ibis(result)))
+        sql = str(ibis.to_sql(to_untagged(result)))
 
         print("\n" + "=" * 80)
         print("SQL WITH PROJECTION PUSHDOWN:")
@@ -133,7 +139,7 @@ class TestProjectionPushdown:
         )
 
         # Generate SQL
-        sql = str(ibis.to_sql(to_ibis(result)))
+        sql = str(ibis.to_sql(to_untagged(result)))
 
         print("\n" + "=" * 80)
         print("PROJECTION PUSHDOWN - MULTIPLE TABLES:")

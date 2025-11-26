@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import Any
 
-import ibis.expr.types as ir
+from xorq.vendor.ibis.expr import types as ir
 from attrs import frozen
 from returns.result import Failure, Success
 

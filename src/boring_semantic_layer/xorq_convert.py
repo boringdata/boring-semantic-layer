@@ -68,8 +68,15 @@ def serialize_predicate(predicate: Callable) -> Result[str, Exception]:
     return expr_to_ibis_string(predicate)
 
 
-def to_xorq(semantic_expr, aggregate_cache_storage=None):
-    """Convert BSL expression to xorq expression with metadata tags.
+def to_tagged(semantic_expr, aggregate_cache_storage=None):
+    """Tag a BSL expression with serialized metadata.
+
+    Takes a BSL semantic expression and tags it with serialized metadata
+    (dimensions, measures, etc.) in xorq format. The tagged expression can
+    later be reconstructed using from_tagged().
+
+    Note: The input can already be a xorq expression - this function tags it
+    with BSL metadata, it doesn't convert formats.
 
     Args:
         semantic_expr: BSL SemanticTable or expression
@@ -78,19 +85,19 @@ def to_xorq(semantic_expr, aggregate_cache_storage=None):
                                 .cache() at aggregation points for smart cube caching.
 
     Returns:
-       ir.Expr
+       xorq expression with BSL metadata tags
 
     Example:
         >>> from boring_semantic_layer import SemanticModel
         >>> model = SemanticModel(...)
-        >>> # Without caching:
-        >>> xorq_expr = to_xorq(model)
+        >>> # Tag with metadata:
+        >>> tagged_expr = to_tagged(model)
 
         >>> # With auto cube caching:
         >>> from xorq.caching import ParquetStorage
         >>> import xorq.api as xo
         >>> storage = ParquetStorage(source=xo.connect())
-        >>> xorq_expr = to_xorq(model, aggregate_cache_storage=storage)
+        >>> tagged_expr = to_tagged(model, aggregate_cache_storage=storage)
     """
     from . import expr as bsl_expr
     from .ops import SemanticAggregateOp
@@ -102,7 +109,7 @@ def to_xorq(semantic_expr, aggregate_cache_storage=None):
         else:
             op = semantic_expr
 
-        ibis_expr = bsl_expr.to_ibis(semantic_expr)
+        ibis_expr = bsl_expr.to_untagged(semantic_expr)
 
         import re
 
@@ -285,36 +292,36 @@ def _extract_op_metadata(op) -> dict[str, Any]:
     return metadata
 
 
-def from_xorq(xorq_expr):
-    """Reconstruct BSL expression from tagged xorq expression.
+def from_tagged(tagged_expr):
+    """Reconstruct BSL expression from tagged expression.
 
-    Extracts BSL metadata from xorq tags and reconstructs the original
+    Extracts BSL metadata from tags and reconstructs the original
     BSL operation chain.
 
     Args:
-        xorq_expr: Xorq expression with BSL metadata tags
+        tagged_expr: Expression with BSL metadata tags (created by to_tagged)
 
     Returns:
         BSL expression reconstructed from metadata
 
     Raises:
-        ValueError: If no BSL metadata found in xorq expression
+        ValueError: If no BSL metadata found in expression
         Exception: If reconstruction fails
 
     Example:
-        >>> xorq_expr = ...  # Tagged xorq expression
-        >>> bsl_expr = from_xorq(xorq_expr)  # No .unwrap() needed!
+        >>> tagged_expr = to_tagged(model)
+        >>> bsl_expr = from_tagged(tagged_expr)
         >>> # Use bsl_expr normally
     """
 
     @safe
     def do_convert():
-        metadata = _extract_xorq_metadata(xorq_expr)
+        metadata = _extract_xorq_metadata(tagged_expr)
 
         if not metadata:
-            raise ValueError("No BSL metadata found in xorq expression")
+            raise ValueError("No BSL metadata found in tagged expression")
 
-        return _reconstruct_bsl_operation(metadata, xorq_expr)
+        return _reconstruct_bsl_operation(metadata, tagged_expr)
 
     result = do_convert()
 
@@ -350,7 +357,15 @@ def _deserialize_expr(expr_str: str | None, fallback_name: str | None = None) ->
     if not expr_str:
         return lambda t, n=fallback_name: t[n] if n else t  # noqa: E731
     result = ibis_string_to_expr(expr_str)
-    return result.value_or(lambda t, n=fallback_name: t[n] if n else t)  # noqa: E731
+
+    from returns.result import Success
+    if isinstance(result, Success):
+        return result.unwrap()
+
+    if fallback_name:
+        return lambda t, n=fallback_name: t[n]  # noqa: E731
+
+    raise ValueError(f"Failed to deserialize expression: {expr_str}. Error: {result.failure()}")
 
 
 _RECONSTRUCTORS = {}
@@ -406,7 +421,7 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
 
     def _create_measure(name: str, meas_data: dict) -> ops.Measure:
         return ops.Measure(
-            expr=_deserialize_expr(meas_data.get("expr"), fallback_name=name),
+            expr=_deserialize_expr(meas_data.get("expr"), fallback_name=None),
             description=meas_data.get("description"),
             requires_unnest=tuple(meas_data.get("requires_unnest", [])),
         )
@@ -448,7 +463,7 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
         return expr
 
     def _reconstruct_table():
-        import ibis
+        from xorq.vendor import ibis
         from xorq.common.utils.graph_utils import walk_nodes
         from xorq.expr.relations import Read
         from xorq.vendor.ibis.expr.operations import relations as xorq_rel
@@ -481,9 +496,9 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
             backend = backend_class.from_connection(xorq_backend.con)
             return backend.table(table_name)
 
-        from xorq.common.utils.ibis_utils import to_ibis
-
-        return to_ibis(xorq_expr)
+        # If none of the above, just return the xorq expression as a table
+        # (it's already in xorq's vendored ibis land)
+        return xorq_expr.to_expr()
 
     dim_meta = _parse_field(metadata, "dimensions")
     meas_meta = _parse_field(metadata, "measures")
@@ -584,8 +599,8 @@ def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
 
 
 __all__ = [
-    "to_xorq",
-    "from_xorq",
+    "to_tagged",
+    "from_tagged",
     "try_import_xorq",
     "XorqModule",
 ]
