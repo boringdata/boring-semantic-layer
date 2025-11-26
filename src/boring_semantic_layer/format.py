@@ -5,7 +5,7 @@ from __future__ import annotations
 try:
     from ibis.expr.format import fmt, render_fields, render_schema
 except ImportError:
-    from xorq.vendor.ibis.expr.format import fmt, render_fields, render_schema
+    from xorq.vendor.ibis.expr.format import fmt, render_fields
 
 from boring_semantic_layer.ops import (
     SemanticAggregateOp,
@@ -52,7 +52,7 @@ def _format_semantic_table(op: SemanticTableOp, **kwargs):
 
     all_measures = {**measures, **calc_measures}
     if all_measures:
-        for meas_name in all_measures.keys():
+        for meas_name in all_measures:
             if meas_name in calc_measures:
                 lines.append(f"  {CALC_COLOR}{meas_name} [calc]{RESET}")
             else:

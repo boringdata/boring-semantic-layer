@@ -4,21 +4,22 @@
 Malloy: https://docs.malloydata.dev/documentation/patterns/other
 """
 
+from pathlib import Path
+
 import ibis
 from ibis import _
 
-from boring_semantic_layer import to_semantic_table
-
-BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
+from boring_semantic_layer import from_yaml
 
 
 def main():
-    con = ibis.duckdb.connect(":memory:")
-    airports_tbl = con.read_parquet(f"{BASE_URL}/airports.parquet")
+    # Load semantic models from YAML with profile
+    yaml_path = Path(__file__).parent / "flights.yml"
+    profile_file = Path(__file__).parent / "profiles.yml"
+    models = from_yaml(str(yaml_path), profile="example_db", profile_path=str(profile_file))
 
-    airports = to_semantic_table(airports_tbl, name="airports").with_measures(
-        avg_elevation=lambda t: t.elevation.mean(),
-    )
+    # Use airports model from YAML (already has avg_elevation measure)
+    airports = models["airports"]
 
     result = (
         airports.group_by("state")
@@ -27,11 +28,13 @@ def main():
             nest={"data": lambda t: t.group_by(["code", "elevation"])},
         )
         .mutate(
-            rank=ibis.row_number().over(
-                ibis.window(order_by=ibis.desc("avg_elevation")),
+            rank=lambda t: ibis.row_number().over(
+                ibis.window(order_by=t.avg_elevation.desc()),
             ),
-            is_other=_.rank > 4,
-            state_grouped=ibis.cases((_.is_other, "OTHER"), else_=_.state),
+        )
+        .mutate(
+            is_other=lambda t: t.rank > 4,
+            state_grouped=lambda t: (t.rank > 4).ifelse("OTHER", t.state),
         )
         .group_by("state_grouped")
         .aggregate(

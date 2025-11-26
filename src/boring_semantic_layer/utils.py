@@ -3,8 +3,10 @@ from __future__ import annotations
 import ast
 import inspect
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
+import yaml
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Result, safe
 from toolz import curry
@@ -230,6 +232,7 @@ def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
         try:
             from xorq.vendor import ibis as xorq_ibis
             from xorq.vendor.ibis import _ as xorq_deferred
+
             eval_context = {
                 "ibis": ibis,
                 "_": _,
@@ -254,9 +257,30 @@ def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
     return do_convert()
 
 
+def read_yaml_file(yaml_path: str | Path) -> dict:
+    """Read and parse YAML file into dict."""
+    yaml_path = Path(yaml_path)
+    if not yaml_path.exists():
+        raise FileNotFoundError(f"YAML file not found: {yaml_path}")
+
+    try:
+        with open(yaml_path) as f:
+            content = yaml.safe_load(f)
+
+        if not isinstance(content, dict):
+            raise ValueError(f"YAML file must contain a dict, got: {type(content)}")
+
+        return content
+    except (FileNotFoundError, ValueError):
+        raise
+    except Exception as e:
+        raise ValueError(f"Failed to parse YAML file {yaml_path}: {e}") from e
+
+
 __all__ = [
     "safe_eval",
     "SafeEvalError",
     "expr_to_ibis_string",
     "ibis_string_to_expr",
+    "read_yaml_file",
 ]

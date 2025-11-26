@@ -17,10 +17,12 @@ from ibis.expr.schema import Schema
 try:
     from xorq.vendor.ibis.common.collections import FrozenDict, FrozenOrderedDict
     from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
+
     _SchemaClass = XorqSchema
     _FrozenOrderedDict = FrozenOrderedDict
 except ImportError:
     from ibis.common.collections import FrozenDict, FrozenOrderedDict
+
     _SchemaClass = Schema
     _FrozenOrderedDict = FrozenOrderedDict
 
@@ -72,6 +74,7 @@ def _unwrap(wrapped: Any) -> Any:
 
 def _semantic_repr(op: Relation) -> str:
     from ibis.expr.format import pretty
+
     try:
         return pretty(op)
     except Exception:
@@ -84,22 +87,17 @@ def _make_schema(fields_dict: dict[str, str]):
 
 
 def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
-    result = (
-        expr.resolve(scope)
-        if _is_deferred(expr)
-        else expr(scope)
-        if callable(expr)
-        else expr
-    )
+    result = expr.resolve(scope) if _is_deferred(expr) else expr(scope) if callable(expr) else expr
 
-    if hasattr(result, '__class__') and hasattr(scope, '__class__'):
+    if hasattr(result, "__class__") and hasattr(scope, "__class__"):
         result_module = result.__class__.__module__
         scope_module = scope.__class__.__module__
-        result_is_regular_ibis = 'ibis.expr' in result_module and 'xorq' not in result_module
-        scope_is_xorq = 'xorq.vendor.ibis' in scope_module
+        result_is_regular_ibis = "ibis.expr" in result_module and "xorq" not in result_module
+        scope_is_xorq = "xorq.vendor.ibis" in scope_module
 
         if result_is_regular_ibis and scope_is_xorq:
             from xorq.common.utils.ibis_utils import from_ibis
+
             result = from_ibis(result)
 
     return result
@@ -236,11 +234,7 @@ def _matches_aggregation_pattern(measure_expr, agg_expr, tbl):
         """Evaluate measure expression in a ColumnScope."""
         scope = ColumnScope(_tbl=tbl)
         return (
-            expr.resolve(scope)
-            if _is_deferred(expr)
-            else expr(scope)
-            if callable(expr)
-            else expr
+            expr.resolve(scope) if _is_deferred(expr) else expr(scope) if callable(expr) else expr
         )
 
     @curry
@@ -331,11 +325,7 @@ def _make_base_measure(
     def evaluate_expr(expr, scope):
         """Evaluate expression in given scope."""
         return (
-            expr.resolve(scope)
-            if _is_deferred(expr)
-            else expr(scope)
-            if callable(expr)
-            else expr
+            expr.resolve(scope) if _is_deferred(expr) else expr(scope) if callable(expr) else expr
         )
 
     def convert_aggregation_expr(t, agg_expr: AggregationExpr):
@@ -415,9 +405,7 @@ def _build_json_definition(
     result = {
         "dimensions": {n: spec.to_json() for n, spec in dims_dict.items()},
         "measures": {n: spec.to_json() for n, spec in meas_dict.items()},
-        "entity_dimensions": {
-            n: spec.to_json() for n, spec in dims_dict.items() if spec.is_entity
-        },
+        "entity_dimensions": {n: spec.to_json() for n, spec in dims_dict.items() if spec.is_entity},
         "event_timestamp": {
             n: spec.to_json() for n, spec in dims_dict.items() if spec.is_event_timestamp
         },
@@ -455,7 +443,13 @@ class Dimension:
 
     def __hash__(self) -> int:
         return hash(
-            (self.description, self.is_entity, self.is_event_timestamp, self.is_time_dimension, self.smallest_time_grain),
+            (
+                self.description,
+                self.is_entity,
+                self.is_event_timestamp,
+                self.is_time_dimension,
+                self.smallest_time_grain,
+            ),
         )
 
 
@@ -500,7 +494,9 @@ class SemanticTableOp(Relation):
     calc_measures: FrozenDict[str, Any]
     name: str | None = None
     description: str | None = None
-    _source_join: Any = field(default=None, repr=False)  # Track if this wraps a join (SemanticJoinOp) for optimization
+    _source_join: Any = field(
+        default=None, repr=False
+    )  # Track if this wraps a join (SemanticJoinOp) for optimization
 
     def __init__(
         self,
@@ -1215,11 +1211,16 @@ class SemanticMutateOp(Relation):
             resolved = _resolve_expr(_unwrap(fn_wrapped), proxy)
 
             # If resolved expression is from regular ibis but table is xorq, convert it
-            if hasattr(resolved, '__class__') and hasattr(current_tbl, '__class__'):
+            if hasattr(resolved, "__class__") and hasattr(current_tbl, "__class__"):
                 resolved_module = resolved.__class__.__module__
                 table_module = current_tbl.__class__.__module__
-                if 'ibis.expr' in resolved_module and 'xorq' not in resolved_module and 'xorq.vendor.ibis' in table_module:
+                if (
+                    "ibis.expr" in resolved_module
+                    and "xorq" not in resolved_module
+                    and "xorq.vendor.ibis" in table_module
+                ):
                     from xorq.common.utils.ibis_utils import from_ibis
+
                     resolved = from_ibis(resolved)
 
             new_col = resolved.name(name)
@@ -1290,14 +1291,16 @@ class SemanticJoinOp(Relation):
     left: Relation
     right: Relation
     how: str
-    on: Callable[[Any, Any], ir.BooleanValue] | None
+    on: (
+        Callable[[Any, Any], Any] | None
+    )  # Returns BooleanValue from either ibis or xorq.vendor.ibis
 
     def __init__(
         self,
         left: Relation,
         right: Relation,
         how: str = "inner",
-        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
+        on: Callable[[Any, Any], Any] | None = None,
     ) -> None:
         super().__init__(
             left=Relation.__coerce__(left),
@@ -1799,8 +1802,16 @@ class SemanticJoinOp(Relation):
         from .convert import _Resolver
 
         # Simply convert both sides without any projection pushdown
-        left_tbl = _to_untagged(self.left) if not isinstance(self.left, SemanticJoinOp) else self.left.to_untagged()
-        right_tbl = _to_untagged(self.right) if not isinstance(self.right, SemanticJoinOp) else self.right.to_untagged()
+        left_tbl = (
+            _to_untagged(self.left)
+            if not isinstance(self.left, SemanticJoinOp)
+            else self.left.to_untagged()
+        )
+        right_tbl = (
+            _to_untagged(self.right)
+            if not isinstance(self.right, SemanticJoinOp)
+            else self.right.to_untagged()
+        )
 
         return (
             left_tbl.join(
@@ -2106,7 +2117,9 @@ class SemanticIndexOp(Relation):
     def to_untagged(self):
         all_roots = _find_all_root_models(self.source)
         base_tbl = (
-            _to_untagged(self.source).limit(self.sample) if self.sample else _to_untagged(self.source)
+            _to_untagged(self.source).limit(self.sample)
+            if self.sample
+            else _to_untagged(self.source)
         )
 
         merged_dimensions = _get_merged_fields(all_roots, "dimensions")

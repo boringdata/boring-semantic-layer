@@ -12,10 +12,12 @@ import ibis
 import pandas as pd
 import pytest
 
-from boring_semantic_layer import to_untagged, to_semantic_table
+from boring_semantic_layer import to_semantic_table, to_untagged
 
 # Projection pushdown disabled for xorq compatibility
-pytestmark = pytest.mark.xfail(reason="Projection pushdown disabled for xorq vendored ibis compatibility")
+pytestmark = pytest.mark.xfail(
+    reason="Projection pushdown disabled for xorq vendored ibis compatibility"
+)
 
 
 @pytest.fixture
@@ -412,9 +414,9 @@ def test_projection_pushdown_three_way_join_all_notations(duckdb_con):
     )
 
     # Three-way join using raw column access in predicates
-    joined = orders.join_many(customers, lambda o, c: o.customer_id == c.customer_id, how="left").join_many(
-        items, lambda oc, i: oc.order_id == i.order_id, how="left"
-    )
+    joined = orders.join_many(
+        customers, lambda o, c: o.customer_id == c.customer_id, how="left"
+    ).join_many(items, lambda oc, i: oc.order_id == i.order_id, how="left")
 
     # Test 1: Use bracket notation with prefixes in calculated measures
     result1 = (

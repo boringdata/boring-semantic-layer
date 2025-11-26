@@ -33,88 +33,18 @@ Usage:
 The server will start and listen for MCP connections.
 """
 
-import ibis
+from pathlib import Path
 
-from boring_semantic_layer import MCPSemanticModel, to_semantic_table
+from boring_semantic_layer import MCPSemanticModel, from_yaml
 
-con = ibis.duckdb.connect(":memory:")
+# Load semantic models from YAML with profile
+yaml_path = Path(__file__).parent / "flights.yml"
+profile_file = Path(__file__).parent / "profiles.yml"
+models = from_yaml(str(yaml_path), profile="example_db", profile_path=str(profile_file))
 
-BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
-flights_tbl = con.read_parquet(f"{BASE_URL}/flights.parquet")
-carriers_tbl = con.read_parquet(f"{BASE_URL}/carriers.parquet")
-
-# Define carriers semantic table
-carriers = (
-    to_semantic_table(carriers_tbl, name="carriers")
-    .with_dimensions(
-        code={
-            "expr": lambda t: t.code,
-            "description": "Carrier code (e.g., AA, UA, DL)",
-        },
-        name={
-            "expr": lambda t: t.name,
-            "description": "Full carrier name",
-        },
-        nickname={
-            "expr": lambda t: t.nickname,
-            "description": "Carrier nickname or short name",
-        },
-    )
-    .with_measures(
-        carrier_count={
-            "expr": lambda t: t.count(),
-            "description": "Total number of carriers",
-        }
-    )
-)
-
-# Define flights semantic table with join to carriers
-flights = (
-    to_semantic_table(flights_tbl, name="flights")
-    .with_dimensions(
-        origin={
-            "expr": lambda t: t.origin,
-            "description": "Origin airport code",
-        },
-        destination={
-            "expr": lambda t: t.destination,
-            "description": "Destination airport code",
-        },
-        carrier={
-            "expr": lambda t: t.carrier,
-            "description": "Carrier code",
-        },
-        tail_num={
-            "expr": lambda t: t.tail_num,
-            "description": "Aircraft tail number",
-        },
-        arr_time={
-            "expr": lambda t: t.arr_time,
-            "description": "Arrival time",
-            "is_time_dimension": True,
-            "smallest_time_grain": "TIME_GRAIN_SECOND",
-        },
-    )
-    .with_measures(
-        flight_count={
-            "expr": lambda t: t.count(),
-            "description": "Total number of flights",
-        },
-        avg_dep_delay={
-            "expr": lambda t: t.dep_delay.mean(),
-            "description": "Average departure delay in minutes",
-        },
-        avg_distance={
-            "expr": lambda t: t.distance.mean(),
-            "description": "Average flight distance in miles",
-        },
-    )
-    .join_one(carriers, lambda f, c: f.carrier == c.code)
-)
-
-# Create MCP server
+# Create MCP server with all models from YAML
 server = MCPSemanticModel(
-    models={"flights": flights, "carriers": carriers},
+    models=models,
     name="Flight Data Semantic Layer Server (BSL v2)",
 )
 

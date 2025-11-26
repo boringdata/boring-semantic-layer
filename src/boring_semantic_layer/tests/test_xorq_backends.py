@@ -20,6 +20,7 @@ from boring_semantic_layer.xorq_convert import from_tagged, to_tagged, try_impor
 try:
     try_import_xorq()
     import xorq.api as xo
+
     xorq_available = True
     xorq_skip_reason = ""
 except ImportError:
@@ -105,9 +106,7 @@ class TestXorqDuckDBBackend:
         import ibis
 
         table = ibis.memtable({"x": list(range(100))})
-        model = SemanticModel(
-            table=table, dimensions={"x": lambda t: t.x}, measures={}
-        )
+        model = SemanticModel(table=table, dimensions={"x": lambda t: t.x}, measures={})
 
         tagged_expr = to_tagged(model)
 
@@ -131,7 +130,6 @@ class TestXorqDataFusionBackend:
     def test_datafusion_basic_execution(self):
         """Test executing with DataFusion backend."""
         import ibis
-
         from xorq.api import execute
 
         table = ibis.memtable({"a": [1, 2, 3]})
@@ -177,7 +175,6 @@ class TestXorqPandasBackend:
     def test_pandas_backend_execution(self):
         """Test executing with Pandas backend."""
         import ibis
-
         from xorq.api import execute
 
         table = ibis.memtable({"x": [1, 2, 3], "y": [4, 5, 6]})
@@ -248,8 +245,9 @@ class TestXorqBackendFeatures:
 
     def test_read_write_operations(self):
         """Test xorq backend read/write operations with BSL."""
-        import ibis
         import tempfile
+
+        import ibis
 
         # Create a semantic model
         table = ibis.memtable({"a": [1, 2, 3], "b": [4, 5, 6]})
@@ -299,7 +297,7 @@ class TestXorqBackendFeatures:
         tagged_expr = to_tagged(model)
 
         # Execute with xorq
-        df = xo.execute(tagged_expr)
+        xo.execute(tagged_expr)
 
         # Convert back from xorq
         restored_model = from_tagged(tagged_expr)

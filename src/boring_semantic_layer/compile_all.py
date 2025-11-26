@@ -170,8 +170,8 @@ def _fix_relation_mismatch(result, base_tbl):
         For aggregations like CountStar, the immediate table is the first
         argument in __args__.
         """
-        from ibis.expr.operations.relations import Relation
         from ibis.expr.operations.reductions import Reduction
+        from ibis.expr.operations.relations import Relation
 
         # For reductions (count, sum, etc), the first arg is usually the table
         if isinstance(op, Reduction) and hasattr(op, '__args__') and op.__args__:

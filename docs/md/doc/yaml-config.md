@@ -22,7 +22,27 @@ In YAML configuration, **only unbound syntax (`_`) is accepted** for expressions
 
 ## Loading YAML Models
 
-Ibis table objects must be created separately in Python and passed to the YAML loader. Tables are resolved by the names specified in the YAML `table` field.
+### Option 1: Using Profiles (Recommended)
+
+```yaml
+# File-level profile
+profile: my_db
+
+flights:
+  table: flights_tbl
+  dimensions:
+    origin: _.origin
+```
+
+```python
+from boring_semantic_layer import from_yaml
+
+models = from_yaml("flights_model.yml")
+```
+
+See [Profile documentation](/profile) for setup details.
+
+### Option 2: Passing Tables Manually
 
 Create your ibis tables:
 
@@ -45,11 +65,10 @@ carriers_tbl = ibis.memtable({
 
 And pass them to the loaded YAML file defining your Semantic Tables:
 
-
 ```load_yaml_example
 from boring_semantic_layer import from_yaml
 
-# Load models from YAML file
+# Load models from YAML file with explicit tables
 models = from_yaml(
     "yaml_example.yaml",
     tables={
@@ -65,7 +84,7 @@ carriers_sm = models["carriers"]
 flights_sm.dimensions, flights_sm.measures
 ```
 
-<regularoutput code-block="load_yaml_example"></regularoutput>
+<regularoutput code-block="load_yaml_example"></regularoutput> 
 
 ## Querying YAML Models
 

@@ -10,7 +10,7 @@ from packaging.version import Version
 from xorq.vendor.ibis.expr.types.generic import Value as XorqValue
 
 _IBIS_VERSION = Version(ibis.__version__)
-_NEEDS_COMPAT = _IBIS_VERSION >= Version("10.0.0")
+_NEEDS_COMPAT = Version("10.0.0") <= _IBIS_VERSION
 
 
 def _extract_value(boundary):
@@ -82,6 +82,7 @@ _patch_installed = False
 _original_ibis_window = ibis.window
 _original_ibis_desc = ibis.desc
 _original_ibis_asc = ibis.asc
+_original_ibis_cases = ibis.cases
 
 
 def _is_xorq_expr(expr):
@@ -134,6 +135,20 @@ def _patched_ibis_asc(expr):
     if _is_xorq_expr(expr):
         return xibis.asc(expr)
     return _original_ibis_asc(expr)
+
+
+def _patched_ibis_cases(*args, else_=None, **kwargs):
+    """Patch ibis.cases to work with xorq expressions.
+
+    If any of the arguments contain xorq expressions, use xorq's case function
+    (xorq uses 'case' instead of 'cases').
+    """
+    # Check if any arguments or the else_ clause contain xorq expressions
+    if _contains_xorq_exprs(*args, else_=else_):
+        # xorq uses 'case' instead of 'cases'
+        return xibis.case(*args, else_=else_, **kwargs)
+
+    return _original_ibis_cases(*args, else_=else_, **kwargs)
 
 
 def _is_xorq_window(window):
@@ -189,6 +204,7 @@ def install_window_compatibility():
     3. regular ibis Value.over() method to accept xorq windows
        (converts the expression to xorq using from_ibis)
     4. regular ibis.desc() and ibis.asc() to accept xorq expressions
+    5. regular ibis.cases() to work with xorq expressions
 
     Only installs the patch if ibis version is 10.0.0 or greater.
     """
@@ -204,6 +220,7 @@ def install_window_compatibility():
         ibis.window = _patched_ibis_window
         ibis.desc = _patched_ibis_desc
         ibis.asc = _patched_ibis_asc
+        ibis.cases = _patched_ibis_cases
 
         _patch_installed = True
 
@@ -213,7 +230,7 @@ def uninstall_window_compatibility():
 
     Restores the original methods:
     1. .over() methods to both xorq's and regular ibis Value classes
-    2. window(), desc(), asc() functions to regular ibis module
+    2. window(), desc(), asc(), cases() functions to regular ibis module
     """
     global _patch_installed
 
@@ -223,4 +240,5 @@ def uninstall_window_compatibility():
         ibis.window = _original_ibis_window
         ibis.desc = _original_ibis_desc
         ibis.asc = _original_ibis_asc
+        ibis.cases = _original_ibis_cases
         _patch_installed = False

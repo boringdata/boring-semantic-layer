@@ -8,9 +8,10 @@ from typing import Any
 import ibis
 from ibis.common.collections import FrozenDict
 from ibis.expr import types as ir
-from ibis.expr.types import Table
-from ibis.expr.types.groupby import GroupedTable
 from returns.result import Success, safe
+from xorq.vendor import ibis as xorq_ibis
+from xorq.vendor.ibis.expr.types import Table
+from xorq.vendor.ibis.expr.types.groupby import GroupedTable
 
 from .chart import chart as create_chart
 from .measure_scope import AggregationExpr, MeasureScope
@@ -951,7 +952,7 @@ class SemanticGroupBy(SemanticTable):
                     return {col: source_tbl[col] for col in columns}
 
                 def collect_struct(struct_dict):
-                    return ibis.struct(struct_dict).collect()
+                    return xorq_ibis.struct(struct_dict).collect()
 
                 def handle_grouped_table(result, ibis_tbl):
                     group_cols = tuple(map(attrgetter("name"), result.groupings))

@@ -467,9 +467,9 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
         return expr
 
     def _reconstruct_table():
-        from xorq.vendor import ibis
         from xorq.common.utils.graph_utils import walk_nodes
         from xorq.expr.relations import Read
+        from xorq.vendor import ibis
         from xorq.vendor.ibis.expr.operations import relations as xorq_rel
 
         # Unwrap any cached nodes before walking

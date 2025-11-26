@@ -1,0 +1,20 @@
+# BSL Profile configuration for examples
+# This profile creates an in-memory DuckDB database with sample data from Malloy
+
+example_db:
+  type: duckdb
+  database: ":memory:"
+  tables:
+    # Flight data
+    carriers_tbl: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/carriers.parquet"
+    flights_tbl: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/flights.parquet"
+    aircraft_tbl: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/aircraft.parquet"
+    aircraft_models_tbl: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/aircraft_models.parquet"
+    airports_tbl: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/airports.parquet"
+    # E-commerce data
+    order_items: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/order_items.parquet"
+    users: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/users.parquet"
+    products: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/products.parquet"
+    inventory_items: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/inventory_items.parquet"
+    # Analytics data
+    ga_sample: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/ga_sample.parquet"

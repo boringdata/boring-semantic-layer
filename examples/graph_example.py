@@ -2,6 +2,7 @@
 """Dependency graph example - inspect field dependencies using YAML models."""
 
 import json
+from pathlib import Path
 from pprint import pprint
 
 import ibis
@@ -30,11 +31,10 @@ flights_tbl = ibis.memtable(
 )
 
 # Load semantic models from YAML
-models = from_yaml(
-    "examples/yaml_example.yml", {"carriers_tbl": carriers_tbl, "flights_tbl": flights_tbl}
-)
+yaml_path = Path(__file__).parent / "flights.yml"
+profile_file = Path(__file__).parent / "profiles.yml"
+models = from_yaml(str(yaml_path), profile="example_db", profile_path=str(profile_file))
 
-# Get individual models
 carriers = models["carriers"]
 flights = models["flights"]
 
