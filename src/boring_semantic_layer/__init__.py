@@ -20,6 +20,13 @@ from .expr import (
     SemanticTable,
     to_untagged,
 )
+from .graph_utils import (
+    graph_bfs,
+    graph_invert,
+    graph_predecessors,
+    graph_successors,
+    graph_to_dict,
+)
 from .ops import (
     Dimension,
     Measure,
@@ -42,8 +49,6 @@ __all__ = [
     "from_yaml",
     "MCPSemanticModel",
     "options",
-    "ProfileError",
-    "get_connection",
 ]
 
 # Import MCP functionality from separate module if available
@@ -58,7 +63,6 @@ except ImportError:
 # This allows users to use `import ibis` seamlessly with xorq backend
 try:
     from .window_compat import install_window_compatibility
-
     install_window_compatibility()
 
     _XORQ_AVAILABLE = True

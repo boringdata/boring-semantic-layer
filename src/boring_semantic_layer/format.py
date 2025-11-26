@@ -5,7 +5,7 @@ from __future__ import annotations
 try:
     from ibis.expr.format import fmt, render_fields, render_schema
 except ImportError:
-    from xorq.vendor.ibis.expr.format import fmt, render_fields
+    from xorq.vendor.ibis.expr.format import fmt, render_fields, render_schema
 
 from boring_semantic_layer.ops import (
     SemanticAggregateOp,
@@ -24,10 +24,10 @@ from boring_semantic_layer.ops import (
 
 @fmt.register(SemanticTableOp)
 def _format_semantic_table(op: SemanticTableOp, **kwargs):
-    dims = object.__getattribute__(op, "dimensions")
-    measures = object.__getattribute__(op, "measures")
-    calc_measures = object.__getattribute__(op, "calc_measures")
-    name = object.__getattribute__(op, "name")
+    dims = object.__getattribute__(op, 'dimensions')
+    measures = object.__getattribute__(op, 'measures')
+    calc_measures = object.__getattribute__(op, 'calc_measures')
+    name = object.__getattribute__(op, 'name')
 
     DIM_COLOR = "\033[36m"
     MEASURE_COLOR = "\033[35m"
@@ -39,12 +39,12 @@ def _format_semantic_table(op: SemanticTableOp, **kwargs):
     lines = [f"{HEADER_COLOR}SemanticTable{RESET}{name_part}"]
 
     if dims:
-        for dim_name in dims:
+        for dim_name in dims.keys():
             lines.append(f"  {DIM_COLOR}{dim_name} [dim]{RESET}")
 
     all_measures = {**measures, **calc_measures}
     if all_measures:
-        for meas_name in all_measures:
+        for meas_name in all_measures.keys():
             if meas_name in calc_measures:
                 lines.append(f"  {CALC_COLOR}{meas_name} [calc]{RESET}")
             else:
@@ -59,14 +59,14 @@ def _format_semantic_filter(op: SemanticFilterOp, source=None, **kwargs):
     REF_COLOR = "\033[93m"
     RESET = "\033[0m"
 
-    predicate = object.__getattribute__(op, "predicate")
+    predicate = object.__getattribute__(op, 'predicate')
 
     pred_repr = "<predicate>"
-    if hasattr(predicate, "__name__"):
+    if hasattr(predicate, '__name__'):
         pred_repr = f"λ {predicate.__name__}"
-    elif hasattr(predicate, "unwrap"):
+    elif hasattr(predicate, 'unwrap'):
         unwrapped = predicate.unwrap
-        if hasattr(unwrapped, "__name__"):
+        if hasattr(unwrapped, '__name__'):
             pred_repr = f"λ {unwrapped.__name__}"
 
     if source is None:
@@ -84,8 +84,8 @@ def _format_semantic_aggregate(op: SemanticAggregateOp, source=None, **kwargs):
     MEASURE_COLOR = "\033[35m"
     RESET = "\033[0m"
 
-    aggs = object.__getattribute__(op, "aggs")
-    keys = object.__getattribute__(op, "keys")
+    aggs = object.__getattribute__(op, 'aggs')
+    keys = object.__getattribute__(op, 'keys')
 
     if source is None:
         top = f"{OP_COLOR}Aggregate{RESET}\n"
@@ -130,7 +130,7 @@ def _format_semantic_groupby(op: SemanticGroupByOp, source=None, **kwargs):
     DIM_COLOR = "\033[36m"
     RESET = "\033[0m"
 
-    keys = object.__getattribute__(op, "keys")
+    keys = object.__getattribute__(op, 'keys')
 
     if source is None:
         top = f"{OP_COLOR}GroupBy{RESET}\n"
@@ -176,12 +176,8 @@ def _format_semantic_mutate(op: SemanticMutateOp, source=None, **kwargs):
     REF_COLOR = "\033[93m"
     RESET = "\033[0m"
 
-    post = object.__getattribute__(op, "post")
-    top = (
-        f"{OP_COLOR}Mutate{RESET}\n"
-        if source is None
-        else f"{OP_COLOR}Mutate{RESET}[{REF_COLOR}{source}{RESET}]\n"
-    )
+    post = object.__getattribute__(op, 'post')
+    top = f"{OP_COLOR}Mutate{RESET}\n" if source is None else f"{OP_COLOR}Mutate{RESET}[{REF_COLOR}{source}{RESET}]\n"
 
     exprs_to_show = list(post.keys())[:3]
     if len(post) > 3:

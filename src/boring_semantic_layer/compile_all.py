@@ -73,7 +73,6 @@ def _get_ibis_module(table):
     if table_module.startswith("xorq.vendor.ibis"):
         # Table is from xorq's vendored ibis
         from xorq.vendor import ibis as xorq_ibis
-
         return xorq_ibis
     else:
         # Table is from regular ibis
@@ -163,7 +162,7 @@ def _fix_relation_mismatch(result, base_tbl):
         Fixed expression that belongs to base_tbl's relation
     """
     # Check if result is an expression
-    if not hasattr(result, "op"):
+    if not hasattr(result, 'op'):
         return result
 
     result_op = result.op()
@@ -176,11 +175,11 @@ def _fix_relation_mismatch(result, base_tbl):
         For aggregations like CountStar, the immediate table is the first
         argument in __args__.
         """
-        from ibis.expr.operations.reductions import Reduction
         from ibis.expr.operations.relations import Relation
+        from ibis.expr.operations.reductions import Reduction
 
         # For reductions (count, sum, etc), the first arg is usually the table
-        if isinstance(op, Reduction) and hasattr(op, "__args__") and op.__args__:
+        if isinstance(op, Reduction) and hasattr(op, '__args__') and op.__args__:
             first_arg = op.__args__[0]
             if isinstance(first_arg, Relation):
                 return first_arg
@@ -279,11 +278,7 @@ def _build_level_aggregations(
 def _make_grouped_table(agg_dict: dict[str, Any], by_cols: Iterable[str], table):
     group_exprs = [table[c] for c in by_cols]
     # xorq requires at least one grouping expression, so handle empty case
-    return (
-        table.group_by(group_exprs).aggregate(**agg_dict)
-        if group_exprs
-        else table.aggregate(**agg_dict)
-    )
+    return table.group_by(group_exprs).aggregate(**agg_dict) if group_exprs else table.aggregate(**agg_dict)
 
 
 def _build_session_table(base_tbl, by_cols: Iterable[str], regular_measures: dict) -> Any:

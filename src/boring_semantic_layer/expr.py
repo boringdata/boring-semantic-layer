@@ -1236,3 +1236,4 @@ class SemanticProject(SemanticTable):
         return _build_semantic_model_from_roots(
             self.op().to_untagged(), all_roots, field_filter=set(self.fields)
         )
+

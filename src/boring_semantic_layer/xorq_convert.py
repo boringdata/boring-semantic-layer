@@ -359,7 +359,6 @@ def _deserialize_expr(expr_str: str | None, fallback_name: str | None = None) ->
     result = ibis_string_to_expr(expr_str)
 
     from returns.result import Success
-
     if isinstance(result, Success):
         return result.unwrap()
 
@@ -464,9 +463,9 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
         return expr
 
     def _reconstruct_table():
+        from xorq.vendor import ibis
         from xorq.common.utils.graph_utils import walk_nodes
         from xorq.expr.relations import Read
-        from xorq.vendor import ibis
         from xorq.vendor.ibis.expr.operations import relations as xorq_rel
 
         # Unwrap any cached nodes before walking
