@@ -20,13 +20,6 @@ from .expr import (
     SemanticTable,
     to_untagged,
 )
-from .graph_utils import (
-    graph_bfs,
-    graph_invert,
-    graph_predecessors,
-    graph_successors,
-    graph_to_dict,
-)
 from .ops import (
     Dimension,
     Measure,
@@ -53,11 +46,6 @@ __all__ = [
     "ProfileError",
     "get_connection",
     "get_tables",
-    "graph_bfs",
-    "graph_invert",
-    "graph_predecessors",
-    "graph_successors",
-    "graph_to_dict",
 ]
 
 # Import MCP functionality from separate module if available
