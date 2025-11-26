@@ -10,7 +10,7 @@ Run with: python examples/projection_pushdown_demo.py
 import ibis
 import pandas as pd
 
-from boring_semantic_layer import to_ibis, to_semantic_table
+from boring_semantic_layer import to_untagged, to_semantic_table
 
 
 def main():
@@ -70,7 +70,7 @@ def main():
     print("=" * 80)
     print("\nGenerated SQL with automatic projection pushdown:")
     print("-" * 80)
-    sql = str(ibis.to_sql(to_ibis(query)))
+    sql = str(ibis.to_sql(to_untagged(query)))
     print(sql)
     print("-" * 80)
 

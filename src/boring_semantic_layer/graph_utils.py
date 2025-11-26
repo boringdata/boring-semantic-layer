@@ -7,6 +7,23 @@ from ibis.expr.types import Expr
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Failure, Success
 
+__all__ = [
+    "bfs",
+    "gen_children_of",
+    "replace_nodes",
+    "to_node",
+    "walk_nodes",
+    "to_node_safe",
+    "try_to_node",
+    "find_dimensions_and_measures",
+    "graph_predecessors",
+    "graph_successors",
+    "graph_bfs",
+    "graph_invert",
+    "graph_to_dict",
+    "build_dependency_graph",
+]
+
 
 def to_node(maybe_expr: Any) -> Node:
     return (
@@ -93,7 +110,7 @@ def graph_successors(graph: dict[str, dict], node: str) -> set[str]:
 def graph_bfs(
     graph: dict[str, dict],
     start: str | list[str],
-) -> Iterable[str]:
+):
     """
     Perform BFS on a dependency graph, yielding node names in order.
 
@@ -104,6 +121,8 @@ def graph_bfs(
     Yields:
         Node names in breadth-first order
     """
+    from collections import deque
+
     start_names = [start] if isinstance(start, str) else start
     queue = deque(start_names)
     visited = set()
@@ -199,7 +218,12 @@ def build_dependency_graph(
     Returns:
         Dictionary mapping field names to metadata with "deps" and "type" keys
     """
-    from ibis.expr.operations.relations import Field
+    from xorq.vendor.ibis.expr.operations.relations import Field as XorqField
+
+    try:
+        from ibis.expr.operations.relations import Field as IbisField
+    except ImportError:
+        IbisField = None
 
     from .ops import _collect_measure_refs
 
@@ -217,11 +241,18 @@ def build_dependency_graph(
 
             resolved = _resolve_expr(obj.expr, table)
             table_op = to_node(table)
-            fields = [
-                f
-                for f in walk_nodes(Field, resolved)
-                if hasattr(f, "name") and hasattr(f, "rel") and f.rel == table_op
-            ]
+
+            # Collect Field nodes from both ibis and xorq
+            fields = []
+            for f in walk_nodes((XorqField,), resolved):
+                if hasattr(f, "name") and hasattr(f, "rel") and f.rel == table_op:
+                    fields.append(f)
+
+            # Also try ibis Field if available
+            if IbisField is not None:
+                for f in walk_nodes((IbisField,), resolved):
+                    if hasattr(f, "name") and hasattr(f, "rel") and f.rel == table_op:
+                        fields.append(f)
 
             deps_with_types = _classify_dependencies(
                 fields, dimensions, measures, calc_measures, current_field=name

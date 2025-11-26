@@ -58,8 +58,8 @@ if TYPE_CHECKING:
     )
 
 
-def _to_ibis(source: Any) -> ir.Table:
-    return source.to_ibis() if hasattr(source, "to_ibis") else source.to_expr()
+def _to_untagged(source: Any) -> ir.Table:
+    return source.to_untagged() if hasattr(source, "to_untagged") else source.to_expr()
 
 
 def _semantic_table(*args, **kwargs) -> SemanticTable:
@@ -594,7 +594,7 @@ class SemanticTableOp(Relation):
         # Default behavior for everything else
         return object.__getattribute__(self, name)
 
-    def to_ibis(self):
+    def to_untagged(self):
         return self.table
 
 
@@ -619,11 +619,11 @@ class SemanticFilterOp(Relation):
     def schema(self) -> Schema:
         return self.source.schema
 
-    def to_ibis(self):
+    def to_untagged(self):
         from .convert import _Resolver
 
         all_roots = _find_all_root_models(self.source)
-        base_tbl = _to_ibis(self.source)
+        base_tbl = _to_untagged(self.source)
         dim_map = (
             {}
             if isinstance(self.source, SemanticAggregateOp)
@@ -743,9 +743,9 @@ class SemanticProjectOp(Relation):
     def schema(self) -> Schema:
         return _SchemaClass(fields=_FrozenOrderedDict({k: v.dtype for k, v in self.values.items()}))
 
-    def to_ibis(self):
+    def to_untagged(self):
         all_roots = _find_all_root_models(self.source)
-        tbl = _to_ibis(self.source)
+        tbl = _to_untagged(self.source)
 
         if not all_roots:
             return tbl.select([getattr(tbl, f) for f in self.fields])
@@ -793,8 +793,8 @@ class SemanticGroupByOp(Relation):
     def schema(self) -> Schema:
         return self.source.schema
 
-    def to_ibis(self):
-        return _to_ibis(self.source)
+    def to_untagged(self):
+        return _to_untagged(self.source)
 
 
 @frozen
@@ -1014,7 +1014,7 @@ class SemanticAggregateOp(Relation):
         merged_dimensions = _get_merged_fields(all_roots, "dimensions")
 
         base_tbl = (
-            self.source.to_expr() if hasattr(self.source, "to_expr") else _to_ibis(self.source)
+            self.source.to_expr() if hasattr(self.source, "to_expr") else _to_untagged(self.source)
         )
 
         table_names = []
@@ -1047,7 +1047,7 @@ class SemanticAggregateOp(Relation):
 
         return combined.to_dict()
 
-    def to_ibis(self):
+    def to_untagged(self):
         all_roots = _find_all_root_models(self.source)
 
         def find_join_in_tree(node):
@@ -1089,9 +1089,9 @@ class SemanticAggregateOp(Relation):
         # Only use the join optimization if there are no filters after the join
         # Otherwise we'd skip the filter operations
         if join_op is not None and not has_filter_after_join(self.source):
-            tbl = join_op.to_ibis(parent_requirements=self.required_columns)
+            tbl = join_op.to_untagged(parent_requirements=self.required_columns)
         else:
-            tbl = _to_ibis(self.source)
+            tbl = _to_untagged(self.source)
 
         def has_prior_aggregate(node):
             """Recursively check if there's a SemanticAggregateOp before any mutate."""
@@ -1186,8 +1186,8 @@ class SemanticMutateOp(Relation):
     def schema(self) -> Schema:
         return self.source.schema
 
-    def to_ibis(self):
-        agg_tbl = _to_ibis(self.source)
+    def to_untagged(self):
+        agg_tbl = _to_untagged(self.source)
 
         # Process mutations incrementally so each can reference previous ones
         # This allows: .mutate(rank=..., is_other=lambda t: t["rank"] > 5)
@@ -1234,7 +1234,7 @@ class SemanticUnnestOp(Relation):
     def values(self) -> FrozenDict:
         return FrozenDict({})
 
-    def to_ibis(self):
+    def to_untagged(self):
         """Convert to Ibis expression with functional struct unpacking.
 
         Uses pure helper functions to extract struct fields when unnesting
@@ -1260,7 +1260,7 @@ class SemanticUnnestOp(Relation):
 
             return unnested_tbl
 
-        tbl = _to_ibis(self.source)
+        tbl = _to_untagged(self.source)
 
         if self.column not in tbl.columns:
             raise ValueError(f"Column '{self.column}' not found in table")
@@ -1375,7 +1375,7 @@ class SemanticJoinOp(Relation):
 
     @property
     def table(self):
-        return self.to_ibis()
+        return self.to_untagged()
 
     def query(
         self,
@@ -1402,7 +1402,7 @@ class SemanticJoinOp(Relation):
 
     def with_dimensions(self, **dims) -> SemanticTable:
         return _semantic_table(
-            table=self.to_ibis(),
+            table=self.to_untagged(),
             dimensions={**self.get_dimensions(), **dims},
             measures=self.get_measures(),
             calc_measures=self.get_calculated_measures(),
@@ -1410,7 +1410,7 @@ class SemanticJoinOp(Relation):
         )
 
     def with_measures(self, **meas) -> SemanticTable:
-        joined_tbl = self.to_ibis()
+        joined_tbl = self.to_untagged()
         all_known = (
             list(self.get_measures().keys())
             + list(self.get_calculated_measures().keys())
@@ -1577,7 +1577,7 @@ class SemanticJoinOp(Relation):
             if isinstance(node, SemanticJoinOp):
                 return collect_leaf_tables(node.left) + collect_leaf_tables(node.right)
             table_name = getattr(node, "name", None)
-            return [(table_name, _to_ibis(node))] if table_name else []
+            return [(table_name, _to_untagged(node))] if table_name else []
 
         leaf_tables = collect_leaf_tables(self)
 
@@ -1613,14 +1613,14 @@ class SemanticJoinOp(Relation):
         if self.on is not None:
             # Get full schema for join key extraction
             temp_left = (
-                self.left.to_ibis()
+                self.left.to_untagged()
                 if isinstance(self.left, SemanticJoinOp)
-                else _to_ibis(self.left)
+                else _to_untagged(self.left)
             )
             temp_right = (
-                self.right.to_ibis()
+                self.right.to_untagged()
                 if isinstance(self.right, SemanticJoinOp)
-                else _to_ibis(self.right)
+                else _to_untagged(self.right)
             )
 
             join_keys_result = _extract_join_key_columns(self.on, temp_left, temp_right)
@@ -1631,7 +1631,7 @@ class SemanticJoinOp(Relation):
                     for col in join_keys_result.left_columns:
                         for leaf_name in self.left._collect_leaf_table_names():
                             leaf_table = self._get_leaf_table_by_name(self.left, leaf_name)
-                            if leaf_table and col in _to_ibis(leaf_table).columns:
+                            if leaf_table and col in _to_untagged(leaf_table).columns:
                                 requirements = requirements.add_columns(leaf_name, {col})
                 else:
                     left_name = getattr(self.left, "name", None)
@@ -1644,7 +1644,7 @@ class SemanticJoinOp(Relation):
                     for col in join_keys_result.right_columns:
                         for leaf_name in self.right._collect_leaf_table_names():
                             leaf_table = self._get_leaf_table_by_name(self.right, leaf_name)
-                            if leaf_table and col in _to_ibis(leaf_table).columns:
+                            if leaf_table and col in _to_untagged(leaf_table).columns:
                                 requirements = requirements.add_columns(leaf_name, {col})
                 else:
                     right_name = getattr(self.right, "name", None)
@@ -1702,14 +1702,14 @@ class SemanticJoinOp(Relation):
         if self.on is not None:
             # Convert without projection to get full schema
             temp_left = (
-                self.left.to_ibis(parent_requirements=None)
+                self.left.to_untagged(parent_requirements=None)
                 if isinstance(self.left, SemanticJoinOp)
-                else _to_ibis(self.left)
+                else _to_untagged(self.left)
             )
             temp_right = (
-                self.right.to_ibis(parent_requirements=None)
+                self.right.to_untagged(parent_requirements=None)
                 if isinstance(self.right, SemanticJoinOp)
-                else _to_ibis(self.right)
+                else _to_untagged(self.right)
             )
 
             join_keys = _extract_join_key_columns(self.on, temp_left, temp_right)
@@ -1734,7 +1734,7 @@ class SemanticJoinOp(Relation):
                                 # We do this by converting the table and checking its schema
                                 leaf_table = self._get_leaf_table_by_name(self.left, table_name)
                                 if leaf_table is not None:
-                                    leaf_ibis = _to_ibis(leaf_table)
+                                    leaf_ibis = _to_untagged(leaf_table)
                                     if col in leaf_ibis.columns:
                                         existing = join_columns.get(table_name, set())
                                         join_columns[table_name] = existing | {col}
@@ -1753,14 +1753,14 @@ class SemanticJoinOp(Relation):
                             if table_name:
                                 leaf_table = self._get_leaf_table_by_name(self.right, table_name)
                                 if leaf_table is not None:
-                                    leaf_ibis = _to_ibis(leaf_table)
+                                    leaf_ibis = _to_untagged(leaf_table)
                                     if col in leaf_ibis.columns:
                                         existing = join_columns.get(table_name, set())
                                         join_columns[table_name] = existing | {col}
 
         return join_columns
 
-    def to_ibis(self, parent_requirements: dict[str, set[str]] | None = None):
+    def to_untagged(self, parent_requirements: dict[str, set[str]] | None = None):
         """Convert join to Ibis expression.
 
         Note: Projection pushdown has been disabled for compatibility with xorq's
@@ -1777,14 +1777,14 @@ class SemanticJoinOp(Relation):
 
         # Simply convert both sides without any projection pushdown
         left_tbl = (
-            _to_ibis(self.left)
+            _to_untagged(self.left)
             if not isinstance(self.left, SemanticJoinOp)
-            else self.left.to_ibis()
+            else self.left.to_untagged()
         )
         right_tbl = (
-            _to_ibis(self.right)
+            _to_untagged(self.right)
             if not isinstance(self.right, SemanticJoinOp)
-            else self.right.to_ibis()
+            else self.right.to_untagged()
         )
 
         return (
@@ -1798,13 +1798,13 @@ class SemanticJoinOp(Relation):
         )
 
     def execute(self):
-        return self.to_ibis().execute()
+        return self.to_untagged().execute()
 
     def compile(self, **kwargs):
-        return self.to_ibis().compile(**kwargs)
+        return self.to_untagged().compile(**kwargs)
 
     def sql(self, **kwargs):
-        return ibis.to_sql(self.to_ibis(), **kwargs)
+        return ibis.to_sql(self.to_untagged(), **kwargs)
 
     def __getitem__(self, key):
         dims_dict = self.get_dimensions()
@@ -1829,7 +1829,7 @@ class SemanticJoinOp(Relation):
     def as_table(self) -> SemanticTable:
         """Convert to SemanticTable, preserving merged metadata from both sides."""
         return _semantic_table(
-            table=self.to_ibis(),
+            table=self.to_untagged(),
             dimensions=self.get_dimensions(),
             measures=self.get_measures(),
             calc_measures=self.get_calculated_measures(),
@@ -1863,8 +1863,8 @@ class SemanticOrderByOp(Relation):
     def schema(self) -> Schema:
         return self.source.schema
 
-    def to_ibis(self):
-        tbl = _to_ibis(self.source)
+    def to_untagged(self):
+        tbl = _to_untagged(self.source)
 
         def resolve_order_key(key):
             if isinstance(key, str):
@@ -1901,8 +1901,8 @@ class SemanticLimitOp(Relation):
     def schema(self) -> Schema:
         return self.source.schema
 
-    def to_ibis(self):
-        tbl = _to_ibis(self.source)
+    def to_untagged(self):
+        tbl = _to_untagged(self.source)
         return tbl.limit(self.n) if self.offset == 0 else tbl.limit(self.n, offset=self.offset)
 
 
@@ -2088,10 +2088,12 @@ class SemanticIndexOp(Relation):
     def aggs(self) -> dict[str, Any]:
         return {"weight": lambda t: t.weight}
 
-    def to_ibis(self):
+    def to_untagged(self):
         all_roots = _find_all_root_models(self.source)
         base_tbl = (
-            _to_ibis(self.source).limit(self.sample) if self.sample else _to_ibis(self.source)
+            _to_untagged(self.source).limit(self.sample)
+            if self.sample
+            else _to_untagged(self.source)
         )
 
         merged_dimensions = _get_merged_fields(all_roots, "dimensions")
@@ -2166,20 +2168,20 @@ class SemanticIndexOp(Relation):
         return SemanticLimit(source=self, n=n, offset=offset)
 
     def execute(self):
-        return self.to_ibis().execute()
+        return self.to_untagged().execute()
 
     def as_expr(self):
         """Return self as expression."""
         return self
 
     def compile(self, **kwargs):
-        return self.to_ibis().compile(**kwargs)
+        return self.to_untagged().compile(**kwargs)
 
     def sql(self, **kwargs):
-        return ibis.to_sql(self.to_ibis(), **kwargs)
+        return ibis.to_sql(self.to_untagged(), **kwargs)
 
     def __getitem__(self, key):
-        return self.to_ibis()[key]
+        return self.to_untagged()[key]
 
     def pipe(self, func, *args, **kwargs):
         return func(self, *args, **kwargs)

@@ -1,5 +1,4 @@
-"""Compatibility layer for window functions between regular and vendored ibis.
-
+"""TO BE REMOVED ONCE XORQ CATCHES UP
 This compatibility layer is only needed for ibis version 10.0.0 and greater.
 """
 
@@ -10,7 +9,6 @@ import xorq.vendor.ibis as xibis
 from packaging.version import Version
 from xorq.vendor.ibis.expr.types.generic import Value as XorqValue
 
-# Check if ibis version is 10.0.0 or greater
 _IBIS_VERSION = Version(ibis.__version__)
 _NEEDS_COMPAT = Version("10.0.0") <= _IBIS_VERSION
 

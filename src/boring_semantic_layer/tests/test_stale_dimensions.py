@@ -81,7 +81,7 @@ def test_filter_before_aggregation_on_joined_table():
     This is the critical test case that was missing - it tests:
     join → filter → group_by → aggregate
 
-    This pattern exposed a bug where SemanticAggregateOp.to_ibis() would skip
+    This pattern exposed a bug where SemanticAggregateOp.to_untagged() would skip
     directly to the join for projection pushdown, bypassing the filter.
     """
     orders_df = pd.DataFrame(

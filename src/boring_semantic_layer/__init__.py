@@ -18,7 +18,7 @@ from .config import (
 from .expr import (
     SemanticModel,
     SemanticTable,
-    to_ibis,
+    to_untagged,
 )
 from .graph_utils import (
     graph_bfs,
@@ -42,7 +42,7 @@ from .yaml import (
 
 __all__ = [
     "to_semantic_table",
-    "to_ibis",
+    "to_untagged",
     "SemanticModel",
     "SemanticTable",
     "Dimension",
@@ -50,37 +50,23 @@ __all__ = [
     "from_yaml",
     "MCPSemanticModel",
     "options",
-    "to_tagged",
-    "from_tagged",
     "ProfileError",
     "get_connection",
     "get_tables",
-    "graph_predecessors",
-    "graph_successors",
     "graph_bfs",
     "graph_invert",
+    "graph_predecessors",
+    "graph_successors",
     "graph_to_dict",
 ]
 
-# Import MCP functionality if available
+# Import MCP functionality from separate module if available
 try:
     from .mcp import MCPSemanticModel  # noqa: F401
 
     _MCP_AVAILABLE = True
 except ImportError:
     _MCP_AVAILABLE = False
-
-# Import xorq conversion functionality
-from .xorq_convert import from_tagged, to_tagged  # noqa: F401
-
-# Import graph utilities
-from .graph_utils import (  # noqa: F401
-    graph_bfs,
-    graph_invert,
-    graph_predecessors,
-    graph_successors,
-    graph_to_dict,
-)
 
 # Install window compatibility if xorq is available
 # This allows users to use `import ibis` seamlessly with xorq backend

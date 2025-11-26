@@ -35,11 +35,11 @@ from .ops import (
 from .query import query as build_query
 
 
-def to_ibis(expr):
+def to_untagged(expr):
     if isinstance(expr, SemanticTable):
-        return expr.op().to_ibis()
+        return expr.op().to_untagged()
 
-    result = safe(lambda: expr.to_ibis())()
+    result = safe(lambda: expr.to_untagged())()
     if isinstance(result, Success):
         return result.unwrap()
 
@@ -151,12 +151,12 @@ class SemanticTable(ir.Table):
         """Prevent select() on semantic tables.
 
         The semantic layer works with dimensions and measures, not arbitrary column selection.
-        Use .to_ibis().select() if you need to perform Ibis operations.
+        Use .to_untagged().select() if you need to perform Ibis operations.
         """
         raise NotImplementedError(
             "select() is not supported on semantic tables. "
             "Use group_by() and aggregate() to work with dimensions and measures, "
-            "or call .to_ibis().select() to convert to an Ibis table first."
+            "or call .to_untagged().select() to convert to an Ibis table first."
         )
 
     def pipe(self, func, *args, **kwargs):
@@ -166,17 +166,17 @@ class SemanticTable(ir.Table):
         """Return the graph repr of the underlying operation."""
         return repr(self.op())
 
-    def to_ibis(self):
-        return self.op().to_ibis()
+    def to_untagged(self):
+        return self.op().to_untagged()
 
     def execute(self):
-        return to_ibis(self).execute()
+        return to_untagged(self).execute()
 
     def compile(self, **kwargs):
-        return to_ibis(self).compile(**kwargs)
+        return to_untagged(self).compile(**kwargs)
 
     def sql(self, **kwargs):
-        return ibis.to_sql(to_ibis(self), **kwargs)
+        return ibis.to_sql(to_untagged(self), **kwargs)
 
 
 def _create_dimension(expr: Dimension | Callable | dict) -> Dimension:
@@ -408,8 +408,8 @@ class SemanticModel(SemanticTable):
             sample=sample,
         )
 
-    def to_ibis(self):
-        return self.op().to_ibis()
+    def to_untagged(self):
+        return self.op().to_untagged()
 
     def as_expr(self):
         return self
@@ -494,7 +494,7 @@ class SemanticJoin(SemanticTable):
 
     @property
     def table(self):
-        return self.op().to_ibis()
+        return self.op().to_untagged()
 
     def get_dimensions(self):
         return self.op().get_dimensions()
@@ -527,8 +527,8 @@ class SemanticJoin(SemanticTable):
             sample=sample,
         )
 
-    def to_ibis(self):
-        return self.op().to_ibis()
+    def to_untagged(self):
+        return self.op().to_untagged()
 
     def as_expr(self):
         return self
@@ -601,12 +601,12 @@ class SemanticJoin(SemanticTable):
 
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.op())
-        return _build_semantic_model_from_roots(self.op().to_ibis(), all_roots)
+        return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
 
     def with_dimensions(self, **dims) -> SemanticModel:
         """Add or update dimensions."""
         return SemanticModel(
-            table=self.op().to_ibis(),
+            table=self.op().to_untagged(),
             dimensions={**self.get_dimensions(), **dims},
             measures=self.get_measures(),
             calc_measures=self.get_calculated_measures(),
@@ -617,7 +617,7 @@ class SemanticJoin(SemanticTable):
         from .measure_scope import MeasureScope
         from .ops import _classify_measure
 
-        joined_tbl = self.op().to_ibis()
+        joined_tbl = self.op().to_untagged()
         all_known = (
             list(self.get_measures().keys())
             + list(self.get_calculated_measures().keys())
@@ -727,7 +727,7 @@ class SemanticFilter(SemanticTable):
 
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.op().source)
-        return _build_semantic_model_from_roots(self.op().to_ibis(), all_roots)
+        return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
 
     def with_dimensions(self, **dims) -> SemanticModel:
         """Add or update dimensions after filtering."""
@@ -737,7 +737,7 @@ class SemanticFilter(SemanticTable):
         existing_calc = _get_merged_fields(all_roots, "calc_measures") if all_roots else {}
 
         return SemanticModel(
-            table=self.op().to_ibis(),
+            table=self.op().to_untagged(),
             dimensions={**existing_dims, **dims},
             measures=existing_meas,
             calc_measures=existing_calc,
@@ -756,14 +756,14 @@ class SemanticFilter(SemanticTable):
         all_measure_names = (
             tuple(new_base_meas.keys()) + tuple(new_calc_meas.keys()) + tuple(meas.keys())
         )
-        scope = MeasureScope(_tbl=self.op().to_ibis(), _known=all_measure_names)
+        scope = MeasureScope(_tbl=self.op().to_untagged(), _known=all_measure_names)
 
         for name, fn_or_expr in meas.items():
             kind, value = _classify_measure(fn_or_expr, scope)
             (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
 
         return SemanticModel(
-            table=self.op().to_ibis(),
+            table=self.op().to_untagged(),
             dimensions=existing_dims,
             measures=new_base_meas,
             calc_measures=new_calc_meas,
@@ -842,7 +842,7 @@ class SemanticGroupBy(SemanticTable):
                     result = fn(ibis_tbl)
 
                     if isinstance(result, SemanticTable):
-                        return to_ibis(result)
+                        return to_untagged(result)
 
                     if isinstance(result, GroupedTable):
                         return handle_grouped_table(result, ibis_tbl)
@@ -959,7 +959,7 @@ class SemanticAggregate(SemanticTable):
 
     def as_table(self) -> SemanticModel:
         return SemanticModel(
-            table=self.op().to_ibis(),
+            table=self.op().to_untagged(),
             dimensions={},
             measures={},
             calc_measures={},
@@ -999,7 +999,7 @@ class SemanticOrderBy(SemanticTable):
 
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.source)
-        return _build_semantic_model_from_roots(self.op().to_ibis(), all_roots)
+        return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
 
     def chart(
         self,
@@ -1039,7 +1039,7 @@ class SemanticLimit(SemanticTable):
 
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.source)
-        return _build_semantic_model_from_roots(self.op().to_ibis(), all_roots)
+        return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
 
     def chart(
         self,
@@ -1075,7 +1075,7 @@ class SemanticUnnest(SemanticTable):
 
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.source)
-        return _build_semantic_model_from_roots(self.op().to_ibis(), all_roots)
+        return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
 
     def with_dimensions(self, **dims) -> SemanticModel:
         all_roots = _find_all_root_models(self.source)
@@ -1203,7 +1203,7 @@ class SemanticMutate(SemanticTable):
 
     def as_table(self) -> SemanticModel:
         return SemanticModel(
-            table=self.op().to_ibis(),
+            table=self.op().to_untagged(),
             dimensions={},
             measures={},
             calc_measures={},
@@ -1234,5 +1234,5 @@ class SemanticProject(SemanticTable):
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.source)
         return _build_semantic_model_from_roots(
-            self.op().to_ibis(), all_roots, field_filter=set(self.fields)
+            self.op().to_untagged(), all_roots, field_filter=set(self.fields)
         )

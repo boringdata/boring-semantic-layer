@@ -13,7 +13,7 @@ import contextlib
 import ibis
 import pytest
 
-from boring_semantic_layer import to_ibis, to_semantic_table
+from boring_semantic_layer import to_semantic_table, to_untagged
 
 # Projection pushdown disabled for xorq compatibility
 pytestmark = pytest.mark.xfail(
@@ -92,7 +92,7 @@ class TestProjectionPushdown:
         )
 
         # Generate SQL
-        sql = str(ibis.to_sql(to_ibis(result)))
+        sql = str(ibis.to_sql(to_untagged(result)))
 
         print("\n" + "=" * 80)
         print("SQL WITH PROJECTION PUSHDOWN:")
@@ -141,7 +141,7 @@ class TestProjectionPushdown:
         )
 
         # Generate SQL
-        sql = str(ibis.to_sql(to_ibis(result)))
+        sql = str(ibis.to_sql(to_untagged(result)))
 
         print("\n" + "=" * 80)
         print("PROJECTION PUSHDOWN - MULTIPLE TABLES:")
