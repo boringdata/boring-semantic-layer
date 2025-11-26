@@ -4,7 +4,7 @@
 import ibis
 from ibis import _
 
-from boring_semantic_layer import to_semantic_table, entity_dimension, time_dimension
+from boring_semantic_layer import to_semantic_table
 
 BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
 
@@ -18,9 +18,9 @@ def main():
         .with_dimensions(
             origin=lambda t: t.origin,
             destination=lambda t: t.destination,
-            carrier=entity_dimension(lambda t: t.carrier),
+            carrier=lambda t: t.carrier,
             arr_time={
-                "expr": time_dimension(lambda t: t.arr_time),
+                "expr": lambda t: t.arr_time,
                 "is_time_dimension": True,
                 "smallest_time_grain": "day",
             },
