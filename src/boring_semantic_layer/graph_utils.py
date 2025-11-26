@@ -2,18 +2,19 @@
 
 from typing import Any
 
+from ibis.expr.operations.core import Node as IbisNode
+from ibis.expr.types import Expr as IbisExpr
+from returns.maybe import Maybe, Nothing, Some
+from returns.result import Failure, Result, Success
 from xorq.common.utils.graph_utils import (
-    gen_children_of as _xorq_gen_children_of,
     replace_nodes as _xorq_replace_nodes,
+)
+from xorq.common.utils.graph_utils import (
     to_node as _xorq_to_node,
 )
 from xorq.vendor.ibis.common.graph import Graph
 from xorq.vendor.ibis.expr.operations.core import Node
 from xorq.vendor.ibis.expr.types import Expr as XorqExpr
-from ibis.expr.operations.core import Node as IbisNode
-from ibis.expr.types import Expr as IbisExpr
-from returns.maybe import Maybe, Nothing, Some
-from returns.result import Failure, Result, Success
 
 __all__ = [
     "bfs",

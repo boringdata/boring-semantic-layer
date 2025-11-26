@@ -119,17 +119,34 @@ con = get_connection('my_db', search_locations=['local'])
 con = get_connection('my_db', search_locations=['local', 'bsl_dir', 'xorq_dir'])
 ```
 
-`from_yaml()` resolves profiles in order:
-1. `profile` parameter
-2. `BSL_PROFILE` environment variable
-3. YAML `profile` section
-4. Table-level `profile`
+`from_yaml()` resolves profiles in priority order (first match wins):
+
+1. **`profile` parameter** - Explicit argument passed to `from_yaml()`:
+   ```python
+   models = from_yaml('model.yml', profile='my_db')
+   ```
+
+2. **`BSL_PROFILE` environment variable** - System-wide default:
+   ```bash
+   export BSL_PROFILE=my_db
+   ```
+
+3. **YAML file-level `profile`** - Default defined inside the YAML file:
+   ```yaml
+   profile: my_db  # File-level default
+   models:
+     flights: ...
+   ```
+
+4. **Table-level `profile`** - Per-table override (see [YAML-Based](#yaml-based) section)
 
 ## Supported Backends
 
-BSL accepts both native ibis backends and xorq's vendored ibis backends. The `type` field in your profile corresponds to the ibis backend name, and the other fields are passed as connection parameters.
+BSL uses xorq backends for all connections, which provide caching and performance optimizations. The `type` field in your profile corresponds to the ibis backend name, and the other fields are passed as connection parameters.
 
-**xorq's vendored backends are required to enable caching.** By default, BSL uses xorq's cached backends automatically via `get_connection()` for improved performance. If you need native ibis backends without caching, pass `use_xorq=False` to `get_connection()`.
+```python
+con = get_connection('my_db')  # Uses xorq backend
+```
 
 See the [ibis backends documentation](https://ibis-project.org/backends/) for the complete list of supported backends and their required connection parameters.
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -11,42 +10,16 @@ from xorq.vendor.ibis.backends.profiles import Profile as XorqProfile
 from .utils import read_yaml_file
 
 
-def _substitute_env_vars(value: Any) -> Any:
-    """Recursively substitute ${VAR} or $VAR with environment variables."""
-    if isinstance(value, str):
-        pattern = re.compile(r"\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)")
-
-        def replacer(match):
-            var_name = match.group(1) or match.group(2)
-            return os.environ.get(var_name, match.group(0))
-
-        return pattern.sub(replacer, value)
-    elif isinstance(value, dict):
-        return {k: _substitute_env_vars(v) for k, v in value.items()}
-    elif isinstance(value, list):
-        return [_substitute_env_vars(item) for item in value]
-    return value
-
-
 class ProfileError(Exception):
     """Raised when profile loading fails."""
-
-    @classmethod
-    def not_found(cls, name: str, local_profile: Path, search_locations: list[str]) -> ProfileError:
-        """Create ProfileError for profile not found."""
-        return cls(
-            f"Profile '{name}' not found. "
-            f"Create {local_profile} or ~/.config/bsl/profiles/{name}.yml"
-        )
 
 
 def get_connection(
     profile: str | dict | BaseBackend | None = None,
     profile_file: str | Path | None = None,
-    use_xorq: bool = True,
     search_locations: list[str] | None = None,
 ) -> BaseBackend:
-    """Get database connection from profile.
+    """Get database connection from profile using xorq backend.
 
     Resolves connection from multiple sources (in order):
     1. Explicit profile parameter (string, dict, or BaseBackend)
@@ -55,18 +28,17 @@ def get_connection(
     Args:
         profile: Profile name, config dict, BaseBackend, or None (uses env vars)
         profile_file: Optional path to profile YAML file (or from env vars)
-        use_xorq: If True, use xorq backend (default). If False, use pure ibis.
         search_locations: Order of locations to search for profiles (default: ["bsl_dir", "local", "xorq_dir"])
 
     Returns:
-        BaseBackend: Database connection
+        BaseBackend: Database connection (xorq backend)
 
     Raises:
         ProfileError: If profile cannot be loaded or doesn't exist
 
     Example:
         >>> con = get_connection()  # Uses env vars
-        >>> con = get_connection("my_profile", use_xorq=False)  # Pure ibis
+        >>> con = get_connection("my_profile")
         >>> con = get_connection({"type": "duckdb", "database": ":memory:"})
     """
     if search_locations is None:
@@ -108,11 +80,10 @@ def get_connection(
             return get_connection(
                 profile_name,
                 profile_file=profile_file,
-                use_xorq=use_xorq,
                 search_locations=search_locations,
             )
         # Regular inline connection config (e.g., {"type": "duckdb", "database": ":memory:"})
-        return _create_connection_from_config(profile, use_xorq=use_xorq)
+        return _create_connection_from_config(profile)
 
     # Load from file or search
     if not isinstance(profile, str):
@@ -120,11 +91,11 @@ def get_connection(
 
     # Direct YAML file path
     if profile.endswith((".yml", ".yaml")) and Path(profile).exists():
-        return _load_from_file(Path(profile), use_xorq=use_xorq)
+        return _load_from_file(Path(profile))
 
     # Load from specific profile file
     if profile_file:
-        return _load_from_file(Path(profile_file), profile, use_xorq=use_xorq)
+        return _load_from_file(Path(profile_file), profile)
 
     # Search for profile name in configured locations
     local_profile = Path.cwd() / "profiles.yml"
@@ -132,19 +103,22 @@ def get_connection(
 
     for location in search_locations:
         if location == "bsl_dir" and bsl_profile.exists():
-            return _load_from_file(bsl_profile, profile, use_xorq=use_xorq)
+            return _load_from_file(bsl_profile, profile)
 
         if location == "local" and local_profile.exists():
-            return _load_from_file(local_profile, profile, use_xorq=use_xorq)
+            return _load_from_file(local_profile, profile)
 
-        if location == "xorq_dir" and use_xorq:
+        if location == "xorq_dir":
             try:
                 xorq_profile = XorqProfile.load(profile)
                 return xorq_profile.get_con()
             except Exception:
                 continue
 
-    raise ProfileError.not_found(profile, local_profile, search_locations)
+    raise ProfileError(
+        f"Profile '{profile}' not found. "
+        f"Create {local_profile} or ~/.config/bsl/profiles/{profile}.yml"
+    )
 
 
 def get_tables(
@@ -184,9 +158,7 @@ def get_tables(
     return tables
 
 
-def _load_from_file(
-    yaml_file: Path, profile_name: str | None = None, use_xorq: bool = True
-) -> BaseBackend:
+def _load_from_file(yaml_file: Path, profile_name: str | None = None) -> BaseBackend:
     """Load profile from YAML file."""
     try:
         profiles_config = read_yaml_file(yaml_file)
@@ -194,7 +166,7 @@ def _load_from_file(
         raise ProfileError(str(e)) from e
 
     config = _get_profile_config(profiles_config, profile_name, yaml_file)
-    return _create_connection_from_config(config, use_xorq=use_xorq)
+    return _create_connection_from_config(config)
 
 
 def _get_profile_config(profiles_config: dict, profile_name: str | None, yaml_file: Path) -> dict:
@@ -219,15 +191,12 @@ def _get_profile_config(profiles_config: dict, profile_name: str | None, yaml_fi
     return config
 
 
-def _create_connection_from_config(config: dict, use_xorq: bool = True) -> BaseBackend:
-    """Create connection from configuration dict.
+def _create_connection_from_config(config: dict) -> BaseBackend:
+    """Create connection from configuration dict using xorq backend.
 
     Args:
         config: Configuration dictionary with 'type' and connection parameters
-        use_xorq: If True, use xorq for connection (default). If False, use pure ibis.
     """
-    import ibis
-
     config = config.copy()
     conn_type = config.get("type")
     if not conn_type:
@@ -235,24 +204,10 @@ def _create_connection_from_config(config: dict, use_xorq: bool = True) -> BaseB
 
     parquet_tables = config.pop("tables", None)
 
-    if use_xorq:
-        # Use xorq (handles env var substitution automatically)
-        kwargs_tuple = tuple(sorted((k, v) for k, v in config.items() if k != "type"))
-        xorq_profile = XorqProfile(con_name=conn_type, kwargs_tuple=kwargs_tuple)
-        connection = xorq_profile.get_con()
-    else:
-        # Use pure ibis
-        config.pop("type")
-        config = _substitute_env_vars(config)
-
-        # Create ibis connection
-        try:
-            backend = getattr(ibis, conn_type, None)
-            if not backend or not hasattr(backend, "connect"):
-                raise ProfileError(f"Unsupported ibis backend: {conn_type}")
-            connection = backend.connect(**config)
-        except Exception as e:
-            raise ProfileError(f"Failed to create {conn_type} connection: {e}") from e
+    # Use xorq (handles env var substitution automatically)
+    kwargs_tuple = tuple(sorted((k, v) for k, v in config.items() if k != "type"))
+    xorq_profile = XorqProfile(con_name=conn_type, kwargs_tuple=kwargs_tuple)
+    connection = xorq_profile.get_con()
 
     # Load parquet tables if specified
     if parquet_tables:
