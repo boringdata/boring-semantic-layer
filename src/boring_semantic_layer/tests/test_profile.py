@@ -52,7 +52,6 @@ class TestProfileSaveLoad:
         monkeypatch.chdir(temp_dir)
         # Clear env vars that would override local profile discovery
         monkeypatch.delenv("BSL_PROFILE_FILE", raising=False)
-        monkeypatch.delenv("BSL_PROFILE_PATH", raising=False)
 
         profile_file = temp_dir / "profiles.yml"
         profile_file.write_text("""
@@ -69,7 +68,6 @@ local_db:
         monkeypatch.setenv("HOME", str(temp_dir))
         # Clear env vars that would override local profile discovery
         monkeypatch.delenv("BSL_PROFILE_FILE", raising=False)
-        monkeypatch.delenv("BSL_PROFILE_PATH", raising=False)
 
         bsl_profiles_dir = temp_dir / ".config" / "bsl" / "profiles"
         bsl_profiles_dir.mkdir(parents=True, exist_ok=True)

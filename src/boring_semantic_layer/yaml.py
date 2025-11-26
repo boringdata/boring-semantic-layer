@@ -10,7 +10,7 @@ from ibis import _
 from .api import to_semantic_table
 from .expr import SemanticModel, SemanticTable
 from .ops import Dimension, Measure
-from .profile import get_connection, get_tables
+from .profile import get_connection
 from .utils import read_yaml_file, safe_eval
 
 
@@ -142,14 +142,9 @@ def _load_table_for_yaml_model(
     if "profile" in model_config:
         profile_config = model_config["profile"]
         connection = get_connection(profile_config)
-        model_tables = get_tables(connection, [table_name])
-
-        # Check for duplicates
-        duplicates = set(tables.keys()) & set(model_tables.keys())
-        if duplicates:
-            raise ValueError(f"Table name conflict: {', '.join(sorted(duplicates))} already exists")
-
-        tables.update(model_tables)
+        if table_name in tables:
+            raise ValueError(f"Table name conflict: {table_name} already exists")
+        tables[table_name] = connection.table(table_name)
 
     # Verify table exists
     if table_name not in tables:
@@ -177,7 +172,7 @@ def from_yaml(
                 profile_config or profile_path,
                 profile_file=profile_path if profile_config else None,
             )
-            tables = get_tables(connection)
+            tables = {name: connection.table(name) for name in connection.list_tables()}
 
     # Filter to only model definitions (exclude 'profile' key and non-dict values)
     model_configs = {

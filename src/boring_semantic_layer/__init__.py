@@ -27,7 +27,6 @@ from .ops import (
 from .profile import (
     ProfileError,
     get_connection,
-    get_tables,
 )
 from .yaml import (
     from_yaml,
@@ -45,7 +44,6 @@ __all__ = [
     "options",
     "ProfileError",
     "get_connection",
-    "get_tables",
 ]
 
 # Import MCP functionality from separate module if available
