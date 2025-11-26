@@ -74,7 +74,7 @@ Master the "bucketing with OTHER" pattern for clean reports and visualizations:
 - Show top N items individually, group rest as 'OTHER'
 - Use `ibis.rank()` with window functions for rankings
 - Use `ibis.cases()` for bucketing logic
-- Drop to ibis level with `.to_ibis()` for second aggregation
+- Drop to ibis level with `.to_untagged()` for second aggregation
 - Top N per group (e.g., top 3 states per facility type)
 - Dynamic thresholds (e.g., states covering 80% of total)
 - Pie-chart-ready aggregations with limited slices

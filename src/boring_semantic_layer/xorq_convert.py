@@ -109,7 +109,7 @@ def to_tagged(semantic_expr, aggregate_cache_storage=None):
         else:
             op = semantic_expr
 
-        ibis_expr = bsl_expr.to_ibis(semantic_expr)
+        ibis_expr = bsl_expr.to_untagged(semantic_expr)
 
         import re
 

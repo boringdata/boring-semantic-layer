@@ -18,7 +18,7 @@ import pandas as pd
 import pytest
 
 from boring_semantic_layer.api import to_semantic_table
-from boring_semantic_layer.expr import to_ibis
+from boring_semantic_layer.expr import to_untagged
 
 # Projection pushdown disabled for xorq compatibility
 pytestmark = pytest.mark.xfail(reason="Projection pushdown disabled for xorq vendored ibis compatibility")
@@ -90,7 +90,7 @@ class TestProjectionPushdownDemo:
         )
 
         query = flights.group_by("origin").aggregate("flight_count")
-        sql = str(ibis.to_sql(to_ibis(query)))
+        sql = str(ibis.to_sql(to_untagged(query)))
 
         print("\n" + "=" * 80)
         print("TEST 1: Single Table (Baseline)")
@@ -137,7 +137,7 @@ class TestProjectionPushdownDemo:
         joined = flights.join(aircraft, lambda f, a: f.tail_num == a.tail_num)
         query = joined.group_by("flights.origin").aggregate("flights.flight_count")
 
-        sql = str(ibis.to_sql(to_ibis(query)))
+        sql = str(ibis.to_sql(to_untagged(query)))
 
         print("\n" + "=" * 80)
         print("TEST 2: Two-Table Join")
@@ -230,7 +230,7 @@ class TestProjectionPushdownDemo:
 
         query = joined.group_by("customers.name").aggregate("orders.revenue")
 
-        sql = str(ibis.to_sql(to_ibis(query)))
+        sql = str(ibis.to_sql(to_untagged(query)))
 
         print("\n" + "=" * 80)
         print("TEST 3: Three-Table Join (N-Way)")
@@ -283,7 +283,7 @@ class TestProjectionPushdownDemo:
         # Only use flight_count, not total_distance
         query = joined.group_by("flights.origin").aggregate("flights.flight_count")
 
-        sql = str(ibis.to_sql(to_ibis(query)))
+        sql = str(ibis.to_sql(to_untagged(query)))
 
         print("\n" + "=" * 80)
         print("TEST 4: Measure Column Inclusion (Conservative)")

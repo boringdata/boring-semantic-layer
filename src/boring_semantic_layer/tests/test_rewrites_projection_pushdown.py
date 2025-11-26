@@ -12,7 +12,7 @@ import ibis
 import pandas as pd
 import pytest
 
-from boring_semantic_layer import to_ibis, to_semantic_table
+from boring_semantic_layer import to_untagged, to_semantic_table
 
 # Projection pushdown disabled for xorq compatibility
 pytestmark = pytest.mark.xfail(reason="Projection pushdown disabled for xorq vendored ibis compatibility")
@@ -81,7 +81,7 @@ def test_projection_pushdown_simple_aggregate(wide_tables):
     query = flights.group_by("origin").aggregate("flight_count")
 
     # Get generated SQL
-    sql = str(ibis.to_sql(to_ibis(query)))
+    sql = str(ibis.to_sql(to_untagged(query)))
 
     # Check that unused columns are NOT in the SQL
     unused_cols = [
@@ -134,7 +134,7 @@ def test_projection_pushdown_after_join(wide_tables):
     query = joined.group_by("flights.origin").aggregate("flight_count")
 
     # Get generated SQL
-    sql = str(ibis.to_sql(to_ibis(query)))
+    sql = str(ibis.to_sql(to_untagged(query)))
 
     # Check that unused columns from BOTH tables are NOT in SQL
     unused_cols = [
@@ -186,7 +186,7 @@ def test_projection_pushdown_with_dimension_from_right_table(wide_tables):
     # Should NOT need unused columns
     query = joined.group_by("aircraft.manufacturer").aggregate("flight_count")
 
-    sql = str(ibis.to_sql(to_ibis(query)))
+    sql = str(ibis.to_sql(to_untagged(query)))
 
     # Check unused columns are not present
     unused_cols = [
@@ -219,7 +219,7 @@ def test_projection_pushdown_with_measure_referencing_columns(wide_tables):
     # Query using the distance measure
     query = flights.group_by("origin").aggregate("total_distance")
 
-    sql = str(ibis.to_sql(to_ibis(query)))
+    sql = str(ibis.to_sql(to_untagged(query)))
 
     # 'distance' column SHOULD be in SQL (needed for measure)
     assert "distance" in sql, "Column 'distance' should be in SQL (needed for measure)"
@@ -253,7 +253,7 @@ def test_projection_pushdown_counts_columns(wide_tables):
     joined = flights.join(aircraft, lambda f, a: f.tail_num == a.tail_num, how="left")
     query = joined.group_by("flights.origin").aggregate("flight_count")
 
-    sql = str(ibis.to_sql(to_ibis(query)))
+    sql = str(ibis.to_sql(to_untagged(query)))
 
     # Count SELECT clauses to estimate column reduction
     # Original tables have: 10 (flights) + 7 (aircraft) = 17 total columns
@@ -305,7 +305,7 @@ def test_projection_pushdown_multiple_dimensions(wide_tables):
     # Query using dimensions from both tables
     query = joined.group_by("flights.origin", "aircraft.manufacturer").aggregate("flight_count")
 
-    sql = str(ibis.to_sql(to_ibis(query)))
+    sql = str(ibis.to_sql(to_untagged(query)))
 
     # Should need: origin, tail_num (join keys), manufacturer
     # Should NOT need: destination, model, or any UNUSED columns
@@ -428,7 +428,7 @@ def test_projection_pushdown_three_way_join_all_notations(duckdb_con):
         .aggregate("combined_metric")
     )
 
-    sql1 = str(ibis.to_sql(to_ibis(result1)))
+    sql1 = str(ibis.to_sql(to_untagged(result1)))
 
     # Test 2: Use dot notation for unprefixed dimension access
     result2 = (
@@ -440,12 +440,12 @@ def test_projection_pushdown_three_way_join_all_notations(duckdb_con):
         .aggregate("revenue_per_item")
     )
 
-    sql2 = str(ibis.to_sql(to_ibis(result2)))
+    sql2 = str(ibis.to_sql(to_untagged(result2)))
 
     # Test 3: Simple query with minimal columns
     result3 = joined.group_by("customers.segment").aggregate("orders.order_count")
 
-    sql3 = str(ibis.to_sql(to_ibis(result3)))
+    sql3 = str(ibis.to_sql(to_untagged(result3)))
 
     # Verify projection pushdown works across all queries
     unused_cols = [

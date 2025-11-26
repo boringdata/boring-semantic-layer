@@ -306,11 +306,11 @@ class TestIndexResultOperations:
 class TestIndexAccessMethods:
     """Tests for accessing index results and joined table methods."""
 
-    def test_join_has_to_ibis(self, flights_semantic, airports_semantic):
-        """Test that SemanticJoin has to_ibis() method."""
+    def test_join_has_to_untagged(self, flights_semantic, airports_semantic):
+        """Test that SemanticJoin has to_untagged() method."""
         joined = flights_semantic.join_one(airports_semantic, left_on="origin", right_on="code")
 
-        ibis_table = joined.to_ibis()
+        ibis_table = joined.to_untagged()
         assert ibis_table is not None
         # Should be an Ibis table
         assert hasattr(ibis_table, "execute")

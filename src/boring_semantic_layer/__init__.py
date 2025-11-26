@@ -18,7 +18,7 @@ from .config import (
 from .expr import (
     SemanticModel,
     SemanticTable,
-    to_ibis,
+    to_untagged,
 )
 from .ops import (
     Dimension,
@@ -30,7 +30,7 @@ from .yaml import (
 
 __all__ = [
     "to_semantic_table",
-    "to_ibis",
+    "to_untagged",
     "SemanticModel",
     "SemanticTable",
     "Dimension",

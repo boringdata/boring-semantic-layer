@@ -11,7 +11,7 @@ a nested list of flight_legs by the aircraft on that day. The flight legs are nu
 import ibis
 import pandas as pd
 
-from boring_semantic_layer import to_ibis, to_semantic_table
+from boring_semantic_layer import to_untagged, to_semantic_table
 
 # Show all columns in output
 pd.set_option("display.max_columns", None)
@@ -64,7 +64,7 @@ def main():
 
     # Normalize by unnesting flight_legs - each leg becomes its own row
     # Convert semantic expression to ibis, unnest the array column, then execute
-    sessions_ibis = to_ibis(sessions)
+    sessions_ibis = to_untagged(sessions)
     unnested = sessions_ibis.unnest("flight_legs")
 
     # Unpack the struct fields into individual columns
