@@ -1280,14 +1280,14 @@ class SemanticJoinOp(Relation):
     left: Relation
     right: Relation
     how: str
-    on: Callable[[Any, Any], ir.BooleanValue] | None
+    on: Callable[[Any, Any], Any] | None  # Returns BooleanValue from either ibis or xorq.vendor.ibis
 
     def __init__(
         self,
         left: Relation,
         right: Relation,
         how: str = "inner",
-        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
+        on: Callable[[Any, Any], Any] | None = None,
     ) -> None:
         super().__init__(
             left=Relation.__coerce__(left),
