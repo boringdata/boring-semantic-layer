@@ -217,7 +217,7 @@ class TestChartFieldNameSanitization:
         )
 
         # Join tables - this creates a "carriers.name" field
-        joined = flights_sm.join_many(carriers_sm, left_on="carrier", right_on="code")
+        joined = flights_sm.join_many(carriers_sm, on=lambda l, r: l.carrier == r.code)
 
         # Query with the joined field
         result = joined.group_by("carriers.name").aggregate("flight_count", "total_distance")
