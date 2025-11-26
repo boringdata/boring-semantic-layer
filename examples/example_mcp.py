@@ -109,7 +109,7 @@ flights = (
             "description": "Average flight distance in miles",
         },
     )
-    .join_one(carriers, left_on="carrier", right_on="code")
+    .join_one(carriers, lambda f, c: f.carrier == c.code)
 )
 
 # Create MCP server

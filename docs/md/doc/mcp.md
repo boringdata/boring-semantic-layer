@@ -345,8 +345,7 @@ carriers = (
 # Connect them with joins
 flights_with_carriers = flights.join_one(
     carriers,
-    left_on="carrier",
-    right_on="code"
+    lambda f, c: f.carrier == c.code
 )
 ```
 

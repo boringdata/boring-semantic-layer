@@ -62,7 +62,7 @@ def main():
         )
     )
 
-    joined = customers.join(orders, lambda c, o: c.customer_id == o.customer_id)
+    joined = customers.join_one(orders, lambda c, o: c.customer_id == o.customer_id)
     query = joined.group_by("customers.customer_id", "customers.name").aggregate("total_amount")
 
     print("=" * 80)

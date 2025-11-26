@@ -192,7 +192,7 @@ flights = (
 )
 
 # Join flights with airports
-flights_with_origin = flights.join_one(airports, left_on="origin", right_on="code")
+flights_with_origin = flights.join_one(airports, lambda f, a: f.origin == a.code)
 
 # Index across the join
 result = (

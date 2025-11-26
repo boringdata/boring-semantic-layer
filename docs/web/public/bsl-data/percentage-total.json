@@ -3,8 +3,8 @@
   "queries": {
     "setup_data": {
       "code": "import ibis\nfrom ibis import _\nfrom boring_semantic_layer import to_semantic_table\n\n# Create synthetic flights data with carrier information\nflights_data = ibis.memtable({\n    \"flight_id\": list(range(1, 51)),\n    \"carrier\": [\"AA\", \"UA\", \"DL\", \"WN\", \"B6\"] * 10,\n    \"nickname\": [\"American Airlines\", \"United Airlines\", \"Delta Air Lines\",\n                 \"Southwest Airlines\", \"JetBlue Airways\"] * 10,\n    \"origin\": [\"JFK\", \"LAX\", \"ORD\", \"ATL\", \"DFW\"] * 10,\n    \"distance\": [2475, 1745, 733, 946, 1383, 2475, 1745, 733, 946, 1383,\n                 2475, 1745, 733, 946, 1383, 2475, 1745, 733, 946, 1383,\n                 2475, 1745, 733, 946, 1383, 2475, 1745, 733, 946, 1383,\n                 2475, 1745, 733, 946, 1383, 2475, 1745, 733, 946, 1383,\n                 2475, 1745, 733, 946, 1383, 2475, 1745, 733, 946, 1383]\n})\n\n# Create semantic table with measures including percentage calculations\nflights = (\n    to_semantic_table(flights_data, name=\"flights\")\n    .with_measures(\n        flight_count=lambda t: t.count(),\n        total_distance=lambda t: t.distance.sum(),\n    )\n    .with_measures(\n        market_share=lambda t: t.flight_count / t.all(t.flight_count) * 100,\n        distance_share=lambda t: t.total_distance / t.all(t.total_distance) * 100,\n    )\n)",
-      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_lgusghlsgndl5le2upibkgh5hm\"",
-      "plan": "SemanticTableOp[flights]\n  4 measures: flight_count, total_distance, market_share, ...",
+      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_rvydhxtucnb45n2itncp7vhvqa\"",
+      "plan": "\u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[33mmarket_share [calc]\u001b[0m\n  \u001b[33mdistance_share [calc]\u001b[0m",
       "table": {
         "columns": [
           "flight_id",
@@ -369,8 +369,8 @@
     },
     "query_market_share": {
       "code": "from ibis import _\n\nresult = (\n    flights.group_by(\"nickname\")\n    .aggregate(\"flight_count\", \"market_share\")\n    .order_by(_.market_share.desc())\n    .limit(10)\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t5\".\"nickname\",\n    \"t5\".\"flight_count\",\n    (\n      CAST(\"t5\".\"flight_count\" AS DOUBLE) / CAST(\"t5\".\"flight_count_right\" AS DOUBLE)\n    ) * 100 AS \"market_share\"\n  FROM (\n    SELECT\n      \"t3\".\"nickname\",\n      \"t3\".\"flight_count\",\n      \"t4\".\"flight_count\" AS \"flight_count_right\"\n    FROM (\n      SELECT\n        \"t0\".\"nickname\",\n        COUNT(*) AS \"flight_count\"\n      FROM \"ibis_pandas_memtable_lgusghlsgndl5le2upibkgh5hm\" AS \"t0\"\n      GROUP BY\n        1\n    ) AS \"t3\"\n    CROSS JOIN (\n      SELECT\n        COUNT(*) AS \"flight_count\"\n      FROM \"ibis_pandas_memtable_lgusghlsgndl5le2upibkgh5hm\" AS \"t0\"\n    ) AS \"t4\"\n  ) AS \"t5\"\n) AS \"t6\"\nORDER BY\n  \"t6\".\"market_share\" DESC\nLIMIT 10",
-      "plan": "r0 := SemanticTableOp[flights]\n  4 measures: flight_count, total_distance, market_share, ...\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['nickname']\n  inherited measures: 4\n\nr2 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['nickname']\n  aggs: [flight_count, market_share]\n\nr3 := SemanticOrderByOp\n  source: SemanticAggregateOp\n  keys: [<expr>]\n\nSemanticLimitOp\n  source: SemanticOrderByOp\n  n: 10",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t5\".\"nickname\",\n    \"t5\".\"flight_count\",\n    (\n      CAST(\"t5\".\"flight_count\" AS DOUBLE) / CAST(\"t5\".\"flight_count_right\" AS DOUBLE)\n    ) * 100 AS \"market_share\"\n  FROM (\n    SELECT\n      \"t3\".\"nickname\",\n      \"t3\".\"flight_count\",\n      \"t4\".\"flight_count\" AS \"flight_count_right\"\n    FROM (\n      SELECT\n        \"t0\".\"nickname\",\n        COUNT(*) AS \"flight_count\"\n      FROM \"ibis_pandas_memtable_rvydhxtucnb45n2itncp7vhvqa\" AS \"t0\"\n      GROUP BY\n        1\n    ) AS \"t3\"\n    CROSS JOIN (\n      SELECT\n        COUNT(*) AS \"flight_count\"\n      FROM \"ibis_pandas_memtable_rvydhxtucnb45n2itncp7vhvqa\" AS \"t0\"\n    ) AS \"t4\"\n  ) AS \"t5\"\n) AS \"t6\"\nORDER BY\n  \"t6\".\"market_share\" DESC\nLIMIT 10",
+      "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[33mmarket_share [calc]\u001b[0m\n  \u001b[33mdistance_share [calc]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n    \u001b[36mnickname\u001b[0m\n\nr2 := \u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  groups:\n    \u001b[36mnickname\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m\n    \u001b[35mmarket_share\u001b[0m\n\nr3 := OrderBy[r2]\n  sort_keys:\n    _CallableWrapper(_fn=_.market_share.desc())\n\nLimit[r3]\n  n:\n    10",
       "table": {
         "columns": [
           "nickname",
@@ -379,7 +379,7 @@
         ],
         "data": [
           [
-            "JetBlue Airways",
+            "Delta Air Lines",
             10,
             20.0
           ],
@@ -389,12 +389,12 @@
             20.0
           ],
           [
-            "Delta Air Lines",
+            "American Airlines",
             10,
             20.0
           ],
           [
-            "American Airlines",
+            "JetBlue Airways",
             10,
             20.0
           ],
@@ -415,7 +415,7 @@
             }
           },
           "data": {
-            "name": "data-22ff56d28de2cb704f1e74c5f594d0c0"
+            "name": "data-36a469066bd7915bf7dac0005c53aad3"
           },
           "mark": {
             "type": "bar"
@@ -468,19 +468,14 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-22ff56d28de2cb704f1e74c5f594d0c0": [
+            "data-36a469066bd7915bf7dac0005c53aad3": [
               {
                 "nickname": "JetBlue Airways",
                 "flight_count": 10,
                 "market_share": 20.0
               },
               {
-                "nickname": "United Airlines",
-                "flight_count": 10,
-                "market_share": 20.0
-              },
-              {
-                "nickname": "American Airlines",
+                "nickname": "Southwest Airlines",
                 "flight_count": 10,
                 "market_share": 20.0
               },
@@ -490,7 +485,12 @@
                 "market_share": 20.0
               },
               {
-                "nickname": "Southwest Airlines",
+                "nickname": "American Airlines",
+                "flight_count": 10,
+                "market_share": 20.0
+              },
+              {
+                "nickname": "United Airlines",
                 "flight_count": 10,
                 "market_share": 20.0
               }
@@ -501,8 +501,8 @@
     },
     "query_market_share_by_origin": {
       "code": "from ibis import _\n\nresult = (\n    flights.group_by(\"origin\", \"nickname\")\n    .aggregate(\"flight_count\", \"market_share\")\n    .order_by(_.market_share.desc())\n    .limit(15)\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t5\".\"origin\",\n    \"t5\".\"nickname\",\n    \"t5\".\"flight_count\",\n    (\n      CAST(\"t5\".\"flight_count\" AS DOUBLE) / CAST(\"t5\".\"flight_count_right\" AS DOUBLE)\n    ) * 100 AS \"market_share\"\n  FROM (\n    SELECT\n      \"t3\".\"origin\",\n      \"t3\".\"nickname\",\n      \"t3\".\"flight_count\",\n      \"t4\".\"flight_count\" AS \"flight_count_right\"\n    FROM (\n      SELECT\n        \"t0\".\"origin\",\n        \"t0\".\"nickname\",\n        COUNT(*) AS \"flight_count\"\n      FROM \"ibis_pandas_memtable_lgusghlsgndl5le2upibkgh5hm\" AS \"t0\"\n      GROUP BY\n        1,\n        2\n    ) AS \"t3\"\n    CROSS JOIN (\n      SELECT\n        COUNT(*) AS \"flight_count\"\n      FROM \"ibis_pandas_memtable_lgusghlsgndl5le2upibkgh5hm\" AS \"t0\"\n    ) AS \"t4\"\n  ) AS \"t5\"\n) AS \"t6\"\nORDER BY\n  \"t6\".\"market_share\" DESC\nLIMIT 15",
-      "plan": "r0 := SemanticTableOp[flights]\n  4 measures: flight_count, total_distance, market_share, ...\n\nr1 := SemanticGroupByOp\n  source: SemanticTableOp\n  keys: ['origin', 'nickname']\n  inherited measures: 4\n\nr2 := SemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['origin', 'nickname']\n  aggs: [flight_count, market_share]\n\nr3 := SemanticOrderByOp\n  source: SemanticAggregateOp\n  keys: [<expr>]\n\nSemanticLimitOp\n  source: SemanticOrderByOp\n  n: 15",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t5\".\"origin\",\n    \"t5\".\"nickname\",\n    \"t5\".\"flight_count\",\n    (\n      CAST(\"t5\".\"flight_count\" AS DOUBLE) / CAST(\"t5\".\"flight_count_right\" AS DOUBLE)\n    ) * 100 AS \"market_share\"\n  FROM (\n    SELECT\n      \"t3\".\"origin\",\n      \"t3\".\"nickname\",\n      \"t3\".\"flight_count\",\n      \"t4\".\"flight_count\" AS \"flight_count_right\"\n    FROM (\n      SELECT\n        \"t0\".\"origin\",\n        \"t0\".\"nickname\",\n        COUNT(*) AS \"flight_count\"\n      FROM \"ibis_pandas_memtable_rvydhxtucnb45n2itncp7vhvqa\" AS \"t0\"\n      GROUP BY\n        1,\n        2\n    ) AS \"t3\"\n    CROSS JOIN (\n      SELECT\n        COUNT(*) AS \"flight_count\"\n      FROM \"ibis_pandas_memtable_rvydhxtucnb45n2itncp7vhvqa\" AS \"t0\"\n    ) AS \"t4\"\n  ) AS \"t5\"\n) AS \"t6\"\nORDER BY\n  \"t6\".\"market_share\" DESC\nLIMIT 15",
+      "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[33mmarket_share [calc]\u001b[0m\n  \u001b[33mdistance_share [calc]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n    \u001b[36morigin\u001b[0m\n    \u001b[36mnickname\u001b[0m\n\nr2 := \u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  groups:\n    \u001b[36morigin\u001b[0m\n    \u001b[36mnickname\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m\n    \u001b[35mmarket_share\u001b[0m\n\nr3 := OrderBy[r2]\n  sort_keys:\n    _CallableWrapper(_fn=_.market_share.desc())\n\nLimit[r3]\n  n:\n    15",
       "table": {
         "columns": [
           "origin",
@@ -511,6 +511,12 @@
           "market_share"
         ],
         "data": [
+          [
+            "DFW",
+            "JetBlue Airways",
+            10,
+            20.0
+          ],
           [
             "ORD",
             "Delta Air Lines",
@@ -534,12 +540,6 @@
             "United Airlines",
             10,
             20.0
-          ],
-          [
-            "DFW",
-            "JetBlue Airways",
-            10,
-            20.0
           ]
         ]
       },
@@ -553,7 +553,7 @@
             }
           },
           "data": {
-            "name": "data-05cf262a523ce358fba29b601dfa77e4"
+            "name": "data-8331c84561cc4406558d0c33aafaa5ef"
           },
           "mark": {
             "type": "text"
@@ -567,10 +567,10 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-05cf262a523ce358fba29b601dfa77e4": [
+            "data-8331c84561cc4406558d0c33aafaa5ef": [
               {
-                "origin": "DFW",
-                "nickname": "JetBlue Airways",
+                "origin": "ORD",
+                "nickname": "Delta Air Lines",
                 "flight_count": 10,
                 "market_share": 20.0
               },
@@ -593,8 +593,8 @@
                 "market_share": 20.0
               },
               {
-                "origin": "ORD",
-                "nickname": "Delta Air Lines",
+                "origin": "DFW",
+                "nickname": "JetBlue Airways",
                 "flight_count": 10,
                 "market_share": 20.0
               }

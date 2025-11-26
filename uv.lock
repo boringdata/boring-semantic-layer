@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -212,6 +212,7 @@ version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "attrs" },
+    { name = "ibis-framework" },
     { name = "packaging" },
     { name = "pyyaml" },
     { name = "returns" },
@@ -273,6 +274,7 @@ requires-dist = [
     { name = "boring-semantic-layer", extras = ["fastmcp", "examples", "viz-altair", "viz-plotly", "viz-plotext"], marker = "extra == 'dev'" },
     { name = "duckdb", marker = "extra == 'examples'", specifier = "<1.4" },
     { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=2.12.4" },
+    { name = "ibis-framework", specifier = ">=11.0.0" },
     { name = "kaleido", marker = "extra == 'viz-plotly'" },
     { name = "malloy", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "nbformat", marker = "extra == 'viz-plotly'", specifier = ">=4.2.0" },
