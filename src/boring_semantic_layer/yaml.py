@@ -117,30 +117,7 @@ def _parse_joins(
 def _load_tables_from_references(
     table_refs: dict[str, tuple[str, str] | tuple[str, str, str] | Any],
 ) -> dict[str, Any]:
-    """Load tables from mixed references (tuples for remote profiles, or direct table objects).
-
-    Supports loading tables from remote profiles using tuple notation:
-    - (profile_name, table_name) - Load table from profile
-    - (profile_name, table_name, profile_file) - Load table from specific profile file
-
-    Args:
-        table_refs: Dictionary mapping table names to either:
-            - Tuple[str, str]: (profile_name, table_name) - Load from profile
-            - Tuple[str, str, str]: (profile_name, table_name, profile_file) - Load from specific file
-            - Table object: Already loaded ibis table
-
-    Returns:
-        dict[str, Table]: Dictionary mapping names to loaded ibis tables
-
-    Example:
-        >>> table_refs = {
-        ...     "prod_users": ("prod_db", "users"),  # Load from prod_db profile
-        ...     "staging_orders": ("staging", "orders", "staging.yml"),  # Load from specific file
-        ...     "local_data": ibis_table,  # Use existing table
-        ... }
-        >>> tables = _load_tables_from_references(table_refs)
-        >>> # {"prod_users": <Table>, "staging_orders": <Table>, "local_data": <Table>}
-    """
+    """Load tables from tuples (profile, table) or pass through table objects."""
     resolved = {}
     for name, ref in table_refs.items():
         if isinstance(ref, tuple) and len(ref) in (2, 3):
@@ -158,24 +135,7 @@ def _load_table_for_yaml_model(
     existing_tables: dict[str, Any],
     table_name: str,
 ) -> dict[str, Any]:
-    """Load table for a semantic model definition, handling profile configs.
-
-    Args:
-        model_config: Model configuration dict (may contain 'profile' key)
-        existing_tables: Already loaded tables
-        table_name: Name of the table to load
-
-    Returns:
-        dict: Updated tables dictionary with new table loaded if needed
-
-    Raises:
-        ValueError: If table name conflicts with existing tables
-        KeyError: If required table not found
-
-    Example:
-        >>> config = {"table": "users", "profile": {"name": "prod_db"}}
-        >>> tables = _load_table_for_yaml_model(config, {}, "users")
-    """
+    """Load table from model config profile if specified, verify it exists."""
     tables = existing_tables.copy()
 
     # Load table from model-specific profile if needed

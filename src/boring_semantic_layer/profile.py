@@ -19,28 +19,7 @@ def get_connection(
     profile_file: str | Path | None = None,
     search_locations: list[str] | None = None,
 ) -> BaseBackend:
-    """Get database connection from profile using xorq backend.
-
-    Resolves connection from multiple sources (in order):
-    1. Explicit profile parameter (string, dict, or BaseBackend)
-    2. Environment variables (BSL_PROFILE, BSL_PROFILE_FILE, BSL_PROFILE_PATH)
-
-    Args:
-        profile: Profile name, config dict, BaseBackend, or None (uses env vars)
-        profile_file: Optional path to profile YAML file (or from env vars)
-        search_locations: Order of locations to search for profiles (default: ["bsl_dir", "local", "xorq_dir"])
-
-    Returns:
-        BaseBackend: Database connection (xorq backend)
-
-    Raises:
-        ProfileError: If profile cannot be loaded or doesn't exist
-
-    Example:
-        >>> con = get_connection()  # Uses env vars
-        >>> con = get_connection("my_profile")
-        >>> con = get_connection({"type": "duckdb", "database": ":memory:"})
-    """
+    """Get xorq database connection from profile name, dict config, or env vars."""
     if search_locations is None:
         search_locations = ["bsl_dir", "local", "xorq_dir"]
 
@@ -125,37 +104,9 @@ def get_tables(
     connection: BaseBackend,
     table_names: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Get tables from a connection as a dictionary.
-
-    Helper function for loading tables from a connection, with optional filtering.
-    Handles conversion of xorq tables to pure ibis tables.
-
-    Args:
-        connection: Database connection
-        table_names: Optional list of table names to load. If None, loads all tables.
-
-    Returns:
-        dict: Dictionary mapping table names to ibis Table objects
-
-    Example:
-        >>> con = get_connection("my_profile")
-        >>> tables = get_tables(con)  # {"users": Table, "orders": Table}
-        >>> tables = get_tables(con, ["users"])  # Only users table
-    """
-    import ibis
-
+    """Get tables from connection as dict."""
     names = table_names or connection.list_tables()
-    tables = {}
-
-    for name in names:
-        table = connection.table(name)
-        # Check if this is a xorq vendored ibis table that needs conversion
-        if type(table).__module__.startswith("xorq.vendor.ibis"):
-            # TODO: REMOVE !!!!!
-            table = ibis.memtable(table.execute())
-        tables[name] = table
-
-    return tables
+    return {name: connection.table(name) for name in names}
 
 
 def _load_from_file(yaml_file: Path, profile_name: str | None = None) -> BaseBackend:
@@ -192,11 +143,7 @@ def _get_profile_config(profiles_config: dict, profile_name: str | None, yaml_fi
 
 
 def _create_connection_from_config(config: dict) -> BaseBackend:
-    """Create connection from configuration dict using xorq backend.
-
-    Args:
-        config: Configuration dictionary with 'type' and connection parameters
-    """
+    """Create xorq connection from config dict with 'type' field."""
     config = config.copy()
     conn_type = config.get("type")
     if not conn_type:
