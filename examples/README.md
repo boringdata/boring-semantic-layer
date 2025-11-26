@@ -148,8 +148,7 @@ result = (
 ```python
 flights_with_aircraft = flights.join_one(
     aircraft,
-    left_on="tail_num",
-    right_on="tail_num"
+    lambda f, a: f.tail_num == a.tail_num
 )
 
 # Measures are prefixed: flights__flight_count, aircraft__aircraft_count

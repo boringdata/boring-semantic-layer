@@ -111,8 +111,7 @@ Join carriers to flights to add carrier information:
 # Join carriers to flights
 flights_with_carriers = flights_st.join_many(
     carriers_st,
-    left_on="carrier_code",
-    right_on="code"
+    lambda f, c: f.carrier_code == c.code
 )
 
 # Inspect dimensions - now includes both flights and carriers
@@ -128,8 +127,7 @@ Add aircraft information to create a fully composed model:
 # Join aircraft to the composed model
 full_model = flights_with_carriers.join_many(
     aircraft_st,
-    left_on="aircraft_id",
-    right_on="id"
+    lambda f, a: f.aircraft_id == a.id
 )
 
 # Inspect dimensions - now includes flights, carriers, AND aircraft

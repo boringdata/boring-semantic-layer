@@ -37,7 +37,7 @@ def main():
 
     aircraft = (
         to_semantic_table(aircraft_tbl, name="aircraft")
-        .join(
+        .join_one(
             models,
             lambda a, m: a.aircraft_model_code == m.aircraft_model_code,
             how="left",
@@ -49,7 +49,7 @@ def main():
 
     flights = (
         to_semantic_table(flights_tbl, name="flights")
-        .join(aircraft, lambda f, a: f.tail_num == a.tail_num, how="left")
+        .join_many(aircraft, lambda f, a: f.tail_num == a.tail_num)
         .with_measures(
             flight_count=lambda t: t.count(),
             total_distance=lambda t: t.distance.sum(),

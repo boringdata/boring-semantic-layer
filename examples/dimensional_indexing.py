@@ -207,7 +207,7 @@ def main():
         )
     )
 
-    flights_with_origin = flights.join_one(airports, left_on="origin", right_on="code")
+    flights_with_origin = flights.join_one(airports, lambda f, a: f.origin == a.code)
 
     joined_index = (
         flights_with_origin.index(s.cols("carrier", "airports__state"))

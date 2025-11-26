@@ -135,7 +135,7 @@ def test_dims_after_join():
         name=lambda t: t.name,
     )
 
-    joined = flights_st.join(carriers_st, on=lambda f, c: f.carrier == c.code)
+    joined = flights_st.join_many(carriers_st, lambda f, c: f.carrier == c.code)
 
     # After join, dimensions should be prefixed
     assert set(joined.dimensions) == {
@@ -161,7 +161,7 @@ def test_measures_after_join():
         carrier_count=lambda t: t.count(),
     )
 
-    joined = flights_st.join(carriers_st, on=lambda f, c: f.carrier == c.code)
+    joined = flights_st.join_many(carriers_st, lambda f, c: f.carrier == c.code)
 
     # After join, measures should be prefixed
     assert set(joined.measures) == {"flights.flight_count", "carriers.carrier_count"}

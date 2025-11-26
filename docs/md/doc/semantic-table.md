@@ -212,7 +212,7 @@ flights.join(carriers, condition, how="left")
 **Semantic Joins:**
 ```python
 # Specifies the relationship: one carrier has many flights
-flights.join_many(carriers, left_on="carrier", right_on="code")
+flights.join_many(carriers, lambda f, c: f.carrier == c.code)
 ```
 
 **What You Get:**
@@ -276,8 +276,7 @@ Use `join_many()` when one row in the left table can match multiple rows in the 
 # Join carriers to flights - one carrier has many flights
 flights_with_carriers = flights_st.join_many(
     carriers,
-    left_on="carrier",
-    right_on="code"
+    lambda f, c: f.carrier == c.code
 )
 
 # Inspect available dimensions and measures
@@ -296,8 +295,7 @@ Use `join_one()` when rows have a unique matching relationship (INNER JOIN).
 # Many flights → one carrier (each flight has exactly one carrier)
 flights_with_carrier = flights_st.join_one(
     carriers,
-    left_on="carrier",
-    right_on="code"
+    lambda f, c: f.carrier == c.code
 )
 ```
 

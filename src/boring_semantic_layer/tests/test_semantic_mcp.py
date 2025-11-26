@@ -512,7 +512,7 @@ class TestJoinedModels:
                     "description": "Total number of flights",
                 },
             )
-            .join_one(carriers, left_on="carrier", right_on="code")
+            .join_one(carriers, lambda f, c: f.carrier == c.code)
         )
 
         return {"flights": flights, "carriers": carriers}
@@ -688,7 +688,7 @@ class TestDescriptionSupport:
             .with_measures(carrier_count=lambda t: t.count())
         )
 
-        flights_with_carriers = flights.join_one(carriers, left_on="carrier", right_on="code")
+        flights_with_carriers = flights.join_one(carriers, lambda f, c: f.carrier == c.code)
 
         mcp = MCPSemanticModel(models={"flights_with_carriers": flights_with_carriers})
 

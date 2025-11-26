@@ -18,10 +18,12 @@ def _parse_dimensions(dimensions: Mapping[str, Any]) -> dict[str, Dimension]:
 
     Supports two formats:
     1. Simple format (backwards compatible): name: expression_string
-    2. Extended format with descriptions and time dimension info:
+    2. Extended format with descriptions and metadata:
         name:
           expr: expression_string
           description: "description text"
+          is_entity: true/false
+          is_event_timestamp: true/false
           is_time_dimension: true/false
           smallest_time_grain: "TIME_GRAIN_DAY"
     """
@@ -44,6 +46,8 @@ def _parse_dimensions(dimensions: Mapping[str, Any]) -> dict[str, Dimension]:
 
             expr_str = config["expr"]
             description = config.get("description")
+            is_entity = config.get("is_entity", False)
+            is_event_timestamp = config.get("is_event_timestamp", False)
             is_time_dimension = config.get("is_time_dimension", False)
             smallest_time_grain = config.get("smallest_time_grain")
 
@@ -51,6 +55,8 @@ def _parse_dimensions(dimensions: Mapping[str, Any]) -> dict[str, Dimension]:
             result[name] = Dimension(
                 expr=lambda t, d=deferred: d.resolve(t),
                 description=description,
+                is_entity=is_entity,
+                is_event_timestamp=is_event_timestamp,
                 is_time_dimension=is_time_dimension,
                 smallest_time_grain=smallest_time_grain,
             )
@@ -151,6 +157,7 @@ def _parse_joins(
                 )
 
         join_type = join_config.get("type", "one")
+        how = join_config.get("how")  # Optional join method override
 
         if join_type == "one":
             left_on = join_config.get("left_on")
@@ -159,10 +166,12 @@ def _parse_joins(
                 raise ValueError(
                     f"Join '{alias}' of type 'one' must specify 'left_on' and 'right_on' fields",
                 )
+            # Convert left_on/right_on to lambda condition
+            on_condition = lambda left, right, l=left_on, r=right_on: getattr(left, l) == getattr(right, r)
             result_model = result_model.join_one(
                 join_model,
-                left_on=left_on,
-                right_on=right_on,
+                on=on_condition,
+                how=how if how else "inner",
             )
         elif join_type == "many":
             left_on = join_config.get("left_on")
@@ -171,16 +180,16 @@ def _parse_joins(
                 raise ValueError(
                     f"Join '{alias}' of type 'many' must specify 'left_on' and 'right_on' fields",
                 )
+            # Convert left_on/right_on to lambda condition
+            on_condition = lambda left, right, l=left_on, r=right_on: getattr(left, l) == getattr(right, r)
             result_model = result_model.join_many(
                 join_model,
-                left_on=left_on,
-                right_on=right_on,
+                on=on_condition,
+                how=how if how else "left",
             )
-        elif join_type == "cross":
-            result_model = result_model.join_cross(join_model)
         else:
             raise ValueError(
-                f"Invalid join type '{join_type}'. Must be 'one', 'many', or 'cross'",
+                f"Invalid join type '{join_type}'. Must be 'one' or 'many'",
             )
 
     return result_model
@@ -205,12 +214,16 @@ def from_yaml(
           table: flights_tbl
           description: "Flight data model"
           dimensions:
-            origin: _.origin
+            origin:
+              expr: _.origin
+              description: "Origin airport code"
+              is_entity: true
             destination: _.destination
             carrier: _.carrier
             arr_time:
               expr: _.arr_time
               description: "Arrival time"
+              is_event_timestamp: true
               is_time_dimension: true
               smallest_time_grain: "TIME_GRAIN_DAY"
           measures:

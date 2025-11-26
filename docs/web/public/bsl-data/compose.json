@@ -1,5 +1,5 @@
 {
-  "markdown": "# Composing Models\n\nBuild complex data models by combining multiple semantic tables through joins. Model composition allows you to create rich, multi-dimensional views of your data.\n\n## Composition via Joins\n\nModel composition in BSL is achieved through **joins**. When you join semantic tables, the result is a new composed model that contains **all dimensions and measures** from both tables.\n\n<note type=\"info\">\nEach join creates a new semantic model with the combined dimensions and measures from all joined tables. This allows you to build progressively richer models.\n</note>\n\n## Example: Two-Level Composition\n\nLet's build a composed model step-by-step, showing available dimensions and measures at each level.\n\n### Level 0: Base Models\n\nFirst, let's set up our base tables:\n\n```setup_ibis_tables\nimport ibis\nfrom boring_semantic_layer import to_semantic_table\n\n# Create sample data\ncon = ibis.duckdb.connect(\":memory:\")\n\n# Flights table\nflights_data = ibis.memtable({\n    \"flight_id\": [1, 2, 3],\n    \"carrier_code\": [\"AA\", \"UA\", \"DL\"],\n    \"aircraft_id\": [101, 102, 103],\n    \"distance\": [1000, 1500, 800],\n    \"passengers\": [150, 180, 120]\n})\nflights_tbl = con.create_table(\"flights\", flights_data)\n\n# Carriers table\ncarriers_data = ibis.memtable({\n    \"code\": [\"AA\", \"UA\", \"DL\"],\n    \"name\": [\"American Airlines\", \"United Airlines\", \"Delta Air Lines\"],\n    \"country\": [\"USA\", \"USA\", \"USA\"]\n})\ncarriers_tbl = con.create_table(\"carriers\", carriers_data)\n\n# Aircraft table\naircraft_data = ibis.memtable({\n    \"id\": [101, 102, 103],\n    \"model\": [\"Boeing 737\", \"Airbus A320\", \"Boeing 777\"],\n    \"capacity\": [180, 200, 350]\n})\naircraft_tbl = con.create_table(\"aircraft\", aircraft_data)\n```\n\n<collapsedcodeblock code-block=\"setup_ibis_tables\" title=\"Define Ibis Tables\"></collapsedcodeblock>\n\n```setup_semantic_models\n# Create semantic tables\nflights_st = (\n    to_semantic_table(flights_tbl, name=\"flights\")\n    .with_dimensions(\n        flight_id=lambda t: t.flight_id,\n        carrier_code=lambda t: t.carrier_code,\n        aircraft_id=lambda t: t.aircraft_id\n    )\n    .with_measures(\n        flight_count=lambda t: t.count(),\n        total_distance=lambda t: t.distance.sum(),\n        total_passengers=lambda t: t.passengers.sum()\n    )\n)\n\ncarriers_st = (\n    to_semantic_table(carriers_tbl, name=\"carriers\")\n    .with_dimensions(\n        code=lambda t: t.code,\n        name=lambda t: t.name,\n        country=lambda t: t.country\n    )\n    .with_measures(\n        carrier_count=lambda t: t.count()\n    )\n)\n\naircraft_st = (\n    to_semantic_table(aircraft_tbl, name=\"aircraft\")\n    .with_dimensions(\n        id=lambda t: t.id,\n        model=lambda t: t.model\n    )\n    .with_measures(\n        aircraft_count=lambda t: t.count(),\n        total_capacity=lambda t: t.capacity.sum()\n    )\n)\n```\n\n<collapsedcodeblock code-block=\"setup_semantic_models\" title=\"Define Semantic Models\"></collapsedcodeblock>\n\n```level0_dimensions\nflights_st.dimensions, flights_st.measures\n```\n\n<regularoutput code-block=\"level0_dimensions\"></regularoutput>\n\n### Level 1: First Join (Flights + Carriers)\n\nJoin carriers to flights to add carrier information:\n\n```level1_join\n# Join carriers to flights\nflights_with_carriers = flights_st.join_many(\n    carriers_st,\n    left_on=\"carrier_code\",\n    right_on=\"code\"\n)\n\n# Inspect dimensions - now includes both flights and carriers\nflights_with_carriers.dimensions, flights_with_carriers.measures\n```\n<regularoutput code-block=\"level1_join\"></regularoutput>\n\n### Level 2: Second Join (+ Aircraft)\n\nAdd aircraft information to create a fully composed model:\n\n```level2_join\n# Join aircraft to the composed model\nfull_model = flights_with_carriers.join_many(\n    aircraft_st,\n    left_on=\"aircraft_id\",\n    right_on=\"id\"\n)\n\n# Inspect dimensions - now includes flights, carriers, AND aircraft\nfull_model.dimensions, full_model.measures\n```\n<regularoutput code-block=\"level2_join\"></regularoutput>\n\n## Query the Composed Model\n\nNow you can query across all joined tables:\n\n```composed_query\n# Query using dimensions and measures from all three tables\nresult = (\n    full_model\n    .group_by( \"aircraft.model\")\n    .aggregate(\"flight_count\", \"total_passengers\", \"total_capacity\")\n)\n```\n\n<bslquery code-block=\"composed_query\"></bslquery>\n\n## Key Takeaways\n\n- **Composition via Joins**: Use `join_many()`, `join_one()`, or `join()` to compose models\n- **Additive**: Each join adds dimensions and measures from the joined table\n- **Table Prefixes**: Dimensions/measures are prefixed with table names (`flights.`, `carriers.`, `aircraft.`)\n- **No Limit**: Compose as many models as needed for your analysis\n- **Incremental**: Build from simple to complex, one join at a time\n\n## Next Steps\n\n- Learn about [YAML Configuration](/building/yaml) for declarative model composition\n- Explore [Query Methods](/querying/methods) for querying composed models\n",
+  "markdown": "# Composing Models\n\nBuild complex data models by combining multiple semantic tables through joins. Model composition allows you to create rich, multi-dimensional views of your data.\n\n## Composition via Joins\n\nModel composition in BSL is achieved through **joins**. When you join semantic tables, the result is a new composed model that contains **all dimensions and measures** from both tables.\n\n<note type=\"info\">\nEach join creates a new semantic model with the combined dimensions and measures from all joined tables. This allows you to build progressively richer models.\n</note>\n\n## Example: Two-Level Composition\n\nLet's build a composed model step-by-step, showing available dimensions and measures at each level.\n\n### Level 0: Base Models\n\nFirst, let's set up our base tables:\n\n```setup_ibis_tables\nimport ibis\nfrom boring_semantic_layer import to_semantic_table\n\n# Create sample data\ncon = ibis.duckdb.connect(\":memory:\")\n\n# Flights table\nflights_data = ibis.memtable({\n    \"flight_id\": [1, 2, 3],\n    \"carrier_code\": [\"AA\", \"UA\", \"DL\"],\n    \"aircraft_id\": [101, 102, 103],\n    \"distance\": [1000, 1500, 800],\n    \"passengers\": [150, 180, 120]\n})\nflights_tbl = con.create_table(\"flights\", flights_data)\n\n# Carriers table\ncarriers_data = ibis.memtable({\n    \"code\": [\"AA\", \"UA\", \"DL\"],\n    \"name\": [\"American Airlines\", \"United Airlines\", \"Delta Air Lines\"],\n    \"country\": [\"USA\", \"USA\", \"USA\"]\n})\ncarriers_tbl = con.create_table(\"carriers\", carriers_data)\n\n# Aircraft table\naircraft_data = ibis.memtable({\n    \"id\": [101, 102, 103],\n    \"model\": [\"Boeing 737\", \"Airbus A320\", \"Boeing 777\"],\n    \"capacity\": [180, 200, 350]\n})\naircraft_tbl = con.create_table(\"aircraft\", aircraft_data)\n```\n\n<collapsedcodeblock code-block=\"setup_ibis_tables\" title=\"Define Ibis Tables\"></collapsedcodeblock>\n\n```setup_semantic_models\n# Create semantic tables\nflights_st = (\n    to_semantic_table(flights_tbl, name=\"flights\")\n    .with_dimensions(\n        flight_id=lambda t: t.flight_id,\n        carrier_code=lambda t: t.carrier_code,\n        aircraft_id=lambda t: t.aircraft_id\n    )\n    .with_measures(\n        flight_count=lambda t: t.count(),\n        total_distance=lambda t: t.distance.sum(),\n        total_passengers=lambda t: t.passengers.sum()\n    )\n)\n\ncarriers_st = (\n    to_semantic_table(carriers_tbl, name=\"carriers\")\n    .with_dimensions(\n        code=lambda t: t.code,\n        name=lambda t: t.name,\n        country=lambda t: t.country\n    )\n    .with_measures(\n        carrier_count=lambda t: t.count()\n    )\n)\n\naircraft_st = (\n    to_semantic_table(aircraft_tbl, name=\"aircraft\")\n    .with_dimensions(\n        id=lambda t: t.id,\n        model=lambda t: t.model\n    )\n    .with_measures(\n        aircraft_count=lambda t: t.count(),\n        total_capacity=lambda t: t.capacity.sum()\n    )\n)\n```\n\n<collapsedcodeblock code-block=\"setup_semantic_models\" title=\"Define Semantic Models\"></collapsedcodeblock>\n\n```level0_dimensions\nflights_st.dimensions, flights_st.measures\n```\n\n<regularoutput code-block=\"level0_dimensions\"></regularoutput>\n\n### Level 1: First Join (Flights + Carriers)\n\nJoin carriers to flights to add carrier information:\n\n```level1_join\n# Join carriers to flights\nflights_with_carriers = flights_st.join_many(\n    carriers_st,\n    lambda f, c: f.carrier_code == c.code\n)\n\n# Inspect dimensions - now includes both flights and carriers\nflights_with_carriers.dimensions, flights_with_carriers.measures\n```\n<regularoutput code-block=\"level1_join\"></regularoutput>\n\n### Level 2: Second Join (+ Aircraft)\n\nAdd aircraft information to create a fully composed model:\n\n```level2_join\n# Join aircraft to the composed model\nfull_model = flights_with_carriers.join_many(\n    aircraft_st,\n    lambda f, a: f.aircraft_id == a.id\n)\n\n# Inspect dimensions - now includes flights, carriers, AND aircraft\nfull_model.dimensions, full_model.measures\n```\n<regularoutput code-block=\"level2_join\"></regularoutput>\n\n## Query the Composed Model\n\nNow you can query across all joined tables:\n\n```composed_query\n# Query using dimensions and measures from all three tables\nresult = (\n    full_model\n    .group_by( \"aircraft.model\")\n    .aggregate(\"flight_count\", \"total_passengers\", \"total_capacity\")\n)\n```\n\n<bslquery code-block=\"composed_query\"></bslquery>\n\n## Key Takeaways\n\n- **Composition via Joins**: Use `join_many()`, `join_one()`, or `join()` to compose models\n- **Additive**: Each join adds dimensions and measures from the joined table\n- **Table Prefixes**: Dimensions/measures are prefixed with table names (`flights.`, `carriers.`, `aircraft.`)\n- **No Limit**: Compose as many models as needed for your analysis\n- **Incremental**: Build from simple to complex, one join at a time\n\n## Next Steps\n\n- Learn about [YAML Configuration](/building/yaml) for declarative model composition\n- Explore [Query Methods](/querying/methods) for querying composed models\n",
   "queries": {
     "setup_ibis_tables": {
       "code": "import ibis\nfrom boring_semantic_layer import to_semantic_table\n\n# Create sample data\ncon = ibis.duckdb.connect(\":memory:\")\n\n# Flights table\nflights_data = ibis.memtable({\n    \"flight_id\": [1, 2, 3],\n    \"carrier_code\": [\"AA\", \"UA\", \"DL\"],\n    \"aircraft_id\": [101, 102, 103],\n    \"distance\": [1000, 1500, 800],\n    \"passengers\": [150, 180, 120]\n})\nflights_tbl = con.create_table(\"flights\", flights_data)\n\n# Carriers table\ncarriers_data = ibis.memtable({\n    \"code\": [\"AA\", \"UA\", \"DL\"],\n    \"name\": [\"American Airlines\", \"United Airlines\", \"Delta Air Lines\"],\n    \"country\": [\"USA\", \"USA\", \"USA\"]\n})\ncarriers_tbl = con.create_table(\"carriers\", carriers_data)\n\n# Aircraft table\naircraft_data = ibis.memtable({\n    \"id\": [101, 102, 103],\n    \"model\": [\"Boeing 737\", \"Airbus A320\", \"Boeing 777\"],\n    \"capacity\": [180, 200, 350]\n})\naircraft_tbl = con.create_table(\"aircraft\", aircraft_data)",
@@ -33,7 +33,7 @@
     "setup_semantic_models": {
       "code": "# Create semantic tables\nflights_st = (\n    to_semantic_table(flights_tbl, name=\"flights\")\n    .with_dimensions(\n        flight_id=lambda t: t.flight_id,\n        carrier_code=lambda t: t.carrier_code,\n        aircraft_id=lambda t: t.aircraft_id\n    )\n    .with_measures(\n        flight_count=lambda t: t.count(),\n        total_distance=lambda t: t.distance.sum(),\n        total_passengers=lambda t: t.passengers.sum()\n    )\n)\n\ncarriers_st = (\n    to_semantic_table(carriers_tbl, name=\"carriers\")\n    .with_dimensions(\n        code=lambda t: t.code,\n        name=lambda t: t.name,\n        country=lambda t: t.country\n    )\n    .with_measures(\n        carrier_count=lambda t: t.count()\n    )\n)\n\naircraft_st = (\n    to_semantic_table(aircraft_tbl, name=\"aircraft\")\n    .with_dimensions(\n        id=lambda t: t.id,\n        model=lambda t: t.model\n    )\n    .with_measures(\n        aircraft_count=lambda t: t.count(),\n        total_capacity=lambda t: t.capacity.sum()\n    )\n)",
       "sql": "SELECT\n  *\nFROM \"memory\".\"main\".\"aircraft\"",
-      "plan": "SemanticTableOp[aircraft]\n  2 dimensions: id, model\n  2 measures: aircraft_count, total_capacity",
+      "plan": "\u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34maircraft\u001b[0m\n  \u001b[36mid [dim]\u001b[0m\n  \u001b[36mmodel [dim]\u001b[0m\n  \u001b[35maircraft_count [measure]\u001b[0m\n  \u001b[35mtotal_capacity [measure]\u001b[0m",
       "table": {
         "columns": [
           "id",
@@ -60,27 +60,148 @@
       }
     },
     "level0_dimensions": {
-      "output": [
-        "('flight_id', 'carrier_code', 'aircraft_id')",
-        "('flight_count', 'total_distance', 'total_passengers')"
-      ]
+      "code": "flights_st.dimensions, flights_st.measures",
+      "sql": "SELECT\n  *\nFROM \"memory\".\"main\".\"aircraft\"",
+      "plan": "\u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34maircraft\u001b[0m\n  \u001b[36mid [dim]\u001b[0m\n  \u001b[36mmodel [dim]\u001b[0m\n  \u001b[35maircraft_count [measure]\u001b[0m\n  \u001b[35mtotal_capacity [measure]\u001b[0m",
+      "table": {
+        "columns": [
+          "id",
+          "model",
+          "capacity"
+        ],
+        "data": [
+          [
+            101,
+            "Boeing 737",
+            180
+          ],
+          [
+            102,
+            "Airbus A320",
+            200
+          ],
+          [
+            103,
+            "Boeing 777",
+            350
+          ]
+        ]
+      }
     },
     "level1_join": {
-      "output": [
-        "('flights.flight_id', 'flights.carrier_code', 'flights.aircraft_id', 'carriers.code', 'carriers.name', 'carriers.country')",
-        "('flights.flight_count', 'flights.total_distance', 'flights.total_passengers', 'carriers.carrier_count')"
-      ]
+      "code": "# Join carriers to flights\nflights_with_carriers = flights_st.join_many(\n    carriers_st,\n    lambda f, c: f.carrier_code == c.code\n)\n\n# Inspect dimensions - now includes both flights and carriers\nflights_with_carriers.dimensions, flights_with_carriers.measures",
+      "sql": "SELECT\n  \"t2\".\"flight_id\",\n  \"t2\".\"carrier_code\",\n  \"t2\".\"aircraft_id\",\n  \"t2\".\"distance\",\n  \"t2\".\"passengers\",\n  \"t3\".\"code\",\n  \"t3\".\"name\",\n  \"t3\".\"country\"\nFROM \"memory\".\"main\".\"flights\" AS \"t2\"\nLEFT OUTER JOIN \"memory\".\"main\".\"carriers\" AS \"t3\"\n  ON \"t2\".\"carrier_code\" = \"t3\".\"code\"",
+      "plan": "<boring_semantic_layer.ops.SemanticJoinOp object at 0x1443bd1f0>",
+      "table": {
+        "columns": [
+          "flight_id",
+          "carrier_code",
+          "aircraft_id",
+          "distance",
+          "passengers",
+          "code",
+          "name",
+          "country"
+        ],
+        "data": [
+          [
+            1,
+            "AA",
+            101,
+            1000,
+            150,
+            "AA",
+            "American Airlines",
+            "USA"
+          ],
+          [
+            2,
+            "UA",
+            102,
+            1500,
+            180,
+            "UA",
+            "United Airlines",
+            "USA"
+          ],
+          [
+            3,
+            "DL",
+            103,
+            800,
+            120,
+            "DL",
+            "Delta Air Lines",
+            "USA"
+          ]
+        ]
+      }
     },
     "level2_join": {
-      "output": [
-        "('flights.flight_id', 'flights.carrier_code', 'flights.aircraft_id', 'carriers.code', 'carriers.name', 'carriers.country', 'aircraft.id', 'aircraft.model')",
-        "('flights.flight_count', 'flights.total_distance', 'flights.total_passengers', 'carriers.carrier_count', 'aircraft.aircraft_count', 'aircraft.total_capacity')"
-      ]
+      "code": "# Join aircraft to the composed model\nfull_model = flights_with_carriers.join_many(\n    aircraft_st,\n    lambda f, a: f.aircraft_id == a.id\n)\n\n# Inspect dimensions - now includes flights, carriers, AND aircraft\nfull_model.dimensions, full_model.measures",
+      "sql": "SELECT\n  \"t3\".\"flight_id\",\n  \"t3\".\"carrier_code\",\n  \"t3\".\"aircraft_id\",\n  \"t3\".\"distance\",\n  \"t3\".\"passengers\",\n  \"t4\".\"code\",\n  \"t4\".\"name\",\n  \"t4\".\"country\",\n  \"t5\".\"id\",\n  \"t5\".\"model\",\n  \"t5\".\"capacity\"\nFROM \"memory\".\"main\".\"flights\" AS \"t3\"\nLEFT OUTER JOIN \"memory\".\"main\".\"carriers\" AS \"t4\"\n  ON \"t3\".\"carrier_code\" = \"t4\".\"code\"\nLEFT OUTER JOIN \"memory\".\"main\".\"aircraft\" AS \"t5\"\n  ON \"t3\".\"aircraft_id\" = \"t5\".\"id\"",
+      "plan": "<boring_semantic_layer.ops.SemanticJoinOp object at 0x1443c8bf0>",
+      "table": {
+        "columns": [
+          "flight_id",
+          "carrier_code",
+          "aircraft_id",
+          "distance",
+          "passengers",
+          "code",
+          "name",
+          "country",
+          "id",
+          "model",
+          "capacity"
+        ],
+        "data": [
+          [
+            1,
+            "AA",
+            101,
+            1000,
+            150,
+            "AA",
+            "American Airlines",
+            "USA",
+            101,
+            "Boeing 737",
+            180
+          ],
+          [
+            2,
+            "UA",
+            102,
+            1500,
+            180,
+            "UA",
+            "United Airlines",
+            "USA",
+            102,
+            "Airbus A320",
+            200
+          ],
+          [
+            3,
+            "DL",
+            103,
+            800,
+            120,
+            "DL",
+            "Delta Air Lines",
+            "USA",
+            103,
+            "Boeing 777",
+            350
+          ]
+        ]
+      }
     },
     "composed_query": {
       "code": "# Query using dimensions and measures from all three tables\nresult = (\n    full_model\n    .group_by( \"aircraft.model\")\n    .aggregate(\"flight_count\", \"total_passengers\", \"total_capacity\")\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t10\".\"aircraft.model\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t10\".\"passengers\") AS \"total_passengers\",\n    SUM(\"t10\".\"capacity\") AS \"total_capacity\"\n  FROM (\n    SELECT\n      \"t9\".\"distance\",\n      \"t9\".\"carrier_code\",\n      \"t9\".\"aircraft_id\",\n      \"t9\".\"passengers\",\n      \"t9\".\"code\",\n      \"t9\".\"model\",\n      \"t9\".\"capacity\",\n      \"t9\".\"id\",\n      \"t9\".\"model\" AS \"aircraft.model\"\n    FROM (\n      SELECT\n        \"t6\".\"distance\",\n        \"t6\".\"carrier_code\",\n        \"t6\".\"aircraft_id\",\n        \"t6\".\"passengers\",\n        \"t7\".\"code\",\n        \"t8\".\"model\",\n        \"t8\".\"capacity\",\n        \"t8\".\"id\"\n      FROM (\n        SELECT\n          \"t0\".\"distance\",\n          \"t0\".\"carrier_code\",\n          \"t0\".\"aircraft_id\",\n          \"t0\".\"passengers\"\n        FROM \"memory\".\"main\".\"flights\" AS \"t0\"\n      ) AS \"t6\"\n      LEFT OUTER JOIN (\n        SELECT\n          \"t1\".\"code\"\n        FROM \"memory\".\"main\".\"carriers\" AS \"t1\"\n      ) AS \"t7\"\n        ON \"t6\".\"carrier_code\" = \"t7\".\"code\"\n      LEFT OUTER JOIN (\n        SELECT\n          \"t2\".\"model\",\n          \"t2\".\"capacity\",\n          \"t2\".\"id\"\n        FROM \"memory\".\"main\".\"aircraft\" AS \"t2\"\n      ) AS \"t8\"\n        ON \"t6\".\"aircraft_id\" = \"t8\".\"id\"\n    ) AS \"t9\"\n  ) AS \"t10\"\n  GROUP BY\n    1\n) AS \"t11\"",
-      "plan": "r0 := SemanticTableOp[aircraft]\n  2 dimensions: id, model\n  2 measures: aircraft_count, total_capacity\n\nr1 := SemanticTableOp[flights]\n  3 dimensions: flight_id, carrier_code, aircraft_id\n  3 measures: flight_count, total_distance, total_passengers\n\nr2 := SemanticTableOp[carriers]\n  3 dimensions: code, name, country\n  1 measure: carrier_count\n\nr3 := SemanticJoinOp\n  left: flights\n  right: carriers\n  how: 'left'\n  on: <function>\n\nr4 := SemanticJoinOp\n  left: SemanticJoinOp\n  right: aircraft\n  how: 'left'\n  on: <function>\n\nr5 := SemanticGroupByOp\n  source: SemanticJoinOp\n  keys: ['aircraft.model']\n  inherited dimensions: 8\n  inherited measures: 6\n\nSemanticAggregateOp\n  source: SemanticGroupByOp\n  keys: ['aircraft.model']\n  aggs: [flight_count, total_passengers, total_capacity]",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t7\".\"aircraft.model\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t7\".\"passengers\") AS \"total_passengers\",\n    SUM(\"t7\".\"capacity\") AS \"total_capacity\"\n  FROM (\n    SELECT\n      \"t6\".\"flight_id\",\n      \"t6\".\"carrier_code\",\n      \"t6\".\"aircraft_id\",\n      \"t6\".\"distance\",\n      \"t6\".\"passengers\",\n      \"t6\".\"code\",\n      \"t6\".\"name\",\n      \"t6\".\"country\",\n      \"t6\".\"id\",\n      \"t6\".\"model\",\n      \"t6\".\"capacity\",\n      \"t6\".\"model\" AS \"aircraft.model\"\n    FROM (\n      SELECT\n        \"t3\".\"flight_id\",\n        \"t3\".\"carrier_code\",\n        \"t3\".\"aircraft_id\",\n        \"t3\".\"distance\",\n        \"t3\".\"passengers\",\n        \"t4\".\"code\",\n        \"t4\".\"name\",\n        \"t4\".\"country\",\n        \"t5\".\"id\",\n        \"t5\".\"model\",\n        \"t5\".\"capacity\"\n      FROM \"memory\".\"main\".\"flights\" AS \"t3\"\n      LEFT OUTER JOIN \"memory\".\"main\".\"carriers\" AS \"t4\"\n        ON \"t3\".\"carrier_code\" = \"t4\".\"code\"\n      LEFT OUTER JOIN \"memory\".\"main\".\"aircraft\" AS \"t5\"\n        ON \"t3\".\"aircraft_id\" = \"t5\".\"id\"\n    ) AS \"t6\"\n  ) AS \"t7\"\n  GROUP BY\n    1\n) AS \"t8\"",
+      "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34maircraft\u001b[0m\n  \u001b[36mid [dim]\u001b[0m\n  \u001b[36mmodel [dim]\u001b[0m\n  \u001b[35maircraft_count [measure]\u001b[0m\n  \u001b[35mtotal_capacity [measure]\u001b[0m\n\nr1 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36mflight_id [dim]\u001b[0m\n  \u001b[36mcarrier_code [dim]\u001b[0m\n  \u001b[36maircraft_id [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[35mtotal_passengers [measure]\u001b[0m\n\nr2 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mcarriers\u001b[0m\n  \u001b[36mcode [dim]\u001b[0m\n  \u001b[36mname [dim]\u001b[0m\n  \u001b[36mcountry [dim]\u001b[0m\n  \u001b[35mcarrier_count [measure]\u001b[0m\n\nr3 := Join\n  how:\n    left\n  left:\n    r1\n  right:\n    r2\n\nr4 := Join\n  how:\n    left\n  left:\n    r3\n  right:\n    r0\n\nr5 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr4\u001b[0m]\n  keys:\n    \u001b[36maircraft.model\u001b[0m\n\n\u001b[1;32mAggregate\u001b[0m[\u001b[93mr5\u001b[0m]\n  groups:\n    \u001b[36maircraft.model\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m\n    \u001b[35mtotal_passengers\u001b[0m\n    \u001b[35mtotal_capacity\u001b[0m",
       "table": {
         "columns": [
           "aircraft.model",
@@ -89,6 +210,12 @@
           "total_capacity"
         ],
         "data": [
+          [
+            "Boeing 777",
+            1,
+            120,
+            350
+          ],
           [
             "Airbus A320",
             1,
@@ -100,12 +227,6 @@
             1,
             150,
             180
-          ],
-          [
-            "Boeing 777",
-            1,
-            120,
-            350
           ]
         ]
       },
@@ -119,7 +240,7 @@
             }
           },
           "data": {
-            "name": "data-7e81fa099da273faf8fb9af08f53ae8a"
+            "name": "data-f0a68cc4fa68ffbd859216926b5e49d6"
           },
           "mark": {
             "type": "bar"
@@ -173,13 +294,7 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-7e81fa099da273faf8fb9af08f53ae8a": [
-              {
-                "aircraft_model": "Boeing 737",
-                "flight_count": 1,
-                "total_passengers": 150,
-                "total_capacity": 180
-              },
+            "data-f0a68cc4fa68ffbd859216926b5e49d6": [
               {
                 "aircraft_model": "Boeing 777",
                 "flight_count": 1,
@@ -191,6 +306,12 @@
                 "flight_count": 1,
                 "total_passengers": 180,
                 "total_capacity": 200
+              },
+              {
+                "aircraft_model": "Boeing 737",
+                "flight_count": 1,
+                "total_passengers": 150,
+                "total_capacity": 180
               }
             ]
           }

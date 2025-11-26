@@ -53,9 +53,9 @@ def _collect_all_refs(expr: MeasureExpr, out: set[str]) -> None:
 
 
 @curry
-def _compile_binop(by_tbl, all_tbl, op: str, left: Any, right: Any):
-    left_val = _compile_formula(left, by_tbl, all_tbl)
-    right_val = _compile_formula(right, by_tbl, all_tbl)
+def _compile_binop(by_tbl, all_tbl, base_tbl, op: str, left: Any, right: Any):
+    left_val = _compile_formula(left, by_tbl, all_tbl, base_tbl)
+    right_val = _compile_formula(right, by_tbl, all_tbl, base_tbl)
     ops = {
         "add": lambda left_val, right_val: left_val + right_val,
         "sub": lambda left_val, right_val: left_val - right_val,
@@ -79,7 +79,7 @@ def _get_ibis_module(table):
         return ibis
 
 
-def _compile_formula(expr: MeasureExpr, by_tbl, all_tbl):
+def _compile_formula(expr: MeasureExpr, by_tbl, all_tbl, base_tbl):
     """Compile a measure expression to ibis, using functional dispatch for AggregationExpr."""
     from .measure_scope import AggregationExpr
 
@@ -100,22 +100,17 @@ def _compile_formula(expr: MeasureExpr, by_tbl, all_tbl):
                 f"Expected a measure computing {expr.ref.column}.{expr.ref.operation}() to exist."
             )
     if isinstance(expr, AggregationExpr):
-        # If AggregationExpr wasn't resolved to a measure, we might be in a calculated
-        # measure context (BinOp). In that case, the raw column won't exist in the
-        # grouped table. We should raise a helpful error.
-        if expr.column not in by_tbl.columns and expr.column != "*":
+        # Handle inline aggregations in calculated measures
+        # Check if column exists in base table
+        if expr.column != "*" and expr.column not in base_tbl.columns:
             raise ValueError(
                 f"Unresolved AggregationExpr: {expr}. "
-                f"Column '{expr.column}' not found in grouped table. "
-                f"This can happen when using inline aggregations like _.distance.sum() in complex expressions. "
-                f"Consider defining base measures first, e.g.:\n"
-                f"  .with_measures(total_distance=_.distance.sum())\n"
-                f"  .with_measures(my_calc=lambda t: t.total_distance + ...))"
+                f"Column '{expr.column}' not found in base table. "
+                f"Available columns: {base_tbl.columns}"
             )
 
-        # Compile AggregationExpr directly from grouped table
-        # This allows inline aggregations like lambda t: t.distance.sum() to work
-        # when the measure is a simple aggregation (not part of a BinOp)
+        # Apply the aggregation to the base table column
+        # The result will be an aggregation that can be used in the grouped context
         operations = {
             "sum": lambda col: col.sum(),
             "mean": lambda col: col.mean(),
@@ -129,15 +124,15 @@ def _compile_formula(expr: MeasureExpr, by_tbl, all_tbl):
         if op_fn is None:
             raise ValueError(f"Unknown aggregation operation: {expr.operation}")
 
-        # Apply the operation to the column
+        # Apply the operation to the base table column
         if expr.operation == "count":
-            return by_tbl.count()
+            return base_tbl.count()
 
-        column = by_tbl[expr.column]
+        column = base_tbl[expr.column]
         result = op_fn(column)
         return result
     if isinstance(expr, BinOp):
-        return _compile_binop(by_tbl, all_tbl, expr.op, expr.left, expr.right)
+        return _compile_binop(by_tbl, all_tbl, base_tbl, expr.op, expr.left, expr.right)
     return expr
 
 
@@ -418,7 +413,7 @@ def compile_grouped_with_all(
         out = by_tbl
 
     # Step 5: Apply calculated measures
-    calc_cols = {name: _compile_formula(ast, out, all_tbl) for name, ast in calc_specs.items()}
+    calc_cols = {name: _compile_formula(ast, out, all_tbl, base_tbl) for name, ast in calc_specs.items()}
     out = out.mutate(**calc_cols)
 
     # Step 6: Select requested columns

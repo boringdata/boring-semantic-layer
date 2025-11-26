@@ -415,6 +415,12 @@ def _build_json_definition(
     result = {
         "dimensions": {n: spec.to_json() for n, spec in dims_dict.items()},
         "measures": {n: spec.to_json() for n, spec in meas_dict.items()},
+        "entity_dimensions": {
+            n: spec.to_json() for n, spec in dims_dict.items() if spec.is_entity
+        },
+        "event_timestamp": {
+            n: spec.to_json() for n, spec in dims_dict.items() if spec.is_event_timestamp
+        },
         "time_dimensions": {
             n: spec.to_json() for n, spec in dims_dict.items() if spec.is_time_dimension
         },
@@ -429,7 +435,9 @@ def _build_json_definition(
 class Dimension:
     expr: Callable[[ir.Table], ir.Value] | Deferred
     description: str | None = None
+    is_entity: bool = False
     is_time_dimension: bool = False
+    is_event_timestamp: bool = False
     smallest_time_grain: str | None = None
 
     def __call__(self, table: ir.Table) -> ir.Value:
@@ -437,15 +445,17 @@ class Dimension:
 
     def to_json(self) -> Mapping[str, Any]:
         base = {"description": self.description}
-        return (
-            {**base, "smallest_time_grain": self.smallest_time_grain}
-            if self.is_time_dimension
-            else base
-        )
+        if self.is_entity:
+            base["is_entity"] = True
+        if self.is_event_timestamp:
+            base["is_event_timestamp"] = True
+        if self.is_time_dimension:
+            base["smallest_time_grain"] = self.smallest_time_grain
+        return base
 
     def __hash__(self) -> int:
         return hash(
-            (self.description, self.is_time_dimension, self.smallest_time_grain),
+            (self.description, self.is_entity, self.is_event_timestamp, self.is_time_dimension, self.smallest_time_grain),
         )
 
 
@@ -1448,12 +1458,13 @@ class SemanticJoinOp(Relation):
 
         return SemanticFilter(source=self, predicate=predicate)
 
-    def join(
+    def join_one(
         self,
         other: SemanticTable,
-        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
+        on: Callable[[Any, Any], ir.BooleanValue],
         how: str = "inner",
     ):
+        """Join with one-to-one relationship semantics."""
         from .expr import SemanticJoin
 
         return SemanticJoin(
@@ -1463,34 +1474,43 @@ class SemanticJoinOp(Relation):
             how=how,
         )
 
-    def join_one(
-        self,
-        other: SemanticTable,
-        left_on: str,
-        right_on: str,
-    ):
-        from .expr import SemanticJoin
-
-        return SemanticJoin(
-            left=self,
-            right=other.op(),
-            on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
-            how="inner",
-        )
-
     def join_many(
         self,
         other: SemanticTable,
-        left_on: str,
-        right_on: str,
+        on: Callable[[Any, Any], ir.BooleanValue],
+        how: str = "left",
     ):
+        """Join with one-to-many relationship semantics."""
         from .expr import SemanticJoin
 
         return SemanticJoin(
             left=self,
             right=other.op(),
-            on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
-            how="left",
+            on=on,
+            how=how,
+        )
+
+    def join_cross(self, other: SemanticTable):
+        """Cross join (Cartesian product) with another semantic model."""
+        from .expr import SemanticJoin
+
+        return SemanticJoin(
+            left=self,
+            right=other.op(),
+            on=None,
+            how="cross",
+        )
+
+    def join(self, *args, **kwargs):
+        """Deprecated: Use join_one(), join_many(), or join_cross() instead."""
+        raise TypeError(
+            "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
+            "For one-to-one relationships:\n"
+            "  table.join_one(other, lambda l, r: l.id == r.id, how='inner')\n\n"
+            "For one-to-many relationships:\n"
+            "  table.join_many(other, lambda l, r: l.id == r.id, how='left')\n\n"
+            "For Cartesian product:\n"
+            "  table.join_cross(other)"
         )
 
     def index(

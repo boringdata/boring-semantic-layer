@@ -33,6 +33,8 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
 
             dim_metadata[name] = {
                 "description": dim.description,
+                "is_entity": dim.is_entity,
+                "is_event_timestamp": dim.is_event_timestamp,
                 "is_time_dimension": dim.is_time_dimension,
                 "smallest_time_grain": dim.smallest_time_grain,
                 "expr": expr_str,
@@ -415,6 +417,8 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
         return ops.Dimension(
             expr=_deserialize_expr(dim_data.get("expr"), fallback_name=name),
             description=dim_data.get("description"),
+            is_entity=dim_data.get("is_entity", False),
+            is_event_timestamp=dim_data.get("is_event_timestamp", False),
             is_time_dimension=dim_data.get("is_time_dimension", False),
             smallest_time_grain=dim_data.get("smallest_time_grain"),
         )

@@ -7,12 +7,13 @@ semantic tables. All functions are thin wrappers around SemanticModel methods.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ibis.expr import types as ir
 
 from .expr import SemanticModel
+from .ops import Dimension
 
 
 def to_semantic_table(
@@ -45,52 +46,65 @@ def to_semantic_table(
 def join_one(
     left: SemanticModel,
     other: SemanticModel,
-    left_on: str,
-    right_on: str,
+    on: Callable[[Any, Any], ir.BooleanValue],
+    how: str = "inner",
 ) -> SemanticModel:
     """Join two semantic tables with a one-to-one relationship.
 
     Args:
         left: Left semantic table
         other: Right semantic table
-        left_on: Column name in left table
-        right_on: Column name in right table
+        on: Lambda function taking (left, right) tables and returning a boolean condition
+        how: Join type - "inner", "left", "right", or "outer" (default: "inner")
 
     Returns:
         Joined SemanticModel
+
+    Examples:
+        >>> join_one(orders, customers, lambda o, c: o.customer_id == c.customer_id)
+        >>> join_one(orders, customers, lambda o, c: o.customer_id == c.customer_id, how="left")
+        >>> join_one(orders, customers, lambda o, c: o.customer_id == c.customer_id, how="outer")
     """
-    return left.join_one(other, left_on, right_on)
+    return left.join_one(other, on, how)
 
 
 def join_many(
     left: SemanticModel,
     other: SemanticModel,
-    left_on: str,
-    right_on: str,
+    on: Callable[[Any, Any], ir.BooleanValue],
+    how: str = "left",
 ) -> SemanticModel:
     """Join two semantic tables with a one-to-many relationship.
 
     Args:
         left: Left semantic table
         other: Right semantic table
-        left_on: Column name in left table
-        right_on: Column name in right table
+        on: Lambda function taking (left, right) tables and returning a boolean condition
+        how: Join type - "inner", "left", "right", or "outer" (default: "left")
 
     Returns:
         Joined SemanticModel
+
+    Examples:
+        >>> join_many(customer, orders, lambda c, o: c.customer_id == o.customer_id)
+        >>> join_many(customer, orders, lambda c, o: c.customer_id == o.customer_id, how="inner")
+        >>> join_many(customer, orders, lambda c, o: c.customer_id == o.customer_id, how="right")
     """
-    return left.join_many(other, left_on, right_on)
+    return left.join_many(other, on, how)
 
 
 def join_cross(left: SemanticModel, other: SemanticModel) -> SemanticModel:
-    """Cross join two semantic tables.
+    """Cross join (Cartesian product) two semantic tables.
 
     Args:
         left: Left semantic table
         other: Right semantic table
 
     Returns:
-        Cross-joined SemanticModel
+        Joined SemanticModel (Cartesian product of all rows)
+
+    Examples:
+        >>> join_cross(table_a, table_b)  # All combinations of rows
     """
     return left.join_cross(other)
 
@@ -182,3 +196,79 @@ def limit_(table: SemanticModel, n: int) -> SemanticModel:
         Limited SemanticModel
     """
     return table.limit(n)
+
+
+def entity_dimension(
+    expr: Callable[[ir.Table], ir.Value],
+    description: str | None = None,
+) -> Dimension:
+    """Create an entity dimension (join key/identifier).
+
+    Entity dimensions represent the primary entities in your feature view,
+    similar to Feast's entity concept. These are typically used as join keys
+    (e.g., business_id, user_id, customer_id).
+
+    Args:
+        expr: Lambda function that extracts the entity column from a table
+        description: Optional description of the entity dimension
+
+    Returns:
+        Dimension marked as an entity
+
+    Examples:
+        >>> from boring_semantic_layer import entity_dimension, to_semantic_table
+        >>> model = (
+        ...     to_semantic_table(table, name="features")
+        ...     .with_dimensions(
+        ...         business_id=entity_dimension(lambda t: t.business_id),
+        ...         user_id=entity_dimension(lambda t: t.user_id, "User identifier"),
+        ...     )
+        ... )
+    """
+    return Dimension(
+        expr=expr,
+        description=description,
+        is_entity=True,
+    )
+
+
+def time_dimension(
+    expr: Callable[[ir.Table], ir.Value],
+    description: str | None = None,
+    smallest_time_grain: str | None = None,
+) -> Dimension:
+    """Create an event timestamp dimension for point-in-time correctness.
+
+    Event timestamp dimensions represent the primary temporal field for
+    feature engineering and point-in-time joins, similar to Feast's
+    event_timestamp. Unlike regular time dimensions (is_time_dimension),
+    this marks THE canonical timestamp for the feature view.
+
+    Args:
+        expr: Lambda function that extracts the timestamp column from a table
+        description: Optional description of the time dimension
+        smallest_time_grain: Optional time granularity (e.g., "TIME_GRAIN_DAY", "TIME_GRAIN_HOUR")
+
+    Returns:
+        Dimension marked as an event timestamp
+
+    Examples:
+        >>> from boring_semantic_layer import time_dimension, to_semantic_table
+        >>> model = (
+        ...     to_semantic_table(table, name="features")
+        ...     .with_dimensions(
+        ...         statement_date=time_dimension(
+        ...             lambda t: t.statement_date,
+        ...             "Statement date for balance features",
+        ...             smallest_time_grain="TIME_GRAIN_DAY",
+        ...         ),
+        ...     )
+        ... )
+    """
+    return Dimension(
+        expr=expr,
+        description=description,
+        is_event_timestamp=True,
+        is_time_dimension=True if smallest_time_grain else False,
+        smallest_time_grain=smallest_time_grain,
+    )

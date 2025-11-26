@@ -336,18 +336,23 @@ def _convert_semantic_join(node: SemanticJoinOp, catalog, *args):
     """Convert SemanticJoinOp to Ibis join.
 
     Handles both conditional joins (with ON clause) and cross joins.
+    Resolves dimensions from both left and right tables for the join condition.
     """
     left_tbl = convert(node.left, catalog=catalog)
     right_tbl = convert(node.right, catalog=catalog)
-    return (
-        left_tbl.join(
+
+    if node.on is not None:
+        # Get dimensions from left and right for semantic resolution
+        left_dims = {k: v.expr for k, v in node.left.get_dimensions().items()}
+        right_dims = {k: v.expr for k, v in node.right.get_dimensions().items()}
+
+        return left_tbl.join(
             right_tbl,
-            node.on(_Resolver(left_tbl), _Resolver(right_tbl)),
+            node.on(_Resolver(left_tbl, left_dims), _Resolver(right_tbl, right_dims)),
             how=node.how,
         )
-        if node.on is not None
-        else left_tbl.join(right_tbl, how=node.how)
-    )
+    else:
+        return left_tbl.join(right_tbl, how=node.how)
 
 
 @convert.register(SemanticAggregateOp)

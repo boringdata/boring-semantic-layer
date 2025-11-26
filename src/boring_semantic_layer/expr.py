@@ -186,6 +186,8 @@ def _create_dimension(expr: Dimension | Callable | dict) -> Dimension:
         return Dimension(
             expr=expr["expr"],
             description=expr.get("description"),
+            is_entity=expr.get("is_entity", False),
+            is_event_timestamp=expr.get("is_event_timestamp", False),
             is_time_dimension=expr.get("is_time_dimension", False),
             smallest_time_grain=expr.get("smallest_time_grain"),
         )
@@ -306,6 +308,35 @@ class SemanticModel(SemanticTable):
     def get_calculated_measures(self):
         return self.op().get_calculated_measures()
 
+    def is_feature_view(self) -> bool:
+        """Check if this semantic model is a valid FeatureView.
+
+        A FeatureView is defined as a semantic model with:
+        - Exactly 1 entity dimension (join key)
+        - Exactly 1 event timestamp dimension (for point-in-time correctness)
+
+        This matches the Feast FeatureView concept where features are organized
+        around a single entity and timestamp for feature engineering.
+
+        Returns:
+            True if the model has exactly 1 entity and 1 event timestamp, False otherwise
+
+        Examples:
+            >>> from boring_semantic_layer import entity_dimension, time_dimension, to_semantic_table
+            >>> model = (
+            ...     to_semantic_table(tbl, name="balance_features")
+            ...     .with_dimensions(
+            ...         business_id=entity_dimension(lambda t: t.business_id),
+            ...         statement_date=time_dimension(lambda t: t.statement_date),
+            ...     )
+            ... )
+            >>> model.is_feature_view()
+            True
+        """
+        from .graph_utils import is_feature_view as _is_feature_view
+
+        return _is_feature_view(self)
+
     @property
     def _dims(self):
         return self.op()._dims
@@ -355,36 +386,107 @@ class SemanticModel(SemanticTable):
             description=self.description,
         )
 
-    def join(
+    def join_one(
         self,
         other: SemanticModel,
-        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
+        on: Callable[[Any, Any], ir.BooleanValue],
         how: str = "inner",
     ) -> SemanticJoin:
+        """Join with one-to-one relationship semantics.
+
+        Args:
+            other: The semantic model to join with
+            on: Lambda function taking (left, right) tables and returning a boolean condition.
+                Can reference both semantic dimensions and raw table columns.
+            how: Join type - "inner", "left", "right", or "outer" (default: "inner")
+
+        Returns:
+            SemanticJoin: The joined semantic model
+
+        Examples:
+            Join on semantic dimensions:
+            >>> orders.join_one(customers, lambda o, c: o.customer_id == c.customer_id)
+
+            Join on raw columns (not defined as dimensions):
+            >>> orders.join_one(customers, lambda o, c: o.raw_id == c.raw_id)
+
+            Different join types:
+            >>> orders.join_one(customers, lambda o, c: o.customer_id == c.customer_id, how="left")
+            >>> orders.join_one(customers, lambda o, c: o.customer_id == c.customer_id, how="outer")
+        """
         other_op = other.op() if isinstance(other, SemanticModel) else other
         return SemanticJoin(left=self.op(), right=other_op, on=on, how=how)
 
-    def join_one(self, other: SemanticModel, left_on: str, right_on: str) -> SemanticJoin:
-        other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(
-            left=self.op(),
-            right=other_op,
-            on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
-            how="inner",
-        )
+    def join_many(
+        self,
+        other: SemanticModel,
+        on: Callable[[Any, Any], ir.BooleanValue],
+        how: str = "left",
+    ) -> SemanticJoin:
+        """Join with one-to-many relationship semantics.
 
-    def join_many(self, other: SemanticModel, left_on: str, right_on: str) -> SemanticJoin:
+        Args:
+            other: The semantic model to join with
+            on: Lambda function taking (left, right) tables and returning a boolean condition.
+                Can reference both semantic dimensions and raw table columns.
+            how: Join type - "inner", "left", "right", or "outer" (default: "left")
+
+        Returns:
+            SemanticJoin: The joined semantic model
+
+        Examples:
+            Join on semantic dimensions:
+            >>> customer.join_many(orders, lambda c, o: c.customer_id == o.customer_id)
+
+            Join on raw columns:
+            >>> customer.join_many(orders, lambda c, o: c.external_id == o.account_ref)
+
+            Different join types:
+            >>> customer.join_many(orders, lambda c, o: c.customer_id == o.customer_id, how="inner")
+            >>> customer.join_many(orders, lambda c, o: c.customer_id == o.customer_id, how="right")
+        """
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(
-            left=self.op(),
-            right=other_op,
-            on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
-            how="left",
-        )
+        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how)
 
     def join_cross(self, other: SemanticModel) -> SemanticJoin:
+        """Cross join (Cartesian product) with another semantic model.
+
+        Args:
+            other: The semantic model to cross join with
+
+        Returns:
+            SemanticJoin: The joined semantic model
+
+        Examples:
+            >>> table_a.join_cross(table_b)  # Cartesian product of all rows
+        """
         other_op = other.op() if isinstance(other, SemanticModel) else other
         return SemanticJoin(left=self.op(), right=other_op, on=None, how="cross")
+
+    def join(self, *args, **kwargs):
+        """Deprecated: Use join_one() or join_many() instead.
+
+        The generic join() method has been removed. Please use:
+        - join_one(other, lambda l, r: condition, how="inner") for one-to-one relationships
+        - join_many(other, lambda l, r: condition, how="left") for one-to-many relationships
+        - join_cross(other) for Cartesian product
+
+        Examples:
+            Old: table.join(other, lambda l, r: l.id == r.id, how="left")
+            New: table.join_many(other, lambda l, r: l.id == r.id)
+
+            Old: table.join(other, lambda l, r: l.id == r.id, how="inner")
+            New: table.join_one(other, lambda l, r: l.id == r.id)
+        """
+        raise TypeError(
+            "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
+            "For one-to-one relationships:\n"
+            "  table.join_one(other, lambda l, r: l.id == r.id, how='inner')\n\n"
+            "For one-to-many relationships:\n"
+            "  table.join_many(other, lambda l, r: l.id == r.id, how='left')\n\n"
+            "For Cartesian product:\n"
+            "  table.join_cross(other)"
+        )
 
     def index(
         self,
@@ -641,12 +743,22 @@ class SemanticJoin(SemanticTable):
             _source_join=self.op(),  # Pass join reference for projection pushdown
         )
 
-    def join(
+    def join_one(
         self,
         other: SemanticModel,
-        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
+        on: Callable[[Any, Any], ir.BooleanValue],
         how: str = "inner",
     ) -> SemanticJoin:
+        """Join with one-to-one relationship semantics.
+
+        Args:
+            other: The semantic model to join with
+            on: Lambda function taking (left, right) tables and returning a boolean condition
+            how: Join type - "inner", "left", "right", or "full" (default: "inner")
+
+        Returns:
+            SemanticJoin: The joined semantic model
+        """
         return SemanticJoin(
             left=self.op(),
             right=other.op() if isinstance(other, SemanticModel) else other,
@@ -654,38 +766,48 @@ class SemanticJoin(SemanticTable):
             how=how,
         )
 
-    def join_one(
-        self,
-        other: SemanticModel,
-        left_on: str,
-        right_on: str,
-    ) -> SemanticJoin:
-        return SemanticJoin(
-            left=self.op(),
-            right=other.op() if isinstance(other, SemanticModel) else other,
-            on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
-            how="inner",
-        )
-
     def join_many(
         self,
         other: SemanticModel,
-        left_on: str,
-        right_on: str,
+        on: Callable[[Any, Any], ir.BooleanValue],
+        how: str = "left",
     ) -> SemanticJoin:
+        """Join with one-to-many relationship semantics.
+
+        Args:
+            other: The semantic model to join with
+            on: Lambda function taking (left, right) tables and returning a boolean condition
+            how: Join type - "inner", "left", "right", or "full" (default: "left")
+
+        Returns:
+            SemanticJoin: The joined semantic model
+        """
         return SemanticJoin(
             left=self.op(),
             right=other.op() if isinstance(other, SemanticModel) else other,
-            on=lambda left, right: getattr(left, left_on) == getattr(right, right_on),
-            how="left",
+            on=on,
+            how=how,
         )
 
     def join_cross(self, other: SemanticModel) -> SemanticJoin:
+        """Cross join (Cartesian product) with another semantic model."""
         return SemanticJoin(
             left=self.op(),
             right=other.op() if isinstance(other, SemanticModel) else other,
             on=None,
             how="cross",
+        )
+
+    def join(self, *args, **kwargs):
+        """Deprecated: Use join_one(), join_many(), or join_cross() instead."""
+        raise TypeError(
+            "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
+            "For one-to-one relationships:\n"
+            "  table.join_one(other, lambda l, r: l.id == r.id, how='inner')\n\n"
+            "For one-to-many relationships:\n"
+            "  table.join_many(other, lambda l, r: l.id == r.id, how='left')\n\n"
+            "For Cartesian product:\n"
+            "  table.join_cross(other)"
         )
 
     def group_by(self, *keys: str):
@@ -918,12 +1040,13 @@ class SemanticAggregate(SemanticTable):
     def mutate(self, **post) -> SemanticMutate:
         return SemanticMutate(source=self.op(), post=post)
 
-    def join(
+    def join_one(
         self,
         other: SemanticModel,
-        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
+        on: Callable[[Any, Any], ir.BooleanValue],
         how: str = "inner",
     ) -> SemanticJoin:
+        """Join with one-to-one relationship semantics."""
         return SemanticJoin(
             left=self.op(),
             right=other.op(),
@@ -931,30 +1054,39 @@ class SemanticAggregate(SemanticTable):
             how=how,
         )
 
-    def join_one(
-        self,
-        other: SemanticModel,
-        left_on: str,
-        right_on: str,
-    ) -> SemanticJoin:
-        return SemanticJoin(
-            left=self.op(),
-            right=other.op(),
-            on=lambda left, right: left[left_on] == right[right_on],
-            how="inner",
-        )
-
     def join_many(
         self,
         other: SemanticModel,
-        left_on: str,
-        right_on: str,
+        on: Callable[[Any, Any], ir.BooleanValue],
+        how: str = "left",
     ) -> SemanticJoin:
+        """Join with one-to-many relationship semantics."""
         return SemanticJoin(
             left=self.op(),
             right=other.op(),
-            on=lambda left, right: left[left_on] == right[right_on],
-            how="left",
+            on=on,
+            how=how,
+        )
+
+    def join_cross(self, other: SemanticModel) -> SemanticJoin:
+        """Cross join (Cartesian product) with another semantic model."""
+        return SemanticJoin(
+            left=self.op(),
+            right=other.op() if isinstance(other, SemanticModel) else other,
+            on=None,
+            how="cross",
+        )
+
+    def join(self, *args, **kwargs):
+        """Deprecated: Use join_one(), join_many(), or join_cross() instead."""
+        raise TypeError(
+            "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
+            "For one-to-one relationships:\n"
+            "  table.join_one(other, lambda l, r: l.id == r.id, how='inner')\n\n"
+            "For one-to-many relationships:\n"
+            "  table.join_many(other, lambda l, r: l.id == r.id, how='left')\n\n"
+            "For Cartesian product:\n"
+            "  table.join_cross(other)"
         )
 
     def as_table(self) -> SemanticModel:
