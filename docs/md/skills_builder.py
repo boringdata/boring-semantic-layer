@@ -15,6 +15,8 @@ Usage:
 """
 
 import argparse
+import json
+import re
 import sys
 from pathlib import Path
 
@@ -36,16 +38,73 @@ class SkillBuilder:
             # Script is in docs/md/, so we stay in md/
             docs_dir = Path(__file__).parent
         self.docs_dir = docs_dir
-        self.prompts_dir = docs_dir / "prompts" / "query" / "langchain"
+        self.prompts_dir = docs_dir / "prompts"
         self.skills_dir = docs_dir / "skills"
+        self._index = None
 
-    def read_prompt(self, filename: str) -> str:
+    def read_prompt(self, category: str, filename: str) -> str:
         """Read a prompt file from the prompts directory."""
-        return (self.prompts_dir / filename).read_text()
+        return (self.prompts_dir / category / filename).read_text()
 
-    def build_claude_code_skill(self) -> str:
-        """Build Claude Code SKILL.md content."""
-        content = self.read_prompt("system.md")
+    def read_index(self) -> dict:
+        """Read the index.json file containing documentation topics."""
+        if self._index is None:
+            index_path = self.docs_dir / "index.json"
+            self._index = json.loads(index_path.read_text())
+        return self._index
+
+    def build_additional_info_for_skill(self, tool: str = "claude-code") -> str:
+        """Build the Additional Information section for CLI skills (no get_documentation tool).
+
+        Args:
+            tool: The target tool (claude-code, cursor, codex) - determines docs path
+        """
+        index = self.read_index()
+        topics = index.get("topics", {})
+
+        # Docs are installed relative to skill folder (e.g., docs/doc/windowing.md)
+        docs_base = "docs"
+
+        lines = [
+            "## Additional Information",
+            "",
+            f"**Available documentation** (in `{docs_base}/` folder next to this skill):",
+            "",
+        ]
+        for topic_id, topic_info in topics.items():
+            title = topic_info.get("title", topic_id)
+            desc = topic_info.get("description", "")
+            source = topic_info.get("source", "")
+            # Create relative path from the skill folder
+            doc_path = f"{docs_base}/{source}" if source else ""
+            lines.append(f"- **{title}**: {desc}")
+            if doc_path:
+                lines.append(f"  - Path: `{doc_path}`")
+
+        return "\n".join(lines)
+
+    def transform_prompt_for_skill(self, content: str, tool: str = "claude-code") -> str:
+        """Transform a LangChain prompt for use as a CLI skill.
+
+        Replaces the 'Additional Information' section that references get_documentation()
+        with a static version built from index.json.
+
+        Args:
+            content: The prompt content to transform
+            tool: The target tool (claude-code, cursor, codex) - determines docs path
+        """
+        # Pattern to match the Additional Information section
+        pattern = r"## Additional Information.*"
+        replacement = self.build_additional_info_for_skill(tool)
+
+        # Replace the section (DOTALL makes . match newlines)
+        return re.sub(pattern, replacement, content, flags=re.DOTALL)
+
+    def build_query_expert_claude_code(self) -> str:
+        """Build Claude Code bsl-query-expert SKILL.md content."""
+        # Read the LangChain system prompt and transform it for skills
+        content = self.read_prompt("query/langchain", "system.md")
+        content = self.transform_prompt_for_skill(content, tool="claude-code")
         frontmatter = """---
 name: bsl-query-expert
 description: Query BSL semantic models with group_by, aggregate, filter, and visualizations. Use for data analysis from existing semantic tables.
@@ -54,9 +113,23 @@ description: Query BSL semantic models with group_by, aggregate, filter, and vis
 """
         return frontmatter + content
 
-    def build_codex_skill(self) -> str:
-        """Build Codex skill content."""
-        content = self.read_prompt("system.md")
+    def build_model_builder_claude_code(self) -> str:
+        """Build Claude Code bsl-model-builder SKILL.md content."""
+        content = self.read_prompt("build", "system.md")
+        content = self.transform_prompt_for_skill(content, tool="claude-code")
+        frontmatter = """---
+name: bsl-model-builder
+description: Build BSL semantic models with dimensions, measures, joins, and YAML config. Use for creating/modifying data models.
+---
+
+"""
+        return frontmatter + content
+
+    def build_query_expert_codex(self) -> str:
+        """Build Codex bsl-query-expert skill content."""
+        # Read the LangChain system prompt and transform it for skills
+        content = self.read_prompt("query/langchain", "system.md")
+        content = self.transform_prompt_for_skill(content, tool="codex")
         header = """# BSL Query Expert - Codex Skill
 
 This skill helps with querying Boring Semantic Layer (BSL) models.
@@ -64,12 +137,36 @@ This skill helps with querying Boring Semantic Layer (BSL) models.
 """
         return header + content
 
-    def build_cursor_skill(self) -> str:
-        """Build Cursor skill content."""
-        content = self.read_prompt("system.md")
+    def build_model_builder_codex(self) -> str:
+        """Build Codex bsl-model-builder skill content."""
+        content = self.read_prompt("build", "system.md")
+        content = self.transform_prompt_for_skill(content, tool="codex")
+        header = """# BSL Model Builder - Codex Skill
+
+This skill helps with building Boring Semantic Layer (BSL) semantic models.
+
+"""
+        return header + content
+
+    def build_query_expert_cursor(self) -> str:
+        """Build Cursor bsl-query-expert skill content."""
+        # Read the LangChain system prompt and transform it for skills
+        content = self.read_prompt("query/langchain", "system.md")
+        content = self.transform_prompt_for_skill(content, tool="cursor")
         header = """# BSL Query Expert - Cursor Skill
 
 Guide for querying Boring Semantic Layer (BSL) semantic models.
+
+"""
+        return header + content
+
+    def build_model_builder_cursor(self) -> str:
+        """Build Cursor bsl-model-builder skill content."""
+        content = self.read_prompt("build", "system.md")
+        content = self.transform_prompt_for_skill(content, tool="cursor")
+        header = """# BSL Model Builder - Cursor Skill
+
+Guide for building Boring Semantic Layer (BSL) semantic models.
 
 """
         return header + content
@@ -81,24 +178,43 @@ Guide for querying Boring Semantic Layer (BSL) semantic models.
         (self.skills_dir / "codex").mkdir(exist_ok=True)
         (self.skills_dir / "cursor").mkdir(exist_ok=True)
 
+    def _get_all_skills(self) -> dict[str, dict]:
+        """Get all skill configurations."""
+        return {
+            # Claude Code skills
+            "claude-code/bsl-query-expert": {
+                "path": self.skills_dir / "claude-code" / "bsl-query-expert" / "SKILL.md",
+                "content": self.build_query_expert_claude_code(),
+            },
+            "claude-code/bsl-model-builder": {
+                "path": self.skills_dir / "claude-code" / "bsl-model-builder" / "SKILL.md",
+                "content": self.build_model_builder_claude_code(),
+            },
+            # Codex skills
+            "codex/bsl-query-expert": {
+                "path": self.skills_dir / "codex" / "bsl-query-expert.codex",
+                "content": self.build_query_expert_codex(),
+            },
+            "codex/bsl-model-builder": {
+                "path": self.skills_dir / "codex" / "bsl-model-builder.codex",
+                "content": self.build_model_builder_codex(),
+            },
+            # Cursor skills
+            "cursor/bsl-query-expert": {
+                "path": self.skills_dir / "cursor" / "bsl-query-expert.cursorrules",
+                "content": self.build_query_expert_cursor(),
+            },
+            "cursor/bsl-model-builder": {
+                "path": self.skills_dir / "cursor" / "bsl-model-builder.cursorrules",
+                "content": self.build_model_builder_cursor(),
+            },
+        }
+
     def build_all(self, dry_run: bool = False) -> dict[str, Path]:
         """Build all skill files."""
         self.ensure_skills_dir()
 
-        skills = {
-            "claude-code": {
-                "path": self.skills_dir / "claude-code" / "bsl-query-expert" / "SKILL.md",
-                "content": self.build_claude_code_skill(),
-            },
-            "codex": {
-                "path": self.skills_dir / "codex" / "bsl-query-expert.codex",
-                "content": self.build_codex_skill(),
-            },
-            "cursor": {
-                "path": self.skills_dir / "cursor" / "bsl-query-expert.cursorrules",
-                "content": self.build_cursor_skill(),
-            },
-        }
+        skills = self._get_all_skills()
 
         results = {}
         for name, skill in skills.items():
@@ -119,20 +235,7 @@ Guide for querying Boring Semantic Layer (BSL) semantic models.
 
     def check_up_to_date(self) -> bool:
         """Check if skills are up to date. Returns True if all up to date."""
-        skills = {
-            "claude-code": {
-                "path": self.skills_dir / "claude-code" / "bsl-query-expert" / "SKILL.md",
-                "content": self.build_claude_code_skill(),
-            },
-            "codex": {
-                "path": self.skills_dir / "codex" / "bsl-query-expert.codex",
-                "content": self.build_codex_skill(),
-            },
-            "cursor": {
-                "path": self.skills_dir / "cursor" / "bsl-query-expert.cursorrules",
-                "content": self.build_cursor_skill(),
-            },
-        }
+        skills = self._get_all_skills()
 
         all_up_to_date = True
         for _name, skill in skills.items():

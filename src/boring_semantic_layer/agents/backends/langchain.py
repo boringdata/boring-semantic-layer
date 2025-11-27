@@ -8,10 +8,10 @@ from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain.tools import tool
 from pydantic import BaseModel, Field
+from returns.result import Failure, Success
 
 from boring_semantic_layer import from_yaml
 from boring_semantic_layer.agents.utils.chart_handler import generate_chart_with_data
-from boring_semantic_layer.agents.utils.model_metadata import get_model_description
 from boring_semantic_layer.agents.utils.prompts import load_prompt
 from boring_semantic_layer.utils import safe_eval
 
@@ -120,9 +120,8 @@ class LangChainAgent:
                     "dimensions": list(model.dimensions),
                     "measures": list(model.measures),
                 }
-                description = get_model_description(model)
-                if description:
-                    model_info["description"] = description
+                if model.description:
+                    model_info["description"] = model.description
                 result[model_name] = model_info
             return json.dumps(result, indent=2)
 
@@ -139,8 +138,12 @@ class LangChainAgent:
         @tool(description=_doc_description)
         def get_documentation(topic: str) -> str:
             if topic in topics:
-                doc_content = load_prompt(_MD_DIR, topics[topic])
-                return doc_content or f"❌ File not found: {topics[topic]}"
+                topic_info = topics[topic]
+                source_path = (
+                    topic_info.get("source") if isinstance(topic_info, dict) else topic_info
+                )
+                doc_content = load_prompt(_MD_DIR, source_path)
+                return doc_content or f"❌ File not found: {source_path}"
             return f"❌ Unknown topic '{topic}'. Available topics: {', '.join(topics.keys())}"
 
         class QueryModelArgs(BaseModel):
@@ -155,13 +158,11 @@ class LangChainAgent:
         )
         def query_model(**kwargs) -> str:
             try:
-                # Don't restrict allowed_names - let safe_eval handle security via AST validation
-                # This allows lambda parameters like 't' to work
-                # Include ibis in context for window functions and other ibis operations
-                query_result = safe_eval(
-                    kwargs["query"],
-                    context={**self.models, "ibis": ibis},
-                )
+                # safe_eval returns Result type - unwrap it here
+                result = safe_eval(kwargs["query"], context={**self.models, "ibis": ibis})
+                if isinstance(result, Failure):
+                    raise result.failure()
+                query_result = result.unwrap() if isinstance(result, Success) else result
                 chart_spec = kwargs.get("chart_spec")
 
                 # Determine if we're in CLI mode (plotext backend)

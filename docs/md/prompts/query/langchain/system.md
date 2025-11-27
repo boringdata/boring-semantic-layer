@@ -131,13 +131,25 @@ flights.with_dimensions(arr_date=lambda t: t.arr_time.date()).filter(lambda t: t
 - "Here are the results: | Year | Count | |------|-------| | 2000 | 1234 | ..." (Don't repeat the table!)
 - "Let me show you a sample: [placeholder data]" (Tool already showed real data!)
 
-## Advanced Features
+## Additional Information
 
 **Need detailed documentation?** Use `get_documentation(topic="...")` to fetch comprehensive guides.
 
-**See all available topics**: `get_documentation(topic="index")`
-
-Common topics:
-- Chart backends: `plotext`, `altair`, `plotly`
-- Query features: `windowing`, `bucketing`, `nested-subtotals`, `percentage-total`, `indexing`
-- Getting started: `getting-started`, `yaml-config`, `semantic-table`
+**Available topics:**
+- `getting-started` - Introduction to BSL, installation, and basic usage
+- `semantic-table` - Building semantic models with dimensions and measures
+- `yaml-config` - Defining semantic models in YAML files
+- `profile` - Database connection profiles
+- `compose` - Joining multiple semantic tables
+- `query-methods` - Complete API reference for queries
+- `windowing` - Running totals, moving averages, rankings
+- `bucketing` - Categorical buckets and 'Other' consolidation
+- `nested-subtotals` - Rollup calculations with subtotals
+- `percentage-total` - Percent of total with t.all()
+- `indexing` - Dimensional indexing and comparisons
+- `charting` - Data visualization overview
+- `charting-altair` - Interactive web charts with Altair
+- `charting-plotly` - Interactive charts with Plotly
+- `charting-plotext` - Terminal ASCII charts
+- `sessionized` - Session-based data analysis
+- `comparison` - Period-over-period comparisons

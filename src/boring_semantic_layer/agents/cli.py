@@ -1,11 +1,245 @@
 """Command-line interface for Boring Semantic Layer - v2 with generic backend support."""
 
 import argparse
+import json
 import logging
+import shutil
 import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+# Tool configurations - how each tool stores skills
+TOOL_CONFIGS = {
+    "claude-code": {
+        "target_pattern": ".claude/skills/{skill_name}/SKILL.md",
+        "description": "Claude Code skills",
+    },
+    "cursor": {
+        "target_pattern": ".cursor/rules/{skill_name}.mdc",
+        "description": "Cursor rules",
+    },
+    "codex": {
+        "target_pattern": ".codex/{skill_name}.codex",
+        "description": "Codex instructions",
+    },
+}
+
+
+def _get_skills_dir() -> Path:
+    """Get the directory containing skill files (bundled with the package)."""
+    # Skills are in docs/md/skills relative to the package
+    package_dir = Path(__file__).parent.parent.parent.parent
+    skills_dir = package_dir / "docs" / "md" / "skills"
+    return skills_dir
+
+
+def _get_md_dir() -> Path:
+    """Get the docs/md directory containing prompts and docs."""
+    package_dir = Path(__file__).parent.parent.parent.parent
+    return package_dir / "docs" / "md"
+
+
+def _get_doc_files_from_index() -> list[dict]:
+    """Read index.json and return a list of documentation files to copy."""
+    md_dir = _get_md_dir()
+    index_path = md_dir / "index.json"
+
+    if not index_path.exists():
+        return []
+
+    index = json.loads(index_path.read_text())
+    topics = index.get("topics", {})
+
+    doc_files = []
+    for topic_id, topic_info in topics.items():
+        source_path = topic_info.get("source", "")
+        if source_path:
+            full_source = md_dir / source_path
+            if full_source.exists():
+                doc_files.append(
+                    {
+                        "topic_id": topic_id,
+                        "source": full_source,
+                        "relative_path": source_path,
+                    }
+                )
+    return doc_files
+
+
+def _discover_skills_for_tool(tool: str) -> list[dict]:
+    """Discover all skills available for a tool by scanning the directory."""
+    skills_dir = _get_skills_dir()
+    tool_dir = skills_dir / tool
+
+    if not tool_dir.exists():
+        return []
+
+    skills = []
+    config = TOOL_CONFIGS.get(tool, {})
+
+    if tool == "claude-code":
+        # Claude Code: each subdirectory is a skill with SKILL.md
+        for skill_dir in tool_dir.iterdir():
+            if skill_dir.is_dir():
+                skill_file = skill_dir / "SKILL.md"
+                if skill_file.exists():
+                    skill_name = skill_dir.name
+                    target = config["target_pattern"].format(skill_name=skill_name)
+                    skills.append(
+                        {
+                            "name": skill_name,
+                            "source": skill_file,
+                            "target": target,
+                        }
+                    )
+    elif tool == "cursor":
+        # Cursor: each .cursorrules or .mdc file is a skill
+        for skill_file in tool_dir.glob("*.cursorrules"):
+            skill_name = skill_file.stem
+            target = config["target_pattern"].format(skill_name=skill_name)
+            skills.append(
+                {
+                    "name": skill_name,
+                    "source": skill_file,
+                    "target": target,
+                }
+            )
+        for skill_file in tool_dir.glob("*.mdc"):
+            skill_name = skill_file.stem
+            target = config["target_pattern"].format(skill_name=skill_name)
+            skills.append(
+                {
+                    "name": skill_name,
+                    "source": skill_file,
+                    "target": target,
+                }
+            )
+    elif tool == "codex":
+        # Codex: each .codex file is a skill
+        for skill_file in tool_dir.glob("*.codex"):
+            skill_name = skill_file.stem
+            target = config["target_pattern"].format(skill_name=skill_name)
+            skills.append(
+                {
+                    "name": skill_name,
+                    "source": skill_file,
+                    "target": target,
+                }
+            )
+
+    return skills
+
+
+def cmd_skill_list(args):
+    """List available skills."""
+    print("Available BSL skills:\n")
+    for tool, config in TOOL_CONFIGS.items():
+        skills = _discover_skills_for_tool(tool)
+        if skills:
+            print(f"  {tool} ({config['description']}):")
+            for skill in skills:
+                print(f"    ✓ {skill['name']}")
+                print(f"      → {skill['target']}")
+        else:
+            print(f"  {tool}: (no skills found)")
+    print("\nUse 'bsl skill show <tool>' to preview skills")
+    print("Use 'bsl skill install <tool>' to install all skills for a tool")
+
+
+def cmd_skill_show(args):
+    """Show the content of skill files for a tool."""
+    tool = args.tool
+    if tool not in TOOL_CONFIGS:
+        print(f"❌ Unknown tool: {tool}")
+        print(f"   Available tools: {', '.join(TOOL_CONFIGS.keys())}")
+        return
+
+    skills = _discover_skills_for_tool(tool)
+    if not skills:
+        print(f"❌ No skills found for {tool}")
+        return
+
+    for i, skill in enumerate(skills):
+        if i > 0:
+            print("\n" + "=" * 60 + "\n")
+        print(f"# Skill: {skill['name']}")
+        print(f"# Source: {skill['source']}")
+        print(f"# Target: {skill['target']}")
+        print("-" * 60)
+        print(skill["source"].read_text())
+
+
+def cmd_skill_install(args):
+    """Install all skill files for a specific tool."""
+    tool = args.tool
+    if tool not in TOOL_CONFIGS:
+        print(f"❌ Unknown tool: {tool}")
+        print(f"   Available tools: {', '.join(TOOL_CONFIGS.keys())}")
+        return
+
+    skills = _discover_skills_for_tool(tool)
+    if not skills:
+        print(f"❌ No skills found for {tool}")
+        return
+
+    installed = 0
+    skipped = 0
+
+    # Install skill files
+    for skill in skills:
+        target_path = Path.cwd() / skill["target"]
+
+        # Check if target exists
+        if target_path.exists() and not args.force:
+            print(f"⚠️  Skipped {skill['name']} (already exists: {target_path})")
+            skipped += 1
+            continue
+
+        # Create parent directories if needed
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Copy the file
+        shutil.copy2(skill["source"], target_path)
+        print(f"✅ Installed {skill['name']}")
+        print(f"   → {target_path}")
+        installed += 1
+
+    # Install documentation files from index.json into each skill folder
+    doc_files = _get_doc_files_from_index()
+    docs_installed = 0
+    docs_skipped = 0
+
+    if doc_files and skills:
+        print("\n📚 Installing documentation files...")
+
+        for skill in skills:
+            # Get the skill target directory
+            skill_target = Path.cwd() / skill["target"]
+            skill_dir = skill_target.parent
+            docs_base = skill_dir / "docs"
+
+            for doc_file in doc_files:
+                target_path = docs_base / doc_file["relative_path"]
+
+                if target_path.exists() and not args.force:
+                    docs_skipped += 1
+                    continue
+
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(doc_file["source"], target_path)
+                docs_installed += 1
+
+        if docs_installed > 0:
+            print(f"   ✅ Installed {docs_installed} documentation file(s)")
+        if docs_skipped > 0:
+            print(f"   ⚠️  Skipped {docs_skipped} (already exist)")
+
+    print(f"\n📦 Installed {installed} skill(s)" + (f", skipped {skipped}" if skipped else ""))
+    if docs_installed > 0 or docs_skipped > 0:
+        print(f"   + {docs_installed + docs_skipped} documentation file(s)")
+    if skipped or docs_skipped:
+        print("   Use --force to overwrite existing files")
 
 
 def setup_logging(verbose: bool = False):
@@ -20,7 +254,6 @@ def setup_logging(verbose: bool = False):
 def cmd_chat(args):
     """Start an interactive chat session with the semantic model."""
     import os
-    from pathlib import Path
 
     from boring_semantic_layer.agents.chats.cli import start_chat
 
@@ -43,17 +276,17 @@ def cmd_chat(args):
             print("   Use --sm <path> or set BSL_MODEL_PATH environment variable")
             return
 
-    # Get model from args (no validation - let LangChain handle it)
-    llm_model = args.model if hasattr(args, "model") and args.model else "gpt-4"
+    # Get LLM from args (no validation - let LangChain handle it)
+    llm_model = args.llm if hasattr(args, "llm") and args.llm else "gpt-4"
     initial_query = " ".join(args.query) if hasattr(args, "query") and args.query else None
     profile = args.profile if hasattr(args, "profile") else None
 
-    # Get profile_file from args or BSL_PROFILE_PATH env var
+    # Get profile_file from args or BSL_PROFILE_FILE env var
     profile_file = (
         args.profile_file if hasattr(args, "profile_file") and args.profile_file else None
     )
     if not profile_file:
-        profile_file_str = os.environ.get("BSL_PROFILE_PATH")
+        profile_file_str = os.environ.get("BSL_PROFILE_FILE")
         if profile_file_str:
             profile_file = Path(profile_file_str)
 
@@ -139,9 +372,9 @@ def main():
         help="Chart backend for visualizations (default: plotext)",
     )
     chat_parser.add_argument(
-        "--model",
+        "--llm",
         default="gpt-4",
-        help="LLM model to use. Supported: OpenAI (gpt-4, gpt-4o, gpt-3.5-turbo), Anthropic (claude-3-5-sonnet-20241022), Google (gemini-1.5-pro, gemini-1.5-flash). Auto-detects based on API keys. (default: gpt-4 or auto-selected)",
+        help="LLM model to use (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-1.5-pro)",
     )
     chat_parser.add_argument(
         "--profile",
@@ -152,12 +385,6 @@ def main():
         "--profile-file",
         type=Path,
         help="Path to profiles.yml file (default: looks for profiles.yml in current directory and examples/)",
-    )
-    chat_parser.add_argument(
-        "--list-fields",
-        "-l",
-        action="store_true",
-        help="List available dimensions and measures before starting chat",
     )
     chat_parser.add_argument(
         "query",
@@ -202,6 +429,43 @@ def main():
     )
     render_parser.set_defaults(func=cmd_render)
 
+    # Skill command with subcommands
+    skill_parser = subparsers.add_parser(
+        "skill",
+        help="Manage BSL skills for AI coding assistants",
+    )
+    skill_subparsers = skill_parser.add_subparsers(dest="skill_command", help="Skill command")
+
+    # skill list
+    skill_list_parser = skill_subparsers.add_parser("list", help="List available skills")
+    skill_list_parser.set_defaults(func=cmd_skill_list)
+
+    # skill show <tool>
+    skill_show_parser = skill_subparsers.add_parser("show", help="Show skill content")
+    skill_show_parser.add_argument(
+        "tool",
+        choices=list(TOOL_CONFIGS.keys()),
+        help="Tool to show skills for",
+    )
+    skill_show_parser.set_defaults(func=cmd_skill_show)
+
+    # skill install <tool>
+    skill_install_parser = skill_subparsers.add_parser(
+        "install", help="Install all skills for a tool"
+    )
+    skill_install_parser.add_argument(
+        "tool",
+        choices=list(TOOL_CONFIGS.keys()),
+        help="Tool to install skills for",
+    )
+    skill_install_parser.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        help="Overwrite existing file",
+    )
+    skill_install_parser.set_defaults(func=cmd_skill_install)
+
     args = parser.parse_args()
 
     # Setup logging
@@ -213,7 +477,11 @@ def main():
 
     # Check if a command was provided
     if not hasattr(args, "func"):
-        parser.print_help()
+        # Handle 'bsl skill' without subcommand
+        if args.command == "skill":
+            skill_parser.print_help()
+        else:
+            parser.print_help()
         sys.exit(1)
 
     # Execute command
