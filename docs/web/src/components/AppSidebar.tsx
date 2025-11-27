@@ -9,7 +9,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { Home, BookOpen, Code2, Sparkles, FileText, Github, ChevronRight, Sparkle } from "lucide-react";
+import { Home, BookOpen, Code2, Sparkles, FileText, Github, ChevronRight, Sparkle, Bot } from "lucide-react";
 import { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -66,7 +66,17 @@ const navigationStructure = [
       },
       { title: "Charting", path: "/querying/charting" },
       { title: "Dimensional Indexing", path: "/querying/indexing" },
-      { title: "MCP Integration", path: "/querying/mcp" },
+    ],
+  },
+  {
+    title: "Agents",
+    icon: Bot,
+    items: [
+      { title: "Overview", path: "/agents" },
+      { title: "MCP Server", path: "/agents/mcp" },
+      { title: "LLM Tool", path: "/agents/tool" },
+      { title: "AI Skills (CLI)", path: "/agents/skill" },
+      { title: "Demo Chat", path: "/agents/chat" },
     ],
   },
   {
@@ -90,7 +100,7 @@ const navigationStructure = [
 export function AppSidebar() {
   const { open } = useSidebar();
   const location = useLocation();
-  const [openSections, setOpenSections] = useState<string[]>(["About BSL", "Building a Semantic Table", "Querying Semantic Tables", "Advanced Patterns", "Query Methods", "Defining Semantic Tables", "Semantic Tables"]);
+  const [openSections, setOpenSections] = useState<string[]>(["About BSL", "Building a Semantic Table", "Querying Semantic Tables", "Agents", "Advanced Patterns", "Query Methods", "Defining Semantic Tables", "Semantic Tables"]);
 
   const toggleSection = (title: string) => {
     setOpenSections((prev) =>
@@ -158,13 +168,13 @@ export function AppSidebar() {
                                     <CollapsibleContent>
                                       <SidebarMenu>
                                         {item.subitems.map((subitem) => (
-                                          <SidebarMenuItem key={subitem.hash}>
+                                          <SidebarMenuItem key={subitem.path || subitem.hash}>
                                             <SidebarMenuButton
                                               asChild
                                               tooltip={subitem.title}
                                               className="pl-12"
                                             >
-                                              <NavLink to={`${item.path}${subitem.hash}`}>
+                                              <NavLink to={subitem.path || `${item.path}${subitem.hash}`}>
                                                 <span className="text-xs">{subitem.title}</span>
                                               </NavLink>
                                             </SidebarMenuButton>

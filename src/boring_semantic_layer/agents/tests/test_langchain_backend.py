@@ -16,6 +16,7 @@ def mock_models():
     mock_model = Mock()
     mock_model.dimensions = {"carrier", "origin", "destination"}
     mock_model.measures = {"flight_count", "avg_distance"}
+    mock_model.description = "Test description"
     return {"flights": mock_model}
 
 
@@ -76,10 +77,8 @@ class TestLangChainAgent:
     @patch("boring_semantic_layer.agents.backends.langchain.from_yaml")
     @patch("boring_semantic_layer.agents.backends.langchain.init_chat_model")
     @patch("boring_semantic_layer.agents.backends.langchain.load_prompt")
-    @patch("boring_semantic_layer.agents.backends.langchain.get_model_description")
     def test_list_models_tool(
         self,
-        mock_get_desc,
         mock_load_prompt,
         mock_init_chat,
         mock_from_yaml,
@@ -92,7 +91,6 @@ class TestLangChainAgent:
         mock_from_yaml.return_value = mock_models
         mock_init_chat.return_value = Mock()
         mock_load_prompt.return_value = "Test prompt"
-        mock_get_desc.return_value = "Test description"
 
         model_file = tmp_path / "test.yml"
         model_file.write_text("test")

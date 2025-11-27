@@ -1,27 +1,56 @@
-# Query Agent: BSL as a Claude Code Skill
+# Query Agent: BSL Skills for AI Coding Assistants
 
-The Query Agent ships with a dedicated Claude skill so you can paste the instructions into Claude Desktop (or any Claude Code surface) and keep self-hosted agents honest.
+AI coding assistants can help you build and maintain your semantic model, but they don't know about BSL out of the box.
 
-## Where to find the skill
+The easiest way to provide this context is to use the `bsl` CLI, which copies pre-built prompts into your agent's config folder.
 
-The canonical file lives at [`src/boring_semantic_layer/agents/claude-code/bsl-query-expert/SKILL.md`](../../src/boring_semantic_layer/agents/claude-code/bsl-query-expert/SKILL.md). It documents:
+## Installation
 
-- The exact method order (`model -> with_dimensions -> filter -> group_by -> aggregate`).
-- Time-dimension recipes with `.truncate()` and string casting.
-- Windowing with `.mutate().over(...)` for rolling averages, cumulative sums, and rankings.
-- Tool usage rules (always call `query_model` instead of returning pseudo-code).
+### Claude Code
 
-## Loading it in Claude Desktop
+```bash
+bsl skill install claude-code
+```
+
+Or manually copy the prompt from [`skills/claude-code/`](https://github.com/boringdata/boring-semantic-layer/tree/main/docs/md/skills/claude-code/) to `.claude/skills/bsl-query-expert/SKILL.md`
+
+### Claude Desktop
 
 1. Open Claude Desktop and click **Skills -> New Skill**.
-2. Copy the entire `SKILL.md` contents into the editor.
+2. Run `bsl skill show claude-code` and copy the output into the editor.
 3. Name it something memorable like "BSL Query Expert" and save.
 4. Add optional tags ("data", "analytics") so you can search for it quickly.
 
-Now, whenever you spin up a Claude session with your MCP server or plain text context, attach this skill. Claude will follow the instructions verbatim and call your Query Agent via MCP or CLI commands without hallucinating SQL.
+### Cursor
 
-## Reusing the skill elsewhere
+```bash
+bsl skill install cursor
+```
 
-- **Claude Projects** -> point to the same `SKILL.md` file to give project-specific contexts the semantic-layer instructions.
-- **Prompt libraries** -> paste the skill into your LangChain prompt templates so non-Claude LLMs mimic the same guard rails.
-- **Docs** -> this page is a handy reminder for new teammates about where the skill lives and why it matters.
+Or manually copy the prompt from [`skills/cursor/`](https://github.com/boringdata/boring-semantic-layer/tree/main/docs/md/skills/cursor) to `.cursorrules` in your project root
+
+### Codex (OpenAI)
+
+```bash
+bsl skill install codex
+```
+
+Or manually copy the prompt from [`skills/codex/`](https://github.com/boringdata/boring-semantic-layer/tree/main/docs/md/skills/codex) to your Codex system instructions
+
+## CLI Reference
+
+```bash
+# List available skills
+bsl skill list
+
+# Preview a skill before installing
+bsl skill show claude-code
+
+# Install a skill to your project
+bsl skill install claude-code
+bsl skill install cursor
+bsl skill install codex
+
+# Overwrite existing file
+bsl skill install cursor --force
+```

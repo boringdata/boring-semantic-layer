@@ -269,6 +269,6 @@ def time_dimension(
         expr=expr,
         description=description,
         is_event_timestamp=True,
-        is_time_dimension=True if smallest_time_grain else False,
+        is_time_dimension=bool(smallest_time_grain),
         smallest_time_grain=smallest_time_grain,
     )

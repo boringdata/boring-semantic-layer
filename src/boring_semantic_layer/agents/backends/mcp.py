@@ -10,7 +10,6 @@ from pydantic.functional_validators import BeforeValidator
 
 from ...query import _find_time_dimension
 from ..utils.chart_handler import generate_chart_with_data
-from ..utils.model_metadata import get_model_description
 from ..utils.prompts import load_prompt
 
 load_dotenv()
@@ -81,9 +80,8 @@ class MCPSemanticModel(FastMCP):
                 "calculated_measures": list(model.get_calculated_measures().keys()),
             }
 
-            description = get_model_description(model)
-            if description:
-                result["description"] = description
+            if model.description:
+                result["description"] = model.description
 
             return result
 

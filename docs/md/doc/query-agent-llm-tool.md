@@ -1,49 +1,90 @@
-# Query Agent: BSL as an LLM Tool
+# Query Agent: LLM Tool
 
-If you already have a LangChain workflow (CLI, Slack, custom app), you can drop the Query Agent in as a toolset. Everything routes through [`LangChainAgent`](../../src/boring_semantic_layer/agents/backends/langchain.py), so table discovery and query execution stay identical no matter the host.
+LLM tools are Python functions that a language model can call during a conversation. When the model needs data, it invokes a tool, receives the result, and continues reasoning.
 
-## Tool surface
+The advantage of this approach is that the LLM can directly execute Ibis-style chained queries—unlike MCP, which requires passing JSON payloads through a separate server.
 
-- `list_models()` -> returns a friendly description of every semantic model plus its dimensions/measures.
-- `query_model(query, show_chart, show_table, chart_spec, limit)` -> executes a literal BSL pipeline string and optionally renders a chart.
+**Benefits:**
+- No additional server to run
+- Full access to native BSL features without an intermediate DSL
 
-Use these helpers from any LangChain-compatible LLM (OpenAI, Claude, Gemini). The agent will automatically keep the conversation history, enforce the `.with_dimensions()` ordering, and cap row counts unless a user explicitly asks for more.
+## Reference implementation
 
-## LangChain + BSL Chat CLI
+We provide a LangChain-based chat agent as a reference:
 
-The CLI is the fastest way to get hands-on with the Query Agent:
+👉 [`langchain.py`](https://github.com/boringdata/boring-semantic-layer/blob/main/src/boring_semantic_layer/agents/backends/langchain.py)
+
+This implementation powers the [BSL CLI demo chat](/agents/chat) and can be adapted to any AI framework (PydanticAI, AI SDK).
+
+## Integrating with your own agent ([LangChain](https://www.langchain.com/))
+
+### Installation
+
+Install the agent dependency group:
 
 ```bash
-pip install boring-semantic-layer
-
-bsl chat \
-  --sm examples/flights/flights.yaml \
-  --model claude-3-5-sonnet-20241022 \
-  --chart-backend plotext
+pip install boring-semantic-layer[agent]
 ```
 
-Key flags:
+Then install the LLM provider you want to use:
 
-- `--sm` -> semantic model YAML path (same file you load in notebooks).
-- `--model` -> OpenAI, Anthropic, or Google model; the CLI auto-detects provider if you omit it.
-- `--chart-backend` -> `plotext` (TTY by default) or `altair`/`plotly` for richer renderers.
-- `--profile` / `--profile-file` -> point to connection info if your YAML references `profiles.yml`.
+```bash
+# OpenAI
+pip install langchain-openai
 
-Behind the scenes the CLI spins up `LangChainAgent` from [`boring_semantic_layer.agents.backends.langchain`](../../src/boring_semantic_layer/agents/backends/langchain.py), prints tool calls for transparency, and streams chart/table output inline.
+# Anthropic
+pip install langchain-anthropic
 
-## LangChain + Slack
+# Google
+pip install langchain-google-genai
+```
 
-[`BSLSlackBot`](../../src/boring_semantic_layer/agents/chats/slack.py) wraps the same agent logic inside a Socket Mode Slack bot:
+### Usage
+
+The `LangChainAgent` loads semantic models from a [YAML config file](/building/yaml):
 
 ```python
-from boring_semantic_layer.agents.chats.slack import BSLSlackBot
+from pathlib import Path
+from boring_semantic_layer.agents.backends.langchain import LangChainAgent
 
-bot = BSLSlackBot(
-    semantic_model_path="examples/flights/flights.yaml",
-    llm_model="gpt-4o-mini",
+agent = LangChainAgent(
+    model_path=Path("flights.yaml"),      # Semantic model YAML
+    llm_model="gpt-4o",                   # LLM to use
+    chart_backend="plotext",              # plotext, altair, or plotly
+    profile="dev",                        # Profile name (optional)
+    profile_file=Path("profiles.yml"),    # Profile file path (optional)
 )
 
-bot.start()
+tool_output, response = agent.query("What are the top 10 origins by flight count?")
 ```
 
-Provide `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` via environment variables or constructor args. When a user mentions the bot, it uses the LangChain agent to query BSL models and reply with results.
+See [YAML Config](/building/yaml) for the semantic model format and [Backend Profiles](/building/profile) for connection setup.
+
+## Available tools
+
+The LLM has access to three tools, similar to the MCP approach:
+
+### `get_documentation`
+
+Returns BSL documentation split into topics (query syntax, methods, charting, etc.). The LLM can explore relevant topics on demand to learn how to construct valid queries and charts.
+
+### `list_models`
+
+Lists all available semantic models by name. Useful when multiple models are loaded and the LLM needs to pick the right one.
+
+### `query_model`
+
+Executes a BSL query and returns results. The LLM passes an Ibis-style query string:
+
+```python
+sm.group_by("origin").aggregate("flight_count")
+```
+
+The tool executes this query against your semantic model and returns the result.
+
+**Parameters:**
+- `query` — The BSL query string to execute
+- `show_chart` — Return a chart visualization
+- `show_table` — Return a DataFrame
+- `chart_spec` — Custom Vega-Lite or Plotly chart specification
+- `limit` — Cap the number of rows returned

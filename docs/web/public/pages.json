@@ -12,6 +12,7 @@
   "percentage-total",
   "profile",
   "query-agent",
+  "query-agent-chat",
   "query-agent-llm-tool",
   "query-agent-mcp",
   "query-agent-skill",

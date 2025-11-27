@@ -515,6 +515,29 @@ class TestDictBasedMetadata:
             joined.get_measures()["flights.flight_count"].description == "Total number of flights"
         )
 
+    def test_joined_model_description(self, flights_data):
+        """Test that joined models have auto-generated description from root models."""
+        tbl = flights_data["flights"]
+        carriers_tbl = flights_data["carriers"]
+
+        # Models with descriptions
+        flights_st = to_semantic_table(tbl, "flights", description="Flight records")
+        carriers_st = to_semantic_table(carriers_tbl, "carriers", description="Carrier info")
+
+        joined = flights_st.join_one(carriers_st, lambda f, c: f.carrier == c.code)
+        assert (
+            joined.description
+            == "Joined model combining: flights (Flight records), carriers (Carrier info)"
+        )
+
+        # Model without description
+        flights_no_desc = to_semantic_table(tbl, "flights_nd")
+        joined_partial = flights_no_desc.join_one(carriers_st, lambda f, c: f.carrier == c.code)
+        assert (
+            joined_partial.description
+            == "Joined model combining: flights_nd, carriers (Carrier info)"
+        )
+
     def test_time_dimension_metadata(self, flights_data):
         """Test that time dimension metadata is preserved."""
         tbl = flights_data["flights"]

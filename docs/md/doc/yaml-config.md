@@ -40,7 +40,7 @@ from boring_semantic_layer import from_yaml
 models = from_yaml("flights_model.yml")
 ```
 
-See [Profile documentation](/profile) for setup details.
+See [Profile documentation](/building/profile) for setup details.
 
 ### Option 2: Passing Tables Manually
 

@@ -37,8 +37,12 @@ import NotFound from "./pages/NotFound";
 import BSLMarkdownPage from "./pages/BSLMarkdownPage";
 import JoinsRelationships from "./pages/JoinsRelationships";
 import SemanticTable from "./pages/SemanticTable";
-import MCP from "./pages/MCP";
 import Windowing from "./pages/Windowing";
+import QueryAgentOverview from "./pages/QueryAgentOverview";
+import QueryAgentMCP from "./pages/QueryAgentMCP";
+import QueryAgentTool from "./pages/QueryAgentTool";
+import QueryAgentSkill from "./pages/QueryAgentSkill";
+import QueryAgentChat from "./pages/QueryAgentChat";
 
 const queryClient = new QueryClient();
 
@@ -138,7 +142,17 @@ const App = () => (
             <Route path="/querying/filtering" element={<Layout><Filtering /></Layout>} />
             <Route path="/querying/charting" element={<Layout><Charting /></Layout>} />
             <Route path="/querying/indexing" element={<Layout><Indexing /></Layout>} />
-            <Route path="/querying/mcp" element={<Layout><MCP /></Layout>} />
+            {/* Agents Section */}
+            <Route path="/agents" element={<Layout><QueryAgentOverview /></Layout>} />
+            <Route path="/agents/mcp" element={<Layout><QueryAgentMCP /></Layout>} />
+            <Route path="/agents/tool" element={<Layout><QueryAgentTool /></Layout>} />
+            <Route path="/agents/skill" element={<Layout><QueryAgentSkill /></Layout>} />
+            <Route path="/agents/chat" element={<Layout><QueryAgentChat /></Layout>} />
+            {/* Legacy Agent routes */}
+            <Route path="/query-agent" element={<Navigate to="/agents" replace />} />
+            <Route path="/query-agent-mcp" element={<Navigate to="/agents/mcp" replace />} />
+            <Route path="/query-agent-llm-tool" element={<Navigate to="/agents/tool" replace />} />
+            <Route path="/query-agent-skill" element={<Navigate to="/agents/skill" replace />} />
 
             {/* Legacy routes - redirect to new consolidated pages */}
             <Route path="/building/joins" element={<Navigate to="/building/semantic-tables" replace />} />
