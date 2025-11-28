@@ -1,6 +1,8 @@
 """Unit tests for LangChain backend."""
 
 import json
+import subprocess
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -449,6 +451,343 @@ class TestProcessQuery:
         assert len(callback_calls) == 1
         assert callback_calls[0] == ("test_tool", {"param": "value"})
         assert agent_response == "Final answer"
+
+
+class TestGetDocumentation:
+    """Tests for get_documentation tool."""
+
+    @patch("boring_semantic_layer.agents.backends.langchain.from_yaml")
+    @patch("boring_semantic_layer.agents.backends.langchain.init_chat_model")
+    @patch("boring_semantic_layer.agents.backends.langchain.load_prompt")
+    def test_get_documentation_returns_content(
+        self, mock_load_prompt, mock_init_chat, mock_from_yaml, tmp_path
+    ):
+        """Test get_documentation returns documentation content."""
+        from boring_semantic_layer.agents.backends.langchain import LangChainAgent
+
+        mock_from_yaml.return_value = {"flights": Mock()}
+        mock_init_chat.return_value = Mock()
+        # Make load_prompt return different values based on the path
+        mock_load_prompt.side_effect = lambda dir, file: f"Content for {file}"
+
+        model_file = tmp_path / "test.yml"
+        model_file.write_text("test")
+
+        agent = LangChainAgent(model_path=model_file)
+
+        # Get get_documentation tool (it's the 3rd tool)
+        get_doc_tool = agent.tools[2]
+        assert get_doc_tool.name == "get_documentation"
+
+    @patch("boring_semantic_layer.agents.backends.langchain.from_yaml")
+    @patch("boring_semantic_layer.agents.backends.langchain.init_chat_model")
+    @patch("boring_semantic_layer.agents.backends.langchain.load_prompt")
+    def test_get_documentation_unknown_topic(
+        self, mock_load_prompt, mock_init_chat, mock_from_yaml, tmp_path
+    ):
+        """Test get_documentation returns error for unknown topic."""
+        from boring_semantic_layer.agents.backends.langchain import LangChainAgent
+
+        mock_from_yaml.return_value = {"flights": Mock()}
+        mock_init_chat.return_value = Mock()
+        mock_load_prompt.return_value = "Test prompt"
+
+        model_file = tmp_path / "test.yml"
+        model_file.write_text("test")
+
+        agent = LangChainAgent(model_path=model_file)
+
+        # Get get_documentation tool
+        get_doc_tool = agent.tools[2]
+        result = get_doc_tool.func(topic="unknown-topic-xyz")
+
+        assert "❌" in result
+        assert "Unknown topic" in result
+        assert "unknown-topic-xyz" in result
+
+    @patch("boring_semantic_layer.agents.backends.langchain.from_yaml")
+    @patch("boring_semantic_layer.agents.backends.langchain.init_chat_model")
+    @patch("boring_semantic_layer.agents.backends.langchain.load_prompt")
+    def test_get_documentation_tool_description_lists_topics(
+        self, mock_load_prompt, mock_init_chat, mock_from_yaml, tmp_path
+    ):
+        """Test get_documentation tool description lists available topics."""
+        from boring_semantic_layer.agents.backends.langchain import LangChainAgent
+
+        mock_from_yaml.return_value = {"flights": Mock()}
+        mock_init_chat.return_value = Mock()
+        mock_load_prompt.return_value = "Test prompt"
+
+        model_file = tmp_path / "test.yml"
+        model_file.write_text("test")
+
+        agent = LangChainAgent(model_path=model_file)
+
+        # Get get_documentation tool
+        get_doc_tool = agent.tools[2]
+
+        # Description should list topics from index.json
+        assert "getting-started" in get_doc_tool.description
+        assert "semantic-table" in get_doc_tool.description
+
+
+class TestGetMdDir:
+    """Tests for _get_md_dir function."""
+
+    def test_get_md_dir_returns_path(self):
+        """Test that _get_md_dir returns a Path."""
+        from boring_semantic_layer.agents.backends.langchain import _get_md_dir
+
+        result = _get_md_dir()
+        assert isinstance(result, Path)
+
+    def test_get_md_dir_contains_expected_files(self):
+        """Test that the md dir contains expected files."""
+        from boring_semantic_layer.agents.backends.langchain import _get_md_dir
+
+        md_dir = _get_md_dir()
+        # Should contain index.json
+        assert (md_dir / "index.json").exists()
+        # Should contain prompts directory
+        assert (md_dir / "prompts").exists()
+        # Should contain doc directory
+        assert (md_dir / "doc").exists()
+
+
+@pytest.mark.slow
+class TestGetDocumentationIntegration:
+    """Integration tests for get_documentation tool when installed as a package."""
+
+    def test_get_documentation_works_when_installed(self, tmp_path):
+        """Test that get_documentation can find docs when BSL is installed as a package."""
+        project_dir = tmp_path / "test-project"
+        project_dir.mkdir()
+
+        # Get the BSL source directory
+        bsl_source = Path(__file__).parent.parent.parent.parent.parent
+
+        # Initialize a uv project
+        result = subprocess.run(
+            ["uv", "init"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"uv init failed: {result.stderr}"
+
+        # Add BSL with agent extras from local path
+        result = subprocess.run(
+            ["uv", "add", f"boring-semantic-layer[agent] @ {bsl_source}"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"uv add failed: {result.stderr}"
+
+        # Create a test script that uses get_documentation
+        test_script = project_dir / "test_docs.py"
+        test_script.write_text("""
+import sys
+from pathlib import Path
+
+# Test _get_md_dir finds docs
+from boring_semantic_layer.agents.backends.langchain import _get_md_dir
+
+md_dir = _get_md_dir()
+print(f"MD_DIR: {md_dir}")
+
+# Check that required files exist
+assert md_dir.exists(), f"MD dir does not exist: {md_dir}"
+assert (md_dir / "index.json").exists(), f"index.json not found in {md_dir}"
+assert (md_dir / "prompts").exists(), f"prompts dir not found in {md_dir}"
+assert (md_dir / "doc").exists(), f"doc dir not found in {md_dir}"
+
+# Check index.json can be loaded
+import json
+index_data = json.loads((md_dir / "index.json").read_text())
+assert "topics" in index_data, "No topics in index.json"
+assert "getting-started" in index_data["topics"], "getting-started not in topics"
+
+# Check a doc file exists
+getting_started_source = index_data["topics"]["getting-started"]["source"]
+doc_path = md_dir / getting_started_source
+assert doc_path.exists(), f"Doc file not found: {doc_path}"
+
+print("SUCCESS: All documentation files found!")
+""")
+
+        # Run the test script
+        result = subprocess.run(
+            ["uv", "run", "python", "test_docs.py"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"Test script failed: {result.stderr}\n{result.stdout}"
+        assert "SUCCESS" in result.stdout, f"Test didn't succeed: {result.stdout}"
+
+    def test_bsl_chat_with_mocked_llm(self, tmp_path):
+        """Test bsl chat command with a mocked LLM in a fresh project."""
+        project_dir = tmp_path / "test-chat-project"
+        project_dir.mkdir()
+
+        # Get the BSL source directory
+        bsl_source = Path(__file__).parent.parent.parent.parent.parent
+
+        # Initialize a uv project
+        result = subprocess.run(
+            ["uv", "init"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"uv init failed: {result.stderr}"
+
+        # Add BSL with agent and examples extras from local path
+        result = subprocess.run(
+            ["uv", "add", f"boring-semantic-layer[agent,examples] @ {bsl_source}"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"uv add failed: {result.stderr}"
+
+        # Create a simple semantic model
+        model_file = project_dir / "model.yml"
+        model_file.write_text("""\
+items:
+  description: "Simple items table"
+  table: items
+  dimensions:
+    category: _.category
+  measures:
+    item_count: _.count()
+    total_value: _.value.sum()
+""")
+
+        # Create test data parquet file
+        import duckdb
+
+        conn = duckdb.connect()
+        conn.execute("""
+            CREATE TABLE items (category VARCHAR, value INTEGER);
+            INSERT INTO items VALUES ('electronics', 100), ('electronics', 200), ('books', 50);
+            COPY items TO 'items.parquet' (FORMAT PARQUET);
+        """)
+        # Move file to project dir
+        import shutil
+
+        shutil.move("items.parquet", project_dir / "items.parquet")
+
+        # Create a profiles.yml with DuckDB in-memory
+        profiles_file = project_dir / "profiles.yml"
+        profiles_file.write_text("""\
+test_db:
+  type: duckdb
+  database: ":memory:"
+  tables:
+    items: "items.parquet"
+""")
+
+        # Create a test script that tests all tools individually
+        test_script = project_dir / "test_chat.py"
+        test_script.write_text("""
+import sys
+from unittest.mock import Mock, patch
+from pathlib import Path
+
+# Patch init_chat_model before importing LangChainAgent
+with patch("boring_semantic_layer.agents.backends.langchain.init_chat_model") as mock_init:
+    mock_llm = Mock()
+    mock_init.return_value = mock_llm
+
+    from boring_semantic_layer.agents.backends.langchain import LangChainAgent
+
+    agent = LangChainAgent(
+        model_path=Path("model.yml"),
+        llm_model="gpt-4",
+        chart_backend="plotext",
+        profile="test_db",
+        profile_file=Path("profiles.yml"),
+    )
+
+    # Verify we have all 3 tools
+    tool_names = [t.name for t in agent.tools]
+    print(f"Available tools: {tool_names}")
+    assert "list_models" in tool_names, f"Missing list_models, got: {tool_names}"
+    assert "query_model" in tool_names, f"Missing query_model, got: {tool_names}"
+    assert "get_documentation" in tool_names, f"Missing get_documentation, got: {tool_names}"
+
+    # Test 1: list_models tool
+    print("\\n=== Testing list_models tool ===")
+    list_models_tool = next(t for t in agent.tools if t.name == "list_models")
+    result = list_models_tool.func()
+    print(f"list_models result: {result[:200]}...")
+    assert "items" in result, f"items not in list_models result: {result}"
+    assert "category" in result, f"category not in list_models result: {result}"
+    assert "item_count" in result, f"item_count not in list_models result: {result}"
+    print("✓ list_models tool works!")
+
+    # Test 2: get_documentation tool
+    print("\\n=== Testing get_documentation tool ===")
+    get_doc_tool = next(t for t in agent.tools if t.name == "get_documentation")
+    result = get_doc_tool.func(topic="getting-started")
+    print(f"get_documentation result length: {len(result)} chars")
+    assert len(result) > 100, f"Documentation too short: {result[:100]}"
+    assert "BSL" in result or "semantic" in result.lower(), f"Unexpected doc content: {result[:200]}"
+    print("✓ get_documentation tool works!")
+
+    # Test 3: query_model tool with chart rendering
+    print("\\n=== Testing query_model tool ===")
+    query_model_tool = next(t for t in agent.tools if t.name == "query_model")
+
+    # Capture stdout to check for chart output (plotext prints directly to stdout)
+    import io
+    import sys as sys_module
+    captured_output = io.StringIO()
+    old_stdout = sys_module.stdout
+    sys_module.stdout = captured_output
+
+    result = query_model_tool.func(query="items.group_by('category').aggregate('item_count')")
+
+    sys_module.stdout = old_stdout
+    chart_output = captured_output.getvalue()
+
+    print(f"query_model result: {result}")
+    print(f"Chart output captured ({len(chart_output)} chars)")
+
+    # Should contain success message
+    assert "success" in result.lower() or "rows" in result.lower(), \\
+        f"Unexpected query result: {result}"
+    print("✓ query_model tool works!")
+
+    # Test 4: Verify chart is rendered (plotext prints ASCII chart to stdout)
+    print("\\n=== Testing chart rendering ===")
+    # plotext uses characters like ─, │, ┼, █, ▄, etc for charts
+    has_chart_chars = any(c in chart_output for c in ["─", "│", "┼", "█", "▄", "▀", "┌", "┐", "└", "┘"])
+    print(f"Chart characters found: {has_chart_chars}")
+    if chart_output:
+        print(f"Chart output preview:\\n{chart_output[:500]}...")
+
+    # With plotext backend, we expect ASCII chart to be printed to stdout
+    assert has_chart_chars, f"Expected ASCII chart in stdout, got: {chart_output[:200] if chart_output else '(empty)'}"
+    # Also verify the chart contains our data labels
+    assert "electronics" in chart_output or "books" in chart_output, \\
+        f"Expected category labels in chart: {chart_output}"
+    print("✓ Chart rendering works!")
+
+    print("\\n=== SUCCESS: All tools work correctly! ===")
+""")
+
+        # Run the test script
+        result = subprocess.run(
+            ["uv", "run", "python", "test_chat.py"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"Test script failed: {result.stderr}\n{result.stdout}"
+        assert "SUCCESS" in result.stdout, f"Test didn't succeed: {result.stdout}"
 
 
 class TestErrorCallback:

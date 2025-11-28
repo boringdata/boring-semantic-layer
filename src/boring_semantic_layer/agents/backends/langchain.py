@@ -17,8 +17,27 @@ from boring_semantic_layer.utils import safe_eval
 
 load_dotenv()
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
-_MD_DIR = _PROJECT_ROOT / "docs" / "md"
+
+def _get_md_dir() -> Path:
+    """Get the directory containing markdown documentation files.
+
+    Looks in multiple locations:
+    1. Installed shared-data location (sys.prefix/share/bsl)
+    2. Development location (docs/md relative to project root)
+    """
+    import sys
+
+    # First try installed location (shared-data from wheel)
+    installed_dir = Path(sys.prefix) / "share" / "bsl"
+    if installed_dir.exists():
+        return installed_dir
+
+    # Fall back to development location
+    project_root = Path(__file__).resolve().parent.parent.parent.parent.parent
+    return project_root / "docs" / "md"
+
+
+_MD_DIR = _get_md_dir()
 _PROMPT_DIR = _MD_DIR / "prompts" / "query" / "langchain"
 
 SYSTEM_PROMPT = load_prompt(_PROMPT_DIR, "system.md")

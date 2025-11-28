@@ -63,6 +63,9 @@ packages = ["src/boring_semantic_layer"]
 
 [tool.hatch.build.targets.wheel.shared-data]
 "docs/md/skills" = "share/bsl/skills"
+"docs/md/doc" = "share/bsl/doc"
+"docs/md/prompts" = "share/bsl/prompts"
+"docs/md/index.json" = "share/bsl/index.json"
 
 [tool.pytest.ini_options]
 markers = [
