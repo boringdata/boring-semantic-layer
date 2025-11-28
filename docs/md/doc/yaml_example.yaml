@@ -1,5 +1,6 @@
 flights:
   table: flights_tbl
+  filter: _.year > 2020  # Optional: filter applied to all queries
   dimensions:
     origin:
       expr: _.origin

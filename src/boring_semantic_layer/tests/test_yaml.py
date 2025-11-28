@@ -799,3 +799,72 @@ balance_features:
 
     finally:
         os.unlink(yaml_path)
+
+
+def test_load_model_with_filter(sample_tables):
+    """Test loading a model with a filter applied."""
+    yaml_content = """
+flights:
+  table: flights_tbl
+  filter: _.distance > 500
+  dimensions:
+    origin: _.origin
+    destination: _.destination
+  measures:
+    flight_count: _.count()
+    avg_distance: _.distance.mean()
+"""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = f.name
+
+    try:
+        models = from_yaml(yaml_path, tables=sample_tables)
+        model = models["flights"]
+
+        # Query the filtered model
+        result = model.group_by().aggregate("flight_count", "avg_distance").execute()
+
+        # Original data has 6 flights, but only 3 have distance > 500
+        # JFK-LAX: 2475, LAX-JFK: 2475, ATL-ORD: 606, JFK-ATL: 760, DAL-HOU: 239, ORD-LAX: 1744
+        # Filter keeps: JFK-LAX, LAX-JFK, ATL-ORD, JFK-ATL, ORD-LAX = 5 flights
+        assert result.iloc[0]["flight_count"] == 5
+
+    finally:
+        os.unlink(yaml_path)
+
+
+def test_load_model_with_complex_filter(sample_tables):
+    """Test loading a model with a complex filter expression."""
+    yaml_content = """
+flights:
+  table: flights_tbl
+  filter: _.origin.isin(['JFK', 'LAX'])
+  dimensions:
+    origin: _.origin
+    carrier: _.carrier
+  measures:
+    flight_count: _.count()
+"""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = f.name
+
+    try:
+        models = from_yaml(yaml_path, tables=sample_tables)
+        model = models["flights"]
+
+        # Query by origin
+        result = model.group_by("origin").aggregate("flight_count").execute()
+
+        # Filter keeps flights from JFK or LAX origins
+        # JFK origins: JFK-LAX, JFK-ATL = 2
+        # LAX origins: LAX-JFK = 1
+        # Total: 3 flights
+        total = result["flight_count"].sum()
+        assert total == 3
+
+    finally:
+        os.unlink(yaml_path)

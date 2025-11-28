@@ -61,6 +61,20 @@ def _parse_dimension_or_measure(
     )
 
 
+def _parse_filter(filter_expr: str) -> callable:
+    """Parse a filter expression from YAML.
+
+    Example YAML:
+        flights:
+          table: flights_tbl
+          filter: _.origin.isin(['SFO', 'LAX', 'JFK'])
+    """
+    from ibis import _
+
+    deferred = safe_eval(filter_expr, context={"_": _}, allowed_names={"_"}).unwrap()
+    return lambda t, d=deferred: d.resolve(t)
+
+
 def _parse_joins(
     joins_config: dict[str, Mapping[str, Any]],
     tables: Mapping[str, Any],
@@ -288,6 +302,12 @@ def from_yaml(
             semantic_table = semantic_table.with_dimensions(**dimensions)
         if measures:
             semantic_table = semantic_table.with_measures(**measures)
+
+        # Apply filter if specified
+        if "filter" in config:
+            filter_predicate = _parse_filter(config["filter"])
+            semantic_table = semantic_table.filter(filter_predicate)
+
         models[name] = semantic_table
 
     # Second pass: add joins now that all models exist

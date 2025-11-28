@@ -101,6 +101,22 @@ result = (
 
 <bslquery code-block="query_yaml_model"></bslquery>
 
+## Filters
+
+You can apply a filter to all queries on a model by adding a `filter` field:
+
+```yaml
+flights:
+  table: flights_tbl
+  filter: _.year > 2020  # Applied to all queries
+  dimensions:
+    origin: _.origin
+  measures:
+    flight_count: _.count()
+```
+
+The filter expression uses the same `_` syntax as dimensions and measures. It's applied automatically when you query the model.
+
 ## Next Steps
 
 - See [Building Semantic Tables](/building/semantic-tables) for Python-based definitions
