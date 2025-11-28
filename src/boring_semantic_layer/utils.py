@@ -231,7 +231,6 @@ def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
 
         try:
             from xorq.vendor import ibis as xorq_ibis
-            from xorq.vendor.ibis import _ as xorq_deferred
 
             eval_context = {
                 "ibis": ibis,

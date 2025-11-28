@@ -1,5 +1,6 @@
 [
   "bucketing",
+  "builder-agent",
   "charting",
   "comparison",
   "compose",
@@ -10,6 +11,11 @@
   "nested-subtotals",
   "percentage-total",
   "profile",
+  "query-agent",
+  "query-agent-chat",
+  "query-agent-llm-tool",
+  "query-agent-mcp",
+  "query-agent-skill",
   "query-methods",
   "reference",
   "semantic-table",

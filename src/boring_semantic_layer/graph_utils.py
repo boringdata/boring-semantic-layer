@@ -48,13 +48,13 @@ def to_node(maybe_expr: Any) -> Node:
 
 
 def gen_children_of(node: Node) -> tuple[Node, ...]:
+    import contextlib
+
     children = getattr(node, "__children__", ())
     result = []
     for child in children:
-        try:
+        with contextlib.suppress(ValueError, AttributeError):
             result.append(to_node(child))
-        except (ValueError, AttributeError):
-            pass
     return tuple(result)
 
 
@@ -108,7 +108,9 @@ def try_to_node(child: Any) -> Maybe[Node]:
     return to_node_safe(child).map(Some).value_or(Nothing)
 
 
-def find_dimensions_and_measures(expr: IbisExpr | XorqExpr) -> tuple[dict[str, Any], dict[str, Any]]:
+def find_dimensions_and_measures(
+    expr: IbisExpr | XorqExpr,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     from .ops import (
         _find_all_root_models,
         _get_field_dict,
@@ -125,18 +127,14 @@ def find_dimensions_and_measures(expr: IbisExpr | XorqExpr) -> tuple[dict[str, A
 def find_entity_dimensions(expr: IbisExpr | XorqExpr) -> dict[str, Any]:
     """Find all entity dimensions in the expression tree."""
     dimensions, _ = find_dimensions_and_measures(expr)
-    return {
-        name: dim for name, dim in dimensions.items()
-        if getattr(dim, 'is_entity', False)
-    }
+    return {name: dim for name, dim in dimensions.items() if getattr(dim, "is_entity", False)}
 
 
 def find_event_timestamp_dimensions(expr: IbisExpr | XorqExpr) -> dict[str, Any]:
     """Find all event timestamp dimensions in the expression tree."""
     dimensions, _ = find_dimensions_and_measures(expr)
     return {
-        name: dim for name, dim in dimensions.items()
-        if getattr(dim, 'is_event_timestamp', False)
+        name: dim for name, dim in dimensions.items() if getattr(dim, "is_event_timestamp", False)
     }
 
 
@@ -273,6 +271,7 @@ def build_dependency_graph(
         Dictionary mapping field names to metadata with "deps" and "type" keys
     """
     from xorq.vendor.ibis.expr.operations.relations import Field as XorqField
+
     try:
         from ibis.expr.operations.relations import Field as IbisField
     except ImportError:

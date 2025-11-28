@@ -32,11 +32,6 @@ from returns.maybe import Maybe, Nothing, Some
 from returns.result import Success, safe
 from toolz import curry
 
-
-def _is_deferred(expr) -> bool:
-    return isinstance(expr, Deferred)
-
-
 from . import projection_utils
 from .compile_all import compile_grouped_with_all
 from .graph_utils import walk_nodes
@@ -49,6 +44,11 @@ from .measure_scope import (
     MeasureScope,
 )
 from .nested_access import NestedAccessMarker
+
+
+def _is_deferred(expr) -> bool:
+    return isinstance(expr, Deferred)
+
 
 if TYPE_CHECKING:
     from .expr import (
@@ -1431,6 +1431,22 @@ class SemanticJoinOp(Relation):
 
     @property
     def name(self) -> str | None:
+        return None
+
+    @property
+    def description(self) -> str | None:
+        """Get description for joined model by combining root model descriptions."""
+        roots = _find_all_root_models(self)
+        base_descriptions = []
+        for root in roots:
+            root_name = getattr(root, "name", None) or "unnamed"
+            root_desc = getattr(root, "description", None)
+            if root_desc:
+                base_descriptions.append(f"{root_name} ({root_desc})")
+            else:
+                base_descriptions.append(root_name)
+        if base_descriptions:
+            return "Joined model combining: " + ", ".join(base_descriptions)
         return None
 
     @property

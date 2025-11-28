@@ -18,10 +18,11 @@ to_semantic_table(
 
 Create a semantic table from an Ibis table. This is the primary entry point for building semantic models.
 
-**Parameters:**
-- `table` - Ibis table to build the model from
-- `name` - Unique identifier for the semantic table
-- `description` - Optional description of the semantic table
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `table` | `ibis.Table` | Ibis table to build the model from |
+| `name` | `str` | Unique identifier for the semantic table |
+| `description` | `str` | Optional description of the semantic table |
 
 **Example:**
 ```python
@@ -81,9 +82,10 @@ from_yaml(
 
 Load semantic models from a YAML configuration file. Returns a dictionary of semantic tables.
 
-**Parameters:**
-- `yaml_path` - Path to YAML configuration file
-- `connection` - Optional Ibis connection for database tables
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `yaml_path` | `str` | Path to YAML configuration file |
+| `connection` | `ibis.Connection` | Optional Ibis connection for database tables |
 
 **Example:**
 ```python
@@ -173,10 +175,11 @@ join_many(
 
 One-to-many relationship join (LEFT JOIN). Use when the left table can match multiple rows in the right table.
 
-**Parameters:**
-- `other` - The semantic table to join with
-- `on` - Lambda function defining the join condition
-- `name` - Optional name for the joined table reference
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `other` | `SemanticTable` | The semantic table to join with |
+| `on` | `Callable` | Lambda function defining the join condition |
+| `name` | `str` | Optional name for the joined table reference |
 
 **Example:**
 ```python
@@ -231,8 +234,12 @@ join(
 
 Custom join with flexible join type. Supports 'inner', 'left', 'right', 'outer', and 'cross'.
 
-**Parameters:**
-- `how` - Join type: 'inner', 'left', 'right', 'outer', or 'cross'
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `other` | `SemanticTable` | The semantic table to join with |
+| `on` | `Callable` | Lambda function defining the join condition |
+| `how` | `str` | Join type: 'inner', 'left', 'right', 'outer', or 'cross' |
+| `name` | `str` | Optional name for the joined table reference |
 
 ## Query Methods
 
@@ -396,11 +403,12 @@ chart(
 
 Create visualizations from query results. Supports Altair (default) and Plotly backends.
 
-**Parameters:**
-- `result` - Query result table to visualize
-- `backend` - "altair" or "plotly"
-- `spec` - Custom Vega-Lite specification (for Altair)
-- `format` - "interactive", "json", "png", "svg"
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `result` | `ibis.Table` | Query result table to visualize |
+| `backend` | `str` | "altair" or "plotly" |
+| `spec` | `dict` | Custom Vega-Lite specification (for Altair) |
+| `format` | `str` | "interactive", "json", "png", "svg" |
 
 **Auto-detection:**
 BSL automatically selects appropriate chart types:
@@ -432,10 +440,11 @@ index(
 
 Create a searchable catalog of unique dimension values with optional weighting and sampling.
 
-**Parameters:**
-- `dimensions` - None (all dimensions) or lambda returning list of fields
-- `by` - Measure name for weighting results
-- `sample` - Number of rows to sample (for large datasets)
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `dimensions` | `Callable` | None (all dimensions) or lambda returning list of fields |
+| `by` | `str` | Measure name for weighting results |
+| `sample` | `int` | Number of rows to sample (for large datasets) |
 
 **Examples:**
 ```python
@@ -467,18 +476,23 @@ MCPSemanticModel(
 
 Create an MCP server to expose semantic models to LLMs like Claude. Accepts either a dictionary of models or a path to a YAML configuration file.
 
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `models` | `dict` or `str` | Dictionary of SemanticTable objects or path to YAML config |
+| `description` | `str` | Optional description of the semantic model |
+
 **Available MCP Tools:**
 
-These tools are called by Claude through the MCP interface:
-
-- `list_models()` - List all available semantic model names
-- `get_model()` - Get detailed model information (dimensions, measures, joins)
-- `get_time_range()` - Get available time range for time-series data
-- `query_model()` - Execute queries against semantic models
+| Tool | Description |
+|------|-------------|
+| `list_models()` | List all available semantic model names |
+| `get_model()` | Get detailed model information (dimensions, measures, joins) |
+| `get_time_range()` | Get available time range for time-series data |
+| `query_model()` | Execute queries against semantic models |
 
 **Example:**
 ```python
-from boring_semantic_layer.mcp import MCPSemanticModel
+from boring_semantic_layer import MCPSemanticModel
 
 # From dictionary
 server = MCPSemanticModel(
@@ -522,12 +536,15 @@ model_name:
 
 #### Expression Syntax
 
-- `_` - Reference to the table
-- `_.column` - Reference a column
-- `_.count()` - Aggregation functions
-- `_.column.sum()` - Column aggregations
-- `_.column.mean()` - Average
-- `_.column.min()` / `_.column.max()` - Min/Max
+| Expression | Description |
+|------------|-------------|
+| `_` | Reference to the table |
+| `_.column` | Reference a column |
+| `_.count()` | Count aggregation |
+| `_.column.sum()` | Sum aggregation |
+| `_.column.mean()` | Average aggregation |
+| `_.column.min()` | Minimum value |
+| `_.column.max()` | Maximum value |
 
 **Example:**
 ```yaml

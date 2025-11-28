@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useLocation, Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
+import remarkGfm from 'remark-gfm'
 import BSLQueryResult from '../components/BSLQueryResult'
 import { StandardOutput } from '@/components/StandardOutput'
 import { CollapsibleSetup } from '@/components/CollapsibleSetup'
@@ -12,6 +13,14 @@ import { Footer } from '@/components/Footer'
 import { TableOfContents } from '@/components/TableOfContents'
 import { AltairChart } from '@/components/AltairChart'
 import { YamlContent } from '@/components/YamlContent'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 
 interface PageData {
   markdown: string
@@ -110,6 +119,7 @@ export default function BSLMarkdownPage({ pageSlug }: BSLMarkdownPageProps = {})
             <div className="flex gap-8">
               <main className="flex-1 max-w-4xl space-y-8 min-w-0">
               <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeRaw]}
                 components={{
                   // H1
@@ -249,6 +259,25 @@ export default function BSLMarkdownPage({ pageSlug }: BSLMarkdownPageProps = {})
                     {children}
                   </a>
                 )
+              },
+              // Tables
+              table({ children }) {
+                return <Table className="my-6">{children}</Table>
+              },
+              thead({ children }) {
+                return <TableHeader>{children}</TableHeader>
+              },
+              tbody({ children }) {
+                return <TableBody>{children}</TableBody>
+              },
+              tr({ children }) {
+                return <TableRow>{children}</TableRow>
+              },
+              th({ children }) {
+                return <TableHead>{children}</TableHead>
+              },
+              td({ children }) {
+                return <TableCell>{children}</TableCell>
               },
                 }}
               >

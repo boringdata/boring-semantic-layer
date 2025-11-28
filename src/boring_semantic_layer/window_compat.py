@@ -1,4 +1,4 @@
-""" TO BE REMOVED ONCE XORQ CATCHES UP
+"""TO BE REMOVED ONCE XORQ CATCHES UP
 This compatibility layer is only needed for ibis version 10.0.0 and greater.
 """
 
@@ -22,11 +22,11 @@ def _extract_value(boundary):
     Returns:
         The numeric value or None if the boundary has no value
     """
-    if not hasattr(boundary, 'value') or boundary.value is None:
+    if not hasattr(boundary, "value") or boundary.value is None:
         return None
 
     value = boundary.value
-    if hasattr(value, 'value'):
+    if hasattr(value, "value"):
         value = value.value
 
     return value
@@ -35,21 +35,21 @@ def _extract_value(boundary):
 def _process_rows_frame(window, params):
     start_val = _extract_value(window.start)
     if start_val is not None and start_val != 0:
-        params['preceding'] = abs(start_val)
+        params["preceding"] = abs(start_val)
 
     end_val = _extract_value(window.end)
     if end_val is not None:
-        params['following'] = end_val if end_val != 0 else 0
+        params["following"] = end_val if end_val != 0 else 0
 
 
 def _process_range_frame(window, params):
     start_val = _extract_value(window.start)
     if start_val is not None and start_val != 0:
-        params['preceding'] = abs(start_val)
+        params["preceding"] = abs(start_val)
 
     end_val = _extract_value(window.end)
     if end_val is not None and end_val != 0:
-        params['following'] = end_val
+        params["following"] = end_val
 
 
 def convert_window_to_xorq(window):
@@ -62,14 +62,14 @@ def convert_window_to_xorq(window):
     params = {}
 
     if window.groupings:
-        params['group_by'] = window.groupings
+        params["group_by"] = window.groupings
 
     if window.orderings:
-        params['order_by'] = window.orderings
+        params["order_by"] = window.orderings
 
-    if window.how == 'rows':
+    if window.how == "rows":
         _process_rows_frame(window, params)
-    elif window.how == 'range':
+    elif window.how == "range":
         _process_range_frame(window, params)
 
     return xibis.window(**params)
@@ -86,19 +86,20 @@ _original_ibis_cases = ibis.cases
 
 
 def _is_xorq_expr(expr):
-    if not hasattr(expr, '__class__'):
+    if not hasattr(expr, "__class__"):
         return False
 
     if isinstance(expr, XorqValue):
         return True
 
     import sys
-    if hasattr(expr, '__module__'):
-        expr_module_name = expr.__module__.split('.')[0]
-        if expr_module_name == 'ibis':
+
+    if hasattr(expr, "__module__"):
+        expr_module_name = expr.__module__.split(".")[0]
+        if expr_module_name == "ibis":
             expr_module = sys.modules.get(expr.__module__)
             if expr_module:
-                root_parts = expr.__module__.split('.')
+                root_parts = expr.__module__.split(".")
                 root_module = sys.modules.get(root_parts[0])
                 return root_module is xibis
 
@@ -111,7 +112,7 @@ def _contains_xorq_exprs(*args, **kwargs):
             return False
         if _is_xorq_expr(val):
             return True
-        if isinstance(val, (list, tuple)):
+        if isinstance(val, list | tuple):
             return any(check_value(v) for v in val)
         return False
 
@@ -162,34 +163,21 @@ def _patched_xorq_over(self, window=None, *, rows=None, range=None, group_by=Non
         window = convert_window_to_xorq(window)
 
     return _original_xorq_over(
-        self,
-        window=window,
-        rows=rows,
-        range=range,
-        group_by=group_by,
-        order_by=order_by
+        self, window=window, rows=rows, range=range, group_by=group_by, order_by=order_by
     )
 
 
 def _patched_ibis_over(self, window=None, *, rows=None, range=None, group_by=None, order_by=None):
     if window is not None and _is_xorq_window(window):
         from xorq.common.utils.ibis_utils import from_ibis
+
         xorq_expr = from_ibis(self)
         return xorq_expr.over(
-            window=window,
-            rows=rows,
-            range=range,
-            group_by=group_by,
-            order_by=order_by
+            window=window, rows=rows, range=range, group_by=group_by, order_by=order_by
         )
 
     return _original_ibis_over(
-        self,
-        window=window,
-        rows=rows,
-        range=range,
-        group_by=group_by,
-        order_by=order_by
+        self, window=window, rows=rows, range=range, group_by=group_by, order_by=order_by
     )
 
 

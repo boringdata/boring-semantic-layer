@@ -5,7 +5,8 @@ Verifies that when users try to use features requiring optional dependencies,
 they receive clear error messages indicating which dependency group to install.
 
 Dependency groups in pyproject.toml:
-- fastmcp: For MCP semantic model functionality (MCPSemanticModel)
+- mcp: For MCP semantic model functionality (MCPSemanticModel)
+- agent: For LangChain-based query agents
 - viz-altair: For Altair visualization (chart with backend="altair")
 - viz-plotly: For Plotly visualization (chart with backend="plotly")
 - examples: For running examples (includes xorq and duckdb)
@@ -45,13 +46,15 @@ class TestDependencyGroupDocumentation:
         optional_deps = pyproject["project"]["optional-dependencies"]
 
         # Verify all expected groups exist
-        assert "fastmcp" in optional_deps, "fastmcp dependency group missing"
+        assert "mcp" in optional_deps, "mcp dependency group missing"
+        assert "agent" in optional_deps, "agent dependency group missing"
         assert "viz-altair" in optional_deps, "viz-altair dependency group missing"
         assert "viz-plotly" in optional_deps, "viz-plotly dependency group missing"
         assert "examples" in optional_deps, "examples dependency group missing"
 
         # Verify key dependencies in each group
-        assert any("fastmcp" in dep for dep in optional_deps["fastmcp"])
+        assert any("fastmcp" in dep for dep in optional_deps["mcp"])
+        assert any("langchain" in dep for dep in optional_deps["agent"])
         assert any("altair" in dep for dep in optional_deps["viz-altair"])
         assert any("plotly" in dep for dep in optional_deps["viz-plotly"])
         assert any("xorq" in dep for dep in optional_deps["examples"])
@@ -82,11 +85,12 @@ class TestDependencyGroupDocumentation:
 
         assert len(dev_with_extras) > 0, "Dev should include boring-semantic-layer with extras"
 
-        # The first dev dependency should include all the optional groups
+        # The first dev dependency should include all the optional groups (not xorq, it's required)
         if dev_with_extras:
             first_dep = dev_with_extras[0]
-            assert "fastmcp" in first_dep
+            assert "mcp" in first_dep
             assert "examples" in first_dep
+            assert "agent" in first_dep
             assert "viz-altair" in first_dep
             assert "viz-plotly" in first_dep
             assert "viz-plotext" in first_dep
@@ -200,7 +204,8 @@ class TestDependencyGroupCoverage:
 
         # Should test all dependency groups
         assert "xorq" in test_file_content
-        assert "fastmcp" in test_file_content
+        assert "mcp" in test_file_content
+        assert "agent" in test_file_content
         assert "viz-altair" in test_file_content or "altair" in test_file_content
         assert "viz-plotly" in test_file_content or "plotly" in test_file_content
 

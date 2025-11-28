@@ -18,40 +18,58 @@ license-files = [
     "LICENSE",
 ]
 
+[project.scripts]
+bsl = "boring_semantic_layer.agents.cli:main"
+
 [project.optional-dependencies]
 examples = ["xorq[duckdb]>=0.3.4", "xorq", "duckdb<1.4"]
+
+# Visualization backends
 viz-altair = ["altair>=5.0.0", "vl-convert-python>=1.0.0"]
 viz-plotly = ["plotly>=6.3.0", "kaleido", "nbformat>=4.2.0"]
 viz-plotext = ["plotext>=5.0.0"]
+
+agent = [
+    "langchain>=0.3.0",
+    "rich>=13.0.0",
+    "python-dotenv>=1.0.0",
+    "plotext>=5.0.0",
+]
+
+# MCP server backend
+mcp = [
+    "fastmcp>=2.12.4",
+]
+
 dev = [
-    "boring-semantic-layer[fastmcp,examples,viz-altair,viz-plotly,viz-plotext]",
+    "boring-semantic-layer[agent,mcp,examples,viz-altair,viz-plotly,viz-plotext]",
+    "langchain-openai>=0.3.0",
+    "langchain-anthropic>=0.3.0",
     "ruff>=0.6.7",
     "pre-commit>=4.2.0",
     "pytest",
     "pandas>=2.3.0",
     "urllib3>=2.2.3",
     "pytest-asyncio",
-    "malloy>=0.1.0", # Malloy tests
-]
-fastmcp = [
-    "fastmcp>=2.12.4",
+    "malloy>=0.1.0",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/boring_semantic_layer"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+"docs/md/skills" = "share/bsl/skills"
+"docs/md/doc" = "share/bsl/doc"
+"docs/md/prompts" = "share/bsl/prompts"
+"docs/md/index.json" = "share/bsl/index.json"
+
 [tool.pytest.ini_options]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-]
-
-[dependency-groups]
-dev = [
-    "adbc-driver-sqlite>=1.9.0",
-    "ibis-framework>=11.0.0",
-    "ipython>=8.37.0",
-    "xorq>=0.3.3",
 ]
 
 [tool.ruff]

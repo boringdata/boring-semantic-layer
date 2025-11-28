@@ -1,4 +1,4 @@
-.PHONY: test examples docs-build check clean help
+.PHONY: test examples docs-build skills-build skills-check check clean help
 
 # Default target - show help
 .DEFAULT_GOAL := help
@@ -12,13 +12,15 @@ IBIS_VERSION ?=
 help:
 	@echo "Available targets:"
 	@echo "  make test                              - Run pytest tests"
-	@echo "  make test IBIS_VERSION=all             - Run tests with all ibis versions (9.5.0, 10.6.0, 11.0.0)"
-	@echo "  make test IBIS_VERSION=10.6.0          - Run tests with specific ibis version"
+	@echo "  make test IBIS_VERSION=all             - Run tests with all ibis versions (9.5.0, 10.8.0, 11.0.0)"
+	@echo "  make test IBIS_VERSION=10.8.0          - Run tests with specific ibis version"
 	@echo "  make examples                          - Run all example scripts"
 	@echo "  make examples IBIS_VERSION=all         - Run examples with all ibis versions"
-	@echo "  make examples IBIS_VERSION=10.6.0      - Run examples with specific ibis version"
+	@echo "  make examples IBIS_VERSION=10.8.0      - Run examples with specific ibis version"
 	@echo "  make docs-build                        - Build documentation"
-	@echo "  make check                             - Run all checks (tests + examples + docs)"
+	@echo "  make skills-build                      - Build AI assistant skills from prompts"
+	@echo "  make skills-check                      - Check if skills are up to date"
+	@echo "  make check                             - Run all checks (tests + examples + docs + skills)"
 	@echo "  make check IBIS_VERSION=all            - Run all checks with all ibis versions"
 	@echo "  make clean                             - Clean build artifacts"
 
@@ -105,11 +107,22 @@ docs-build:
 	@echo "Building documentation..."
 	cd docs/web && npm run build
 
+# Build skills from prompts
+skills-build:
+	@echo "Building AI assistant skills..."
+	uv run python docs/md/skills_builder.py
+
+# Check if skills are up to date
+skills-check:
+	@echo "Checking if skills are up to date..."
+	uv run python docs/md/skills_builder.py --check
+
 # Run all checks (CI target)
 check:
 	@if [ "$(IBIS_VERSION)" = "all" ]; then \
 		$(MAKE) test IBIS_VERSION=all; \
 		$(MAKE) examples IBIS_VERSION=all; \
+		$(MAKE) skills-check; \
 		echo ""; \
 		echo "========================================"; \
 		echo "✓ All checks passed (tests + examples with all ibis versions)!"; \
@@ -118,6 +131,7 @@ check:
 	elif [ -n "$(IBIS_VERSION)" ]; then \
 		$(MAKE) test IBIS_VERSION=$(IBIS_VERSION); \
 		$(MAKE) examples IBIS_VERSION=$(IBIS_VERSION); \
+		$(MAKE) skills-check; \
 		echo ""; \
 		echo "========================================"; \
 		echo "✓ All checks passed (tests + examples with ibis $(IBIS_VERSION))!"; \
@@ -127,6 +141,7 @@ check:
 		$(MAKE) test; \
 		$(MAKE) examples; \
 		$(MAKE) docs-build; \
+		$(MAKE) skills-check; \
 		echo ""; \
 		echo "========================================"; \
 		echo "✓ All checks passed!"; \

@@ -162,6 +162,27 @@ test_profile:
         assert connection is not None
         assert hasattr(connection, "list_tables")
 
+    def test_bsl_profile_file_env_var_without_profile_name(self, temp_dir, monkeypatch):
+        """Test BSL_PROFILE_FILE environment variable uses first profile when no name given."""
+        profile_file = temp_dir / "my_profiles.yml"
+        profile_file.write_text("""
+first_profile:
+  type: duckdb
+  database: ":memory:"
+
+second_profile:
+  type: duckdb
+  database: ":memory:"
+""")
+
+        monkeypatch.setenv("BSL_PROFILE_FILE", str(profile_file))
+
+        # get_connection should use first profile when no profile name is provided
+        connection = get_connection()
+        # Should not raise an error - uses first profile from file
+        assert connection is not None
+        assert hasattr(connection, "list_tables")
+
 
 class TestParquetLoading:
     """Test generic parquet file loading for backends that support read_parquet."""

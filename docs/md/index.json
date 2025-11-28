@@ -1,0 +1,89 @@
+{
+  "topics": {
+    "getting-started": {
+      "title": "Getting Started",
+      "description": "Introduction to BSL, installation, and basic usage with semantic tables",
+      "source": "doc/getting-started.md"
+    },
+    "semantic-table": {
+      "title": "Semantic Tables",
+      "description": "Building semantic models with dimensions, measures, and expressions",
+      "source": "doc/semantic-table.md"
+    },
+    "yaml-config": {
+      "title": "YAML Configuration",
+      "description": "Defining semantic models in YAML files for better organization",
+      "source": "doc/yaml-config.md"
+    },
+    "profile": {
+      "title": "Profiles",
+      "description": "Database connection profiles for connecting to data sources",
+      "source": "doc/profile.md"
+    },
+    "compose": {
+      "title": "Composing Models",
+      "description": "Joining multiple semantic tables together",
+      "source": "doc/compose.md"
+    },
+    "query-methods": {
+      "title": "Query Methods",
+      "description": "Complete API reference for group_by, aggregate, filter, order_by, limit, mutate",
+      "source": "doc/query-methods.md"
+    },
+    "windowing": {
+      "title": "Window Functions",
+      "description": "Running totals, moving averages, rankings, lag/lead, and cumulative calculations",
+      "source": "doc/windowing.md"
+    },
+    "bucketing": {
+      "title": "Bucketing with Other",
+      "description": "Create categorical buckets and consolidate long-tail into 'Other' category",
+      "source": "doc/bucketing.md"
+    },
+    "nested-subtotals": {
+      "title": "Nested Subtotals",
+      "description": "Rollup calculations with subtotals at each grouping level",
+      "source": "doc/nested-subtotals.md"
+    },
+    "percentage-total": {
+      "title": "Percent of Total",
+      "description": "Calculate percentages using t.all() for market share and distribution analysis",
+      "source": "doc/percentage-total.md"
+    },
+    "indexing": {
+      "title": "Dimensional Indexing",
+      "description": "Compare values to baselines and calculate indexed metrics",
+      "source": "doc/indexing.md"
+    },
+    "charting": {
+      "title": "Charting Overview",
+      "description": "Data visualization basics with automatic chart type detection",
+      "source": "doc/charting.md"
+    },
+    "charting-altair": {
+      "title": "Altair Charts",
+      "description": "Interactive web charts with Vega-Lite via Altair backend",
+      "source": "prompts/chart/altair.md"
+    },
+    "charting-plotly": {
+      "title": "Plotly Charts",
+      "description": "Interactive charts with Plotly backend for dashboards",
+      "source": "prompts/chart/plotly.md"
+    },
+    "charting-plotext": {
+      "title": "Terminal Charts",
+      "description": "ASCII charts for terminal/CLI with Plotext backend",
+      "source": "prompts/chart/plotext.md"
+    },
+    "sessionized": {
+      "title": "Sessionized Data",
+      "description": "Working with session-based data and user journey analysis",
+      "source": "doc/sessionized.md"
+    },
+    "comparison": {
+      "title": "Comparison Queries",
+      "description": "Period-over-period comparisons and trend analysis",
+      "source": "doc/comparison.md"
+    }
+  }
+}

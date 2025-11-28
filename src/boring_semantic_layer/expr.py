@@ -8,8 +8,9 @@ from typing import Any
 import ibis
 from ibis.common.collections import FrozenDict
 from ibis.expr import types as ir
+from ibis.expr.types.groupby import GroupedTable as IbisGroupedTable
+from ibis.expr.types.relations import Table as IbisTable
 from returns.result import Success, safe
-from xorq.vendor import ibis as xorq_ibis
 from xorq.vendor.ibis.expr.types import Table
 from xorq.vendor.ibis.expr.types.groupby import GroupedTable
 
@@ -596,6 +597,10 @@ class SemanticJoin(SemanticTable):
         return getattr(self.op(), "name", None)
 
     @property
+    def description(self):
+        return self.op().description
+
+    @property
     def table(self):
         return self.op().to_untagged()
 
@@ -952,7 +957,7 @@ class SemanticGroupBy(SemanticTable):
                     return {col: source_tbl[col] for col in columns}
 
                 def collect_struct(struct_dict):
-                    return xorq_ibis.struct(struct_dict).collect()
+                    return ibis.struct(struct_dict).collect()
 
                 def handle_grouped_table(result, ibis_tbl):
                     group_cols = tuple(map(attrgetter("name"), result.groupings))
@@ -967,10 +972,10 @@ class SemanticGroupBy(SemanticTable):
                     if isinstance(result, SemanticTable):
                         return to_untagged(result)
 
-                    if isinstance(result, GroupedTable):
+                    if isinstance(result, GroupedTable | IbisGroupedTable):
                         return handle_grouped_table(result, ibis_tbl)
 
-                    if isinstance(result, Table):
+                    if isinstance(result, Table | IbisTable):
                         return handle_table(result, ibis_tbl)
 
                     raise TypeError(
@@ -1369,4 +1374,3 @@ class SemanticProject(SemanticTable):
         return _build_semantic_model_from_roots(
             self.op().to_untagged(), all_roots, field_filter=set(self.fields)
         )
-

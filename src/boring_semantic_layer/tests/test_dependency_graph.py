@@ -647,7 +647,7 @@ def test_graph_merge_on_join():
     )
 
     # Join the tables
-    joined = flights.join_one(carriers, on=lambda l, r: l.carrier_code == r.code)
+    joined = flights.join_one(carriers, on=lambda left, right: left.carrier_code == right.code)
 
     # Graph should contain fields from both tables with prefixes (matching get_dimensions())
     graph = joined.get_graph()
