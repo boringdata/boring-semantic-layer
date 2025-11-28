@@ -1,7 +1,6 @@
 """Command-line interface for Boring Semantic Layer - v2 with generic backend support."""
 
 import argparse
-import json
 import logging
 import shutil
 import sys
@@ -27,44 +26,21 @@ TOOL_CONFIGS = {
 
 
 def _get_skills_dir() -> Path:
-    """Get the directory containing skill files (bundled with the package)."""
-    # Skills are in docs/md/skills relative to the package
+    """Get the directory containing skill files (bundled with the package).
+
+    Looks in multiple locations:
+    1. Installed shared-data location (sys.prefix/share/bsl/skills)
+    2. Development location (docs/md/skills relative to package)
+    """
+    # First try installed location (shared-data from wheel)
+    installed_skills_dir = Path(sys.prefix) / "share" / "bsl" / "skills"
+    if installed_skills_dir.exists():
+        return installed_skills_dir
+
+    # Fall back to development location
     package_dir = Path(__file__).parent.parent.parent.parent
     skills_dir = package_dir / "docs" / "md" / "skills"
     return skills_dir
-
-
-def _get_md_dir() -> Path:
-    """Get the docs/md directory containing prompts and docs."""
-    package_dir = Path(__file__).parent.parent.parent.parent
-    return package_dir / "docs" / "md"
-
-
-def _get_doc_files_from_index() -> list[dict]:
-    """Read index.json and return a list of documentation files to copy."""
-    md_dir = _get_md_dir()
-    index_path = md_dir / "index.json"
-
-    if not index_path.exists():
-        return []
-
-    index = json.loads(index_path.read_text())
-    topics = index.get("topics", {})
-
-    doc_files = []
-    for topic_id, topic_info in topics.items():
-        source_path = topic_info.get("source", "")
-        if source_path:
-            full_source = md_dir / source_path
-            if full_source.exists():
-                doc_files.append(
-                    {
-                        "topic_id": topic_id,
-                        "source": full_source,
-                        "relative_path": source_path,
-                    }
-                )
-    return doc_files
 
 
 def _discover_skills_for_tool(tool: str) -> list[dict]:
@@ -205,40 +181,8 @@ def cmd_skill_install(args):
         print(f"   → {target_path}")
         installed += 1
 
-    # Install documentation files from index.json into each skill folder
-    doc_files = _get_doc_files_from_index()
-    docs_installed = 0
-    docs_skipped = 0
-
-    if doc_files and skills:
-        print("\n📚 Installing documentation files...")
-
-        for skill in skills:
-            # Get the skill target directory
-            skill_target = Path.cwd() / skill["target"]
-            skill_dir = skill_target.parent
-            docs_base = skill_dir / "docs"
-
-            for doc_file in doc_files:
-                target_path = docs_base / doc_file["relative_path"]
-
-                if target_path.exists() and not args.force:
-                    docs_skipped += 1
-                    continue
-
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(doc_file["source"], target_path)
-                docs_installed += 1
-
-        if docs_installed > 0:
-            print(f"   ✅ Installed {docs_installed} documentation file(s)")
-        if docs_skipped > 0:
-            print(f"   ⚠️  Skipped {docs_skipped} (already exist)")
-
     print(f"\n📦 Installed {installed} skill(s)" + (f", skipped {skipped}" if skipped else ""))
-    if docs_installed > 0 or docs_skipped > 0:
-        print(f"   + {docs_installed + docs_skipped} documentation file(s)")
-    if skipped or docs_skipped:
+    if skipped:
         print("   Use --force to overwrite existing files")
 
 
@@ -320,20 +264,21 @@ def cmd_chat(args):
     )
 
 
-def cmd_render(args):
-    """Render markdown files with BSL queries."""
-    from boring_semantic_layer.chart.md_renderer import cmd_render as render_func
-
-    success = render_func(
-        md_path=args.input,
-        output=args.output,
-        format=args.format,
-        images_dir=args.images_dir,
-        watch=args.watch,
-    )
-
-    if not success:
-        sys.exit(1)
+# TODO: Add tests for cmd_render before re-enabling
+# def cmd_render(args):
+#     """Render markdown files with BSL queries."""
+#     from boring_semantic_layer.chart.md_renderer import cmd_render as render_func
+#
+#     success = render_func(
+#         md_path=args.input,
+#         output=args.output,
+#         format=args.format,
+#         images_dir=args.images_dir,
+#         watch=args.watch,
+#     )
+#
+#     if not success:
+#         sys.exit(1)
 
 
 def main():
@@ -393,41 +338,42 @@ def main():
     )
     chat_parser.set_defaults(func=cmd_chat)
 
-    # Render command
-    render_parser = subparsers.add_parser(
-        "render",
-        help="Render markdown files with BSL queries to HTML or markdown with images",
-    )
-    render_parser.add_argument(
-        "input",
-        type=Path,
-        help="Path to input markdown file",
-    )
-    render_parser.add_argument(
-        "-o",
-        "--output",
-        type=Path,
-        help="Path to output file (default: input file with .html or _rendered.md suffix)",
-    )
-    render_parser.add_argument(
-        "-f",
-        "--format",
-        choices=["html", "markdown"],
-        default="html",
-        help="Output format (default: html)",
-    )
-    render_parser.add_argument(
-        "--images-dir",
-        type=Path,
-        help="Directory for exported images (markdown format only, default: <output>_images)",
-    )
-    render_parser.add_argument(
-        "-w",
-        "--watch",
-        action="store_true",
-        help="Watch for file changes and auto-regenerate output",
-    )
-    render_parser.set_defaults(func=cmd_render)
+    # TODO: Add tests for render command before re-enabling
+    # # Render command
+    # render_parser = subparsers.add_parser(
+    #     "render",
+    #     help="Render markdown files with BSL queries to HTML or markdown with images",
+    # )
+    # render_parser.add_argument(
+    #     "input",
+    #     type=Path,
+    #     help="Path to input markdown file",
+    # )
+    # render_parser.add_argument(
+    #     "-o",
+    #     "--output",
+    #     type=Path,
+    #     help="Path to output file (default: input file with .html or _rendered.md suffix)",
+    # )
+    # render_parser.add_argument(
+    #     "-f",
+    #     "--format",
+    #     choices=["html", "markdown"],
+    #     default="html",
+    #     help="Output format (default: html)",
+    # )
+    # render_parser.add_argument(
+    #     "--images-dir",
+    #     type=Path,
+    #     help="Directory for exported images (markdown format only, default: <output>_images)",
+    # )
+    # render_parser.add_argument(
+    #     "-w",
+    #     "--watch",
+    #     action="store_true",
+    #     help="Watch for file changes and auto-regenerate output",
+    # )
+    # render_parser.set_defaults(func=cmd_render)
 
     # Skill command with subcommands
     skill_parser = subparsers.add_parser(

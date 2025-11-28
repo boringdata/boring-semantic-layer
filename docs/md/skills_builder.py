@@ -62,24 +62,24 @@ class SkillBuilder:
         index = self.read_index()
         topics = index.get("topics", {})
 
-        # Docs are installed relative to skill folder (e.g., docs/doc/windowing.md)
-        docs_base = "docs"
+        # Base URL for documentation on GitHub
+        docs_base_url = "https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md"
 
         lines = [
             "## Additional Information",
             "",
-            f"**Available documentation** (in `{docs_base}/` folder next to this skill):",
+            "**Available documentation:**",
             "",
         ]
         for topic_id, topic_info in topics.items():
             title = topic_info.get("title", topic_id)
             desc = topic_info.get("description", "")
             source = topic_info.get("source", "")
-            # Create relative path from the skill folder
-            doc_path = f"{docs_base}/{source}" if source else ""
+            # Create GitHub URL for the doc
+            doc_url = f"{docs_base_url}/{source}" if source else ""
             lines.append(f"- **{title}**: {desc}")
-            if doc_path:
-                lines.append(f"  - Path: `{doc_path}`")
+            if doc_url:
+                lines.append(f"  - URL: {doc_url}")
 
         return "\n".join(lines)
 

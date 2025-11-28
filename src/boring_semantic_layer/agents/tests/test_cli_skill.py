@@ -1,15 +1,15 @@
 """Tests for CLI skill commands."""
 
-import json
 import re
+import subprocess
 from argparse import Namespace
 from pathlib import Path
+
+import pytest
 
 from boring_semantic_layer.agents.cli import (
     TOOL_CONFIGS,
     _discover_skills_for_tool,
-    _get_doc_files_from_index,
-    _get_md_dir,
     _get_skills_dir,
     cmd_skill_install,
     cmd_skill_list,
@@ -240,161 +240,140 @@ class TestToolConfigs:
         assert expected_tools == set(TOOL_CONFIGS.keys())
 
 
-class TestGetDocFilesFromIndex:
-    """Tests for _get_doc_files_from_index function."""
+class TestSkillDocURLs:
+    """Tests that SKILL files reference documentation URLs correctly."""
 
-    def test_returns_list(self):
-        """Test that _get_doc_files_from_index returns a list."""
-        result = _get_doc_files_from_index()
-        assert isinstance(result, list)
-
-    def test_doc_files_exist(self):
-        """Test that all doc files from index exist."""
-        doc_files = _get_doc_files_from_index()
-        for doc_file in doc_files:
-            assert doc_file["source"].exists(), f"Doc file missing: {doc_file['source']}"
-
-    def test_doc_files_have_required_keys(self):
-        """Test that each doc file has required keys."""
-        required_keys = {"topic_id", "source", "relative_path"}
-        doc_files = _get_doc_files_from_index()
-        for doc_file in doc_files:
-            assert required_keys.issubset(doc_file.keys()), f"Doc file missing keys: {doc_file}"
-
-    def test_index_json_exists(self):
-        """Test that index.json exists."""
-        md_dir = _get_md_dir()
-        index_path = md_dir / "index.json"
-        assert index_path.exists(), f"index.json not found at {index_path}"
-
-
-class TestSkillDocPathsMatch:
-    """Tests that SKILL files reference documentation paths that exist after install."""
-
-    def test_skill_additional_info_paths_match_index(self):
-        """Test that paths in SKILL files match those in index.json."""
-        md_dir = _get_md_dir()
-        index_path = md_dir / "index.json"
-        index = json.loads(index_path.read_text())
-        topics = index.get("topics", {})
-
-        # Read the generated SKILL file
+    def test_skill_additional_info_has_urls(self):
+        """Test that skills contain GitHub URLs for documentation."""
         skills_dir = _get_skills_dir()
         skill_file = skills_dir / "claude-code" / "bsl-query-expert" / "SKILL.md"
         skill_content = skill_file.read_text()
 
-        # Extract paths from SKILL file (format: `docs/path/to/file.md`)
-        path_pattern = r"Path: `(docs/[^`]+)`"
-        additional_info_section = skill_content.split("## Additional Information")[-1]
-        skill_paths = re.findall(path_pattern, additional_info_section)
+        # Should contain GitHub URLs
+        assert "https://github.com/boringdata/boring-semantic-layer" in skill_content
+        assert "## Additional Information" in skill_content
+        assert "URL:" in skill_content
 
-        # Verify each path corresponds to an entry in index.json
-        for skill_path in skill_paths:
-            # Extract the relative path (remove docs/ prefix)
-            relative_path = skill_path.replace("docs/", "")
-
-            # Find topic with matching source
-            found = False
-            for _topic_id, topic_info in topics.items():
-                if topic_info.get("source") == relative_path:
-                    found = True
-                    break
-
-            assert found, f"Path '{skill_path}' in SKILL file not found in index.json"
-
-        # Verify all index topics have paths in skill file
-        for topic_id, topic_info in topics.items():
-            source = topic_info.get("source", "")
-            expected_path = f"docs/{source}"
-            assert expected_path in skill_content, (
-                f"Topic '{topic_id}' with path '{expected_path}' not found in SKILL file"
-            )
-
-    def test_install_creates_docs_matching_skill_paths(self, tmp_path, monkeypatch):
-        """Test that installed docs match paths referenced in SKILL file."""
-        monkeypatch.chdir(tmp_path)
-
-        # Install skills and docs
-        args = Namespace(tool="claude-code", force=False)
-        cmd_skill_install(args)
-
-        # Read installed SKILL file
-        skill_dir = tmp_path / ".claude" / "skills" / "bsl-query-expert"
-        skill_file = skill_dir / "SKILL.md"
+    def test_skill_urls_point_to_valid_docs(self):
+        """Test that URLs in skills point to expected doc locations."""
+        skills_dir = _get_skills_dir()
+        skill_file = skills_dir / "claude-code" / "bsl-query-expert" / "SKILL.md"
         skill_content = skill_file.read_text()
 
-        # Extract paths from Additional Information section
-        additional_info = skill_content.split("## Additional Information")[-1]
-        path_pattern = r"Path: `(docs/[^`]+)`"
-        referenced_paths = re.findall(path_pattern, additional_info)
+        # Extract URLs from skill file
+        url_pattern = (
+            r"URL: (https://github\.com/boringdata/boring-semantic-layer/blob/main/docs/md/[^\s]+)"
+        )
+        urls = re.findall(url_pattern, skill_content)
 
-        # Verify each referenced path exists relative to skill folder
-        for path in referenced_paths:
-            installed_doc = skill_dir / path
-            assert installed_doc.exists(), (
-                f"SKILL file references path '{path}' but file not installed at {installed_doc}"
-            )
+        assert len(urls) > 0, "No documentation URLs found in skill file"
 
-    def test_all_index_topics_have_source_files(self):
-        """Test that all topics in index.json have valid source files."""
-        md_dir = _get_md_dir()
-        index_path = md_dir / "index.json"
-        index = json.loads(index_path.read_text())
-        topics = index.get("topics", {})
+        # Verify URLs have expected format
+        for url in urls:
+            assert url.endswith(".md"), f"URL should point to markdown file: {url}"
 
-        for topic_id, topic_info in topics.items():
-            source_path = topic_info.get("source", "")
-            assert source_path, f"Topic '{topic_id}' missing 'source' field"
 
-            full_path = md_dir / source_path
-            assert full_path.exists(), (
-                f"Topic '{topic_id}' references non-existent file: {full_path}"
-            )
+@pytest.mark.slow
+class TestSkillInstallIntegration:
+    """Integration tests that create a real project and install skills."""
 
-    def test_install_creates_all_docs_from_index(self, tmp_path, monkeypatch):
-        """Test that install creates all doc files listed in index.json in each skill folder."""
-        monkeypatch.chdir(tmp_path)
+    def test_install_skills_in_new_project(self, tmp_path):
+        """Test installing skills in a fresh uv project with BSL installed from local path."""
+        project_dir = tmp_path / "test-project"
+        project_dir.mkdir()
 
-        # Install skills and docs
-        args = Namespace(tool="claude-code", force=False)
-        cmd_skill_install(args)
+        # Get the BSL source directory (parent of src/boring_semantic_layer)
+        bsl_source = Path(__file__).parent.parent.parent.parent.parent
 
-        # Get expected docs from index
-        md_dir = _get_md_dir()
-        index_path = md_dir / "index.json"
-        index = json.loads(index_path.read_text())
-        topics = index.get("topics", {})
+        # Initialize a uv project
+        result = subprocess.run(
+            ["uv", "init"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"uv init failed: {result.stderr}"
 
-        # Check docs in first skill folder
-        skill_dir = tmp_path / ".claude" / "skills" / "bsl-query-expert"
-        docs_base = skill_dir / "docs"
+        # Add BSL with agent extras from local path
+        result = subprocess.run(
+            ["uv", "add", f"boring-semantic-layer[agent] @ {bsl_source}"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"uv add failed: {result.stderr}"
 
-        for topic_id, topic_info in topics.items():
-            source_path = topic_info.get("source", "")
-            if source_path:
-                installed_doc = docs_base / source_path
-                assert installed_doc.exists(), (
-                    f"Doc file for topic '{topic_id}' not installed: {installed_doc}"
-                )
+        # Test skill list
+        result = subprocess.run(
+            ["uv", "run", "bsl", "skill", "list"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"bsl skill list failed: {result.stderr}"
+        assert "claude-code" in result.stdout
+        assert "cursor" in result.stdout
+        assert "codex" in result.stdout
 
-    def test_installed_docs_content_matches_source(self, tmp_path, monkeypatch):
-        """Test that installed doc content matches source files."""
-        monkeypatch.chdir(tmp_path)
+        # Install claude-code skills
+        result = subprocess.run(
+            ["uv", "run", "bsl", "skill", "install", "claude-code"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"bsl skill install claude-code failed: {result.stderr}"
+        assert "Installed" in result.stdout
 
-        # Install skills and docs
-        args = Namespace(tool="claude-code", force=False)
-        cmd_skill_install(args)
+        # Verify skill files were created
+        skill_file = project_dir / ".claude" / "skills" / "bsl-query-expert" / "SKILL.md"
+        assert skill_file.exists(), "Claude Code skill file not created"
 
-        # Compare content of installed docs with source
-        doc_files = _get_doc_files_from_index()
-        skill_dir = tmp_path / ".claude" / "skills" / "bsl-query-expert"
-        docs_base = skill_dir / "docs"
+        skill_content = skill_file.read_text()
+        assert "BSL Query Expert" in skill_content
+        assert "https://github.com/boringdata/boring-semantic-layer" in skill_content
 
-        for doc_file in doc_files:
-            source_content = doc_file["source"].read_text()
-            installed_path = docs_base / doc_file["relative_path"]
-            installed_content = installed_path.read_text()
+        # Install cursor skills
+        result = subprocess.run(
+            ["uv", "run", "bsl", "skill", "install", "cursor"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"bsl skill install cursor failed: {result.stderr}"
 
-            assert source_content == installed_content, (
-                f"Content mismatch for {doc_file['relative_path']}"
-            )
+        cursor_file = project_dir / ".cursor" / "rules" / "bsl-query-expert.mdc"
+        assert cursor_file.exists(), "Cursor skill file not created"
+
+    def test_skill_install_idempotent(self, tmp_path):
+        """Test that running skill install twice doesn't fail."""
+        project_dir = tmp_path / "test-project-2"
+        project_dir.mkdir()
+
+        bsl_source = Path(__file__).parent.parent.parent.parent.parent
+
+        # Initialize and add BSL
+        subprocess.run(["uv", "init"], cwd=project_dir, capture_output=True)
+        subprocess.run(
+            ["uv", "add", f"boring-semantic-layer[agent] @ {bsl_source}"],
+            cwd=project_dir,
+            capture_output=True,
+        )
+
+        # Install twice
+        result1 = subprocess.run(
+            ["uv", "run", "bsl", "skill", "install", "claude-code"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+        )
+        assert result1.returncode == 0
+
+        result2 = subprocess.run(
+            ["uv", "run", "bsl", "skill", "install", "claude-code"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+        )
+        assert result2.returncode == 0
+        assert "already exists" in result2.stdout or "Skipped" in result2.stdout

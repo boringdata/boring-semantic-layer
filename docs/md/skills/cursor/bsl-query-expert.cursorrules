@@ -137,39 +137,39 @@ flights.with_dimensions(arr_date=lambda t: t.arr_time.date()).filter(lambda t: t
 
 ## Additional Information
 
-**Available documentation** (in `docs/` folder next to this skill):
+**Available documentation:**
 
 - **Getting Started**: Introduction to BSL, installation, and basic usage with semantic tables
-  - Path: `docs/doc/getting-started.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/doc/getting-started.md
 - **Semantic Tables**: Building semantic models with dimensions, measures, and expressions
-  - Path: `docs/doc/semantic-table.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/doc/semantic-table.md
 - **YAML Configuration**: Defining semantic models in YAML files for better organization
-  - Path: `docs/doc/yaml-config.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/doc/yaml-config.md
 - **Profiles**: Database connection profiles for connecting to data sources
-  - Path: `docs/doc/profile.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/doc/profile.md
 - **Composing Models**: Joining multiple semantic tables together
-  - Path: `docs/doc/compose.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/doc/compose.md
 - **Query Methods**: Complete API reference for group_by, aggregate, filter, order_by, limit, mutate
-  - Path: `docs/doc/query-methods.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/doc/query-methods.md
 - **Window Functions**: Running totals, moving averages, rankings, lag/lead, and cumulative calculations
-  - Path: `docs/doc/windowing.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/doc/windowing.md
 - **Bucketing with Other**: Create categorical buckets and consolidate long-tail into 'Other' category
-  - Path: `docs/doc/bucketing.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/doc/bucketing.md
 - **Nested Subtotals**: Rollup calculations with subtotals at each grouping level
-  - Path: `docs/doc/nested-subtotals.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/doc/nested-subtotals.md
 - **Percent of Total**: Calculate percentages using t.all() for market share and distribution analysis
-  - Path: `docs/doc/percentage-total.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/doc/percentage-total.md
 - **Dimensional Indexing**: Compare values to baselines and calculate indexed metrics
-  - Path: `docs/doc/indexing.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/doc/indexing.md
 - **Charting Overview**: Data visualization basics with automatic chart type detection
-  - Path: `docs/doc/charting.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/doc/charting.md
 - **Altair Charts**: Interactive web charts with Vega-Lite via Altair backend
-  - Path: `docs/prompts/chart/altair.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/prompts/chart/altair.md
 - **Plotly Charts**: Interactive charts with Plotly backend for dashboards
-  - Path: `docs/prompts/chart/plotly.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/prompts/chart/plotly.md
 - **Terminal Charts**: ASCII charts for terminal/CLI with Plotext backend
-  - Path: `docs/prompts/chart/plotext.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/prompts/chart/plotext.md
 - **Sessionized Data**: Working with session-based data and user journey analysis
-  - Path: `docs/doc/sessionized.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/doc/sessionized.md
 - **Comparison Queries**: Period-over-period comparisons and trend analysis
-  - Path: `docs/doc/comparison.md`
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/doc/comparison.md
