@@ -11,7 +11,6 @@ from ibis.expr import types as ir
 from ibis.expr.types.groupby import GroupedTable as IbisGroupedTable
 from ibis.expr.types.relations import Table as IbisTable
 from returns.result import Success, safe
-from xorq.vendor import ibis as xorq_ibis
 from xorq.vendor.ibis.expr.types import Table
 from xorq.vendor.ibis.expr.types.groupby import GroupedTable
 
@@ -957,18 +956,15 @@ class SemanticGroupBy(SemanticTable):
                 def build_struct_dict(columns, source_tbl):
                     return {col: source_tbl[col] for col in columns}
 
-                def collect_struct(struct_dict, use_native_ibis=False):
-                    struct_fn = ibis.struct if use_native_ibis else xorq_ibis.struct
-                    return struct_fn(struct_dict).collect()
+                def collect_struct(struct_dict):
+                    return ibis.struct(struct_dict).collect()
 
                 def handle_grouped_table(result, ibis_tbl):
                     group_cols = tuple(map(attrgetter("name"), result.groupings))
-                    use_native = isinstance(result, IbisGroupedTable)
-                    return collect_struct(build_struct_dict(group_cols, ibis_tbl), use_native)
+                    return collect_struct(build_struct_dict(group_cols, ibis_tbl))
 
                 def handle_table(result, ibis_tbl):
-                    use_native = isinstance(result, IbisTable)
-                    return collect_struct(build_struct_dict(result.columns, ibis_tbl), use_native)
+                    return collect_struct(build_struct_dict(result.columns, ibis_tbl))
 
                 def nest_agg(ibis_tbl):
                     result = fn(ibis_tbl)
