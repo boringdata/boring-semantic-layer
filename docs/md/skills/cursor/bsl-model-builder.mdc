@@ -1,6 +1,8 @@
-# BSL Model Builder - Cursor Skill
-
-Guide for building Boring Semantic Layer (BSL) semantic models.
+---
+description: Build BSL semantic models with dimensions, measures, joins, and YAML config
+globs:
+alwaysApply: false
+---
 
 # BSL Model Builder
 

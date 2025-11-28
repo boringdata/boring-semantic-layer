@@ -1,6 +1,8 @@
-# BSL Query Expert - Cursor Skill
-
-Guide for querying Boring Semantic Layer (BSL) semantic models.
+---
+description: Query BSL semantic models with group_by, aggregate, filter, and visualizations
+globs:
+alwaysApply: false
+---
 
 # BSL Query Expert
 

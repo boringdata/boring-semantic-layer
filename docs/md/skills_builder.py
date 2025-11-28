@@ -149,27 +149,31 @@ This skill helps with building Boring Semantic Layer (BSL) semantic models.
         return header + content
 
     def build_query_expert_cursor(self) -> str:
-        """Build Cursor bsl-query-expert skill content."""
+        """Build Cursor bsl-query-expert skill content (.mdc format with frontmatter)."""
         # Read the LangChain system prompt and transform it for skills
         content = self.read_prompt("query/langchain", "system.md")
         content = self.transform_prompt_for_skill(content, tool="cursor")
-        header = """# BSL Query Expert - Cursor Skill
-
-Guide for querying Boring Semantic Layer (BSL) semantic models.
+        frontmatter = """---
+description: Query BSL semantic models with group_by, aggregate, filter, and visualizations
+globs:
+alwaysApply: false
+---
 
 """
-        return header + content
+        return frontmatter + content
 
     def build_model_builder_cursor(self) -> str:
-        """Build Cursor bsl-model-builder skill content."""
+        """Build Cursor bsl-model-builder skill content (.mdc format with frontmatter)."""
         content = self.read_prompt("build", "system.md")
         content = self.transform_prompt_for_skill(content, tool="cursor")
-        header = """# BSL Model Builder - Cursor Skill
-
-Guide for building Boring Semantic Layer (BSL) semantic models.
+        frontmatter = """---
+description: Build BSL semantic models with dimensions, measures, joins, and YAML config
+globs:
+alwaysApply: false
+---
 
 """
-        return header + content
+        return frontmatter + content
 
     def ensure_skills_dir(self):
         """Create the skills directory structure."""
@@ -199,13 +203,13 @@ Guide for building Boring Semantic Layer (BSL) semantic models.
                 "path": self.skills_dir / "codex" / "bsl-model-builder.codex",
                 "content": self.build_model_builder_codex(),
             },
-            # Cursor skills
+            # Cursor skills (.mdc format with frontmatter)
             "cursor/bsl-query-expert": {
-                "path": self.skills_dir / "cursor" / "bsl-query-expert.cursorrules",
+                "path": self.skills_dir / "cursor" / "bsl-query-expert.mdc",
                 "content": self.build_query_expert_cursor(),
             },
             "cursor/bsl-model-builder": {
-                "path": self.skills_dir / "cursor" / "bsl-model-builder.cursorrules",
+                "path": self.skills_dir / "cursor" / "bsl-model-builder.mdc",
                 "content": self.build_model_builder_cursor(),
             },
         }
