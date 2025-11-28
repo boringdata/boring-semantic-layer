@@ -299,6 +299,28 @@ flights_with_carrier = flights_st.join_one(
 )
 ```
 
+<note type="warning">
+**Important Limitation:** Currently, `left_on` and `right_on` must be **COLUMN names**, not dimension names.
+
+If you have a dimension that maps to a different column name, you must use the underlying column name in the join.
+
+**Example:**
+```python
+# If users table has column 'id' but dimension 'customer_id':
+users = to_semantic_table(users_tbl).with_dimensions(
+    customer_id=lambda t: t.id  # Dimension renamed
+)
+
+# ❌ This will fail with a helpful error:
+orders.join_one(users, left_on="customer_id", right_on="customer_id")
+
+# ✓ Use the actual column name:
+orders.join_one(users, left_on="customer_id", right_on="id")
+```
+
+This is a known limitation tracked in [issue #43](https://github.com/boringdata/boring-semantic-layer/issues/43). If you attempt to use a dimension name that doesn't match a column name, you'll get a helpful error message guiding you to use the correct column name.
+</note>
+
 ### join_cross() - Cross Join
 
 Use `join_cross()` to create every possible combination of rows from both tables (CARTESIAN PRODUCT).

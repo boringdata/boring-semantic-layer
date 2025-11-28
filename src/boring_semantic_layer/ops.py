@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from difflib import get_close_matches
 from functools import reduce
 from typing import TYPE_CHECKING, Any
 
@@ -419,6 +421,40 @@ def _build_json_definition(
     return result
 
 
+def _format_column_error(e: AttributeError, table: ir.Table) -> str:
+    """Format a helpful error message for missing column errors."""
+    # Extract the column name from the error
+    match = re.search(r"has no attribute ['\"]([^'\"]+)['\"]", str(e))
+    missing_col = match.group(1) if match else "unknown"
+
+    # Get available columns
+    available_cols = list(table.columns) if hasattr(table, "columns") else []
+
+    # Build error message
+    parts = [f"Dimension expression references non-existent column '{missing_col}'."]
+
+    if len(available_cols) > 20:
+        parts.append(f"Table has {len(available_cols)} columns. First 15: {available_cols[:15]}")
+    elif available_cols:
+        parts.append(f"Available columns: {available_cols}")
+    else:
+        parts.append(f"No columns available in {type(table).__name__} object")
+
+    # Suggest similar column names
+    suggestions = get_close_matches(missing_col, available_cols, n=3, cutoff=0.6)
+    if suggestions:
+        parts[-1] += f". Did you mean: {suggestions}?"
+
+    # Add helpful tip
+    example = suggestions[0] if suggestions else "column_name"
+    parts.append(
+        f"\n\nTip: Check that your dimension expression uses the correct column name. "
+        f"For example: lambda t: t.{example}"
+    )
+
+    return " ".join(parts)
+
+
 @frozen(kw_only=True, slots=True)
 class Dimension:
     expr: Callable[[ir.Table], ir.Value] | Deferred
@@ -429,7 +465,15 @@ class Dimension:
     smallest_time_grain: str | None = None
 
     def __call__(self, table: ir.Table) -> ir.Value:
-        return self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
+        try:
+            return self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
+        except AttributeError as e:
+            # Provide helpful error for missing columns
+            if "'Table' object has no attribute" in str(
+                e
+            ) or "'Join' object has no attribute" in str(e):
+                raise AttributeError(_format_column_error(e, table)) from e
+            raise
 
     def to_json(self) -> Mapping[str, Any]:
         base = {"description": self.description}
