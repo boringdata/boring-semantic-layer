@@ -72,7 +72,7 @@ def test_dimension_with_join_and_wrong_column():
         .with_measures(total={"expr": lambda t: t.value.sum()})
     )
 
-    joined = st1.join_one(st2, left_on="id", right_on="id")
+    joined = st1.join_one(st2, on=lambda left, right: left.id == right.id)
 
     with pytest.raises(AttributeError) as exc_info:
         joined.query(dimensions=["t1.name"], measures=["t1.count"]).execute()
@@ -119,7 +119,7 @@ def test_wrong_dimension_with_join_projection_pushdown():
     )
 
     # Join and group by a DIFFERENT dimension (arr_time, not the broken destination)
-    joined = flights.join_one(customers, left_on="flight_id", right_on="customer_id")
+    joined = flights.join_one(customers, on=lambda f, c: f.flight_id == c.customer_id)
 
     # The error should mention 'dest' (the actual missing column),
     # not 'arr_time' (which exists but triggers the error via projection pushdown)
@@ -175,7 +175,7 @@ def test_helpful_tip_in_error_message():
 
 
 def test_join_one_with_renamed_dimension():
-    """Test that join_one resolves dimension names when they differ from columns."""
+    """Test that join_one works with lambda-based join condition."""
     con = ibis.duckdb.connect(":memory:")
     customers_df = pd.DataFrame(
         {
@@ -205,13 +205,8 @@ def test_join_one_with_renamed_dimension():
         .with_measures(revenue=lambda t: t.amount.sum())
     )
 
-    # Using dimension name should raise helpful error during execution (issue #43)
-    joined_bad = orders.join_one(customers, left_on="customer_id", right_on="customer_id")
-    with pytest.raises(ValueError, match="customer_id.*dimension.*column.*issue #43"):
-        joined_bad.execute()
-
-    # Using column name should work
-    joined = orders.join_one(customers, left_on="customer_id", right_on="cust_id")
+    # Lambda-based join uses column names directly
+    joined = orders.join_one(customers, on=lambda o, c: o.customer_id == c.cust_id)
     result = joined.group_by("customers.name").aggregate("orders.revenue").execute()
 
     assert len(result) == 2
@@ -220,7 +215,7 @@ def test_join_one_with_renamed_dimension():
 
 
 def test_join_many_with_renamed_dimension():
-    """Test that join_many resolves dimension names when they differ from columns."""
+    """Test that join_many works with lambda-based join condition."""
     con = ibis.duckdb.connect(":memory:")
     customers_df = pd.DataFrame(
         {
@@ -249,13 +244,8 @@ def test_join_many_with_renamed_dimension():
         .with_measures(order_count=lambda t: t.count())
     )
 
-    # Using dimension name should raise helpful error during execution (issue #43)
-    joined_bad = customers.join_many(orders, left_on="customer_id", right_on="customer_id")
-    with pytest.raises(ValueError, match="customer_id.*dimension.*column.*issue #43"):
-        joined_bad.execute()
-
-    # Using column name should work
-    joined = customers.join_many(orders, left_on="cust_id", right_on="customer_id")
+    # Lambda-based join uses column names directly
+    joined = customers.join_many(orders, on=lambda c, o: c.cust_id == o.customer_id)
     result = joined.group_by("customers.customer_id").aggregate("orders.order_count").execute()
 
     assert len(result) == 2
@@ -263,8 +253,8 @@ def test_join_many_with_renamed_dimension():
     assert "orders.order_count" in result.columns
 
 
-def test_flexible_join_with_renamed_dimension():
-    """Test that flexible join() resolves dimension names in lambda."""
+def test_join_one_with_complex_condition():
+    """Test that join_one works with complex lambda conditions."""
     con = ibis.duckdb.connect(":memory:")
     customers_df = pd.DataFrame(
         {
@@ -294,14 +284,9 @@ def test_flexible_join_with_renamed_dimension():
         .with_measures(revenue=lambda t: t.amount.sum())
     )
 
-    # Flexible join() also fails - _Resolver doesn't have dimension mappings (issue #43)
-    joined = orders.join(customers, on=lambda o, c: o.customer_id == c.customer_id)
-    with pytest.raises(AttributeError, match="customer_id"):
-        joined.group_by("customers.name").aggregate("orders.revenue").execute()
-
-    # Using column name should work
-    joined_good = orders.join(customers, on=lambda o, c: o.customer_id == c.cust_id)
-    result = joined_good.group_by("customers.name").aggregate("orders.revenue").execute()
+    # Lambda-based join uses column names directly
+    joined = orders.join_one(customers, on=lambda o, c: o.customer_id == c.cust_id)
+    result = joined.group_by("customers.name").aggregate("orders.revenue").execute()
 
     assert len(result) == 2
     assert "customers.name" in result.columns
@@ -342,11 +327,10 @@ def test_join_dimension_matching_column_name():
         .with_measures(revenue=lambda t: t.amount.sum())
     )
 
-    # This should work - dimension name exists AND column name exists
-    joined = orders.join_one(customers, left_on="customer_id", right_on="customer_id")
+    # Lambda-based join uses column names directly
+    joined = orders.join_one(customers, on=lambda o, c: o.customer_id == c.customer_id)
 
-    # First verify the join executed without error (no ValueError about dimensions)
-    # This confirms that when dimension name = column name, it works
+    # First verify the join executed without error
     result = joined.execute()
 
     # Verify the join worked correctly
