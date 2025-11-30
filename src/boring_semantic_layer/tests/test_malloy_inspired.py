@@ -692,7 +692,7 @@ class TestNestedAggregation:
 
     def test_nested_group_by_with_xorq(self):
         """Test nest parameter with xorq tables (struct collection)."""
-        import xorq
+        from xorq.api import memtable
 
         # Create an xorq table
         airports_df = pd.DataFrame(
@@ -702,7 +702,7 @@ class TestNestedAggregation:
                 "elevation": [5431, 7820, 4227, 1135, 126, 13, 433, 31],
             }
         )
-        airports_tbl = xorq.memtable(airports_df)
+        airports_tbl = memtable(airports_df)
 
         airports = (
             to_semantic_table(airports_tbl, name="airports")
