@@ -246,3 +246,54 @@ def test_introspection_preserves_definition_order():
 
     # Dict keys preserve insertion order in Python 3.7+
     assert st.dimensions == ("dim_a", "dim_b", "dim_c")
+
+
+def test_introspection_after_filter():
+    """Test that .dimensions and .measures work on filtered models."""
+    con = ibis.duckdb.connect(":memory:")
+    df = pd.DataFrame({"carrier": ["AA", "UA", "DL"], "distance": [100, 200, 300]})
+    tbl = con.create_table("flights", df)
+
+    st = (
+        to_semantic_table(tbl, "flights")
+        .with_dimensions(carrier=lambda t: t.carrier)
+        .with_measures(
+            flight_count=lambda t: t.count(),
+            total_distance=lambda t: t.distance.sum(),
+        )
+        .filter(lambda t: t.distance > 150)
+    )
+
+    # Filtered model should still expose dimensions and measures
+    assert st.dimensions == ("carrier",)
+    assert set(st.measures) == {"flight_count", "total_distance"}
+
+
+def test_introspection_after_aggregate_order_limit_chain():
+    """Test that .dimensions and .measures are empty after aggregate->order->limit."""
+    con = ibis.duckdb.connect(":memory:")
+    df = pd.DataFrame({"carrier": ["AA", "UA", "DL"], "distance": [100, 200, 300]})
+    tbl = con.create_table("flights", df)
+
+    st = (
+        to_semantic_table(tbl, "flights")
+        .with_dimensions(carrier=lambda t: t.carrier)
+        .with_measures(flight_count=lambda t: t.count())
+        .group_by("carrier")
+        .aggregate("flight_count")
+        .order_by("carrier")
+        .limit(10)
+    )
+
+    # After aggregate, dimensions and measures are materialized (empty)
+    assert st.dimensions == ()
+    assert st.measures == ()
+
+    # Verify order_by and limit have the attributes
+    ordered = st.order_by("carrier")
+    assert hasattr(ordered, "dimensions")
+    assert hasattr(ordered, "measures")
+
+    limited = ordered.limit(5)
+    assert hasattr(limited, "dimensions")
+    assert hasattr(limited, "measures")

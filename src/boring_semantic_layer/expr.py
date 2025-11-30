@@ -853,6 +853,16 @@ class SemanticFilter(SemanticTable):
     def get_calculated_measures(self):
         return self.op().get_calculated_measures()
 
+    @property
+    def dimensions(self):
+        """Return dimension names as a tuple."""
+        return tuple(self.get_dimensions().keys())
+
+    @property
+    def measures(self):
+        """Return measure names as a tuple."""
+        return tuple(self.get_measures().keys()) + tuple(self.get_calculated_measures().keys())
+
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.op().source)
         return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
@@ -1036,8 +1046,22 @@ class SemanticAggregate(SemanticTable):
         return self.op().schema
 
     @property
+    def dimensions(self):
+        """After aggregation, dimensions are materialized - return empty tuple."""
+        return ()
+
+    @property
     def measures(self):
         return self.op().measures
+
+    def get_dimensions(self):
+        return self.op().get_dimensions()
+
+    def get_measures(self):
+        return self.op().get_measures()
+
+    def get_calculated_measures(self):
+        return self.op().get_calculated_measures()
 
     @property
     def nested_columns(self):
@@ -1135,6 +1159,25 @@ class SemanticOrderBy(SemanticTable):
     def schema(self):
         return self.op().schema
 
+    @property
+    def dimensions(self):
+        return tuple(self.op().get_dimensions().keys())
+
+    @property
+    def measures(self):
+        return tuple(self.op().get_measures().keys()) + tuple(
+            self.op().get_calculated_measures().keys()
+        )
+
+    def get_dimensions(self):
+        return self.op().get_dimensions()
+
+    def get_measures(self):
+        return self.op().get_measures()
+
+    def get_calculated_measures(self):
+        return self.op().get_calculated_measures()
+
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.source)
         return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
@@ -1175,6 +1218,25 @@ class SemanticLimit(SemanticTable):
     def schema(self):
         return self.op().schema
 
+    @property
+    def dimensions(self):
+        return tuple(self.op().get_dimensions().keys())
+
+    @property
+    def measures(self):
+        return tuple(self.op().get_measures().keys()) + tuple(
+            self.op().get_calculated_measures().keys()
+        )
+
+    def get_dimensions(self):
+        return self.op().get_dimensions()
+
+    def get_measures(self):
+        return self.op().get_measures()
+
+    def get_calculated_measures(self):
+        return self.op().get_calculated_measures()
+
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.source)
         return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
@@ -1210,6 +1272,25 @@ class SemanticUnnest(SemanticTable):
     @property
     def schema(self):
         return self.op().schema
+
+    @property
+    def dimensions(self):
+        return tuple(self.op().get_dimensions().keys())
+
+    @property
+    def measures(self):
+        return tuple(self.op().get_measures().keys()) + tuple(
+            self.op().get_calculated_measures().keys()
+        )
+
+    def get_dimensions(self):
+        return self.op().get_dimensions()
+
+    def get_measures(self):
+        return self.op().get_measures()
+
+    def get_calculated_measures(self):
+        return self.op().get_calculated_measures()
 
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.source)
@@ -1278,6 +1359,25 @@ class SemanticMutate(SemanticTable):
     @property
     def nested_columns(self):
         return self.op().nested_columns
+
+    @property
+    def dimensions(self):
+        return tuple(self.op().get_dimensions().keys())
+
+    @property
+    def measures(self):
+        return tuple(self.op().get_measures().keys()) + tuple(
+            self.op().get_calculated_measures().keys()
+        )
+
+    def get_dimensions(self):
+        return self.op().get_dimensions()
+
+    def get_measures(self):
+        return self.op().get_measures()
+
+    def get_calculated_measures(self):
+        return self.op().get_calculated_measures()
 
     def mutate(self, **post) -> SemanticMutate:
         return SemanticMutate(source=self.op(), post=post)
