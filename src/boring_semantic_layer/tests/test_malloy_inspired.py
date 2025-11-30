@@ -684,6 +684,60 @@ class TestTopNWithNesting:
         assert result["total_ltv"].min() >= 180
 
 
+class TestNestedAggregation:
+    """
+    Test nested aggregation with the nest= parameter.
+    This tests the bucketing with "OTHER" pattern from Malloy.
+    """
+
+    def test_nested_group_by_with_xorq(self):
+        """Test nest parameter with xorq tables (struct collection)."""
+        from xorq.api import memtable
+
+        # Create an xorq table
+        airports_df = pd.DataFrame(
+            {
+                "code": ["DEN", "ASE", "SLC", "PHX", "LAX", "SFO", "SEA", "PDX"],
+                "state": ["CO", "CO", "UT", "AZ", "CA", "CA", "WA", "OR"],
+                "elevation": [5431, 7820, 4227, 1135, 126, 13, 433, 31],
+            }
+        )
+        airports_tbl = memtable(airports_df)
+
+        airports = (
+            to_semantic_table(airports_tbl, name="airports")
+            .with_dimensions(
+                state=lambda t: t.state,
+                code=lambda t: t.code,
+                elevation=lambda t: t.elevation,
+            )
+            .with_measures(
+                avg_elevation=lambda t: t.elevation.mean(),
+            )
+        )
+
+        # Test nested aggregation - collect code and elevation per state
+        result = (
+            airports.group_by("state")
+            .aggregate(
+                "avg_elevation",
+                nest={"data": lambda t: t.group_by(["code", "elevation"])},
+            )
+            .execute()
+        )
+
+        assert len(result) == 6  # 6 unique states
+        assert "avg_elevation" in result.columns
+        assert "data" in result.columns
+
+        # Check that CO has 2 airports nested
+        co_row = result[result["state"] == "CO"].iloc[0]
+        assert len(co_row["data"]) == 2
+        # Verify nested data contains the expected airports
+        nested_codes = {item["code"] for item in co_row["data"]}
+        assert nested_codes == {"DEN", "ASE"}
+
+
 class TestCrossJoinAggregation:
     """
     Test aggregation at different join tree levels.
