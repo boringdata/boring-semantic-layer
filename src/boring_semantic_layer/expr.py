@@ -12,6 +12,7 @@ from ibis.expr.types.groupby import GroupedTable as IbisGroupedTable
 from ibis.expr.types.relations import Table as IbisTable
 from returns.result import Success, safe
 from xorq.vendor.ibis.expr.types import Table
+from xorq.vendor.ibis.expr.types.generic import Column as XorqColumn
 from xorq.vendor.ibis.expr.types.groupby import GroupedTable
 
 from .chart import chart as create_chart
@@ -967,6 +968,13 @@ class SemanticGroupBy(SemanticTable):
                     return {col: source_tbl[col] for col in columns}
 
                 def collect_struct(struct_dict):
+                    # ibis.struct and xorq.vendor.ibis.struct are not interchangeable:
+                    # each can only infer types from columns of its own module
+                    first_col = next(iter(struct_dict.values()))
+                    if isinstance(first_col, XorqColumn):
+                        import xorq.vendor.ibis as xibis
+
+                        return xibis.struct(struct_dict).collect()
                     return ibis.struct(struct_dict).collect()
 
                 def handle_grouped_table(result, ibis_tbl):

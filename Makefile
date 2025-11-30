@@ -120,31 +120,31 @@ skills-check:
 # Run all checks (CI target)
 check:
 	@if [ "$(IBIS_VERSION)" = "all" ]; then \
-		$(MAKE) test IBIS_VERSION=all; \
-		$(MAKE) examples IBIS_VERSION=all; \
-		$(MAKE) skills-check; \
-		echo ""; \
-		echo "========================================"; \
-		echo "✓ All checks passed (tests + examples with all ibis versions)!"; \
-		echo "Note: Run 'make docs-build' separately to build documentation"; \
+		$(MAKE) test IBIS_VERSION=all && \
+		$(MAKE) examples IBIS_VERSION=all && \
+		$(MAKE) skills-check && \
+		echo "" && \
+		echo "========================================" && \
+		echo "✓ All checks passed (tests + examples with all ibis versions)!" && \
+		echo "Note: Run 'make docs-build' separately to build documentation" && \
 		echo "========================================"; \
 	elif [ -n "$(IBIS_VERSION)" ]; then \
-		$(MAKE) test IBIS_VERSION=$(IBIS_VERSION); \
-		$(MAKE) examples IBIS_VERSION=$(IBIS_VERSION); \
-		$(MAKE) skills-check; \
-		echo ""; \
-		echo "========================================"; \
-		echo "✓ All checks passed (tests + examples with ibis $(IBIS_VERSION))!"; \
-		echo "Note: Run 'make docs-build' separately to build documentation"; \
+		$(MAKE) test IBIS_VERSION=$(IBIS_VERSION) && \
+		$(MAKE) examples IBIS_VERSION=$(IBIS_VERSION) && \
+		$(MAKE) skills-check && \
+		echo "" && \
+		echo "========================================" && \
+		echo "✓ All checks passed (tests + examples with ibis $(IBIS_VERSION))!" && \
+		echo "Note: Run 'make docs-build' separately to build documentation" && \
 		echo "========================================"; \
 	else \
-		$(MAKE) test; \
-		$(MAKE) examples; \
-		$(MAKE) docs-build; \
-		$(MAKE) skills-check; \
-		echo ""; \
-		echo "========================================"; \
-		echo "✓ All checks passed!"; \
+		$(MAKE) test && \
+		$(MAKE) examples && \
+		$(MAKE) docs-build && \
+		$(MAKE) skills-check && \
+		echo "" && \
+		echo "========================================" && \
+		echo "✓ All checks passed!" && \
 		echo "========================================"; \
 	fi
 
