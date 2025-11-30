@@ -693,6 +693,18 @@ class SemanticFilterOp(Relation):
         pred = _resolve_expr(pred_fn, resolver)
         return base_tbl.filter(pred)
 
+    def get_dimensions(self) -> Mapping[str, Dimension]:
+        """Get dictionary of dimensions from source."""
+        return self.source.get_dimensions()
+
+    def get_measures(self) -> Mapping[str, Measure]:
+        """Get dictionary of measures from source."""
+        return self.source.get_measures()
+
+    def get_calculated_measures(self) -> Mapping[str, Any]:
+        """Get dictionary of calculated measures from source."""
+        return self.source.get_calculated_measures()
+
 
 def _classify_fields(
     fields: tuple[str, ...],
@@ -1057,6 +1069,18 @@ class SemanticAggregateOp(Relation):
     def measures(self) -> tuple[str, ...]:
         return ()
 
+    def get_dimensions(self) -> Mapping[str, Dimension]:
+        """After aggregation, dimensions are materialized - return empty."""
+        return {}
+
+    def get_measures(self) -> Mapping[str, Measure]:
+        """After aggregation, measures are materialized - return empty."""
+        return {}
+
+    def get_calculated_measures(self) -> Mapping[str, Any]:
+        """After aggregation, calculated measures are materialized - return empty."""
+        return {}
+
     @property
     def required_columns(self) -> dict[str, set[str]]:
         """
@@ -1272,6 +1296,18 @@ class SemanticMutateOp(Relation):
 
         return current_tbl
 
+    def get_dimensions(self) -> Mapping[str, Dimension]:
+        """Get dictionary of dimensions from source."""
+        return self.source.get_dimensions()
+
+    def get_measures(self) -> Mapping[str, Measure]:
+        """Get dictionary of measures from source."""
+        return self.source.get_measures()
+
+    def get_calculated_measures(self) -> Mapping[str, Any]:
+        """Get dictionary of calculated measures from source."""
+        return self.source.get_calculated_measures()
+
 
 class SemanticUnnestOp(Relation):
     """Unnest an array column, expanding rows (like Malloy's nested data pattern)."""
@@ -1329,6 +1365,18 @@ class SemanticUnnestOp(Relation):
             raise ValueError(f"Failed to unnest column '{self.column}': {e}") from e
 
         return unpack_struct_if_needed(unnested, self.column)
+
+    def get_dimensions(self) -> Mapping[str, Dimension]:
+        """Get dictionary of dimensions from source."""
+        return self.source.get_dimensions()
+
+    def get_measures(self) -> Mapping[str, Measure]:
+        """Get dictionary of measures from source."""
+        return self.source.get_measures()
+
+    def get_calculated_measures(self) -> Mapping[str, Any]:
+        """Get dictionary of calculated measures from source."""
+        return self.source.get_calculated_measures()
 
 
 class SemanticJoinOp(Relation):
@@ -1963,6 +2011,18 @@ class SemanticOrderByOp(Relation):
 
         return tbl.order_by([resolve_order_key(key) for key in self.keys])
 
+    def get_dimensions(self) -> Mapping[str, Dimension]:
+        """Get dictionary of dimensions from source."""
+        return self.source.get_dimensions()
+
+    def get_measures(self) -> Mapping[str, Measure]:
+        """Get dictionary of measures from source."""
+        return self.source.get_measures()
+
+    def get_calculated_measures(self) -> Mapping[str, Any]:
+        """Get dictionary of calculated measures from source."""
+        return self.source.get_calculated_measures()
+
 
 class SemanticLimitOp(Relation):
     source: Relation
@@ -1990,6 +2050,18 @@ class SemanticLimitOp(Relation):
     def to_untagged(self):
         tbl = _to_untagged(self.source)
         return tbl.limit(self.n) if self.offset == 0 else tbl.limit(self.n, offset=self.offset)
+
+    def get_dimensions(self) -> Mapping[str, Dimension]:
+        """Get dictionary of dimensions from source."""
+        return self.source.get_dimensions()
+
+    def get_measures(self) -> Mapping[str, Measure]:
+        """Get dictionary of measures from source."""
+        return self.source.get_measures()
+
+    def get_calculated_measures(self) -> Mapping[str, Any]:
+        """Get dictionary of calculated measures from source."""
+        return self.source.get_calculated_measures()
 
 
 def _get_field_type_str(field_type: Any) -> str:
