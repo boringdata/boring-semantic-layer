@@ -206,7 +206,7 @@ def detect_time_dimension(
 def get_chart_detection_params(
     semantic_aggregate: Any,
     df: Any | None = None,
-) -> tuple[list[str], list[str], str | None, str | None]:
+) -> tuple[list[str], list[str], str | None]:
     """
     Extract all parameters needed for chart type detection.
 
@@ -217,15 +217,12 @@ def get_chart_detection_params(
         df: Optional DataFrame for time dimension detection
 
     Returns:
-        Tuple of (dimensions, measures, time_dimension, time_grain)
+        Tuple of (dimensions, measures, time_dimension)
     """
-    dimensions, measures, _, aggregate_op = extract_aggregate_metadata(semantic_aggregate)
+    dimensions, measures, *_ = extract_aggregate_metadata(semantic_aggregate)
     time_dimension = detect_time_dimension(semantic_aggregate, dimensions, df)
-    time_grain = getattr(semantic_aggregate, "_chart_time_grain", None)
-    if time_grain is None and aggregate_op is not None:
-        time_grain = getattr(aggregate_op, "_chart_time_grain", None)
 
-    return dimensions, measures, time_dimension, time_grain
+    return dimensions, measures, time_dimension
 
 
 def has_time_dimension(dimensions: list[str], time_dimension: str | None) -> bool:

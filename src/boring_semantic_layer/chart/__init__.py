@@ -107,14 +107,10 @@ def chart(
     df = semantic_aggregate.execute()
 
     # Get chart parameters
-    dimensions, measures, time_dimension, time_grain = get_chart_detection_params(
-        semantic_aggregate, df
-    )
+    dimensions, measures, time_dimension = get_chart_detection_params(semantic_aggregate, df)
 
     # Detect chart type
-    chart_type = backend_instance.detect_chart_type(
-        dimensions, measures, time_dimension, time_grain
-    )
+    chart_type = backend_instance.detect_chart_type(dimensions, measures, time_dimension)
 
     # Prepare data
     df_prepared, params = backend_instance.prepare_data(
@@ -123,7 +119,6 @@ def chart(
         measures,
         chart_type,
         time_dimension,
-        time_grain,
     )
 
     # Create chart

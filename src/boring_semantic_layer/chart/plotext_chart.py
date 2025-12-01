@@ -76,7 +76,6 @@ class PlotextBackend(ChartBackend):
         dimensions: Sequence[str],
         measures: Sequence[str],
         time_dimension: str | None = None,
-        time_grain: str | None = None,
     ) -> str:
         """
         Auto-detect appropriate chart type based on query structure.
@@ -103,7 +102,6 @@ class PlotextBackend(ChartBackend):
         measures: Sequence[str],
         chart_type: str,
         time_dimension: str | None = None,
-        time_grain: str | None = None,
     ) -> tuple[Any, dict[str, Any]]:
         """Prepare data for Plotext chart creation."""
         # Sort line charts to avoid zigzag connections
@@ -402,20 +400,17 @@ def chart(
     df = semantic_aggregate.execute()
 
     # Extract chart detection parameters
-    dimensions, measures, time_dimension, time_grain = get_chart_detection_params(
-        semantic_aggregate, df
-    )
+    dimensions, measures, time_dimension = get_chart_detection_params(semantic_aggregate, df)
 
     # Create and render chart
     backend = PlotextBackend()
-    chart_type = backend.detect_chart_type(dimensions, measures, time_dimension, time_grain)
+    chart_type = backend.detect_chart_type(dimensions, measures, time_dimension)
     df_prepared, params = backend.prepare_data(
         df,
         dimensions,
         measures,
         chart_type,
         time_dimension,
-        time_grain,
     )
     chart_obj = backend.create_chart(df_prepared, params, chart_type, spec)
     backend.format_output(chart_obj, "static")
