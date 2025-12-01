@@ -86,6 +86,48 @@ flights_sm.dimensions, flights_sm.measures
 
 <regularoutput code-block="load_yaml_example"></regularoutput> 
 
+### Option 3: Loading from a Dictionary (`from_config`)
+
+If you're loading configuration through your own mechanism (e.g., Kedro catalog, external config management), you can use `from_config()` to construct semantic models directly from a Python dictionary:
+
+```python
+from boring_semantic_layer import from_config
+
+config = {
+    "flights": {
+        "table": "flights_tbl",
+        "dimensions": {
+            "origin": "_.origin",
+            "destination": "_.dest",
+        },
+        "measures": {
+            "flight_count": "_.count()",
+            "avg_distance": "_.distance.mean()",
+        },
+    }
+}
+
+models = from_config(config, tables={"flights_tbl": flights_tbl})
+flights_sm = models["flights"]
+```
+
+This is useful for integrations where you don't want to write config to a file just to load it. The `from_config()` function accepts the same `profile` and `profile_path` parameters as `from_yaml()`:
+
+```python
+# With a profile
+models = from_config(config, profile="my_db")
+
+# With profile in config
+config = {
+    "profile": "my_db",
+    "flights": {
+        "table": "flights_tbl",
+        ...
+    }
+}
+models = from_config(config)
+```
+
 ## Querying YAML Models
 
 YAML-defined models work exactly like Python-defined models. You can use the same `group_by()` and `aggregate()` methods to query your data.
