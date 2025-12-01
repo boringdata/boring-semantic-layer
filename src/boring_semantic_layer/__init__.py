@@ -38,6 +38,7 @@ from .profile import (
     get_connection,
 )
 from .yaml import (
+    from_config,
     from_yaml,
 )
 
@@ -50,6 +51,7 @@ __all__ = [
     "SemanticTable",
     "Dimension",
     "Measure",
+    "from_config",
     "from_yaml",
     "MCPSemanticModel",
     "options",
