@@ -6,7 +6,7 @@ import tempfile
 import ibis
 import pytest
 
-from boring_semantic_layer import SemanticTable, from_yaml
+from boring_semantic_layer import SemanticTable, from_config, from_yaml
 
 
 @pytest.fixture
@@ -865,6 +865,208 @@ flights:
         # Total: 3 flights
         total = result["flight_count"].sum()
         assert total == 3
+
+    finally:
+        os.unlink(yaml_path)
+
+
+# ============================================================================
+# from_config tests
+# ============================================================================
+
+
+def test_from_config_simple_model(sample_tables):
+    """Test loading a simple model from a config dict."""
+    config = {
+        "carriers": {
+            "table": "carriers_tbl",
+            "description": "Airline carriers",
+            "dimensions": {
+                "code": "_.code",
+                "name": "_.name",
+            },
+            "measures": {
+                "carrier_count": "_.count()",
+            },
+        }
+    }
+
+    models = from_config(config, tables=sample_tables)
+    model = models["carriers"]
+
+    # Verify it's a SemanticTable
+    assert isinstance(model, SemanticTable)
+    assert model.name == "carriers"
+
+    # Verify dimensions and measures
+    assert "code" in model.dimensions
+    assert "name" in model.dimensions
+    assert "carrier_count" in model.measures
+
+    # Test a query
+    result = model.group_by("name").aggregate("carrier_count").execute()
+    assert len(result) == 4
+
+
+def test_from_config_with_descriptions(sample_tables):
+    """Test loading a model with descriptions from config dict."""
+    config = {
+        "carriers": {
+            "table": "carriers_tbl",
+            "dimensions": {
+                "code": {"expr": "_.code", "description": "Airline code"},
+                "name": {"expr": "_.name", "description": "Full airline name"},
+            },
+            "measures": {
+                "carrier_count": {"expr": "_.count()", "description": "Number of carriers"},
+            },
+        }
+    }
+
+    models = from_config(config, tables=sample_tables)
+    model = models["carriers"]
+
+    # Verify descriptions
+    assert model.get_dimensions()["code"].description == "Airline code"
+    assert model.get_dimensions()["name"].description == "Full airline name"
+    assert model._base_measures["carrier_count"].description == "Number of carriers"
+
+
+def test_from_config_with_filter(sample_tables):
+    """Test loading a model with a filter from config dict."""
+    config = {
+        "flights": {
+            "table": "flights_tbl",
+            "filter": "_.distance > 500",
+            "dimensions": {
+                "origin": "_.origin",
+            },
+            "measures": {
+                "flight_count": "_.count()",
+            },
+        }
+    }
+
+    models = from_config(config, tables=sample_tables)
+    model = models["flights"]
+
+    result = model.group_by().aggregate("flight_count").execute()
+    # 5 flights have distance > 500
+    assert result.iloc[0]["flight_count"] == 5
+
+
+def test_from_config_with_joins(sample_tables):
+    """Test loading models with joins from config dict."""
+    config = {
+        "carriers": {
+            "table": "carriers_tbl",
+            "dimensions": {"code": "_.code", "name": "_.name"},
+            "measures": {"carrier_count": "_.count()"},
+        },
+        "flights": {
+            "table": "flights_tbl",
+            "dimensions": {"origin": "_.origin", "carrier": "_.carrier"},
+            "measures": {"flight_count": "_.count()"},
+            "joins": {
+                "carriers": {
+                    "model": "carriers",
+                    "type": "one",
+                    "left_on": "carrier",
+                    "right_on": "code",
+                }
+            },
+        },
+    }
+
+    models = from_config(config, tables=sample_tables)
+    flights = models["flights"]
+
+    # Test query with joined dimension
+    result = flights.group_by("flights.origin", "carriers.name").aggregate("flight_count").execute()
+
+    assert "flights.origin" in result.columns
+    assert "carriers.name" in result.columns
+    assert len(result) > 0
+
+
+def test_from_config_multiple_models(sample_tables):
+    """Test loading multiple models from config dict."""
+    config = {
+        "carriers": {
+            "table": "carriers_tbl",
+            "dimensions": {"code": "_.code"},
+            "measures": {"carrier_count": "_.count()"},
+        },
+        "flights": {
+            "table": "flights_tbl",
+            "dimensions": {"origin": "_.origin"},
+            "measures": {"flight_count": "_.count()"},
+        },
+    }
+
+    models = from_config(config, tables=sample_tables)
+
+    assert "carriers" in models
+    assert "flights" in models
+    assert isinstance(models["carriers"], SemanticTable)
+    assert isinstance(models["flights"], SemanticTable)
+
+
+def test_from_config_error_missing_table(sample_tables):
+    """Test error when config references non-existent table."""
+    config = {
+        "missing": {
+            "table": "nonexistent_table",
+            "dimensions": {"col": "_.col"},
+            "measures": {"count": "_.count()"},
+        }
+    }
+
+    with pytest.raises(KeyError, match="Table 'nonexistent_table' not found"):
+        from_config(config, tables=sample_tables)
+
+
+def test_from_config_matches_from_yaml(sample_tables):
+    """Test that from_config produces same result as from_yaml."""
+    yaml_content = """
+carriers:
+  table: carriers_tbl
+  dimensions:
+    code: _.code
+    name: _.name
+  measures:
+    carrier_count: _.count()
+"""
+
+    config = {
+        "carriers": {
+            "table": "carriers_tbl",
+            "dimensions": {
+                "code": "_.code",
+                "name": "_.name",
+            },
+            "measures": {
+                "carrier_count": "_.count()",
+            },
+        }
+    }
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = f.name
+
+    try:
+        yaml_models = from_yaml(yaml_path, tables=sample_tables)
+        config_models = from_config(config, tables=sample_tables)
+
+        # Both should produce same query results
+        yaml_result = yaml_models["carriers"].group_by("name").aggregate("carrier_count").execute()
+        config_result = (
+            config_models["carriers"].group_by("name").aggregate("carrier_count").execute()
+        )
+
+        assert len(yaml_result) == len(config_result)
+        assert set(yaml_result.columns) == set(config_result.columns)
 
     finally:
         os.unlink(yaml_path)
