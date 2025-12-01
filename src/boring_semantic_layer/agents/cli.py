@@ -4,6 +4,7 @@ import argparse
 import logging
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -195,6 +196,58 @@ def setup_logging(verbose: bool = False):
     )
 
 
+def _is_url(path: str | Path | None) -> bool:
+    """Check if a path is a URL."""
+    if path is None:
+        return False
+    path_str = str(path)
+    return path_str.startswith(("http://", "https://"))
+
+
+def _fetch_remote_file(url: str, suffix: str = ".yml") -> Path:
+    """Fetch a remote file and save to a temporary location.
+
+    Args:
+        url: The URL to fetch
+        suffix: File suffix for the temp file
+
+    Returns:
+        Path to the temporary file
+
+    Raises:
+        SystemExit: If the fetch fails
+    """
+    import urllib.error
+    import urllib.request
+
+    print(f"📥 Fetching {url}...")
+
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            content = response.read()
+
+        # Create temp file with appropriate suffix
+        fd, temp_path = tempfile.mkstemp(suffix=suffix)
+        with open(fd, "wb") as f:
+            f.write(content)
+
+        print("   ✓ Downloaded to temporary file")
+        return Path(temp_path)
+
+    except urllib.error.HTTPError as e:
+        print(f"❌ HTTP Error {e.code}: {e.reason}")
+        print(f"   URL: {url}")
+        sys.exit(1)
+    except urllib.error.URLError as e:
+        print(f"❌ URL Error: {e.reason}")
+        print(f"   URL: {url}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Failed to fetch remote file: {e}")
+        print(f"   URL: {url}")
+        sys.exit(1)
+
+
 def cmd_chat(args):
     """Start an interactive chat session with the semantic model."""
     import os
@@ -214,11 +267,15 @@ def cmd_chat(args):
     if not model_path:
         model_path_str = os.environ.get("BSL_MODEL_PATH")
         if model_path_str:
-            model_path = Path(model_path_str)
+            model_path = model_path_str
         else:
             print("❌ Error: No semantic model file specified.")
             print("   Use --sm <path> or set BSL_MODEL_PATH environment variable")
             return
+
+    # Fetch remote model file if URL
+    if _is_url(model_path):
+        model_path = _fetch_remote_file(str(model_path), suffix=".yml")
 
     # Get LLM from args (no validation - let LangChain handle it)
     llm_model = args.llm if hasattr(args, "llm") and args.llm else "gpt-4"
@@ -232,7 +289,11 @@ def cmd_chat(args):
     if not profile_file:
         profile_file_str = os.environ.get("BSL_PROFILE_FILE")
         if profile_file_str:
-            profile_file = Path(profile_file_str)
+            profile_file = profile_file_str
+
+    # Fetch remote profile file if URL
+    if _is_url(profile_file):
+        profile_file = _fetch_remote_file(str(profile_file), suffix=".yml")
 
     # Auto-select profile if not specified and only one exists
     if not profile and profile_file:
@@ -307,8 +368,7 @@ def main():
     chat_parser = subparsers.add_parser("chat", help="Start interactive chat session")
     chat_parser.add_argument(
         "--sm",
-        type=Path,
-        help="Path to semantic model definition (YAML file). Can also be set via BSL_MODEL_PATH environment variable.",
+        help="Path or URL to semantic model definition (YAML file). Can also be set via BSL_MODEL_PATH environment variable.",
     )
     chat_parser.add_argument(
         "--chart-backend",
@@ -328,8 +388,7 @@ def main():
     )
     chat_parser.add_argument(
         "--profile-file",
-        type=Path,
-        help="Path to profiles.yml file (default: looks for profiles.yml in current directory and examples/)",
+        help="Path or URL to profiles.yml file (default: looks for profiles.yml in current directory and examples/)",
     )
     chat_parser.add_argument(
         "query",
