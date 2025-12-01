@@ -1,5 +1,20 @@
 # Example YAML configuration for flights semantic model
 # This demonstrates the YAML loader for the Boring Semantic Layer
+#
+# Run remotely with:
+#   uvx --from 'boring-semantic-layer[agent]' bsl chat \
+#     --sm https://raw.githubusercontent.com/boringdata/boring-semantic-layer/main/examples/flights.yml
+
+# Embedded profile - loads parquet files into in-memory DuckDB
+profile:
+  type: duckdb
+  database: ":memory:"
+  tables:
+    carriers_tbl: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/carriers.parquet"
+    flights_tbl: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/flights.parquet"
+    aircraft_tbl: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/aircraft.parquet"
+    aircraft_models_tbl: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/aircraft_models.parquet"
+    airports_tbl: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/airports.parquet"
 
 # ========================================================================
 # Airlines and Carriers
