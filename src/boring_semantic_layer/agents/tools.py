@@ -188,7 +188,12 @@ class BSLTools:
 
             is_cli_mode = self.chart_backend == "plotext"
             if chart_spec is None and is_cli_mode:
-                chart_spec = {"backend": "plotext", "format": "static"}
+                chart_spec = {
+                    "backend": "plotext",
+                    "format": "static",
+                    "show_chart": True,
+                    "show_table": True,
+                }
 
             return generate_chart_with_data(
                 query_result,

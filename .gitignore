@@ -143,4 +143,4 @@ builds/
 
 # Cached example data
 examples/data/
-examples/profiles.local.yml
+examples/*.local.yml
