@@ -4,7 +4,6 @@ import argparse
 import logging
 import shutil
 import sys
-import tempfile
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -196,58 +195,6 @@ def setup_logging(verbose: bool = False):
     )
 
 
-def _is_url(path: str | Path | None) -> bool:
-    """Check if a path is a URL."""
-    if path is None:
-        return False
-    path_str = str(path)
-    return path_str.startswith(("http://", "https://"))
-
-
-def _fetch_remote_file(url: str, suffix: str = ".yml") -> Path:
-    """Fetch a remote file and save to a temporary location.
-
-    Args:
-        url: The URL to fetch
-        suffix: File suffix for the temp file
-
-    Returns:
-        Path to the temporary file
-
-    Raises:
-        SystemExit: If the fetch fails
-    """
-    import urllib.error
-    import urllib.request
-
-    print(f"📥 Fetching {url}...")
-
-    try:
-        with urllib.request.urlopen(url, timeout=30) as response:
-            content = response.read()
-
-        # Create temp file with appropriate suffix
-        fd, temp_path = tempfile.mkstemp(suffix=suffix)
-        with open(fd, "wb") as f:
-            f.write(content)
-
-        print("   ✓ Downloaded to temporary file")
-        return Path(temp_path)
-
-    except urllib.error.HTTPError as e:
-        print(f"❌ HTTP Error {e.code}: {e.reason}")
-        print(f"   URL: {url}")
-        sys.exit(1)
-    except urllib.error.URLError as e:
-        print(f"❌ URL Error: {e.reason}")
-        print(f"   URL: {url}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"❌ Failed to fetch remote file: {e}")
-        print(f"   URL: {url}")
-        sys.exit(1)
-
-
 def cmd_chat(args):
     """Start an interactive chat session with the semantic model."""
     import os
@@ -273,46 +220,13 @@ def cmd_chat(args):
             print("   Use --sm <path> or set BSL_MODEL_PATH environment variable")
             return
 
-    # Fetch remote model file if URL
-    if _is_url(model_path):
-        model_path = _fetch_remote_file(str(model_path), suffix=".yml")
-
     # Get LLM from args (no validation - let LangChain handle it)
     llm_model = args.llm if hasattr(args, "llm") and args.llm else "gpt-4"
     initial_query = " ".join(args.query) if hasattr(args, "query") and args.query else None
     profile = args.profile if hasattr(args, "profile") else None
+    profile_file = args.profile_file if hasattr(args, "profile_file") else None
 
-    # Get profile_file from args or BSL_PROFILE_FILE env var
-    profile_file = (
-        args.profile_file if hasattr(args, "profile_file") and args.profile_file else None
-    )
-    if not profile_file:
-        profile_file_str = os.environ.get("BSL_PROFILE_FILE")
-        if profile_file_str:
-            profile_file = profile_file_str
-
-    # Fetch remote profile file if URL
-    if _is_url(profile_file):
-        profile_file = _fetch_remote_file(str(profile_file), suffix=".yml")
-
-    # Auto-select profile if not specified and only one exists
-    if not profile and profile_file:
-        try:
-            import yaml
-
-            with open(profile_file) as f:
-                profiles_data = yaml.safe_load(f)
-                if profiles_data and "profiles" in profiles_data:
-                    available_profiles = list(profiles_data["profiles"].keys())
-                    if len(available_profiles) == 1:
-                        profile = available_profiles[0]
-                        print(f"ℹ️  Auto-selected profile: {profile}")
-                    elif len(available_profiles) > 1:
-                        print(f"⚠️  Multiple profiles available: {', '.join(available_profiles)}")
-                        print("   Use --profile to select one")
-        except Exception:
-            # If we can't read the profiles file, just continue without auto-selection
-            pass
+    # Note: profile.py handles BSL_PROFILE_FILE env var and auto-selection
 
     start_chat(
         model_path=model_path,
