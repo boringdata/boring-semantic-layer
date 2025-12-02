@@ -4,6 +4,7 @@ from ibis import _
 from returns.result import Failure, Success
 
 from boring_semantic_layer.utils import (
+    _is_url,
     expr_to_ibis_string,
     ibis_string_to_expr,
     safe_eval,
@@ -158,3 +159,30 @@ def test_safe_eval_lambda_in_context():
     assert isinstance(result, Success)
     fn = result.unwrap()
     assert callable(fn)
+
+
+def test_is_url_http():
+    """Test _is_url detects http URLs."""
+    assert _is_url("http://example.com/file.yml") is True
+
+
+def test_is_url_https():
+    """Test _is_url detects https URLs."""
+    assert _is_url("https://example.com/file.yml") is True
+
+
+def test_is_url_local_path():
+    """Test _is_url returns False for local paths."""
+    assert _is_url("/local/path/file.yml") is False
+    assert _is_url("relative/path.yml") is False
+
+
+def test_is_url_none():
+    """Test _is_url handles None."""
+    assert _is_url(None) is False
+
+
+def test_is_url_other_schemes():
+    """Test _is_url rejects non-http schemes."""
+    assert _is_url("ftp://example.com/file.yml") is False
+    assert _is_url("file:///local/file.yml") is False

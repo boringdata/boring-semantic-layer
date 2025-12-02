@@ -25,7 +25,6 @@ class AltairBackend(ChartBackend):
         dimensions: Sequence[str],
         measures: Sequence[str],
         time_dimension: str | None = None,
-        time_grain: str | None = None,
     ) -> dict[str, Any]:
         """
         Detect an appropriate chart type and return an Altair specification.
@@ -34,7 +33,6 @@ class AltairBackend(ChartBackend):
             dimensions: List of dimension names
             measures: List of measure names
             time_dimension: Optional name of the time dimension
-            time_grain: Optional time grain for temporal formatting
 
         Returns:
             An Altair specification dict with appropriate chart type
@@ -52,32 +50,9 @@ class AltairBackend(ChartBackend):
         # Check if we have a time dimension
         has_time = has_time_dimension(list(dimensions), time_dimension)
 
-        # Determine appropriate date format and axis config based on time grain
-        if has_time and time_grain:
-            if "YEAR" in time_grain:
-                date_format = "%Y"
-                axis_config = {"format": date_format, "labelAngle": 0}
-            elif "QUARTER" in time_grain:
-                date_format = "%Y Q%q"
-                axis_config = {"format": date_format, "labelAngle": -45}
-            elif "MONTH" in time_grain:
-                date_format = "%Y-%m"
-                axis_config = {"format": date_format, "labelAngle": -45}
-            elif "WEEK" in time_grain:
-                date_format = "%Y W%W"
-                axis_config = {"format": date_format, "labelAngle": -45, "tickCount": 10}
-            elif "DAY" in time_grain:
-                date_format = "%Y-%m-%d"
-                axis_config = {"format": date_format, "labelAngle": -45}
-            elif "HOUR" in time_grain:
-                date_format = "%m-%d %H:00"
-                axis_config = {"format": date_format, "labelAngle": -45, "tickCount": 12}
-            else:
-                date_format = "%Y-%m-%d"
-                axis_config = {"format": date_format, "labelAngle": -45}
-        else:
-            date_format = "%Y-%m-%d"
-            axis_config = {"format": date_format, "labelAngle": -45}
+        # Default date format and axis config for temporal data
+        date_format = "%Y-%m-%d"
+        axis_config = {"labelAngle": -45}
 
         # Single dimension, single measure
         if num_dims == 1 and num_measures == 1:
@@ -200,7 +175,6 @@ class AltairBackend(ChartBackend):
         measures: Sequence[str],
         chart_type: dict[str, Any],
         time_dimension: str | None = None,
-        time_grain: str | None = None,
     ) -> tuple[Any, dict[str, Any]]:
         """
         Prepare data for Altair chart creation.
@@ -211,7 +185,6 @@ class AltairBackend(ChartBackend):
             measures: List of measure names
             chart_type: Chart specification dict
             time_dimension: Optional time dimension name
-            time_grain: Optional requested time grain (unused)
 
         Returns:
             tuple: (sanitized_dataframe, empty_params_dict)

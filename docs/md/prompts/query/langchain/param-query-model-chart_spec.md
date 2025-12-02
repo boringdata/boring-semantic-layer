@@ -11,6 +11,7 @@ Common options:
 - `marker`: `"dot"`, `"small"`, `"medium"`, `"large"` (line charts only)
 - `show_chart`: `true/false` - Show chart visualization (default: true)
 - `show_table`: `true/false` - Show tabular output (default: true)
+- `table_limit`: Number of rows to display in table (default: 10)
 
 **IMPORTANT: To display raw dataframe without chart visualization, use:**
 ```json

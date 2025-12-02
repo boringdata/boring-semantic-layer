@@ -371,3 +371,31 @@ class TestChartWithFilters:
         import plotly.graph_objects as go
 
         assert isinstance(chart, go.Figure)
+
+    def test_chart_with_dynamic_dimension_and_rolling_window(self, flights_model):
+        """Test chart generation with dynamically added dimension and rolling window.
+
+        This tests the fix for the issue where getattr() on semantic aggregate
+        triggered Ibis's __getattr__ which caused schema resolution errors.
+        Regression test for: with_dimensions + group_by + mutate(rolling window)
+        """
+        result = (
+            flights_model.with_dimensions(flight_week=lambda t: t.flight_date.truncate("W"))
+            .group_by("flight_week")
+            .aggregate("flight_count")
+            .order_by("flight_week")
+            .mutate(
+                rolling_avg=lambda t: t.flight_count.mean().over(
+                    ibis.window(rows=(-2, 0), order_by="flight_week")
+                )
+            )
+        )
+
+        # The query should execute successfully
+        df = result.execute()
+        assert len(df) > 0
+
+        # Chart generation should not raise an error
+        result.chart(backend="plotext", format="static")
+        # Plotext returns None for static format (renders directly)
+        # Just verify no exception was raised

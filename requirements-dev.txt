@@ -185,7 +185,7 @@ httpx==0.28.1
     #   langsmith
     #   mcp
     #   openai
-httpx-sse==0.4.3
+httpx-sse==0.4.0
     # via mcp
 ibis-framework==11.0.0
     # via boring-semantic-layer
@@ -307,7 +307,9 @@ numpy==2.3.4 ; python_full_version >= '3.11'
     #   pandas
     #   pythran
 openai==2.8.1
-    # via langchain-openai
+    # via
+    #   boring-semantic-layer
+    #   langchain-openai
 openapi-pydantic==0.5.1
     # via fastmcp
 opentelemetry-api==1.38.0

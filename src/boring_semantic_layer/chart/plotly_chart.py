@@ -28,7 +28,6 @@ class PlotlyBackend(ChartBackend):
         dimensions: Sequence[str],
         measures: Sequence[str],
         time_dimension: str | None = None,
-        time_grain: str | None = None,
     ) -> str:
         """
         Auto-detect appropriate chart type based on query structure for Plotly backend.
@@ -40,7 +39,6 @@ class PlotlyBackend(ChartBackend):
             dimensions: List of dimension field names from the query
             measures: List of measure field names from the query
             time_dimension: Optional time dimension field name for temporal detection
-            time_grain: Optional time grain (unused in Plotly)
 
         Returns:
             str: Chart type identifier ("bar", "line", "heatmap", "table", "indicator")
@@ -55,7 +53,6 @@ class PlotlyBackend(ChartBackend):
         measures: Sequence[str],
         chart_type: str,
         time_dimension: str | None = None,
-        time_grain: str | None = None,
     ) -> tuple[Any, dict[str, Any]]:
         """
         Execute query and prepare base parameters for Plotly Express.
@@ -66,7 +63,6 @@ class PlotlyBackend(ChartBackend):
             measures: List of measure names
             chart_type: The chart type string (bar, line, heatmap, etc.)
             time_dimension: Optional time dimension name
-            time_grain: Optional requested time grain (unused)
 
         Returns:
             tuple: (dataframe, base_params) where:

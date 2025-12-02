@@ -100,8 +100,8 @@ def test_show_chart_true_calls_chart_method(mock_query_result):
         mock_query_result.chart.assert_called_once()
 
 
-def test_no_chart_spec_returns_only_data(mock_query_result):
-    """Test that no chart_spec returns only data."""
+def test_no_chart_spec_uses_defaults_json_mode(mock_query_result):
+    """Test that no chart_spec in JSON mode returns records only (no chart)."""
     result = generate_chart_with_data(
         query_result=mock_query_result,
         chart_spec=None,
@@ -109,13 +109,39 @@ def test_no_chart_spec_returns_only_data(mock_query_result):
         return_json=True,
     )
 
-    # Should return JSON with records but no chart
+    # In JSON mode with no chart_spec, show_chart defaults to False
     result_dict = json.loads(result)
     assert "records" in result_dict
     assert "chart" not in result_dict
 
-    # Chart method should not have been called
+    # Chart method should NOT have been called
     mock_query_result.chart.assert_not_called()
+
+
+def test_table_limit_parameter(mock_query_result, capsys):
+    """Test that table_limit limits rows displayed."""
+    # Create a larger dataframe
+    df = pd.DataFrame(
+        {"origin": [f"AIRPORT_{i}" for i in range(20)], "flight_count": list(range(20))}
+    )
+    mock_query_result.execute.return_value = df
+
+    result = generate_chart_with_data(
+        query_result=mock_query_result,
+        chart_spec={"show_chart": False, "show_table": True, "table_limit": 5},
+        default_backend="plotext",
+        return_json=False,
+    )
+
+    # Should return success message with full row count
+    assert "Query executed successfully" in result
+    assert "20 rows" in result
+
+    # Table should only show 5 rows
+    captured = capsys.readouterr()
+    assert "AIRPORT_0" in captured.out
+    assert "AIRPORT_4" in captured.out
+    # Row 5+ should not be in output (table limited to 5)
 
 
 def test_ibis_available_in_context():

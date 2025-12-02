@@ -26,30 +26,43 @@ def generate_chart_with_data(
         json.loads(result_df.to_json(orient="records", date_format="iso")) if return_json else None
     )
 
-    # No chart requested
-    if chart_spec is None or not chart_spec.get("show_chart", True):
-        if return_json:
-            return json.dumps({"records": records})
-        if chart_spec and chart_spec.get("show_table", True):
-            from boring_semantic_layer.chart.plotext_chart import display_table
-
-            display_table(result_df, limit=len(result_df))
-        return success_msg
-
     # Extract chart parameters
-    backend = chart_spec.get("backend", default_backend)
-    spec = chart_spec.get("spec")
-    format_type = chart_spec.get(
-        "format", "json" if return_json else ("static" if backend == "plotext" else "json")
+    backend = chart_spec.get("backend", default_backend) if chart_spec else default_backend
+    spec = chart_spec.get("spec") if chart_spec else None
+    format_type = (
+        chart_spec.get(
+            "format", "json" if return_json else ("static" if backend == "plotext" else "json")
+        )
+        if chart_spec
+        else ("json" if return_json else "static")
     )
+    # Default show_chart=False when no chart_spec in JSON mode (API/MCP),
+    # but True when chart_spec is explicitly provided or in CLI mode
+    default_show_chart = not return_json if chart_spec is None else True
+    show_chart = (
+        chart_spec.get("show_chart", default_show_chart) if chart_spec else default_show_chart
+    )
+    show_table = chart_spec.get("show_table", False) if chart_spec else False
+    table_limit = chart_spec.get("table_limit", 10) if chart_spec else 10
 
     if not return_json:
-        try:
-            query_result.chart(spec=spec, backend=backend, format=format_type)
-        except Exception as e:
-            msg = f"⚠️  Chart generation failed: {e}"
-            error_callback(msg) if error_callback else print(f"\n{msg}")
+        # Display table if requested
+        if show_table:
+            from boring_semantic_layer.chart.plotext_chart import display_table
+
+            display_table(result_df, limit=min(table_limit, len(result_df)))
+        # Render chart if requested
+        if show_chart:
+            try:
+                query_result.chart(spec=spec, backend=backend, format=format_type)
+            except Exception as e:
+                msg = f"⚠️  Chart generation failed: {e}"
+                error_callback(msg) if error_callback else print(f"\n{msg}")
         return success_msg
+
+    # JSON mode - no chart requested
+    if not show_chart:
+        return json.dumps({"records": records})
 
     # JSON mode
     try:

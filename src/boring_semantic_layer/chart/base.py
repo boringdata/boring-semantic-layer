@@ -23,7 +23,6 @@ class ChartBackend(ABC):
         dimensions: Sequence[str],
         measures: Sequence[str],
         time_dimension: str | None = None,
-        time_grain: str | None = None,
     ) -> str | dict[str, Any]:
         """
         Auto-detect appropriate chart type/spec based on query structure.
@@ -32,7 +31,6 @@ class ChartBackend(ABC):
             dimensions: List of dimension field names from the query
             measures: List of measure field names from the query
             time_dimension: Optional time dimension field name for temporal detection
-            time_grain: Optional time grain for temporal formatting
 
         Returns:
             Chart type identifier (string) or chart specification (dict)
@@ -47,7 +45,6 @@ class ChartBackend(ABC):
         measures: Sequence[str],
         chart_type: str | dict[str, Any],
         time_dimension: str | None = None,
-        time_grain: str | None = None,
     ) -> tuple[Any, dict[str, Any]]:
         """
         Prepare dataframe and parameters for chart creation.
@@ -58,7 +55,6 @@ class ChartBackend(ABC):
             measures: List of measure names
             chart_type: Chart type or specification from detect_chart_type
             time_dimension: Optional time dimension name
-            time_grain: Optional requested time grain identifier
 
         Returns:
             tuple: (processed_dataframe, parameters_dict)

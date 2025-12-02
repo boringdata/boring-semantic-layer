@@ -43,6 +43,25 @@ flights.filter(lambda t: t.carrier == "AA").group_by("origin").aggregate("flight
 flights.filter(lambda t: (t.distance > 1000) & (t.arr_time.year() >= 2003)).group_by("carrier").aggregate("flight_count")
 ```
 
+### Filtering Timestamps
+
+**CRITICAL**: When filtering timestamp fields, match types correctly:
+
+```python
+# Filter using .year() - extracts year as integer
+flights.filter(lambda t: t.arr_time.year() >= 2000).group_by("carrier").aggregate("flight_count")
+
+# Filter on truncated timestamps - use ISO date format string
+flights.with_dimensions(
+    arr_year=lambda t: t.arr_time.truncate("Y")
+).filter(lambda t: t.arr_year >= '2000-01-01').group_by("arr_year").aggregate("flight_count")
+```
+
+**Type matching rules:**
+- `.year()` returns **integer** → compare with integer: `t.arr_time.year() >= 2000`
+- `.truncate("Y")` returns **timestamp** → compare with ISO date string: `t.arr_year >= '2000-01-01'`
+- Never mix: `t.arr_year >= 2000` will fail (timestamp vs int)
+
 ## Time Transformations
 
 **CRITICAL**: `group_by()` only accepts dimension names as strings. Cannot use `.year()`, `.month()` directly.

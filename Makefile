@@ -68,7 +68,7 @@ ifeq ($(IBIS_VERSION),all)
 		for file in examples/*.py; do \
 			[ "$$(basename $$file)" = "__init__.py" ] && continue; \
 			[ "$$(basename $$file)" = "run_all_examples.py" ] && continue; \
-			echo "$$(basename $$file)" | grep -q "example_mcp" && continue; \
+			echo "$$(basename $$file)" | grep -qE "example_(mcp|openai)" && continue; \
 			echo "Running $$file..."; \
 			uv run "$$file" || exit 1; \
 		done || { echo "❌ Examples failed with ibis-framework=$$version"; exit 1; }; \
@@ -85,7 +85,7 @@ else ifneq ($(IBIS_VERSION),)
 	@for file in examples/*.py; do \
 		[ "$$(basename $$file)" = "__init__.py" ] && continue; \
 		[ "$$(basename $$file)" = "run_all_examples.py" ] && continue; \
-		echo "$$(basename $$file)" | grep -q "example_mcp" && continue; \
+		echo "$$(basename $$file)" | grep -qE "example_(mcp|openai)" && continue; \
 		echo "Running $$file..."; \
 		uv run "$$file" || exit 1; \
 	done
@@ -95,7 +95,7 @@ else
 	@for file in examples/*.py; do \
 		[ "$$(basename $$file)" = "__init__.py" ] && continue; \
 		[ "$$(basename $$file)" = "run_all_examples.py" ] && continue; \
-		echo "$$(basename $$file)" | grep -q "example_mcp" && continue; \
+		echo "$$(basename $$file)" | grep -qE "example_(mcp|openai)" && continue; \
 		echo "Running $$file..."; \
 		uv run "$$file" || exit 1; \
 	done

@@ -43,6 +43,7 @@ mcp = [
 
 dev = [
     "boring-semantic-layer[agent,mcp,examples,viz-altair,viz-plotly,viz-plotext]",
+    "openai>=1.0.0",
     "langchain-openai>=0.3.0",
     "langchain-anthropic>=0.3.0",
     "ruff>=0.6.7",

@@ -214,7 +214,7 @@ def cmd_chat(args):
     if not model_path:
         model_path_str = os.environ.get("BSL_MODEL_PATH")
         if model_path_str:
-            model_path = Path(model_path_str)
+            model_path = model_path_str
         else:
             print("❌ Error: No semantic model file specified.")
             print("   Use --sm <path> or set BSL_MODEL_PATH environment variable")
@@ -224,34 +224,9 @@ def cmd_chat(args):
     llm_model = args.llm if hasattr(args, "llm") and args.llm else "gpt-4"
     initial_query = " ".join(args.query) if hasattr(args, "query") and args.query else None
     profile = args.profile if hasattr(args, "profile") else None
+    profile_file = args.profile_file if hasattr(args, "profile_file") else None
 
-    # Get profile_file from args or BSL_PROFILE_FILE env var
-    profile_file = (
-        args.profile_file if hasattr(args, "profile_file") and args.profile_file else None
-    )
-    if not profile_file:
-        profile_file_str = os.environ.get("BSL_PROFILE_FILE")
-        if profile_file_str:
-            profile_file = Path(profile_file_str)
-
-    # Auto-select profile if not specified and only one exists
-    if not profile and profile_file:
-        try:
-            import yaml
-
-            with open(profile_file) as f:
-                profiles_data = yaml.safe_load(f)
-                if profiles_data and "profiles" in profiles_data:
-                    available_profiles = list(profiles_data["profiles"].keys())
-                    if len(available_profiles) == 1:
-                        profile = available_profiles[0]
-                        print(f"ℹ️  Auto-selected profile: {profile}")
-                    elif len(available_profiles) > 1:
-                        print(f"⚠️  Multiple profiles available: {', '.join(available_profiles)}")
-                        print("   Use --profile to select one")
-        except Exception:
-            # If we can't read the profiles file, just continue without auto-selection
-            pass
+    # Note: profile.py handles BSL_PROFILE_FILE env var and auto-selection
 
     start_chat(
         model_path=model_path,
@@ -307,8 +282,7 @@ def main():
     chat_parser = subparsers.add_parser("chat", help="Start interactive chat session")
     chat_parser.add_argument(
         "--sm",
-        type=Path,
-        help="Path to semantic model definition (YAML file). Can also be set via BSL_MODEL_PATH environment variable.",
+        help="Path or URL to semantic model definition (YAML file). Can also be set via BSL_MODEL_PATH environment variable.",
     )
     chat_parser.add_argument(
         "--chart-backend",
@@ -328,8 +302,7 @@ def main():
     )
     chat_parser.add_argument(
         "--profile-file",
-        type=Path,
-        help="Path to profiles.yml file (default: looks for profiles.yml in current directory and examples/)",
+        help="Path or URL to profiles.yml file (default: looks for profiles.yml in current directory and examples/)",
     )
     chat_parser.add_argument(
         "query",

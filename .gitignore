@@ -140,3 +140,7 @@ docs-archive/
 # xorq build artifacts
 builds/
 .direnv
+
+# Cached example data
+examples/data/
+examples/*.local.yml
