@@ -12,6 +12,16 @@ model_name.group_by(<dimensions>).aggregate(<measures>)
 - **group_by()**: Dimension names as **strings only**: `"carrier"`, `"origin"`
 - **aggregate()**: Measure names as **strings**: `"flight_count"`, `"avg_distance"`
 
+**CRITICAL**: `aggregate()` takes **measure names as strings**, NOT expressions!
+
+```python
+# ✓ CORRECT - measure names as strings
+flights.group_by("origin").aggregate("flight_count")
+
+# ✗ WRONG - do NOT use kwargs with string expressions
+flights.group_by("origin").aggregate(flight_count='count()')  # ERROR!
+```
+
 ## Examples
 
 ```python
@@ -27,21 +37,23 @@ flights.aggregate("flight_count", "avg_distance")
 
 ## Percentage of Total (t.all)
 
-**CRITICAL SYNTAX**: `.all()` must be called on the measure, NOT on the table!
+Use `.with_measures()` + `t.all()` to define percentage calculations **before** grouping.
+
+**CRITICAL SYNTAX**: `t.all(t.measure_name)` - pass the measure as argument!
 
 ```python
-# ✓ CORRECT - t.all(t.measure_name)
-market_share=lambda t: t.flight_count / t.all(t.flight_count) * 100
-
-# ✗ WRONG - t.all().measure_name
-market_share=lambda t: t.all().flight_count  # ERROR: MeasureScope.all() missing 1 required positional argument
-```
-
-**Usage pattern:**
-```python
+# ✓ CORRECT - define percentage in with_measures, then aggregate
 flights.with_measures(
-    market_share=lambda t: t.flight_count / t.all(t.flight_count) * 100
-).group_by("carrier").aggregate("flight_count", "market_share")
+    pct=lambda t: t.flight_count / t.all(t.flight_count) * 100
+).group_by("day").aggregate("flight_count", "pct")
+
+# ✗ WRONG - don't use mutate with window functions for percentages
+flights.group_by("day").aggregate("flight_count").mutate(
+    pct=lambda t: t.flight_count / t.flight_count.sum() * 100  # ERROR!
+)
+
+# ✗ WRONG - t.all() on table instead of measure
+market_share=lambda t: t.all().flight_count  # ERROR: missing required argument
 ```
 
 ## Filtering

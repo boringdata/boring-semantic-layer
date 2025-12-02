@@ -204,10 +204,16 @@ class BSLTools:
             )
         except Exception as e:
             error_detail = traceback.format_exc()
-            error_msg = f"❌ Query Error: {e}\n{error_detail}"
+            # Truncate traceback to last 1500 chars to avoid context overflow
+            truncated_trace = (
+                f"...(truncated)...\n{error_detail[-1500:]}"
+                if len(error_detail) > 1500
+                else error_detail
+            )
+            error_msg = f"❌ Query Error: {e}\n{truncated_trace}"
             if self._error_callback:
-                self._error_callback(error_msg)
-            # Return full error with traceback so LLM can learn from mistakes
+                self._error_callback(f"❌ Query Error: {e}\n{error_detail}")
+            # Return truncated error so LLM can learn from mistakes without context overflow
             return error_msg
 
     def _get_documentation(self, topic: str) -> str:
