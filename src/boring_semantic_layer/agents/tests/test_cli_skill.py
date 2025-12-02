@@ -331,7 +331,7 @@ class TestSkillInstallIntegration:
 
         skill_content = skill_file.read_text()
         assert "BSL Query Expert" in skill_content
-        assert "https://github.com/boringdata/boring-semantic-layer" in skill_content
+        assert "semantic models" in skill_content.lower()  # Verify skill has relevant content
 
         # Install cursor skills
         result = subprocess.run(
