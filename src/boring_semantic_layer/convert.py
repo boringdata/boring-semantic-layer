@@ -51,13 +51,13 @@ class AnyTable(Protocol):
 
 
 class _PrefixProxy:
-    """Proxy for chained attribute access like t.airports.state or t.a.b.c.
+    """Proxy for chained attribute access like t.airports.state.
 
     When accessing t.airports on a joined model, returns this proxy
     which tracks the prefix and resolves t.airports.state to the
     dimension named "airports.state".
 
-    Supports arbitrary nesting depth: t.join1.join2.column resolves to "join1.join2.column".
+    Only supports single-depth: prefix.column (e.g., "airports.state").
     """
 
     __slots__ = ("_resolver", "_prefix")
@@ -71,13 +71,6 @@ class _PrefixProxy:
         # Try to resolve the full prefixed name as a dimension
         if full_name in self._resolver._dims:
             return self._resolver._dims[full_name](self._resolver._t).name(full_name)
-
-        # Check if this could be an intermediate prefix (e.g., "join1.join2" in "join1.join2.col")
-        prefix_pattern = f"{full_name}."
-        has_deeper_dims = any(k.startswith(prefix_pattern) for k in self._resolver._dims)
-        if has_deeper_dims:
-            # Return another proxy with extended prefix for deeper nesting
-            return _PrefixProxy(resolver=self._resolver, prefix=full_name)
 
         # Fallback to raw table column access
         return getattr(self._resolver._t, name)
