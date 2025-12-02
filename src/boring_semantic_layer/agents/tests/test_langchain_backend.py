@@ -69,7 +69,7 @@ class TestLangChainAgent:
         # Assertions
         assert agent.llm_model == "gpt-4"
         assert agent.chart_backend == "plotext"
-        assert len(agent.tools) == 3  # list_models, query_model, and get_documentation
+        assert len(agent.tools) == 4  # list_models, get_model, query_model, get_documentation
         assert agent.conversation_history == []
         mock_from_yaml.assert_called_once()
         mock_init_chat.assert_called_once_with("gpt-4", temperature=0)
@@ -97,11 +97,10 @@ class TestLangChainAgent:
         # Execute list_models via BSLTools
         result = agent.execute("list_models", {})
 
-        # Parse JSON result
+        # Parse JSON result - list_models now returns {model_name: description}
         result_dict = json.loads(result)
         assert "flights" in result_dict
-        assert "dimensions" in result_dict["flights"]
-        assert "measures" in result_dict["flights"]
+        assert result_dict["flights"] == "Test description"
 
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     @patch("boring_semantic_layer.agents.backends.langchain.init_chat_model")
@@ -701,21 +700,30 @@ bsl = BSLTools(
     profile_file=Path("profiles.yml"),
 )
 
-# Verify we have all 3 tools
+# Verify we have all 4 tools
 tool_names = [t["function"]["name"] for t in bsl.tools]
 print(f"Available tools: {tool_names}")
 assert "list_models" in tool_names, f"Missing list_models, got: {tool_names}"
+assert "get_model" in tool_names, f"Missing get_model, got: {tool_names}"
 assert "query_model" in tool_names, f"Missing query_model, got: {tool_names}"
 assert "get_documentation" in tool_names, f"Missing get_documentation, got: {tool_names}"
 
-# Test 1: list_models tool
+# Test 1: list_models tool - returns {model_name: description}
 print("\\n=== Testing list_models tool ===")
 result = bsl.execute("list_models", {})
 print(f"list_models result: {result[:200]}...")
 assert "items" in result, f"items not in list_models result: {result}"
-assert "category" in result, f"category not in list_models result: {result}"
-assert "item_count" in result, f"item_count not in list_models result: {result}"
+# Description may be "Simple items table" or fallback "Semantic model: items"
+assert "Simple items table" in result or "Semantic model: items" in result, f"description not in list_models result: {result}"
 print("✓ list_models tool works!")
+
+# Test 1b: get_model tool - returns dimensions and measures
+print("\\n=== Testing get_model tool ===")
+result = bsl.execute("get_model", {"model_name": "items"})
+print(f"get_model result: {result[:200]}...")
+assert "category" in result, f"category not in get_model result: {result}"
+assert "item_count" in result, f"item_count not in get_model result: {result}"
+print("✓ get_model tool works!")
 
 # Test 2: get_documentation tool
 print("\\n=== Testing get_documentation tool ===")

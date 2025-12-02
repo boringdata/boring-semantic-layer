@@ -25,7 +25,7 @@ class TestToolDefinitions:
         from boring_semantic_layer.agents.tools import TOOL_DEFINITIONS
 
         assert isinstance(TOOL_DEFINITIONS, list)
-        assert len(TOOL_DEFINITIONS) == 3
+        assert len(TOOL_DEFINITIONS) == 4  # list_models, get_model, query_model, get_documentation
 
     def test_tool_definitions_openai_format(self):
         from boring_semantic_layer.agents.tools import TOOL_DEFINITIONS
@@ -160,9 +160,8 @@ class TestBSLToolsExecute:
 
         result_dict = json.loads(result)
         assert "flights" in result_dict
-        assert "dimensions" in result_dict["flights"]
-        assert "measures" in result_dict["flights"]
-        assert "description" in result_dict["flights"]
+        # list_models now returns {model_name: description} format
+        assert result_dict["flights"] == "Test flight data"
 
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     def test_execute_get_documentation_valid_topic(self, mock_from_yaml, tmp_path, mock_models):
@@ -353,7 +352,8 @@ class TestBSLToolsListModels:
         result = bsl.execute("list_models", {})
 
         data = json.loads(result)
-        assert data["flights"]["description"] == "Test flight data"
+        # list_models returns {model_name: description} format
+        assert data["flights"] == "Test flight data"
 
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     def test_list_models_without_description(self, mock_from_yaml, tmp_path):
@@ -372,7 +372,8 @@ class TestBSLToolsListModels:
         result = bsl.execute("list_models", {})
 
         data = json.loads(result)
-        assert "description" not in data["test"]
+        # When no description, falls back to default "Semantic model: {name}"
+        assert data["test"] == "Semantic model: test"
 
 
 class TestGetMdDir:

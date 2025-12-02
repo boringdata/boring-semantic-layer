@@ -144,6 +144,57 @@ def test_table_limit_parameter(mock_query_result, capsys):
     # Row 5+ should not be in output (table limited to 5)
 
 
+def test_single_row_result_hides_chart():
+    """Test that single-row results automatically hide the chart."""
+    # Create a mock with single-row result (e.g., aggregate total)
+    mock_result = Mock()
+    df = pd.DataFrame({"total_flights": [58635]})  # Single aggregate value
+    mock_result.execute.return_value = df
+    mock_result.chart = Mock(return_value='{"spec": "chart_data"}')
+
+    # Even with show_chart=True (default), chart should be hidden for single row
+    result = generate_chart_with_data(
+        query_result=mock_result,
+        chart_spec={"show_chart": True, "backend": "plotext", "format": "json"},
+        default_backend="plotext",
+        return_json=True,
+    )
+
+    # Should return JSON with records but NO chart (auto-hidden)
+    result_dict = json.loads(result)
+    assert "records" in result_dict
+    assert "chart" not in result_dict
+    assert len(result_dict["records"]) == 1
+    assert result_dict["records"][0]["total_flights"] == 58635
+
+    # Chart method should NOT have been called
+    mock_result.chart.assert_not_called()
+
+
+def test_two_row_result_shows_chart():
+    """Test that two-row results still show the chart."""
+    mock_result = Mock()
+    df = pd.DataFrame({"category": ["A", "B"], "count": [100, 200]})  # Two rows
+    mock_result.execute.return_value = df
+    mock_result.chart = Mock(return_value='{"spec": "chart_data"}')
+
+    result = generate_chart_with_data(
+        query_result=mock_result,
+        chart_spec={"show_chart": True, "backend": "plotext", "format": "json"},
+        default_backend="plotext",
+        return_json=True,
+    )
+
+    # Should return JSON with both records and chart
+    result_dict = json.loads(result)
+    assert "records" in result_dict
+    assert "chart" in result_dict
+    assert len(result_dict["records"]) == 2
+
+    # Chart method SHOULD have been called
+    mock_result.chart.assert_called_once()
+
+
 def test_ibis_available_in_context():
     """Test that ibis module is available in safe_eval context."""
     from pathlib import Path
