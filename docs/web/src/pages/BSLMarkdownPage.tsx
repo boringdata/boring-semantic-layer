@@ -260,6 +260,21 @@ export default function BSLMarkdownPage({ pageSlug }: BSLMarkdownPageProps = {})
                   </a>
                 )
               },
+              // Images
+              img({ src, alt, ...props }) {
+                // Handle root-relative paths for GitHub Pages
+                const imageSrc = src?.startsWith('/')
+                  ? `${import.meta.env.BASE_URL}${src.slice(1)}`
+                  : src
+                return (
+                  <img
+                    src={imageSrc}
+                    alt={alt || ''}
+                    className="my-6 rounded-lg max-w-full"
+                    {...props}
+                  />
+                )
+              },
               // Tables
               table({ children }) {
                 return <Table className="my-6">{children}</Table>
