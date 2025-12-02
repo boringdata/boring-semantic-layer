@@ -207,7 +207,8 @@ class BSLTools:
             error_msg = f"❌ Query Error: {e}\n{error_detail}"
             if self._error_callback:
                 self._error_callback(error_msg)
-            return f"❌ Error: {e}"
+            # Return full error with traceback so LLM can learn from mistakes
+            return error_msg
 
     def _get_documentation(self, topic: str) -> str:
         if topic in _topics:

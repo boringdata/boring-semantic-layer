@@ -25,6 +25,25 @@ flights.group_by("origin", "destination").aggregate("flight_count", "avg_distanc
 flights.aggregate("flight_count", "avg_distance")
 ```
 
+## Percentage of Total (t.all)
+
+**CRITICAL SYNTAX**: `.all()` must be called on the measure, NOT on the table!
+
+```python
+# ✓ CORRECT - t.all(t.measure_name)
+market_share=lambda t: t.flight_count / t.all(t.flight_count) * 100
+
+# ✗ WRONG - t.all().measure_name
+market_share=lambda t: t.all().flight_count  # ERROR: MeasureScope.all() missing 1 required positional argument
+```
+
+**Usage pattern:**
+```python
+flights.with_measures(
+    market_share=lambda t: t.flight_count / t.all(t.flight_count) * 100
+).group_by("carrier").aggregate("flight_count", "market_share")
+```
+
 ## Filtering
 
 Use `.filter()` with lambda expressions:
