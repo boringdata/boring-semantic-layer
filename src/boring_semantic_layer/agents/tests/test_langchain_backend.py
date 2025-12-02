@@ -241,7 +241,12 @@ class TestLangChainAgent:
         mock_query_result.chart.return_value = None  # chart() renders to terminal
 
         # Mock safe_eval to return an actual Success object
-        with patch("boring_semantic_layer.agents.tools.safe_eval") as mock_eval:
+        with (
+            patch("boring_semantic_layer.agents.tools.safe_eval") as mock_eval,
+            patch(
+                "boring_semantic_layer.agents.utils.chart_handler.display_table"
+            ) as mock_display_table,
+        ):
             # Return a real Success object from the returns library
             mock_eval.return_value = Success(mock_query_result)
 
@@ -254,6 +259,8 @@ class TestLangChainAgent:
             mock_query_result.execute.assert_called_once()
             # With plotext backend and no chart_spec, chart() should be called
             mock_query_result.chart.assert_called_once()
+            # Table should be displayed
+            mock_display_table.assert_called_once()
 
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     @patch("boring_semantic_layer.agents.backends.langchain.init_chat_model")

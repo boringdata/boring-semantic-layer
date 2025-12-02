@@ -36,7 +36,12 @@ def generate_chart_with_data(
         if chart_spec
         else ("json" if return_json else "static")
     )
-    show_chart = chart_spec.get("show_chart", True) if chart_spec else True
+    # Default show_chart=False when no chart_spec in JSON mode (API/MCP),
+    # but True when chart_spec is explicitly provided or in CLI mode
+    default_show_chart = not return_json if chart_spec is None else True
+    show_chart = (
+        chart_spec.get("show_chart", default_show_chart) if chart_spec else default_show_chart
+    )
     show_table = chart_spec.get("show_table", False) if chart_spec else False
     table_limit = chart_spec.get("table_limit", 10) if chart_spec else 10
 
