@@ -243,9 +243,7 @@ class TestLangChainAgent:
         # Mock safe_eval to return an actual Success object
         with (
             patch("boring_semantic_layer.agents.tools.safe_eval") as mock_eval,
-            patch(
-                "boring_semantic_layer.agents.utils.chart_handler.display_table"
-            ) as mock_display_table,
+            patch("boring_semantic_layer.chart.plotext_chart.display_table") as mock_display_table,
         ):
             # Return a real Success object from the returns library
             mock_eval.return_value = Success(mock_query_result)

@@ -100,8 +100,8 @@ def test_show_chart_true_calls_chart_method(mock_query_result):
         mock_query_result.chart.assert_called_once()
 
 
-def test_no_chart_spec_uses_defaults(mock_query_result):
-    """Test that no chart_spec uses defaults (show_chart=True)."""
+def test_no_chart_spec_uses_defaults_json_mode(mock_query_result):
+    """Test that no chart_spec in JSON mode returns records only (no chart)."""
     result = generate_chart_with_data(
         query_result=mock_query_result,
         chart_spec=None,
@@ -109,13 +109,13 @@ def test_no_chart_spec_uses_defaults(mock_query_result):
         return_json=True,
     )
 
-    # Should return JSON with records and chart (default show_chart=True)
+    # In JSON mode with no chart_spec, show_chart defaults to False
     result_dict = json.loads(result)
     assert "records" in result_dict
-    assert "chart" in result_dict
+    assert "chart" not in result_dict
 
-    # Chart method should have been called
-    mock_query_result.chart.assert_called_once()
+    # Chart method should NOT have been called
+    mock_query_result.chart.assert_not_called()
 
 
 def test_table_limit_parameter(mock_query_result, capsys):
