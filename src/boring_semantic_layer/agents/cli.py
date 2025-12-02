@@ -228,6 +228,8 @@ def cmd_chat(args):
 
     # Note: profile.py handles BSL_PROFILE_FILE env var and auto-selection
 
+    backend = args.backend if hasattr(args, "backend") else "langchain"
+
     start_chat(
         model_path=model_path,
         llm_model=llm_model,
@@ -236,6 +238,7 @@ def cmd_chat(args):
         profile=profile,
         profile_file=profile_file,
         env_path=env_path,  # Pass through for start_chat's internal use
+        backend=backend,
     )
 
 
@@ -294,6 +297,12 @@ def main():
         "--llm",
         default="gpt-4",
         help="LLM model to use (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-1.5-pro)",
+    )
+    chat_parser.add_argument(
+        "--backend",
+        choices=["langchain", "langgraph", "openai"],
+        default="langchain",
+        help="Agent backend: langchain (simple tool loop), langgraph (ReAct agent), openai (Assistants API)",
     )
     chat_parser.add_argument(
         "--profile",

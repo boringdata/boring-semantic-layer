@@ -22,9 +22,9 @@ def generate_chart_with_data(
         return json.dumps({"error": str(e)}) if return_json else error_msg
 
     success_msg = f"Query executed successfully. Returned {len(result_df)} rows."
-    records = (
-        json.loads(result_df.to_json(orient="records", date_format="iso")) if return_json else None
-    )
+
+    # Detect if chart would be meaningful (need at least 2 rows for visualization)
+    chart_is_meaningful = len(result_df) >= 2
 
     # Extract chart parameters
     backend = chart_spec.get("backend", default_backend) if chart_spec else default_backend
@@ -38,12 +38,26 @@ def generate_chart_with_data(
     )
     # Default show_chart=False when no chart_spec in JSON mode (API/MCP),
     # but True when chart_spec is explicitly provided or in CLI mode
+    # Also auto-disable chart if result has only 1 row (single aggregate, not visualizable)
     default_show_chart = not return_json if chart_spec is None else True
     show_chart = (
         chart_spec.get("show_chart", default_show_chart) if chart_spec else default_show_chart
     )
+    # Override: don't show chart if it wouldn't be meaningful (single row result)
+    if show_chart and not chart_is_meaningful:
+        show_chart = False
     show_table = chart_spec.get("show_table", False) if chart_spec else False
     table_limit = chart_spec.get("table_limit", 10) if chart_spec else 10
+    # Control whether records are returned to LLM (saves tokens for intermediate queries)
+    return_records = chart_spec.get("return_records", True) if chart_spec else True
+    records_limit = chart_spec.get("records_limit") if chart_spec else None
+
+    # Generate records only if needed
+    if return_json and return_records:
+        all_records = json.loads(result_df.to_json(orient="records", date_format="iso"))
+        records = all_records[:records_limit] if records_limit else all_records
+    else:
+        records = None
 
     if not return_json:
         # Display table if requested
@@ -60,11 +74,18 @@ def generate_chart_with_data(
                 error_callback(msg) if error_callback else print(f"\n{msg}")
         return success_msg
 
+    # Build response dict, only include records if present
+    def build_response(**kwargs: Any) -> str:
+        response = {k: v for k, v in kwargs.items() if v is not None}
+        if not response:
+            response = {"status": success_msg}
+        return json.dumps(response)
+
     # JSON mode - no chart requested
     if not show_chart:
-        return json.dumps({"records": records})
+        return build_response(records=records)
 
-    # JSON mode
+    # JSON mode with chart
     try:
         chart_result = query_result.chart(spec=spec, backend=backend, format=format_type)
         if format_type == "json":
@@ -73,16 +94,14 @@ def generate_chart_with_data(
                 if backend == "altair"
                 else (json.loads(chart_result) if isinstance(chart_result, str) else chart_result)
             )
-            return json.dumps({"records": records, "chart": chart_data})
-        return json.dumps(
-            {
-                "records": records,
-                "chart": {
-                    "backend": backend,
-                    "format": format_type,
-                    "message": "Use format='json' for serializable output.",
-                },
-            }
+            return build_response(records=records, chart=chart_data)
+        return build_response(
+            records=records,
+            chart={
+                "backend": backend,
+                "format": format_type,
+                "message": "Use format='json' for serializable output.",
+            },
         )
     except Exception as e:
-        return json.dumps({"records": records, "chart_error": str(e)})
+        return build_response(records=records, chart_error=str(e))

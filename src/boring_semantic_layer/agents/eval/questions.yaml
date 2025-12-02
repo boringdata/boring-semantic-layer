@@ -1,0 +1,252 @@
+# BSL Agent Evaluation Questions
+# These questions test various BSL features and edge cases using the flights dataset
+# Each question has a category, difficulty level, and features being tested
+
+questions:
+  # =============================================================================
+  # TIME-BASED QUERIES - Timestamp handling edge cases
+  # =============================================================================
+  - id: time_001
+    question: "Show flights per year based on arrival time"
+    category: time
+    difficulty: medium
+    features:
+      - truncate
+      - with_dimensions
+      - time_dimension
+    notes: "Tests .truncate('Y') for time dimension, with_dimensions usage"
+
+  - id: time_002
+    question: "How many flights were there in 2003?"
+    category: time
+    difficulty: medium
+    features:
+      - filter_timestamp
+      - year_method
+    notes: "Tests filter on timestamp using .year() method - common edge case"
+
+  - id: time_003
+    question: "What was the total distance flown per month in 2004?"
+    category: time
+    difficulty: medium
+    features:
+      - filter
+      - truncate
+      - aggregate
+    notes: "Combining filter + time truncation + aggregation"
+
+  - id: time_004
+    question: "Show the flight count trend by quarter"
+    category: time
+    difficulty: medium
+    features:
+      - truncate_quarter
+    notes: "Tests quarterly truncation (truncate('Q'))"
+
+  - id: time_005
+    question: "What is the distribution of flights by carrier for flights arriving after 2002?"
+    category: time
+    difficulty: medium
+    features:
+      - filter_timestamp
+      - group_by
+    notes: "Filter on timestamp year + group by carrier"
+
+  # =============================================================================
+  # FILTERING - Filter conditions and multiple conditions
+  # =============================================================================
+  - id: filter_001
+    question: "Which carriers have flights with distance greater than 2000 miles?"
+    category: filter
+    difficulty: easy
+    features:
+      - filter_numeric
+      - lambda_expression
+    notes: "Filter with lambda expression on numeric column"
+
+  - id: filter_002
+    question: "Show flights from JFK or LAX with distance over 1000 miles"
+    category: filter
+    difficulty: medium
+    features:
+      - multiple_conditions
+      - logical_operators
+    notes: "Multiple filter conditions with & / | operators"
+
+  - id: filter_003
+    question: "What is the average delay for American Airlines (AA) flights?"
+    category: filter
+    difficulty: easy
+    features:
+      - filter_string
+      - specific_measure
+    notes: "Filter + specific measure (avg_delay)"
+
+  # =============================================================================
+  # JOINS - Composed models and multi-table queries
+  # =============================================================================
+  - id: join_001
+    question: "Show the flight count by carrier name (not code)"
+    category: join
+    difficulty: medium
+    features:
+      - join_carriers
+      - access_joined_dimension
+    notes: "Join with carriers table to get full name"
+
+  - id: join_002
+    question: "What aircraft manufacturers have the most flights?"
+    category: join
+    difficulty: hard
+    features:
+      - multi_level_join
+    notes: "Multi-level join (flights -> aircraft -> aircraft_models)"
+
+  - id: join_003
+    question: "Show flights grouped by origin airport state"
+    category: join
+    difficulty: medium
+    features:
+      - join_airports
+      - access_joined_dimension
+    notes: "Join with airports table, access joined dimension"
+
+  # =============================================================================
+  # ADVANCED PATTERNS - Complex analytics
+  # =============================================================================
+  - id: advanced_001
+    question: "What is each carrier's market share as a percentage of total flights?"
+    category: advanced
+    difficulty: hard
+    features:
+      - percentage_of_total
+      - all_method
+    notes: "Percentage of total pattern using .all() syntax"
+
+  - id: advanced_002
+    question: "Show the top 3 carriers and group the rest as 'Other'"
+    category: advanced
+    difficulty: hard
+    features:
+      - bucketing
+      - window_functions
+      - cases
+    notes: "Bucketing with 'Other' pattern, window functions"
+
+  - id: advanced_003
+    question: "Calculate the running total of flights by departure date"
+    category: advanced
+    difficulty: hard
+    features:
+      - window_functions
+      - cumsum
+    notes: "Window functions, cumulative sum"
+
+  - id: advanced_004
+    question: "What is the week-over-week change in flight counts?"
+    category: advanced
+    difficulty: hard
+    features:
+      - lag
+      - period_over_period
+    notes: "lag() function, period-over-period comparison"
+
+  # =============================================================================
+  # MULTI-HOP QUERIES - Requires exploring data first, then querying
+  # =============================================================================
+  - id: multihop_001
+    question: "Which carrier has the highest average delay, and what routes do they fly most?"
+    category: multihop
+    difficulty: hard
+    features:
+      - multi_step_reasoning
+      - exploration
+      - follow_up_query
+    notes: "Requires first finding carrier with highest delay, then querying their routes"
+
+  - id: multihop_002
+    question: "What percentage of flights from Texas airports are operated by Southwest (WN)?"
+    category: multihop
+    difficulty: hard
+    features:
+      - join_airports
+      - filter_by_state
+      - percentage_calculation
+    notes: "Need to find Texas airports first, then calculate percentage"
+
+  - id: multihop_003
+    question: "Compare the on-time performance of Boeing vs Airbus aircraft"
+    category: multihop
+    difficulty: hard
+    features:
+      - multi_level_join
+      - filter_manufacturer
+      - comparison
+    notes: "Requires joining to aircraft_models, filtering by manufacturer, comparing delays"
+
+  - id: multihop_004
+    question: "Which origin airport has the most flights to California destinations?"
+    category: multihop
+    difficulty: hard
+    features:
+      - join_destination_airport
+      - filter_state
+      - aggregation
+    notes: "Need to identify CA airports, then find flights to them, then group by origin"
+
+  - id: multihop_005
+    question: "What is the busiest route (origin-destination pair) for the carrier with the most total flights?"
+    category: multihop
+    difficulty: hard
+    features:
+      - two_step_analysis
+      - find_max_first
+      - then_drill_down
+    notes: "First find carrier with most flights, then find their busiest route"
+
+  - id: multihop_006
+    question: "How do flight delays vary by aircraft age? Compare planes made before 2000 vs after."
+    category: multihop
+    difficulty: hard
+    features:
+      - join_aircraft
+      - time_based_grouping
+      - comparison
+    notes: "Requires exploring aircraft data, grouping by year_built, comparing delays"
+
+  # =============================================================================
+  # EDGE CASES - Tricky scenarios
+  # =============================================================================
+  - id: edge_001
+    question: "Show me the flight data as a table, not a chart"
+    category: edge_case
+    difficulty: easy
+    features:
+      - chart_spec
+      - table_display
+    notes: "Chart spec handling (show_chart: false, show_table: true)"
+
+  - id: edge_002
+    question: "List all unique origin-destination pairs with their flight counts, sorted by count"
+    category: edge_case
+    difficulty: medium
+    features:
+      - multiple_dimensions
+      - order_by_desc
+    notes: "Multiple dimensions in group_by, descending order"
+
+# Metadata
+metadata:
+  total_questions: 22
+  model_file: "examples/flights.yml"
+  categories:
+    - time
+    - filter
+    - join
+    - advanced
+    - multihop
+    - edge_case
+  difficulty_levels:
+    - easy
+    - medium
+    - hard

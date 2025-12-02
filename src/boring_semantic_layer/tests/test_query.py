@@ -389,6 +389,171 @@ class TestFiltersWithJoins:
         # Should only include US customers
         assert len(result) == 2
 
+    def test_filter_lambda_with_chained_access(self, joined_model):
+        """Test lambda filter using chained access like t.customers.country."""
+        # This tests the t.table_name.column_name pattern for joined models
+        result = (
+            joined_model.filter(lambda t: t.customers.country == "US")
+            .group_by("customers.name")
+            .aggregate("total_amount")
+            .execute()
+            .reset_index(drop=True)
+        )
+
+        # Should only include US customers (Alice and Charlie)
+        assert len(result) == 2
+        assert all(name in ["Alice", "Charlie"] for name in result["customers.name"])
+
+    def test_filter_lambda_with_chained_access_isin(self, joined_model):
+        """Test lambda filter using chained access with isin()."""
+        result = (
+            joined_model.filter(lambda t: t.customers.tier.isin(["gold"]))
+            .group_by("customers.name")
+            .aggregate("total_amount")
+            .execute()
+            .reset_index(drop=True)
+        )
+
+        # Should only include gold tier customers (Alice and Charlie)
+        assert len(result) == 2
+        assert all(name in ["Alice", "Charlie"] for name in result["customers.name"])
+
+
+class TestDeepNestedJoins:
+    """Test deeply nested joins with chained attribute access."""
+
+    @pytest.fixture(scope="class")
+    def con(self):
+        return ibis.duckdb.connect(":memory:")
+
+    @pytest.fixture(scope="class")
+    def triple_joined_model(self, con):
+        """Create a model with two levels of joins: orders -> customers -> regions."""
+        # Create regions table
+        regions_df = pd.DataFrame(
+            {
+                "region_id": [1, 2],
+                "region_name": ["North", "South"],
+                "country": ["US", "US"],
+            }
+        )
+        regions_tbl = con.create_table("regions_deep", regions_df, overwrite=True)
+
+        # Create customers table with region_id
+        customers_df = pd.DataFrame(
+            {
+                "customer_id": [1, 2, 3],
+                "name": ["Alice", "Bob", "Charlie"],
+                "region_id": [1, 2, 1],
+            }
+        )
+        customers_tbl = con.create_table("customers_deep", customers_df, overwrite=True)
+
+        # Create orders table
+        orders_df = pd.DataFrame(
+            {
+                "order_id": [101, 102, 103, 104],
+                "customer_id": [1, 2, 1, 3],
+                "amount": [100, 200, 150, 300],
+            }
+        )
+        orders_tbl = con.create_table("orders_deep", orders_df, overwrite=True)
+
+        # Create semantic tables
+        regions_st = (
+            to_semantic_table(regions_tbl, name="regions")
+            .with_dimensions(
+                region_id=lambda t: t.region_id,
+                region_name=lambda t: t.region_name,
+                country=lambda t: t.country,
+            )
+            .with_measures(region_count=lambda t: t.count())
+        )
+
+        customers_st = (
+            to_semantic_table(customers_tbl, name="customers")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                name=lambda t: t.name,
+                region_id=lambda t: t.region_id,
+            )
+            .with_measures(customer_count=lambda t: t.count())
+        )
+
+        orders_st = (
+            to_semantic_table(orders_tbl, name="orders")
+            .with_dimensions(
+                order_id=lambda t: t.order_id,
+                customer_id=lambda t: t.customer_id,
+            )
+            .with_measures(total_amount=lambda t: t.amount.sum(), order_count=lambda t: t.count())
+        )
+
+        # Join: orders -> customers -> regions
+        customers_with_regions = customers_st.join_one(
+            regions_st, lambda c, r: c.region_id == r.region_id
+        )
+        return orders_st.join_one(
+            customers_with_regions, lambda o, c: o.customer_id == c.customer_id
+        )
+
+    def test_deep_nested_dimensions_available(self, triple_joined_model):
+        """Test that deeply nested dimensions are available."""
+        dims = triple_joined_model.dimensions
+        # Should have dimensions from all three tables
+        assert "orders.order_id" in dims
+        assert "customers.name" in dims
+        assert "regions.region_name" in dims
+
+    def test_filter_with_nested_join_chained_access(self, triple_joined_model):
+        """Test lambda filter with t.regions.region_name on nested join.
+
+        Note: Nested joins flatten all dimensions to {table_name}.{column},
+        so we use t.regions.region_name (not t.customers.regions.region_name).
+        """
+        result = (
+            triple_joined_model.filter(lambda t: t.regions.region_name == "North")
+            .group_by("customers.name")
+            .aggregate("total_amount")
+            .execute()
+            .reset_index(drop=True)
+        )
+
+        # Should only include customers from North region (Alice and Charlie)
+        assert len(result) == 2
+        assert all(name in ["Alice", "Charlie"] for name in result["customers.name"])
+
+    def test_filter_with_nested_join_chained_access_isin(self, triple_joined_model):
+        """Test lambda filter with nested join using isin()."""
+        result = (
+            triple_joined_model.filter(lambda t: t.regions.country.isin(["US"]))
+            .group_by("regions.region_name")
+            .aggregate("order_count")
+            .execute()
+            .reset_index(drop=True)
+        )
+
+        # All orders are from US, so should have results for both regions
+        assert len(result) == 2
+
+    def test_filter_with_multiple_tables_in_same_query(self, triple_joined_model):
+        """Test filtering on dimensions from multiple joined tables."""
+        result = (
+            triple_joined_model.filter(
+                lambda t: ibis.and_(
+                    t.regions.region_name == "North", t.customers.name.isin(["Alice", "Charlie"])
+                )
+            )
+            .group_by("customers.name")
+            .aggregate("total_amount")
+            .execute()
+            .reset_index(drop=True)
+        )
+
+        # Should only include Alice and Charlie from North region
+        assert len(result) == 2
+        assert all(name in ["Alice", "Charlie"] for name in result["customers.name"])
+
 
 class TestTimeDimensions:
     """Test time dimension functionality."""

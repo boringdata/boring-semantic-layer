@@ -30,6 +30,7 @@ SAFE_NODES = {
     ast.UAdd,
     ast.USub,
     ast.Not,
+    ast.Invert,  # Bitwise NOT (~)
     ast.BinOp,
     ast.Add,
     ast.Sub,
@@ -38,6 +39,9 @@ SAFE_NODES = {
     ast.FloorDiv,
     ast.Mod,
     ast.Pow,
+    ast.BitOr,  # Bitwise OR (|) - for combining conditions in pandas/ibis
+    ast.BitAnd,  # Bitwise AND (&) - for combining conditions in pandas/ibis
+    ast.BitXor,  # Bitwise XOR (^)
     ast.Compare,
     ast.Eq,
     ast.NotEq,
