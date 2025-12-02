@@ -91,7 +91,7 @@
     "level1_join": {
       "code": "# Join carriers to flights\nflights_with_carriers = flights_st.join_many(\n    carriers_st,\n    lambda f, c: f.carrier_code == c.code\n)\n\n# Inspect dimensions - now includes both flights and carriers\nflights_with_carriers.dimensions, flights_with_carriers.measures",
       "sql": "SELECT\n  \"t2\".\"flight_id\",\n  \"t2\".\"carrier_code\",\n  \"t2\".\"aircraft_id\",\n  \"t2\".\"distance\",\n  \"t2\".\"passengers\",\n  \"t3\".\"code\",\n  \"t3\".\"name\",\n  \"t3\".\"country\"\nFROM \"memory\".\"main\".\"flights\" AS \"t2\"\nLEFT OUTER JOIN \"memory\".\"main\".\"carriers\" AS \"t3\"\n  ON \"t2\".\"carrier_code\" = \"t3\".\"code\"",
-      "plan": "<boring_semantic_layer.ops.SemanticJoinOp object at 0x16a111790>",
+      "plan": "<boring_semantic_layer.ops.SemanticJoinOp object at 0x131edac90>",
       "table": {
         "columns": [
           "flight_id",
@@ -140,7 +140,7 @@
     "level2_join": {
       "code": "# Join aircraft to the composed model\nfull_model = flights_with_carriers.join_many(\n    aircraft_st,\n    lambda f, a: f.aircraft_id == a.id\n)\n\n# Inspect dimensions - now includes flights, carriers, AND aircraft\nfull_model.dimensions, full_model.measures",
       "sql": "SELECT\n  \"t3\".\"flight_id\",\n  \"t3\".\"carrier_code\",\n  \"t3\".\"aircraft_id\",\n  \"t3\".\"distance\",\n  \"t3\".\"passengers\",\n  \"t4\".\"code\",\n  \"t4\".\"name\",\n  \"t4\".\"country\",\n  \"t5\".\"id\",\n  \"t5\".\"model\",\n  \"t5\".\"capacity\"\nFROM \"memory\".\"main\".\"flights\" AS \"t3\"\nLEFT OUTER JOIN \"memory\".\"main\".\"carriers\" AS \"t4\"\n  ON \"t3\".\"carrier_code\" = \"t4\".\"code\"\nLEFT OUTER JOIN \"memory\".\"main\".\"aircraft\" AS \"t5\"\n  ON \"t3\".\"aircraft_id\" = \"t5\".\"id\"",
-      "plan": "<boring_semantic_layer.ops.SemanticJoinOp object at 0x11de33dd0>",
+      "plan": "<boring_semantic_layer.ops.SemanticJoinOp object at 0x131e095b0>",
       "table": {
         "columns": [
           "flight_id",
@@ -211,10 +211,10 @@
         ],
         "data": [
           [
-            "Airbus A320",
+            "Boeing 777",
             1,
-            180,
-            200
+            120,
+            350
           ],
           [
             "Boeing 737",
@@ -223,10 +223,10 @@
             180
           ],
           [
-            "Boeing 777",
+            "Airbus A320",
             1,
-            120,
-            350
+            180,
+            200
           ]
         ]
       },
@@ -240,7 +240,7 @@
             }
           },
           "data": {
-            "name": "data-581f709aece0ddb38335b1b015581ee3"
+            "name": "data-f0a68cc4fa68ffbd859216926b5e49d6"
           },
           "mark": {
             "type": "bar"
@@ -292,20 +292,20 @@
             }
           ],
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-581f709aece0ddb38335b1b015581ee3": [
-              {
-                "aircraft_model": "Airbus A320",
-                "flight_count": 1,
-                "total_passengers": 180,
-                "total_capacity": 200
-              },
+            "data-f0a68cc4fa68ffbd859216926b5e49d6": [
               {
                 "aircraft_model": "Boeing 777",
                 "flight_count": 1,
                 "total_passengers": 120,
                 "total_capacity": 350
+              },
+              {
+                "aircraft_model": "Airbus A320",
+                "flight_count": 1,
+                "total_passengers": 180,
+                "total_capacity": 200
               },
               {
                 "aircraft_model": "Boeing 737",
