@@ -419,8 +419,8 @@ class TestFiltersWithJoins:
         assert all(name in ["Alice", "Charlie"] for name in result["customers.name"])
 
 
-class TestDeepNestedJoins:
-    """Test deeply nested joins with chained attribute access."""
+class TestJoinedModelChainedAccess:
+    """Test chained attribute access for joined models (t.table.column)."""
 
     @pytest.fixture(scope="class")
     def con(self):
@@ -497,19 +497,19 @@ class TestDeepNestedJoins:
             customers_with_regions, lambda o, c: o.customer_id == c.customer_id
         )
 
-    def test_deep_nested_dimensions_available(self, triple_joined_model):
-        """Test that deeply nested dimensions are available."""
+    def test_joined_dimensions_available(self, triple_joined_model):
+        """Test that joined dimensions are available with table prefixes."""
         dims = triple_joined_model.dimensions
         # Should have dimensions from all three tables
         assert "orders.order_id" in dims
         assert "customers.name" in dims
         assert "regions.region_name" in dims
 
-    def test_filter_with_nested_join_chained_access(self, triple_joined_model):
-        """Test lambda filter with t.regions.region_name on nested join.
+    def test_filter_with_chained_access(self, triple_joined_model):
+        """Test lambda filter with t.regions.region_name chained access.
 
-        Note: Nested joins flatten all dimensions to {table_name}.{column},
-        so we use t.regions.region_name (not t.customers.regions.region_name).
+        Joins flatten dimensions to {table_name}.{column}, so t.regions.region_name
+        resolves to the "regions.region_name" dimension.
         """
         result = (
             triple_joined_model.filter(lambda t: t.regions.region_name == "North")
@@ -523,8 +523,8 @@ class TestDeepNestedJoins:
         assert len(result) == 2
         assert all(name in ["Alice", "Charlie"] for name in result["customers.name"])
 
-    def test_filter_with_nested_join_chained_access_isin(self, triple_joined_model):
-        """Test lambda filter with nested join using isin()."""
+    def test_filter_with_chained_access_isin(self, triple_joined_model):
+        """Test lambda filter with chained access using isin()."""
         result = (
             triple_joined_model.filter(lambda t: t.regions.country.isin(["US"]))
             .group_by("regions.region_name")
