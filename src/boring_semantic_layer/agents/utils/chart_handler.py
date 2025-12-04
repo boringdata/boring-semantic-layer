@@ -50,7 +50,15 @@ def generate_chart_with_data(
     chart_is_meaningful = total_rows >= 2
 
     # Resolve chart parameters
-    backend = chart_backend or default_backend
+    # In CLI mode, force plotext backend since altair/plotly can't display in terminal
+    if not return_json and chart_backend and chart_backend != "plotext":
+        # Warn user that their backend choice can't be used in terminal
+        msg = f"⚠️  Backend '{chart_backend}' not available in terminal. Using 'plotext' instead."
+        error_callback(msg) if error_callback else print(f"\n{msg}")
+        backend = "plotext"
+    else:
+        backend = chart_backend or default_backend
+
     spec = chart_spec.get("spec") if chart_spec else None
     format_type = chart_format or (
         "json" if return_json else ("static" if backend == "plotext" else "json")

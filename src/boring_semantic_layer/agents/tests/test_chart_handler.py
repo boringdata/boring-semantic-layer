@@ -486,6 +486,52 @@ def test_default_backend_used_when_chart_backend_none(mock_query_result):
     mock_query_result.chart.assert_called_with(spec=None, backend="altair", format="json")
 
 
+def test_cli_mode_forces_plotext_for_non_terminal_backends(mock_query_result):
+    """Test that CLI mode forces plotext when altair/plotly requested."""
+    warnings = []
+
+    def capture_warning(msg):
+        warnings.append(msg)
+
+    generate_chart_with_data(
+        query_result=mock_query_result,
+        get_chart=True,
+        chart_backend="altair",  # Can't display in terminal
+        return_json=False,  # CLI mode
+        error_callback=capture_warning,
+    )
+
+    # Should have warned about backend switch
+    assert len(warnings) == 1
+    assert "altair" in warnings[0]
+    assert "plotext" in warnings[0]
+
+    # Chart should be called with plotext, not altair
+    mock_query_result.chart.assert_called_with(spec=None, backend="plotext", format="static")
+
+
+def test_cli_mode_allows_plotext_backend(mock_query_result):
+    """Test that CLI mode works fine when plotext is explicitly requested."""
+    warnings = []
+
+    def capture_warning(msg):
+        warnings.append(msg)
+
+    generate_chart_with_data(
+        query_result=mock_query_result,
+        get_chart=True,
+        chart_backend="plotext",  # Should work fine
+        return_json=False,  # CLI mode
+        error_callback=capture_warning,
+    )
+
+    # No warnings should be issued
+    assert len(warnings) == 0
+
+    # Chart should be called with plotext
+    mock_query_result.chart.assert_called_with(spec=None, backend="plotext", format="static")
+
+
 def test_ibis_available_in_context():
     """Test that ibis module is available in safe_eval context."""
     from pathlib import Path
