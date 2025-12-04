@@ -368,6 +368,124 @@ def test_static_format_message_in_api_mode():
     assert "Use format='json'" in result_dict["chart"]["message"]
 
 
+def test_chart_spec_passed_to_chart_method(mock_query_result):
+    """Test that chart_spec is correctly passed to chart method."""
+    custom_spec = {"chart_type": "bar", "theme": "dark"}
+
+    result = generate_chart_with_data(
+        query_result=mock_query_result,
+        get_chart=True,
+        chart_spec={"spec": custom_spec},
+        chart_backend="altair",
+        chart_format="json",
+        return_json=True,
+    )
+
+    result_dict = json.loads(result)
+    assert "chart" in result_dict
+
+    # Verify chart was called with the custom spec
+    mock_query_result.chart.assert_called_with(spec=custom_spec, backend="altair", format="json")
+
+
+def test_error_callback_called_on_chart_error(capsys):
+    """Test that error_callback is called when chart generation fails."""
+    mock_result = Mock()
+    df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+    mock_result.execute.return_value = df
+    mock_result.chart = Mock(side_effect=Exception("Chart generation failed"))
+
+    errors = []
+
+    def error_callback(msg):
+        errors.append(msg)
+
+    generate_chart_with_data(
+        query_result=mock_result,
+        get_chart=True,
+        default_backend="plotext",
+        return_json=False,
+        error_callback=error_callback,
+    )
+
+    # Error callback should have been called
+    assert len(errors) == 1
+    assert "Chart generation failed" in errors[0]
+
+
+def test_query_execution_error_json_mode():
+    """Test that query execution errors are handled in JSON mode."""
+    mock_result = Mock()
+    mock_result.execute = Mock(side_effect=Exception("Database connection failed"))
+
+    result = generate_chart_with_data(
+        query_result=mock_result,
+        return_json=True,
+    )
+
+    result_dict = json.loads(result)
+    assert "error" in result_dict
+    assert "Database connection failed" in result_dict["error"]
+
+
+def test_query_execution_error_cli_mode(capsys):
+    """Test that query execution errors are handled in CLI mode."""
+    mock_result = Mock()
+    mock_result.execute = Mock(side_effect=Exception("Database connection failed"))
+
+    errors = []
+
+    def error_callback(msg):
+        errors.append(msg)
+
+    generate_chart_with_data(
+        query_result=mock_result,
+        return_json=False,
+        error_callback=error_callback,
+    )
+
+    # Error callback should have been called
+    assert len(errors) == 1
+    assert "Database connection failed" in errors[0]
+
+
+def test_chart_error_returns_records_with_error(mock_query_result):
+    """Test that chart errors don't prevent records from being returned."""
+    mock_query_result.chart = Mock(side_effect=Exception("Chart rendering failed"))
+
+    result = generate_chart_with_data(
+        query_result=mock_query_result,
+        get_chart=True,
+        return_json=True,
+    )
+
+    result_dict = json.loads(result)
+    # Records should still be returned
+    assert "records" in result_dict
+    assert len(result_dict["records"]) == 3
+    # Chart error should be reported
+    assert "chart_error" in result_dict
+    assert "Chart rendering failed" in result_dict["chart_error"]
+
+
+def test_default_backend_used_when_chart_backend_none(mock_query_result):
+    """Test that default_backend is used when chart_backend is None."""
+    result = generate_chart_with_data(
+        query_result=mock_query_result,
+        get_chart=True,
+        chart_backend=None,
+        chart_format="json",
+        default_backend="altair",
+        return_json=True,
+    )
+
+    result_dict = json.loads(result)
+    assert result_dict["chart"]["backend"] == "altair"
+
+    # Verify chart was called with default backend
+    mock_query_result.chart.assert_called_with(spec=None, backend="altair", format="json")
+
+
 def test_ibis_available_in_context():
     """Test that ibis module is available in safe_eval context."""
     from pathlib import Path
