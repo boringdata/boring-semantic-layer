@@ -566,7 +566,17 @@ Examples:
     parser.add_argument(
         "--category",
         "-c",
-        choices=["time", "filter", "join", "advanced", "multihop", "edge_case"],
+        choices=[
+            "core",
+            "join",
+            "advanced",
+            "multihop",
+            "tool_interaction",
+            "output_config",
+            "ibis_syntax",
+            "resolution_strategy",
+            "edge_case",
+        ],
         help="Filter to specific category",
     )
     parser.add_argument(
