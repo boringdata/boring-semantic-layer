@@ -109,6 +109,9 @@ def generate_chart_with_data(
     else:
         records = None
 
+    # Default display limit for CLI mode (keep terminal output manageable)
+    DEFAULT_CLI_DISPLAY_LIMIT = 10
+
     if not return_json:
         # CLI mode (plotext): auto-show table when get_records=True
         # This way the user sees what the LLM sees
@@ -116,10 +119,14 @@ def generate_chart_with_data(
             from boring_semantic_layer.chart.plotext_chart import display_table
 
             all_records = json.loads(result_df.to_json(orient="records", date_format="iso"))
-            limited_records = all_records[:records_limit] if records_limit else all_records
+            # Use records_limit if specified, otherwise default to 10 for display
+            effective_limit = (
+                records_limit if records_limit is not None else DEFAULT_CLI_DISPLAY_LIMIT
+            )
+            limited_records = all_records[:effective_limit]
             cli_returned_rows = len(limited_records)
 
-            # Show table with the same records that go to LLM
+            # Show table with limited rows for display
             display_table(result_df, limit=cli_returned_rows)
 
             # Render chart if requested (and meaningful)
