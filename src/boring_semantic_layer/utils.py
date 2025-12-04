@@ -83,8 +83,16 @@ def _validate_ast(node: ast.AST, allowed_names: set[str] | None = None) -> None:
 def _parse_expr(expr_str: str) -> ast.AST:
     try:
         return ast.parse(expr_str, mode="eval")
-    except SyntaxError as e:
-        raise SafeEvalError(f"Invalid Python syntax: {e}") from e
+    except SyntaxError:
+        # Try wrapping in parentheses to allow multiline method chaining
+        # This handles cases like:
+        #   model.filter(...)
+        #   .group_by(...)
+        # which is valid Python when wrapped in parens
+        try:
+            return ast.parse(f"({expr_str})", mode="eval")
+        except SyntaxError as e:
+            raise SafeEvalError(f"Invalid Python syntax: {e}") from e
 
 
 def _compile_validated(tree: ast.AST) -> Any:

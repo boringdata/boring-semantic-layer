@@ -3,7 +3,7 @@
   "queries": {
     "load_yaml_example": {
       "code": "from boring_semantic_layer import from_yaml\n\n# Load models from YAML file with explicit tables\nmodels = from_yaml(\n    \"yaml_example.yaml\",\n    tables={\n        \"flights_tbl\": flights_tbl,\n        \"carriers_tbl\": carriers_tbl\n    }\n)\n\nflights_sm = models[\"flights\"]\ncarriers_sm = models[\"carriers\"]\n\n# Inspect the loaded models\nflights_sm.dimensions, flights_sm.measures",
-      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_uaor6d3xyja2je4urqixxq3vpm\"",
+      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_6sj6mz2s7fa7ndnkuhj5pd6k2i\"",
       "plan": "\u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mcarriers\u001b[0m\n  \u001b[36mcode [dim]\u001b[0m\n  \u001b[36mname [dim]\u001b[0m\n  \u001b[35mcarrier_count [measure]\u001b[0m",
       "table": {
         "columns": [
@@ -28,7 +28,7 @@
     },
     "query_yaml_model": {
       "code": "# Query the YAML-defined model\nresult = (\n    flights_sm\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"avg_distance\")\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"distance\") AS \"avg_distance\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_2lp64xuin5acdghxpr4d6sy4aq\" AS \"t0\"\n    WHERE\n      \"t0\".\"year\" > 2020\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"distance\") AS \"avg_distance\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_74ftoum23bf4rmbtxjyzqwmk5u\" AS \"t0\"\n    WHERE\n      \"t0\".\"year\" > 2020\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36morigin [dim]\u001b[0m\n  \u001b[36mdestination [dim]\u001b[0m\n  \u001b[36myear [dim]\u001b[0m\n  \u001b[36mcarrier [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[35mavg_distance [measure]\u001b[0m\n\nr1 := \u001b[1;32mFilter\u001b[0m[\u001b[93mr0\u001b[0m]\n  predicate:\n    \u03bb <lambda>\n\nr2 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr1\u001b[0m]\n  keys:\n    \u001b[36morigin\u001b[0m\n\n\u001b[1;32mAggregate\u001b[0m[\u001b[93mr2\u001b[0m]\n  groups:\n    \u001b[36morigin\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m\n    \u001b[35mavg_distance\u001b[0m",
       "table": {
         "columns": [
@@ -38,9 +38,9 @@
         ],
         "data": [
           [
-            "JFK",
+            "SFO",
             1,
-            2475.0
+            382.0
           ],
           [
             "LAX",
@@ -48,9 +48,9 @@
             337.0
           ],
           [
-            "SFO",
+            "JFK",
             1,
-            382.0
+            2475.0
           ]
         ]
       },

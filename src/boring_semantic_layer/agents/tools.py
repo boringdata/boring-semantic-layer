@@ -24,15 +24,25 @@ from boring_semantic_layer.utils import safe_eval
 
 
 def _get_md_dir() -> Path:
-    """Get the directory containing markdown documentation files."""
+    """Get the directory containing markdown documentation files.
+
+    In development mode (editable install), prefer source docs for live editing.
+    In production, use installed package data.
+    """
     import sys
 
+    # Check for source docs first (development mode - editable install)
+    project_root = Path(__file__).resolve().parent.parent.parent.parent
+    source_dir = project_root / "docs" / "md"
+    if source_dir.exists():
+        return source_dir
+
+    # Fall back to installed package data
     installed_dir = Path(sys.prefix) / "share" / "bsl"
     if installed_dir.exists():
         return installed_dir
 
-    project_root = Path(__file__).resolve().parent.parent.parent.parent
-    return project_root / "docs" / "md"
+    return source_dir  # Return source path even if not found for better error messages
 
 
 _MD_DIR = _get_md_dir()
@@ -89,6 +99,35 @@ TOOL_DEFINITIONS: list[dict] = [
                     "query": {
                         "type": "string",
                         "description": load_prompt(_PROMPT_DIR, "param-query-model-query.md"),
+                    },
+                    "get_records": {
+                        "type": "boolean",
+                        "description": load_prompt(_PROMPT_DIR, "param-query-model-get_records.md"),
+                        "default": True,
+                    },
+                    "records_limit": {
+                        "type": "integer",
+                        "description": load_prompt(
+                            _PROMPT_DIR, "param-query-model-records_limit.md"
+                        ),
+                        "default": 10,
+                    },
+                    "get_chart": {
+                        "type": "boolean",
+                        "description": load_prompt(_PROMPT_DIR, "param-query-model-get_chart.md"),
+                        "default": True,
+                    },
+                    "chart_backend": {
+                        "type": "string",
+                        "description": load_prompt(
+                            _PROMPT_DIR, "param-query-model-chart_backend.md"
+                        ),
+                    },
+                    "chart_format": {
+                        "type": "string",
+                        "description": load_prompt(
+                            _PROMPT_DIR, "param-query-model-chart_format.md"
+                        ),
                     },
                     "chart_spec": {
                         "type": "object",
@@ -237,7 +276,16 @@ class BSLTools:
                 return model_name
         return None
 
-    def _query_model(self, query: str, chart_spec: dict | None = None) -> str:
+    def _query_model(
+        self,
+        query: str,
+        get_records: bool = True,
+        records_limit: int = 10,
+        get_chart: bool = True,
+        chart_backend: str | None = None,
+        chart_format: str | None = None,
+        chart_spec: dict | None = None,
+    ) -> str:
         from ibis import _
         from returns.result import Failure, Success
 
@@ -251,17 +299,15 @@ class BSLTools:
             query_result = result.unwrap() if isinstance(result, Success) else result
 
             is_cli_mode = self.chart_backend == "plotext"
-            if chart_spec is None and is_cli_mode:
-                chart_spec = {
-                    "backend": "plotext",
-                    "format": "static",
-                    "show_chart": True,
-                    "show_table": True,
-                }
 
             return generate_chart_with_data(
                 query_result,
-                chart_spec,
+                get_records=get_records,
+                records_limit=records_limit,
+                get_chart=get_chart,
+                chart_backend=chart_backend,
+                chart_format=chart_format,
+                chart_spec=chart_spec,
                 default_backend=self.chart_backend,
                 return_json=not is_cli_mode,
                 error_callback=self._error_callback,
@@ -354,6 +400,36 @@ class BSLTools:
                     "description"
                 ]
             )
+            get_records: bool = Field(
+                default=True,
+                description=tool_descs["query_model"]["parameters"]["properties"]["get_records"][
+                    "description"
+                ],
+            )
+            records_limit: int = Field(
+                default=10,
+                description=tool_descs["query_model"]["parameters"]["properties"]["records_limit"][
+                    "description"
+                ],
+            )
+            get_chart: bool = Field(
+                default=True,
+                description=tool_descs["query_model"]["parameters"]["properties"]["get_chart"][
+                    "description"
+                ],
+            )
+            chart_backend: str | None = Field(
+                default=None,
+                description=tool_descs["query_model"]["parameters"]["properties"]["chart_backend"][
+                    "description"
+                ],
+            )
+            chart_format: str | None = Field(
+                default=None,
+                description=tool_descs["query_model"]["parameters"]["properties"]["chart_format"][
+                    "description"
+                ],
+            )
             chart_spec: dict | None = Field(
                 default=None,
                 description=tool_descs["query_model"]["parameters"]["properties"]["chart_spec"][
@@ -361,8 +437,23 @@ class BSLTools:
                 ],
             )
 
-        def _query_model(query: str, chart_spec: dict | None = None) -> str:
+        def _query_model(
+            query: str,
+            get_records: bool = True,
+            records_limit: int = 10,
+            get_chart: bool = True,
+            chart_backend: str | None = None,
+            chart_format: str | None = None,
+            chart_spec: dict | None = None,
+        ) -> str:
             args: dict[str, Any] = {"query": query}
+            args["get_records"] = get_records
+            args["records_limit"] = records_limit
+            args["get_chart"] = get_chart
+            if chart_backend:
+                args["chart_backend"] = chart_backend
+            if chart_format:
+                args["chart_format"] = chart_format
             if chart_spec:
                 args["chart_spec"] = chart_spec
             return self.execute("query_model", args)

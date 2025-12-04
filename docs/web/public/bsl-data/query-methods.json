@@ -3,7 +3,7 @@
   "queries": {
     "setup_table": {
       "code": "import ibis\nfrom ibis import _\nfrom boring_semantic_layer import to_semantic_table\n\n# Create Ibis table\nflights_tbl = ibis.memtable({\n    \"origin\": [\"NYC\", \"LAX\", \"NYC\", \"SFO\", \"LAX\", \"NYC\", \"SFO\", \"LAX\", \"NYC\"],\n    \"carrier\": [\"AA\", \"UA\", \"AA\", \"UA\", \"AA\", \"UA\", \"AA\", \"UA\", \"AA\"],\n    \"distance\": [2789, 2789, 2902, 2902, 347, 2789, 347, 347, 2789],\n    \"duration\": [330, 330, 360, 360, 65, 330, 65, 65, 330],\n})\n\n# Create semantic table\nflights_st = (\n    to_semantic_table(flights_tbl, name=\"flights\")\n    .with_dimensions(\n        origin=lambda t: t.origin,\n        carrier=lambda t: t.carrier,\n    )\n    .with_measures(\n        flight_count=lambda t: t.count(),\n        total_distance=lambda t: t.distance.sum(),\n        avg_duration=lambda t: t.duration.mean(),\n    )\n)",
-      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_gucvjlx6jndyniqosmt5co2bdm\"",
+      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_hbzu5evp7vgkbb5xwqrk2oi3pe\"",
       "plan": "\u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36morigin [dim]\u001b[0m\n  \u001b[36mcarrier [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[35mavg_duration [measure]\u001b[0m",
       "table": {
         "columns": [
@@ -72,7 +72,7 @@
     },
     "simple_demo": {
       "code": "# Build a query\nresult = flights_st.group_by(\"origin\").aggregate(\"flight_count\")\n\n# Option 1: Execute and get data as pandas DataFrame\ndf = result.execute()\n\n# Option 2: View the generated SQL\nprint(result.sql())\n\n# Option 3: Generate a visualization (when applicable)\nchart = result.chart()\n\n# Option 4: See the semantic query plan\nprint(result)\n\nresult",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_gucvjlx6jndyniqosmt5co2bdm\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_hbzu5evp7vgkbb5xwqrk2oi3pe\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36morigin [dim]\u001b[0m\n  \u001b[36mcarrier [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[35mavg_duration [measure]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n    \u001b[36morigin\u001b[0m\n\n\u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  groups:\n    \u001b[36morigin\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m",
       "table": {
         "columns": [
@@ -104,7 +104,7 @@
             }
           },
           "data": {
-            "name": "data-cf0d0ca0a252dccfe3241e9d50e45757"
+            "name": "data-b802f777b7c8ee8ce02e7779e5cf35a1"
           },
           "mark": {
             "type": "bar"
@@ -134,11 +134,7 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-cf0d0ca0a252dccfe3241e9d50e45757": [
-              {
-                "origin": "NYC",
-                "flight_count": 4
-              },
+            "data-b802f777b7c8ee8ce02e7779e5cf35a1": [
               {
                 "origin": "LAX",
                 "flight_count": 3
@@ -146,6 +142,10 @@
               {
                 "origin": "SFO",
                 "flight_count": 2
+              },
+              {
+                "origin": "NYC",
+                "flight_count": 4
               }
             ]
           }
@@ -154,7 +154,7 @@
     },
     "query_single_dimension": {
       "code": "# Group by one dimension\nresult = flights_st.group_by(\"origin\").aggregate(\"flight_count\")",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_gucvjlx6jndyniqosmt5co2bdm\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_hbzu5evp7vgkbb5xwqrk2oi3pe\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36morigin [dim]\u001b[0m\n  \u001b[36mcarrier [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[35mavg_duration [measure]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n    \u001b[36morigin\u001b[0m\n\n\u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  groups:\n    \u001b[36morigin\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m",
       "table": {
         "columns": [
@@ -163,12 +163,12 @@
         ],
         "data": [
           [
-            "NYC",
-            4
-          ],
-          [
             "SFO",
             2
+          ],
+          [
+            "NYC",
+            4
           ],
           [
             "LAX",
@@ -186,7 +186,7 @@
             }
           },
           "data": {
-            "name": "data-6aac17ab347da150a44206e804007805"
+            "name": "data-3eaf3be1485583778a074de1413ab582"
           },
           "mark": {
             "type": "bar"
@@ -216,7 +216,11 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-6aac17ab347da150a44206e804007805": [
+            "data-3eaf3be1485583778a074de1413ab582": [
+              {
+                "origin": "SFO",
+                "flight_count": 2
+              },
               {
                 "origin": "LAX",
                 "flight_count": 3
@@ -224,10 +228,6 @@
               {
                 "origin": "NYC",
                 "flight_count": 4
-              },
-              {
-                "origin": "SFO",
-                "flight_count": 2
               }
             ]
           }
@@ -236,7 +236,7 @@
     },
     "query_multiple_dimensions": {
       "code": "# Group by multiple dimensions\nresult = flights_st.group_by(\"origin\", \"carrier\").aggregate(\"flight_count\")",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    \"t1\".\"carrier\",\n    COUNT(*) AS \"flight_count\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_gucvjlx6jndyniqosmt5co2bdm\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1,\n    2\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    \"t1\".\"carrier\",\n    COUNT(*) AS \"flight_count\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_hbzu5evp7vgkbb5xwqrk2oi3pe\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1,\n    2\n) AS \"t2\"",
       "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36morigin [dim]\u001b[0m\n  \u001b[36mcarrier [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[35mavg_duration [measure]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n    \u001b[36morigin\u001b[0m\n    \u001b[36mcarrier\u001b[0m\n\n\u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  groups:\n    \u001b[36morigin\u001b[0m\n    \u001b[36mcarrier\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m",
       "table": {
         "columns": [
@@ -251,16 +251,6 @@
             1
           ],
           [
-            "NYC",
-            "AA",
-            3
-          ],
-          [
-            "LAX",
-            "UA",
-            2
-          ],
-          [
             "LAX",
             "AA",
             1
@@ -274,6 +264,16 @@
             "SFO",
             "AA",
             1
+          ],
+          [
+            "NYC",
+            "AA",
+            3
+          ],
+          [
+            "LAX",
+            "UA",
+            2
           ]
         ]
       },
@@ -287,7 +287,7 @@
             }
           },
           "data": {
-            "name": "data-70998430781d758d54e2f6e62585342e"
+            "name": "data-3568f112b4bf828dbdb7713c502081a9"
           },
           "mark": {
             "type": "rect"
@@ -326,7 +326,22 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-70998430781d758d54e2f6e62585342e": [
+            "data-3568f112b4bf828dbdb7713c502081a9": [
+              {
+                "origin": "LAX",
+                "carrier": "AA",
+                "flight_count": 1
+              },
+              {
+                "origin": "NYC",
+                "carrier": "UA",
+                "flight_count": 1
+              },
+              {
+                "origin": "SFO",
+                "carrier": "UA",
+                "flight_count": 1
+              },
               {
                 "origin": "NYC",
                 "carrier": "AA",
@@ -336,21 +351,6 @@
                 "origin": "LAX",
                 "carrier": "UA",
                 "flight_count": 2
-              },
-              {
-                "origin": "SFO",
-                "carrier": "UA",
-                "flight_count": 1
-              },
-              {
-                "origin": "LAX",
-                "carrier": "AA",
-                "flight_count": 1
-              },
-              {
-                "origin": "NYC",
-                "carrier": "UA",
-                "flight_count": 1
               },
               {
                 "origin": "SFO",
@@ -364,7 +364,7 @@
     },
     "query_no_grouping": {
       "code": "# Aggregate entire dataset without grouping\nresult = flights_st.group_by().aggregate(\"flight_count\", \"total_distance\", \"avg_duration\")",
-      "sql": "SELECT\n  COUNT(*) AS \"flight_count\",\n  SUM(\"t0\".\"distance\") AS \"total_distance\",\n  AVG(\"t0\".\"duration\") AS \"avg_duration\"\nFROM \"ibis_pandas_memtable_gucvjlx6jndyniqosmt5co2bdm\" AS \"t0\"",
+      "sql": "SELECT\n  COUNT(*) AS \"flight_count\",\n  SUM(\"t0\".\"distance\") AS \"total_distance\",\n  AVG(\"t0\".\"duration\") AS \"avg_duration\"\nFROM \"ibis_pandas_memtable_hbzu5evp7vgkbb5xwqrk2oi3pe\" AS \"t0\"",
       "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36morigin [dim]\u001b[0m\n  \u001b[36mcarrier [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[35mavg_duration [measure]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n\n\u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  metrics:\n    \u001b[35mflight_count\u001b[0m\n    \u001b[35mtotal_distance\u001b[0m\n    \u001b[35mavg_duration\u001b[0m",
       "table": {
         "columns": [
@@ -417,7 +417,7 @@
     },
     "query_predefined_measures": {
       "code": "# Use measures defined in with_measures()\nresult = flights_st.group_by(\"origin\").aggregate(\"flight_count\", \"avg_duration\")",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_gucvjlx6jndyniqosmt5co2bdm\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_hbzu5evp7vgkbb5xwqrk2oi3pe\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36morigin [dim]\u001b[0m\n  \u001b[36mcarrier [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[35mavg_duration [measure]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n    \u001b[36morigin\u001b[0m\n\n\u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  groups:\n    \u001b[36morigin\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m\n    \u001b[35mavg_duration\u001b[0m",
       "table": {
         "columns": [
@@ -432,14 +432,14 @@
             153.33333333333334
           ],
           [
-            "SFO",
-            2,
-            212.5
-          ],
-          [
             "NYC",
             4,
             337.5
+          ],
+          [
+            "SFO",
+            2,
+            212.5
           ]
         ]
       },
@@ -453,7 +453,7 @@
             }
           },
           "data": {
-            "name": "data-7832a66b3a07b93f837a3a4f1d96a260"
+            "name": "data-143072415254e2a139ddddbaa9dc6b24"
           },
           "mark": {
             "type": "bar"
@@ -506,12 +506,7 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-7832a66b3a07b93f837a3a4f1d96a260": [
-              {
-                "origin": "LAX",
-                "flight_count": 3,
-                "avg_duration": 153.33333333333334
-              },
+            "data-143072415254e2a139ddddbaa9dc6b24": [
               {
                 "origin": "NYC",
                 "flight_count": 4,
@@ -521,6 +516,11 @@
                 "origin": "SFO",
                 "flight_count": 2,
                 "avg_duration": 212.5
+              },
+              {
+                "origin": "LAX",
+                "flight_count": 3,
+                "avg_duration": 153.33333333333334
               }
             ]
           }
@@ -529,7 +529,7 @@
     },
     "query_onthefly_measures": {
       "code": "# Mix predefined and computed measures\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\n        \"flight_count\",              # Pre-defined measure\n        \"avg_duration\",               # Pre-defined measure\n        total_miles=lambda t: t.distance.sum(),  # Computed on-the-fly\n        max_distance=lambda t: t.flight_count + 2  # You can reference other measures as well\n    )\n)",
-      "sql": "SELECT\n  \"t2\".\"origin\",\n  \"t2\".\"flight_count\",\n  \"t2\".\"avg_duration\",\n  \"t2\".\"total_miles\",\n  \"t2\".\"flight_count\" + 2 AS \"max_distance\"\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\",\n    SUM(\"t1\".\"distance\") AS \"total_miles\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_gucvjlx6jndyniqosmt5co2bdm\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  \"t2\".\"origin\",\n  \"t2\".\"flight_count\",\n  \"t2\".\"avg_duration\",\n  \"t2\".\"total_miles\",\n  \"t2\".\"flight_count\" + 2 AS \"max_distance\"\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\",\n    SUM(\"t1\".\"distance\") AS \"total_miles\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_hbzu5evp7vgkbb5xwqrk2oi3pe\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": null,
       "table": {
         "columns": [
@@ -540,13 +540,6 @@
           "max_distance"
         ],
         "data": [
-          [
-            "LAX",
-            3,
-            153.33333333333334,
-            3483,
-            5
-          ],
           [
             "SFO",
             2,
@@ -560,13 +553,20 @@
             337.5,
             11269,
             6
+          ],
+          [
+            "LAX",
+            3,
+            153.33333333333334,
+            3483,
+            5
           ]
         ]
       }
     },
     "query_table_columns": {
       "code": "# Reference table columns directly in aggregate()\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\n        \"flight_count\",                           # Pre-defined measure\n        total_distance=lambda t: t.distance.sum(),  # Table column 'distance'\n        avg_duration=lambda t: t.duration.mean(),   # Table column 'duration'\n        distance_in_km=lambda t: (t.distance * 1.60934).sum()  # Transform then aggregate\n    )\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\",\n    SUM(\"t1\".\"distance\" * 1.60934) AS \"distance_in_km\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_gucvjlx6jndyniqosmt5co2bdm\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\",\n    SUM(\"t1\".\"distance\" * 1.60934) AS \"distance_in_km\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_hbzu5evp7vgkbb5xwqrk2oi3pe\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": null,
       "table": {
         "columns": [
@@ -577,6 +577,13 @@
           "distance_in_km"
         ],
         "data": [
+          [
+            "SFO",
+            2,
+            3249,
+            212.5,
+            5228.74566
+          ],
           [
             "NYC",
             4,
@@ -590,20 +597,13 @@
             3483,
             153.33333333333334,
             5605.33122
-          ],
-          [
-            "SFO",
-            2,
-            3249,
-            212.5,
-            5228.74566
           ]
         ]
       }
     },
     "query_filter_order_limit": {
       "code": "from ibis import _\n\n# Filter data, sort, and limit results\nresult = (\n    flights_st\n    .filter(lambda t: t.origin.isin([\"NYC\", \"LAX\"]))  # Filter origins\n    .filter(_.distance > 500)                          # Filter distance using _ syntax\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"avg_duration\")        # Aggregate both measures\n    .order_by(ibis.desc(\"flight_count\"))              # Sort by flight_count descending\n    .limit(5)                                          # Top 5 results\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_gucvjlx6jndyniqosmt5co2bdm\" AS \"t0\"\n    WHERE\n      \"t0\".\"origin\" IN ('NYC', 'LAX') AND \"t0\".\"distance\" > 500\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"\nORDER BY\n  \"t2\".\"flight_count\" DESC\nLIMIT 5",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_hbzu5evp7vgkbb5xwqrk2oi3pe\" AS \"t0\"\n    WHERE\n      \"t0\".\"origin\" IN ('NYC', 'LAX') AND \"t0\".\"distance\" > 500\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"\nORDER BY\n  \"t2\".\"flight_count\" DESC\nLIMIT 5",
       "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36morigin [dim]\u001b[0m\n  \u001b[36mcarrier [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[35mavg_duration [measure]\u001b[0m\n\nr1 := \u001b[1;32mFilter\u001b[0m[\u001b[93mr0\u001b[0m]\n  predicate:\n    \u03bb <lambda>\n\nr2 := \u001b[1;32mFilter\u001b[0m[\u001b[93mr1\u001b[0m]\n  predicate:\n    <predicate>\n\nr3 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr2\u001b[0m]\n  keys:\n    \u001b[36morigin\u001b[0m\n\nr4 := \u001b[1;32mAggregate\u001b[0m[\u001b[93mr3\u001b[0m]\n  groups:\n    \u001b[36morigin\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m\n    \u001b[35mavg_duration\u001b[0m\n\nr5 := OrderBy[r4]\n  sort_keys:\n    _CallableWrapper(_fn=_['flight_count'].desc(nulls_first=False))\n\nLimit[r5]\n  n:\n    5",
       "table": {
         "columns": [
@@ -705,7 +705,7 @@
     },
     "query_basic_nest": {
       "code": "from ibis import _\n\n# Nest flight details within each origin\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\n        \"flight_count\",\n        \"total_distance\",\n        # Create nested array of flight details\n        nest={\"flights\": lambda t: t.group_by([\"carrier\", \"distance\"])}\n    )\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\",\n    ARRAY_AGG({'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"}) FILTER(WHERE\n      {'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"} IS NOT NULL) AS \"flights\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_gucvjlx6jndyniqosmt5co2bdm\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\",\n    ARRAY_AGG({'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"}) FILTER(WHERE\n      {'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"} IS NOT NULL) AS \"flights\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_hbzu5evp7vgkbb5xwqrk2oi3pe\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": null,
       "table": {
         "columns": [
@@ -715,29 +715,6 @@
           "flights"
         ],
         "data": [
-          [
-            "NYC",
-            4,
-            11269,
-            [
-              {
-                "carrier": "AA",
-                "distance": 2789
-              },
-              {
-                "carrier": "AA",
-                "distance": 2902
-              },
-              {
-                "carrier": "UA",
-                "distance": 2789
-              },
-              {
-                "carrier": "AA",
-                "distance": 2789
-              }
-            ]
-          ],
           [
             "LAX",
             3,
@@ -771,13 +748,36 @@
                 "distance": 347
               }
             ]
+          ],
+          [
+            "NYC",
+            4,
+            11269,
+            [
+              {
+                "carrier": "AA",
+                "distance": 2789
+              },
+              {
+                "carrier": "AA",
+                "distance": 2902
+              },
+              {
+                "carrier": "UA",
+                "distance": 2789
+              },
+              {
+                "carrier": "AA",
+                "distance": 2789
+              }
+            ]
           ]
         ]
       }
     },
     "query_nest_select": {
       "code": "# Nest specific columns\nresult = (\n    flights_st\n    .group_by(\"carrier\")\n    .aggregate(\n        \"flight_count\",\n        nest={\"routes\": lambda t: t.select(\"origin\", \"distance\", \"duration\")}\n    )\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"carrier\",\n    COUNT(*) AS \"flight_count\",\n    ARRAY_AGG(\n      {'origin': \"t1\".\"origin\", 'distance': \"t1\".\"distance\", 'duration': \"t1\".\"duration\"}\n    ) FILTER(WHERE\n      {'origin': \"t1\".\"origin\", 'distance': \"t1\".\"distance\", 'duration': \"t1\".\"duration\"} IS NOT NULL) AS \"routes\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_gucvjlx6jndyniqosmt5co2bdm\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"carrier\",\n    COUNT(*) AS \"flight_count\",\n    ARRAY_AGG(\n      {'origin': \"t1\".\"origin\", 'distance': \"t1\".\"distance\", 'duration': \"t1\".\"duration\"}\n    ) FILTER(WHERE\n      {'origin': \"t1\".\"origin\", 'distance': \"t1\".\"distance\", 'duration': \"t1\".\"duration\"} IS NOT NULL) AS \"routes\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_hbzu5evp7vgkbb5xwqrk2oi3pe\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": null,
       "table": {
         "columns": [
@@ -786,32 +786,6 @@
           "routes"
         ],
         "data": [
-          [
-            "UA",
-            4,
-            [
-              {
-                "origin": "LAX",
-                "distance": 2789,
-                "duration": 330
-              },
-              {
-                "origin": "SFO",
-                "distance": 2902,
-                "duration": 360
-              },
-              {
-                "origin": "NYC",
-                "distance": 2789,
-                "duration": 330
-              },
-              {
-                "origin": "LAX",
-                "distance": 347,
-                "duration": 65
-              }
-            ]
-          ],
           [
             "AA",
             5,
@@ -842,13 +816,39 @@
                 "duration": 330
               }
             ]
+          ],
+          [
+            "UA",
+            4,
+            [
+              {
+                "origin": "LAX",
+                "distance": 2789,
+                "duration": 330
+              },
+              {
+                "origin": "SFO",
+                "distance": 2902,
+                "duration": 360
+              },
+              {
+                "origin": "NYC",
+                "distance": 2789,
+                "duration": 330
+              },
+              {
+                "origin": "LAX",
+                "distance": 347,
+                "duration": 65
+              }
+            ]
           ]
         ]
       }
     },
     "query_nest_step1": {
       "code": "from ibis import _\n\n# Create nested data structure\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\n        \"flight_count\",\n        nest={\"flights\": lambda t: t.group_by([\"carrier\", \"distance\"])}\n    )\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    ARRAY_AGG({'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"}) FILTER(WHERE\n      {'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"} IS NOT NULL) AS \"flights\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_gucvjlx6jndyniqosmt5co2bdm\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    ARRAY_AGG({'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"}) FILTER(WHERE\n      {'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"} IS NOT NULL) AS \"flights\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_hbzu5evp7vgkbb5xwqrk2oi3pe\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": null,
       "table": {
         "columns": [
@@ -857,38 +857,6 @@
           "flights"
         ],
         "data": [
-          [
-            "LAX",
-            3,
-            [
-              {
-                "carrier": "UA",
-                "distance": 2789
-              },
-              {
-                "carrier": "AA",
-                "distance": 347
-              },
-              {
-                "carrier": "UA",
-                "distance": 347
-              }
-            ]
-          ],
-          [
-            "SFO",
-            2,
-            [
-              {
-                "carrier": "UA",
-                "distance": 2902
-              },
-              {
-                "carrier": "AA",
-                "distance": 347
-              }
-            ]
-          ],
           [
             "NYC",
             4,
@@ -910,13 +878,45 @@
                 "distance": 2789
               }
             ]
+          ],
+          [
+            "SFO",
+            2,
+            [
+              {
+                "carrier": "UA",
+                "distance": 2902
+              },
+              {
+                "carrier": "AA",
+                "distance": 347
+              }
+            ]
+          ],
+          [
+            "LAX",
+            3,
+            [
+              {
+                "carrier": "UA",
+                "distance": 2789
+              },
+              {
+                "carrier": "AA",
+                "distance": 347
+              },
+              {
+                "carrier": "UA",
+                "distance": 347
+              }
+            ]
           ]
         ]
       }
     },
     "query_nest_step2": {
       "code": "from ibis import _\n\n# Re-grouping automatically unnests the 'flights' array\nresult = (\n    result\n    .group_by(\"origin\")\n    .aggregate(\n        total_flights=lambda t: t.flight_count.sum(),\n        # Access unnested fields from the flights array\n        unique_carriers=lambda t: t.flights.carrier.nunique(),\n        avg_distance=lambda t: t.flights.distance.mean()\n    )\n)",
-      "sql": "WITH \"t3\" AS (\n  SELECT\n    *\n  FROM (\n    SELECT\n      \"t1\".\"origin\",\n      COUNT(*) AS \"flight_count\",\n      ARRAY_AGG({'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"}) FILTER(WHERE\n        {'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"} IS NOT NULL) AS \"flights\"\n    FROM (\n      SELECT\n        *\n      FROM \"ibis_pandas_memtable_gucvjlx6jndyniqosmt5co2bdm\" AS \"t0\"\n    ) AS \"t1\"\n    GROUP BY\n      1\n  ) AS \"t2\"\n)\nSELECT\n  *\nFROM (\n  SELECT\n    \"t7\".\"origin\",\n    \"t7\".\"total_flights\",\n    \"t9\".\"unique_carriers\",\n    \"t9\".\"avg_distance\"\n  FROM (\n    SELECT\n      \"t4\".\"origin\",\n      SUM(\"t4\".\"flight_count\") AS \"total_flights\"\n    FROM \"t3\" AS \"t4\"\n    GROUP BY\n      1\n  ) AS \"t7\"\n  LEFT OUTER JOIN (\n    SELECT\n      \"t5\".\"origin\",\n      COUNT(DISTINCT \"t5\".\"flights\".\"carrier\") AS \"unique_carriers\",\n      AVG(\"t5\".\"flights\".\"distance\") AS \"avg_distance\"\n    FROM (\n      SELECT\n        \"t4\".*\n        REPLACE (\"ibis_table_unnest_column_abnr63dmfveghiej47oqjm7vlm\" AS \"flights\")\n      FROM \"t3\" AS \"t4\"\n      CROSS JOIN UNNEST(\"t4\".\"flights\") AS \"ibis_table_unnest_kpvh62wapjhpfhiq743zf3giuu\"(\"ibis_table_unnest_column_abnr63dmfveghiej47oqjm7vlm\")\n    ) AS \"t5\"\n    GROUP BY\n      1\n  ) AS \"t9\"\n    ON \"t7\".\"origin\" = \"t9\".\"origin\"\n) AS \"t10\"",
+      "sql": "WITH \"t3\" AS (\n  SELECT\n    *\n  FROM (\n    SELECT\n      \"t1\".\"origin\",\n      COUNT(*) AS \"flight_count\",\n      ARRAY_AGG({'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"}) FILTER(WHERE\n        {'carrier': \"t1\".\"carrier\", 'distance': \"t1\".\"distance\"} IS NOT NULL) AS \"flights\"\n    FROM (\n      SELECT\n        *\n      FROM \"ibis_pandas_memtable_hbzu5evp7vgkbb5xwqrk2oi3pe\" AS \"t0\"\n    ) AS \"t1\"\n    GROUP BY\n      1\n  ) AS \"t2\"\n)\nSELECT\n  *\nFROM (\n  SELECT\n    \"t7\".\"origin\",\n    \"t7\".\"total_flights\",\n    \"t9\".\"unique_carriers\",\n    \"t9\".\"avg_distance\"\n  FROM (\n    SELECT\n      \"t4\".\"origin\",\n      SUM(\"t4\".\"flight_count\") AS \"total_flights\"\n    FROM \"t3\" AS \"t4\"\n    GROUP BY\n      1\n  ) AS \"t7\"\n  LEFT OUTER JOIN (\n    SELECT\n      \"t5\".\"origin\",\n      COUNT(DISTINCT \"t5\".\"flights\".\"carrier\") AS \"unique_carriers\",\n      AVG(\"t5\".\"flights\".\"distance\") AS \"avg_distance\"\n    FROM (\n      SELECT\n        \"t4\".*\n        REPLACE (\"ibis_table_unnest_column_4xt37if7n5aezf6n4d2mo2nz7u\" AS \"flights\")\n      FROM \"t3\" AS \"t4\"\n      CROSS JOIN UNNEST(\"t4\".\"flights\") AS \"ibis_table_unnest_xxnao2yxovdxpnl5ckbanjfhhe\"(\"ibis_table_unnest_column_4xt37if7n5aezf6n4d2mo2nz7u\")\n    ) AS \"t5\"\n    GROUP BY\n      1\n  ) AS \"t9\"\n    ON \"t7\".\"origin\" = \"t9\".\"origin\"\n) AS \"t10\"",
       "plan": null,
       "table": {
         "columns": [
@@ -927,10 +927,10 @@
         ],
         "data": [
           [
-            "NYC",
-            4,
+            "SFO",
             2,
-            2817.25
+            2,
+            1624.5
           ],
           [
             "LAX",
@@ -939,17 +939,17 @@
             1161.0
           ],
           [
-            "SFO",
+            "NYC",
+            4,
             2,
-            2,
-            1624.5
+            2817.25
           ]
         ]
       }
     },
     "query_mutate": {
       "code": "from ibis import _\n\n# Add post-aggregation calculations\nresult = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"total_distance\")\n    .mutate(\n        avg_distance_per_flight=lambda t: t.total_distance / t.flight_count,\n        flight_category=lambda t: ibis.cases(\n            (t.flight_count >= 3, \"high\"),\n            (t.flight_count >= 2, \"medium\"),\n            else_=\"low\"\n        )\n    )\n)",
-      "sql": "SELECT\n  \"t2\".\"origin\",\n  \"t2\".\"flight_count\",\n  \"t2\".\"total_distance\",\n  \"t2\".\"total_distance\" / \"t2\".\"flight_count\" AS \"avg_distance_per_flight\",\n  CASE\n    WHEN \"t2\".\"flight_count\" >= 3\n    THEN 'high'\n    WHEN \"t2\".\"flight_count\" >= 2\n    THEN 'medium'\n    ELSE 'low'\n  END AS \"flight_category\"\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_gucvjlx6jndyniqosmt5co2bdm\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  \"t2\".\"origin\",\n  \"t2\".\"flight_count\",\n  \"t2\".\"total_distance\",\n  \"t2\".\"total_distance\" / \"t2\".\"flight_count\" AS \"avg_distance_per_flight\",\n  CASE\n    WHEN \"t2\".\"flight_count\" >= 3\n    THEN 'high'\n    WHEN \"t2\".\"flight_count\" >= 2\n    THEN 'medium'\n    ELSE 'low'\n  END AS \"flight_category\"\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_hbzu5evp7vgkbb5xwqrk2oi3pe\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36morigin [dim]\u001b[0m\n  \u001b[36mcarrier [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[35mavg_duration [measure]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n    \u001b[36morigin\u001b[0m\n\nr2 := \u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  groups:\n    \u001b[36morigin\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m\n    \u001b[35mtotal_distance\u001b[0m\n\n\u001b[1;32mMutate\u001b[0m[\u001b[93mr2\u001b[0m]\n  new_columns:\n    avg_distance_per_flight\n    flight_category",
       "table": {
         "columns": [
@@ -993,7 +993,7 @@
             }
           },
           "data": {
-            "name": "data-bef9d7ed725a0d940caf5bf3319f8bb0"
+            "name": "data-49b479c9752b1c894d36228cdb6da4aa"
           },
           "mark": {
             "type": "bar"
@@ -1048,14 +1048,7 @@
           "width": 700,
           "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-bef9d7ed725a0d940caf5bf3319f8bb0": [
-              {
-                "origin": "SFO",
-                "flight_count": 2,
-                "total_distance": 3249,
-                "avg_distance_per_flight": 1624.5,
-                "flight_category": "medium"
-              },
+            "data-49b479c9752b1c894d36228cdb6da4aa": [
               {
                 "origin": "NYC",
                 "flight_count": 4,
@@ -1069,6 +1062,13 @@
                 "total_distance": 3483,
                 "avg_distance_per_flight": 1161.0,
                 "flight_category": "high"
+              },
+              {
+                "origin": "SFO",
+                "flight_count": 2,
+                "total_distance": 3249,
+                "avg_distance_per_flight": 1624.5,
+                "flight_category": "medium"
               }
             ]
           }
@@ -1077,7 +1077,7 @@
     },
     "query_window_example": {
       "code": "from ibis import _\n\n# First aggregate to daily level\ndaily_flights = (\n    flights_st\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"total_distance\")\n    .order_by(\"origin\")\n)\n\n# Then apply window function for cumulative distance\nwindow_spec = ibis.window(order_by=\"origin\")\n\nresult = daily_flights.mutate(\n    cumulative_distance=_.total_distance.cumsum(),\n    flight_rank=lambda t: ibis.rank().over(ibis.window(order_by=_.flight_count.desc()))\n).limit(10)",
-      "sql": "SELECT\n  \"t4\".\"origin\",\n  \"t4\".\"flight_count\",\n  \"t4\".\"total_distance\",\n  \"t4\".\"cumulative_distance\",\n  RANK() OVER (ORDER BY \"t4\".\"flight_count\" DESC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) - 1 AS \"flight_rank\"\nFROM (\n  SELECT\n    \"t3\".\"origin\",\n    \"t3\".\"flight_count\",\n    \"t3\".\"total_distance\",\n    SUM(\"t3\".\"total_distance\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"cumulative_distance\"\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        \"t1\".\"origin\",\n        COUNT(*) AS \"flight_count\",\n        SUM(\"t1\".\"distance\") AS \"total_distance\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_gucvjlx6jndyniqosmt5co2bdm\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1\n    ) AS \"t2\"\n    ORDER BY\n      \"t2\".\"origin\" ASC\n  ) AS \"t3\"\n) AS \"t4\"\nLIMIT 10",
+      "sql": "SELECT\n  \"t4\".\"origin\",\n  \"t4\".\"flight_count\",\n  \"t4\".\"total_distance\",\n  \"t4\".\"cumulative_distance\",\n  RANK() OVER (ORDER BY \"t4\".\"flight_count\" DESC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) - 1 AS \"flight_rank\"\nFROM (\n  SELECT\n    \"t3\".\"origin\",\n    \"t3\".\"flight_count\",\n    \"t3\".\"total_distance\",\n    SUM(\"t3\".\"total_distance\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"cumulative_distance\"\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        \"t1\".\"origin\",\n        COUNT(*) AS \"flight_count\",\n        SUM(\"t1\".\"distance\") AS \"total_distance\"\n      FROM (\n        SELECT\n          *\n        FROM \"ibis_pandas_memtable_hbzu5evp7vgkbb5xwqrk2oi3pe\" AS \"t0\"\n      ) AS \"t1\"\n      GROUP BY\n        1\n    ) AS \"t2\"\n    ORDER BY\n      \"t2\".\"origin\" ASC\n  ) AS \"t3\"\n) AS \"t4\"\nLIMIT 10",
       "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36morigin [dim]\u001b[0m\n  \u001b[36mcarrier [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[35mavg_duration [measure]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n    \u001b[36morigin\u001b[0m\n\nr2 := \u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  groups:\n    \u001b[36morigin\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m\n    \u001b[35mtotal_distance\u001b[0m\n\nr3 := OrderBy[r2]\n  sort_keys:\n    origin\n\nr4 := \u001b[1;32mMutate\u001b[0m[\u001b[93mr3\u001b[0m]\n  new_columns:\n    cumulative_distance\n    flight_rank\n\nLimit[r4]\n  n:\n    10",
       "table": {
         "columns": [

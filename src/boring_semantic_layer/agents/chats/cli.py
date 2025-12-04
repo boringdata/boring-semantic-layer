@@ -40,16 +40,26 @@ def display_tool_call(function_name: str, function_args: dict, status: Status | 
         status.stop()
 
     if function_name == "query_model" and "query" in function_args:
-        call_params = {"query": function_args["query"]}
-        # Only include non-default parameters
+        query = function_args["query"]
+        # Format query nicely - preserve line breaks for multiline queries
+        if "\n" in query:
+            # Multiline query - display with proper formatting
+            console.print("Call bsl query_bsl", style="dim")
+            # Add slight indent to query lines
+            for line in query.split("\n"):
+                console.print(f"  {line}", style="dim")
+        else:
+            # Single line query
+            console.print(f"Call bsl query_bsl {query}", style="dim")
+
+        # Show non-default parameters on separate line if present
+        extra_params = {}
         if function_args.get("limit", 10) != 10:
-            call_params["limit"] = function_args["limit"]
+            extra_params["limit"] = function_args["limit"]
         if function_args.get("chart_spec"):
-            call_params["chart_spec"] = function_args["chart_spec"]
-        if function_args.get("chart_backend"):
-            call_params["chart_backend"] = function_args["chart_backend"]
-        call_json = json.dumps(call_params)
-        console.print(f"Call bsl query_bsl {call_json}", style="dim")
+            extra_params["chart_spec"] = function_args["chart_spec"]
+        if extra_params:
+            console.print(f"  params: {json.dumps(extra_params)}", style="dim")
     elif function_name == "list_models":
         console.print("Call bsl list_models", style="dim")
     elif function_name == "get_model":
@@ -94,7 +104,7 @@ def start_chat(
     profile: str | None = None,
     profile_file: Path | None = None,
     env_path: Path | str | None = None,
-    backend: Literal["langchain", "langgraph", "openai"] = "langchain",
+    backend: Literal["langchain", "langgraph", "openai", "deepagent"] = "langgraph",
 ):
     """
     Start an interactive chat session with rich formatting.
@@ -177,6 +187,18 @@ def start_chat(
                     profile=profile,
                     profile_file=profile_file,
                 )
+            elif backend == "deepagent":
+                from boring_semantic_layer.agents.backends.deepagent import (
+                    DeepAgentBackend,
+                )
+
+                agent = DeepAgentBackend(
+                    model_path=model_path,
+                    llm_model=llm_model,
+                    chart_backend=chart_backend,
+                    profile=profile,
+                    profile_file=profile_file,
+                )
             else:
                 console.print(f"❌ Unknown backend: {backend}", style="bold red")
                 return
@@ -185,6 +207,7 @@ def start_chat(
             "langchain": "LangChain",
             "langgraph": "LangGraph ReAct",
             "openai": "OpenAI Assistants",
+            "deepagent": "DeepAgents (Planning)",
         }
         console.print(
             f"✅ Models loaded successfully ({backend_names[backend]} backend)\n",

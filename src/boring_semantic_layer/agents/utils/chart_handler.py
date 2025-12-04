@@ -7,12 +7,34 @@ from typing import Any
 
 def generate_chart_with_data(
     query_result: Any,
-    chart_spec: dict[str, Any] | None,
+    get_records: bool | dict[str, Any] | None = True,
+    records_limit: int | None = None,
+    get_chart: bool = True,
+    chart_backend: str | None = None,
+    chart_format: str | None = None,
+    chart_spec: dict[str, Any] | None = None,
     default_backend: str = "altair",
     return_json: bool = True,
     error_callback: Callable[[str], None] | None = None,
 ) -> str:
-    """Generate chart from query result. Returns JSON if return_json=True, else renders locally."""
+    """Generate chart from query result with explicit control over records and chart output.
+
+    Args:
+        query_result: BSL query result object with execute() and chart() methods
+        get_records: Return data records to LLM (default: True). For backward compatibility,
+                     can also be a dict (old chart_spec style) which will be handled.
+        records_limit: Max records returned to LLM (default: None = all)
+        get_chart: Generate chart visualization (default: True)
+        chart_backend: Override backend ("plotext", "altair", "plotly") or None for default
+        chart_format: Override format ("json", "static", "string") or None for auto
+        chart_spec: Backend-specific customization (chart_type, theme, etc.)
+        default_backend: Fallback backend when chart_backend is None
+        return_json: True for API/MCP mode, False for CLI mode
+        error_callback: Optional callback for error messages
+
+    Returns:
+        JSON string with query results and optional chart data
+    """
     try:
         result_df = query_result.execute()
     except Exception as e:
@@ -21,69 +43,134 @@ def generate_chart_with_data(
             error_callback(error_msg) if error_callback else print(f"\n{error_msg}\n")
         return json.dumps({"error": str(e)}) if return_json else error_msg
 
-    success_msg = f"Query executed successfully. Returned {len(result_df)} rows."
+    total_rows = len(result_df)
+    columns = list(result_df.columns)
 
     # Detect if chart would be meaningful (need at least 2 rows for visualization)
-    chart_is_meaningful = len(result_df) >= 2
+    chart_is_meaningful = total_rows >= 2
 
-    # Extract chart parameters
-    backend = chart_spec.get("backend", default_backend) if chart_spec else default_backend
+    # Resolve chart parameters
+    backend = chart_backend or default_backend
     spec = chart_spec.get("spec") if chart_spec else None
-    format_type = (
-        chart_spec.get(
-            "format", "json" if return_json else ("static" if backend == "plotext" else "json")
-        )
-        if chart_spec
-        else ("json" if return_json else "static")
+    format_type = chart_format or (
+        "json" if return_json else ("static" if backend == "plotext" else "json")
     )
-    # Default show_chart=False when no chart_spec in JSON mode (API/MCP),
-    # but True when chart_spec is explicitly provided or in CLI mode
-    # Also auto-disable chart if result has only 1 row (single aggregate, not visualizable)
-    default_show_chart = not return_json if chart_spec is None else True
-    show_chart = (
-        chart_spec.get("show_chart", default_show_chart) if chart_spec else default_show_chart
-    )
+
+    # Check for non-serializable format in API mode
+    non_serializable_format = return_json and format_type == "static" and backend != "plotext"
+
+    # Determine if chart should be shown
+    show_chart = get_chart
     # Override: don't show chart if it wouldn't be meaningful (single row result)
     if show_chart and not chart_is_meaningful:
         show_chart = False
-    show_table = chart_spec.get("show_table", False) if chart_spec else False
-    table_limit = chart_spec.get("table_limit", 10) if chart_spec else 10
-    # Control whether records are returned to LLM (saves tokens for intermediate queries)
-    return_records = chart_spec.get("return_records", True) if chart_spec else True
-    records_limit = chart_spec.get("records_limit") if chart_spec else None
 
     # Generate records only if needed
-    if return_json and return_records:
+    returned_rows = None
+    if return_json and get_records:
         all_records = json.loads(result_df.to_json(orient="records", date_format="iso"))
         records = all_records[:records_limit] if records_limit else all_records
+        returned_rows = len(records)
     else:
         records = None
 
     if not return_json:
-        # Display table if requested
-        if show_table:
+        # CLI mode (plotext): auto-show table when get_records=True
+        # This way the user sees what the LLM sees
+        if get_records:
             from boring_semantic_layer.chart.plotext_chart import display_table
 
-            display_table(result_df, limit=min(table_limit, len(result_df)))
-        # Render chart if requested
-        if show_chart:
-            try:
-                query_result.chart(spec=spec, backend=backend, format=format_type)
-            except Exception as e:
-                msg = f"⚠️  Chart generation failed: {e}"
-                error_callback(msg) if error_callback else print(f"\n{msg}")
-        return success_msg
+            all_records = json.loads(result_df.to_json(orient="records", date_format="iso"))
+            limited_records = all_records[:records_limit] if records_limit else all_records
+            cli_returned_rows = len(limited_records)
 
-    # Build response dict, only include records if present
+            # Show table with the same records that go to LLM
+            display_table(result_df, limit=cli_returned_rows)
+
+            # Render chart if requested (and meaningful)
+            if show_chart:
+                try:
+                    query_result.chart(spec=spec, backend=backend, format=format_type)
+                except Exception as e:
+                    msg = f"⚠️  Chart generation failed: {e}"
+                    error_callback(msg) if error_callback else print(f"\n{msg}")
+
+            # Return records to LLM
+            cli_response: dict[str, Any] = {
+                "total_rows": total_rows,
+                "columns": columns,
+                "records": limited_records,
+            }
+            if cli_returned_rows < total_rows:
+                cli_response["returned_rows"] = cli_returned_rows
+                cli_response["note"] = (
+                    f"Showing {cli_returned_rows} of {total_rows} rows. Use records_limit to see more."
+                )
+            # Add chart info
+            if show_chart:
+                cli_response["chart"] = {
+                    "backend": backend,
+                    "format": format_type,
+                    "displayed": True,
+                }
+            return json.dumps(cli_response)
+        else:
+            # get_records=False: final display-only query, just show chart
+            if show_chart:
+                try:
+                    query_result.chart(spec=spec, backend=backend, format=format_type)
+                except Exception as e:
+                    msg = f"⚠️  Chart generation failed: {e}"
+                    error_callback(msg) if error_callback else print(f"\n{msg}")
+
+            response: dict[str, Any] = {
+                "total_rows": total_rows,
+                "columns": columns,
+                "note": "Records not returned (get_records=false). Data displayed to user.",
+            }
+            if show_chart:
+                response["chart"] = {
+                    "backend": backend,
+                    "format": format_type,
+                    "displayed": True,
+                }
+            return json.dumps(response)
+
+    # Build response dict with insight for LLM
     def build_response(**kwargs: Any) -> str:
-        response = {k: v for k, v in kwargs.items() if v is not None}
-        if not response:
-            response = {"status": success_msg}
-        return json.dumps(response)
+        resp: dict[str, Any] = {
+            "total_rows": total_rows,
+            "columns": columns,
+        }
+        # Add insight about records
+        if get_records and returned_rows is not None:
+            if returned_rows < total_rows:
+                resp["returned_rows"] = returned_rows
+                resp["note"] = (
+                    f"Showing {returned_rows} of {total_rows} rows. Use records_limit to see more."
+                )
+        elif not get_records:
+            resp["note"] = "Records not returned (get_records=false). Data displayed to user."
+        # Add any additional kwargs
+        for k, v in kwargs.items():
+            if v is not None:
+                resp[k] = v
+        return json.dumps(resp)
 
     # JSON mode - no chart requested
     if not show_chart:
         return build_response(records=records)
+
+    # JSON mode with non-serializable format - return message instead of error
+    if non_serializable_format:
+        return build_response(
+            records=records,
+            chart={
+                "backend": backend,
+                "format": format_type,
+                "message": "Use format='json' for serializable output.",
+            },
+        )
 
     # JSON mode with chart
     try:
@@ -94,13 +181,22 @@ def generate_chart_with_data(
                 if backend == "altair"
                 else (json.loads(chart_result) if isinstance(chart_result, str) else chart_result)
             )
-            return build_response(records=records, chart=chart_data)
+            return build_response(
+                records=records,
+                chart={
+                    "backend": backend,
+                    "format": format_type,
+                    "data": chart_data,
+                },
+            )
+        # Non-json format (e.g., string for plotext)
         return build_response(
             records=records,
             chart={
                 "backend": backend,
                 "format": format_type,
-                "message": "Use format='json' for serializable output.",
+                "data": chart_result if format_type == "string" else None,
+                "displayed": format_type == "static",
             },
         )
     except Exception as e:

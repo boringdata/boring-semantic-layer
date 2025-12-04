@@ -1,6 +1,6 @@
 """LangGraph ReAct agent for BSL.
 
-Uses langgraph.prebuilt.create_react_agent for a proper ReAct loop
+Uses langchain.agents.create_agent for a proper ReAct loop
 with automatic Thought -> Action -> Observation handling.
 """
 
@@ -8,9 +8,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 from dotenv import load_dotenv
+from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.prebuilt import create_react_agent
+from langchain_core.messages import HumanMessage
 
 from boring_semantic_layer.agents.tools import BSLTools
 
@@ -20,7 +20,7 @@ load_dotenv()
 class LangGraphReActAgent(BSLTools):
     """LangGraph ReAct agent wrapping BSLTools.
 
-    Uses create_react_agent for proper ReAct behavior:
+    Uses create_agent for proper ReAct behavior:
     - Automatic Thought -> Action -> Observation loop
     - Streaming support
     - Multi-model support (OpenAI, Anthropic, Google)
@@ -45,9 +45,11 @@ class LangGraphReActAgent(BSLTools):
         self.conversation_history: list = []
 
         # Create the ReAct agent with callable tools from BSLTools
-        self.agent = create_react_agent(
+        # system_prompt is passed at agent creation time
+        self.agent = create_agent(
             self.llm,
             self.get_callable_tools(),  # Uses TOOL_DEFINITIONS descriptions
+            system_prompt=self.system_prompt,
         )
 
     def query(
@@ -64,9 +66,8 @@ class LangGraphReActAgent(BSLTools):
         """
         self._error_callback = on_error
 
-        # Build messages with system prompt and history
-        messages = [SystemMessage(content=self.system_prompt)]
-        messages.extend(self.conversation_history)
+        # Build messages with history (system prompt is in the agent)
+        messages = list(self.conversation_history)
         messages.append(HumanMessage(content=user_input))
 
         all_tool_outputs = []
@@ -77,22 +78,37 @@ class LangGraphReActAgent(BSLTools):
             {"messages": messages},
             stream_mode="updates",
         ):
-            # Handle agent node output (LLM responses)
-            if "agent" in chunk:
-                agent_messages = chunk["agent"].get("messages", [])
-                for msg in agent_messages:
-                    # Check for thinking/reasoning content before tool calls
-                    if hasattr(msg, "content") and msg.content:
-                        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            # Handle model node output (LLM responses)
+            # Note: create_agent uses "model" node, not "agent"
+            if "model" in chunk:
+                model_messages = chunk["model"].get("messages", [])
+                for msg in model_messages:
+                    has_tool_calls = hasattr(msg, "tool_calls") and msg.tool_calls
+                    content = getattr(msg, "content", None)
+                    # Content can be a string or a list (for Claude's mixed content)
+                    thinking_text = ""
+                    if isinstance(content, str) and content.strip():
+                        thinking_text = content.strip()
+                    elif isinstance(content, list):
+                        # Claude returns list of content blocks
+                        text_parts = [
+                            block.get("text", "")
+                            for block in content
+                            if isinstance(block, dict) and block.get("type") == "text"
+                        ]
+                        thinking_text = " ".join(text_parts).strip()
+
+                    if thinking_text:
+                        if has_tool_calls:
                             # This is thinking before tool execution
                             if on_thinking:
-                                on_thinking(msg.content)
+                                on_thinking(thinking_text)
                         else:
                             # This is the final response
-                            final_response = msg.content
+                            final_response = thinking_text
 
                     # Handle tool calls
-                    if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    if has_tool_calls:
                         for tool_call in msg.tool_calls:
                             if on_tool_call:
                                 on_tool_call(tool_call["name"], tool_call["args"])

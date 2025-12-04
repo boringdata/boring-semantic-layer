@@ -234,8 +234,10 @@ class TestLangChainAgent:
         # Create a mock query result with execute() and chart() methods
         mock_query_result = Mock()
         mock_df = Mock()
-        mock_df.to_json.return_value = '{"data": []}'
-        mock_df.__len__ = Mock(return_value=5)  # Mock len() for result_df
+        # to_json(orient="records") returns a JSON array, not an object
+        mock_df.to_json.return_value = '[{"flight_count": 100}, {"flight_count": 200}]'
+        mock_df.__len__ = Mock(return_value=2)  # Mock len() for result_df
+        mock_df.columns = ["flight_count"]  # Mock columns attribute
         mock_query_result.execute.return_value = mock_df
         mock_query_result.chart.return_value = None  # chart() renders to terminal
 
@@ -251,7 +253,10 @@ class TestLangChainAgent:
 
             # Should successfully unwrap and call generate_chart_with_data
             assert "error" not in result.lower()
-            assert "successfully" in result.lower()
+            # New response format includes total_rows and columns
+            result_dict = json.loads(result)
+            assert result_dict["total_rows"] == 2
+            assert "flight_count" in result_dict["columns"]
             mock_eval.assert_called_once()
             mock_query_result.execute.assert_called_once()
             # With plotext backend and no chart_spec, chart() should be called

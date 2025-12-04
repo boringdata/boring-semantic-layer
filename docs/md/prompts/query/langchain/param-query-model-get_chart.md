@@ -1,0 +1,1 @@
+Generate chart visualization (default: true). Set `false` to skip chart generation and return only data records. Charts are automatically hidden for single-row results (e.g., a single aggregate value).

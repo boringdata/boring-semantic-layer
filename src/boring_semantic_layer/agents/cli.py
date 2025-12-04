@@ -228,7 +228,7 @@ def cmd_chat(args):
 
     # Note: profile.py handles BSL_PROFILE_FILE env var and auto-selection
 
-    backend = args.backend if hasattr(args, "backend") else "langchain"
+    backend = args.backend if hasattr(args, "backend") else "langgraph"
 
     start_chat(
         model_path=model_path,
@@ -300,9 +300,9 @@ def main():
     )
     chat_parser.add_argument(
         "--backend",
-        choices=["langchain", "langgraph", "openai"],
-        default="langchain",
-        help="Agent backend: langchain (simple tool loop), langgraph (ReAct agent), openai (Assistants API)",
+        choices=["langchain", "langgraph", "openai", "deepagent"],
+        default="langgraph",
+        help="Agent backend: langgraph (ReAct, default), langchain (simple loop), openai (Assistants), deepagent (Planning)",
     )
     chat_parser.add_argument(
         "--profile",
