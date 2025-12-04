@@ -567,3 +567,163 @@ def test_ibis_available_in_context():
     assert len(df) == 5
     # Should be sorted descending by flight_count
     assert df["flight_count"].iloc[0] >= df["flight_count"].iloc[1]
+
+
+class TestRecordsDisplayedLimit:
+    """Tests for records_displayed_limit parameter."""
+
+    def test_records_displayed_limit_separate_from_records_limit_cli(self, capsys):
+        """Test that records_displayed_limit controls terminal display independently."""
+        mock_result = Mock()
+        df = pd.DataFrame(
+            {"origin": [f"AIRPORT_{i}" for i in range(20)], "flight_count": list(range(20))}
+        )
+        mock_result.execute.return_value = df
+        mock_result.chart = Mock(return_value='{"spec": "chart_data"}')
+
+        result = generate_chart_with_data(
+            query_result=mock_result,
+            get_chart=False,
+            records_limit=15,  # LLM gets 15 records
+            records_displayed_limit=5,  # Terminal shows only 5
+            default_backend="plotext",
+            return_json=False,  # CLI mode
+        )
+
+        result_dict = json.loads(result)
+        # LLM should receive 15 records
+        assert len(result_dict["records"]) == 15
+        assert result_dict["total_rows"] == 20
+        assert result_dict["returned_rows"] == 15
+
+        # Terminal should only display 5 rows
+        captured = capsys.readouterr()
+        assert "AIRPORT_0" in captured.out
+        assert "AIRPORT_4" in captured.out
+        # Row 5+ should not be displayed (but IS in the LLM records)
+
+    def test_records_displayed_limit_defaults_to_10(self, capsys):
+        """Test that records_displayed_limit defaults to 10 in CLI mode."""
+        mock_result = Mock()
+        df = pd.DataFrame(
+            {"origin": [f"AIRPORT_{i}" for i in range(25)], "flight_count": list(range(25))}
+        )
+        mock_result.execute.return_value = df
+        mock_result.chart = Mock(return_value='{"spec": "chart_data"}')
+
+        result = generate_chart_with_data(
+            query_result=mock_result,
+            get_chart=False,
+            records_limit=None,  # LLM gets all records
+            # records_displayed_limit not specified - should default to 10
+            default_backend="plotext",
+            return_json=False,  # CLI mode
+        )
+
+        result_dict = json.loads(result)
+        # LLM should receive all 25 records
+        assert len(result_dict["records"]) == 25
+        assert result_dict["total_rows"] == 25
+
+        # Terminal should only display 10 rows (default)
+        captured = capsys.readouterr()
+        assert "AIRPORT_0" in captured.out
+        assert "AIRPORT_9" in captured.out
+
+    def test_records_displayed_limit_can_show_more_than_default(self, capsys):
+        """Test that records_displayed_limit can override default to show more rows."""
+        mock_result = Mock()
+        df = pd.DataFrame(
+            {"origin": [f"AIRPORT_{i}" for i in range(15)], "flight_count": list(range(15))}
+        )
+        mock_result.execute.return_value = df
+        mock_result.chart = Mock(return_value='{"spec": "chart_data"}')
+
+        result = generate_chart_with_data(
+            query_result=mock_result,
+            get_chart=False,
+            records_limit=5,  # LLM gets only 5
+            records_displayed_limit=15,  # Show all 15 in terminal
+            default_backend="plotext",
+            return_json=False,  # CLI mode
+        )
+
+        result_dict = json.loads(result)
+        # LLM should receive only 5 records
+        assert len(result_dict["records"]) == 5
+
+        # Terminal should display all 15 rows
+        captured = capsys.readouterr()
+        assert "AIRPORT_0" in captured.out
+        assert "AIRPORT_14" in captured.out
+
+    def test_records_displayed_limit_ignored_in_json_mode(self):
+        """Test that records_displayed_limit is ignored in JSON/API mode."""
+        mock_result = Mock()
+        df = pd.DataFrame(
+            {"origin": [f"AIRPORT_{i}" for i in range(20)], "flight_count": list(range(20))}
+        )
+        mock_result.execute.return_value = df
+        mock_result.chart = Mock(return_value='{"spec": "chart_data"}')
+
+        result = generate_chart_with_data(
+            query_result=mock_result,
+            get_chart=False,
+            records_limit=10,  # LLM gets 10 records
+            records_displayed_limit=5,  # Should be ignored in JSON mode
+            default_backend="altair",
+            return_json=True,  # JSON/API mode
+        )
+
+        result_dict = json.loads(result)
+        # In JSON mode, only records_limit matters
+        assert len(result_dict["records"]) == 10
+        assert result_dict["total_rows"] == 20
+        assert result_dict["returned_rows"] == 10
+
+    def test_records_limit_none_returns_all_to_llm(self, capsys):
+        """Test that records_limit=None returns all records to LLM."""
+        mock_result = Mock()
+        df = pd.DataFrame(
+            {"origin": [f"AIRPORT_{i}" for i in range(50)], "flight_count": list(range(50))}
+        )
+        mock_result.execute.return_value = df
+        mock_result.chart = Mock(return_value='{"spec": "chart_data"}')
+
+        result = generate_chart_with_data(
+            query_result=mock_result,
+            get_chart=False,
+            records_limit=None,  # All records to LLM
+            records_displayed_limit=10,  # Display only 10
+            default_backend="plotext",
+            return_json=False,  # CLI mode
+        )
+
+        result_dict = json.loads(result)
+        # LLM should receive all 50 records
+        assert len(result_dict["records"]) == 50
+        assert result_dict["total_rows"] == 50
+
+    def test_note_shows_both_limits_when_different(self, capsys):
+        """Test that note shows both LLM and display limits when they differ."""
+        mock_result = Mock()
+        df = pd.DataFrame(
+            {"origin": [f"AIRPORT_{i}" for i in range(20)], "flight_count": list(range(20))}
+        )
+        mock_result.execute.return_value = df
+        mock_result.chart = Mock(return_value='{"spec": "chart_data"}')
+
+        result = generate_chart_with_data(
+            query_result=mock_result,
+            get_chart=False,
+            records_limit=15,
+            records_displayed_limit=5,
+            default_backend="plotext",
+            return_json=False,  # CLI mode
+        )
+
+        result_dict = json.loads(result)
+        # Note should mention both LLM records and displayed rows
+        assert "note" in result_dict
+        assert "15" in result_dict["note"]  # LLM records
+        assert "5" in result_dict["note"]  # Displayed rows

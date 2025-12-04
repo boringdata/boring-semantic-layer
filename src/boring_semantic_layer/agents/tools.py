@@ -110,6 +110,12 @@ TOOL_DEFINITIONS: list[dict] = [
                         "description": load_prompt(
                             _PROMPT_DIR, "param-query-model-records_limit.md"
                         ),
+                    },
+                    "records_displayed_limit": {
+                        "type": "integer",
+                        "description": load_prompt(
+                            _PROMPT_DIR, "param-query-model-records_displayed_limit.md"
+                        ),
                         "default": 10,
                     },
                     "get_chart": {
@@ -280,7 +286,8 @@ class BSLTools:
         self,
         query: str,
         get_records: bool = True,
-        records_limit: int = 10,
+        records_limit: int | None = None,
+        records_displayed_limit: int | None = 10,
         get_chart: bool = True,
         chart_backend: str | None = None,
         chart_format: str | None = None,
@@ -304,6 +311,7 @@ class BSLTools:
                 query_result,
                 get_records=get_records,
                 records_limit=records_limit,
+                records_displayed_limit=records_displayed_limit,
                 get_chart=get_chart,
                 chart_backend=chart_backend,
                 chart_format=chart_format,
@@ -406,11 +414,17 @@ class BSLTools:
                     "description"
                 ],
             )
-            records_limit: int = Field(
-                default=10,
+            records_limit: int | None = Field(
+                default=None,
                 description=tool_descs["query_model"]["parameters"]["properties"]["records_limit"][
                     "description"
                 ],
+            )
+            records_displayed_limit: int | None = Field(
+                default=10,
+                description=tool_descs["query_model"]["parameters"]["properties"][
+                    "records_displayed_limit"
+                ]["description"],
             )
             get_chart: bool = Field(
                 default=True,
@@ -440,7 +454,8 @@ class BSLTools:
         def _query_model(
             query: str,
             get_records: bool = True,
-            records_limit: int = 10,
+            records_limit: int | None = None,
+            records_displayed_limit: int | None = 10,
             get_chart: bool = True,
             chart_backend: str | None = None,
             chart_format: str | None = None,
@@ -448,7 +463,10 @@ class BSLTools:
         ) -> str:
             args: dict[str, Any] = {"query": query}
             args["get_records"] = get_records
-            args["records_limit"] = records_limit
+            if records_limit is not None:
+                args["records_limit"] = records_limit
+            if records_displayed_limit is not None:
+                args["records_displayed_limit"] = records_displayed_limit
             args["get_chart"] = get_chart
             if chart_backend:
                 args["chart_backend"] = chart_backend

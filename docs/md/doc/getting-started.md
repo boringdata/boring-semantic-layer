@@ -70,6 +70,89 @@ result = flights_st.group_by("destination").aggregate(
 
 <bslquery code-block="query_by_destination"></bslquery>
 
+## Chat with Your Data
+
+BSL includes a built-in chat interface to query your semantic models using natural language.
+
+### 1. Install the agent extra
+
+```bash
+pip install 'boring-semantic-layer[agent]'
+
+# Install your LLM provider
+pip install langchain-anthropic  # or langchain-openai, langchain-google-genai
+```
+
+### 2. Set your API key
+
+Create a `.env` file:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...  # or OPENAI_API_KEY, GOOGLE_API_KEY
+```
+
+### 3. Start chatting
+
+Try the built-in flights demo model (loads remote data automatically):
+
+```bash
+# Interactive mode
+bsl chat --sm https://raw.githubusercontent.com/boringdata/boring-semantic-layer/main/examples/flights.yml
+
+# Or pass a question directly
+bsl chat --sm https://raw.githubusercontent.com/boringdata/boring-semantic-layer/main/examples/flights.yml \
+  "What are the top 5 origins by flight count?"
+
+```
+
+### Create your own YAML model
+
+Here's a minimal example showing how to define your own semantic model:
+
+```yaml
+# my_flights.yaml - Minimal BSL semantic model
+
+# Database profile - loads remote parquet into in-memory DuckDB
+profile:
+  type: duckdb
+  database: ":memory:"
+  tables:
+    flights_tbl: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/flights.parquet"
+
+# Semantic model definition
+flights:
+  table: flights_tbl
+  description: "Flight data with origin, destination, and metrics"
+
+  dimensions:
+    origin:
+      expr: _.origin
+      description: "Origin airport code"
+    destination:
+      expr: _.destination
+      description: "Destination airport code"
+    carrier: _.carrier
+
+  measures:
+    flight_count:
+      expr: _.count()
+      description: "Total number of flights"
+    total_distance:
+      expr: _.distance.sum()
+      description: "Total distance flown"
+    avg_delay:
+      expr: _.dep_delay.mean()
+      description: "Average departure delay"
+```
+
+Then run:
+
+```bash
+bsl chat --sm my_flights.yaml
+```
+
+See [Query Agent Chat](/examples/query-agent-chat) for full documentation on YAML models with joins and advanced features.
+
 ## Next Steps
 
 - Learn how to [Build Semantic Tables](/examples/semantic-table) with dimensions, measures, and joins

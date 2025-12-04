@@ -41,6 +41,7 @@ def generate_chart_with_data(
     query_result: Any,
     get_records: bool | dict[str, Any] | None = True,
     records_limit: int | None = None,
+    records_displayed_limit: int | None = None,
     get_chart: bool = True,
     chart_backend: str | None = None,
     chart_format: str | None = None,
@@ -56,6 +57,8 @@ def generate_chart_with_data(
         get_records: Return data records to LLM (default: True). For backward compatibility,
                      can also be a dict (old chart_spec style) which will be handled.
         records_limit: Max records returned to LLM (default: None = all)
+        records_displayed_limit: Max records displayed in terminal/CLI (default: 10).
+                                 Only applies in CLI mode (return_json=False).
         get_chart: Generate chart visualization (default: True)
         chart_backend: Override backend ("plotext", "altair", "plotly") or None for default
         chart_format: Override format ("json", "static", "string") or None for auto
@@ -119,15 +122,20 @@ def generate_chart_with_data(
             from boring_semantic_layer.chart.plotext_chart import display_table
 
             all_records = json.loads(result_df.to_json(orient="records", date_format="iso"))
-            # Use records_limit if specified, otherwise default to 10 for display
-            effective_limit = (
-                records_limit if records_limit is not None else DEFAULT_CLI_DISPLAY_LIMIT
+            # Apply records_limit for LLM context (None = all records)
+            llm_records = all_records[:records_limit] if records_limit else all_records
+            llm_returned_rows = len(llm_records)
+            # Apply display limit for terminal (default 10)
+            display_limit = (
+                records_displayed_limit
+                if records_displayed_limit is not None
+                else DEFAULT_CLI_DISPLAY_LIMIT
             )
-            limited_records = all_records[:effective_limit]
-            cli_returned_rows = len(limited_records)
+            displayed_records = all_records[:display_limit]
+            cli_displayed_rows = len(displayed_records)
 
             # Show table with limited rows for display
-            display_table(result_df, limit=cli_returned_rows)
+            display_table(result_df, limit=cli_displayed_rows)
 
             # Render chart if requested (and meaningful)
             if show_chart:
@@ -147,16 +155,17 @@ def generate_chart_with_data(
                     msg = f"⚠️  Chart generation failed: {e}"
                     error_callback(msg) if error_callback else print(f"\n{msg}")
 
-            # Return records to LLM
+            # Return records to LLM (may be different from displayed rows)
             cli_response: dict[str, Any] = {
                 "total_rows": total_rows,
                 "columns": columns,
-                "records": limited_records,
+                "records": llm_records,
             }
-            if cli_returned_rows < total_rows:
-                cli_response["returned_rows"] = cli_returned_rows
+            if llm_returned_rows < total_rows:
+                cli_response["returned_rows"] = llm_returned_rows
                 cli_response["note"] = (
-                    f"Showing {cli_returned_rows} of {total_rows} rows. Use records_limit to see more."
+                    f"Returning {llm_returned_rows} of {total_rows} rows to LLM. "
+                    f"Displayed {cli_displayed_rows} rows in terminal."
                 )
             # Add chart info
             if show_chart:

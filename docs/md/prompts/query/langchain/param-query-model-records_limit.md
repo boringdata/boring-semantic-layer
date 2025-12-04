@@ -1,1 +1,1 @@
-Max records returned to LLM (default: 10). Increase for discovery queries where you need to see more values (e.g., 50 to find all airport codes). Keeps token usage manageable.
+Max records returned to LLM context (default: None = all). Use to limit token usage for large result sets. For example, set to 50 to cap the data sent to your context window. This is separate from `records_displayed_limit` which controls terminal display only.
