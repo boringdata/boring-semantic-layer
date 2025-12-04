@@ -1,8 +1,40 @@
 """Utilities for handling chart generation in agent backends."""
 
 import json
+import tempfile
+import webbrowser
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
+
+
+def _open_chart_in_browser(chart_obj: Any, backend: str) -> bool:
+    """Open an altair or plotly chart in the default browser.
+
+    Args:
+        chart_obj: The chart object (Altair Chart or Plotly Figure)
+        backend: Either "altair" or "plotly"
+
+    Returns:
+        True if successfully opened, False otherwise
+    """
+    try:
+        if backend == "altair":
+            # Altair 5.3+ has chart.show() but we use HTML for compatibility
+            html_content = chart_obj.to_html()
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False) as f:
+                f.write(html_content)
+                temp_path = f.name
+            webbrowser.open(f"file://{temp_path}")
+            return True
+        elif backend == "plotly":
+            # Plotly can write HTML and auto-open
+            temp_path = Path(tempfile.gettempdir()) / "bsl_chart.html"
+            chart_obj.write_html(str(temp_path), auto_open=True)
+            return True
+    except Exception:
+        return False
+    return False
 
 
 def generate_chart_with_data(
@@ -50,14 +82,9 @@ def generate_chart_with_data(
     chart_is_meaningful = total_rows >= 2
 
     # Resolve chart parameters
-    # In CLI mode, force plotext backend since altair/plotly can't display in terminal
-    if not return_json and chart_backend and chart_backend != "plotext":
-        # Warn user that their backend choice can't be used in terminal
-        msg = f"⚠️  Backend '{chart_backend}' not available in terminal. Using 'plotext' instead."
-        error_callback(msg) if error_callback else print(f"\n{msg}")
-        backend = "plotext"
-    else:
-        backend = chart_backend or default_backend
+    backend = chart_backend or default_backend
+    # In CLI mode with altair/plotly, we'll open in browser instead of terminal display
+    open_in_browser = not return_json and backend in ("altair", "plotly")
 
     spec = chart_spec.get("spec") if chart_spec else None
     format_type = chart_format or (
@@ -98,7 +125,17 @@ def generate_chart_with_data(
             # Render chart if requested (and meaningful)
             if show_chart:
                 try:
-                    query_result.chart(spec=spec, backend=backend, format=format_type)
+                    if open_in_browser:
+                        # Get chart object and open in browser for altair/plotly
+                        chart_obj = query_result.chart(spec=spec, backend=backend, format="static")
+                        if _open_chart_in_browser(chart_obj, backend):
+                            print(f"\n📊 Chart opened in browser ({backend})")
+                        else:
+                            msg = f"⚠️  Could not open {backend} chart in browser"
+                            error_callback(msg) if error_callback else print(f"\n{msg}")
+                    else:
+                        # Plotext renders directly in terminal
+                        query_result.chart(spec=spec, backend=backend, format=format_type)
                 except Exception as e:
                     msg = f"⚠️  Chart generation failed: {e}"
                     error_callback(msg) if error_callback else print(f"\n{msg}")
@@ -126,7 +163,17 @@ def generate_chart_with_data(
             # get_records=False: final display-only query, just show chart
             if show_chart:
                 try:
-                    query_result.chart(spec=spec, backend=backend, format=format_type)
+                    if open_in_browser:
+                        # Get chart object and open in browser for altair/plotly
+                        chart_obj = query_result.chart(spec=spec, backend=backend, format="static")
+                        if _open_chart_in_browser(chart_obj, backend):
+                            print(f"\n📊 Chart opened in browser ({backend})")
+                        else:
+                            msg = f"⚠️  Could not open {backend} chart in browser"
+                            error_callback(msg) if error_callback else print(f"\n{msg}")
+                    else:
+                        # Plotext renders directly in terminal
+                        query_result.chart(spec=spec, backend=backend, format=format_type)
                 except Exception as e:
                     msg = f"⚠️  Chart generation failed: {e}"
                     error_callback(msg) if error_callback else print(f"\n{msg}")

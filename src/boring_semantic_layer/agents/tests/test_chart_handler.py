@@ -486,28 +486,31 @@ def test_default_backend_used_when_chart_backend_none(mock_query_result):
     mock_query_result.chart.assert_called_with(spec=None, backend="altair", format="json")
 
 
-def test_cli_mode_forces_plotext_for_non_terminal_backends(mock_query_result):
-    """Test that CLI mode forces plotext when altair/plotly requested."""
-    warnings = []
-
-    def capture_warning(msg):
-        warnings.append(msg)
+def test_cli_mode_opens_altair_in_browser(mock_query_result):
+    """Test that CLI mode opens altair charts in browser."""
 
     generate_chart_with_data(
         query_result=mock_query_result,
         get_chart=True,
-        chart_backend="altair",  # Can't display in terminal
+        chart_backend="altair",
         return_json=False,  # CLI mode
-        error_callback=capture_warning,
     )
 
-    # Should have warned about backend switch
-    assert len(warnings) == 1
-    assert "altair" in warnings[0]
-    assert "plotext" in warnings[0]
+    # Chart should be called with altair and format="static" to get chart object
+    mock_query_result.chart.assert_called_with(spec=None, backend="altair", format="static")
 
-    # Chart should be called with plotext, not altair
-    mock_query_result.chart.assert_called_with(spec=None, backend="plotext", format="static")
+
+def test_cli_mode_opens_plotly_in_browser(mock_query_result):
+    """Test that CLI mode opens plotly charts in browser."""
+    generate_chart_with_data(
+        query_result=mock_query_result,
+        get_chart=True,
+        chart_backend="plotly",
+        return_json=False,  # CLI mode
+    )
+
+    # Chart should be called with plotly and format="static" to get chart object
+    mock_query_result.chart.assert_called_with(spec=None, backend="plotly", format="static")
 
 
 def test_cli_mode_allows_plotext_backend(mock_query_result):
