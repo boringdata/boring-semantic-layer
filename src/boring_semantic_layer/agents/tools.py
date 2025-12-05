@@ -305,8 +305,6 @@ class BSLTools:
                 raise result.failure()
             query_result = result.unwrap() if isinstance(result, Success) else result
 
-            is_cli_mode = self.chart_backend == "plotext"
-
             return generate_chart_with_data(
                 query_result,
                 get_records=get_records,
@@ -316,8 +314,8 @@ class BSLTools:
                 chart_backend=chart_backend,
                 chart_format=chart_format,
                 chart_spec=chart_spec,
-                default_backend=self.chart_backend,
-                return_json=not is_cli_mode,
+                default_backend=self.chart_backend or "altair",
+                return_json=False,  # CLI mode: show table in terminal
                 error_callback=self._error_callback,
             )
         except Exception as e:

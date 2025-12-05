@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-def _open_chart_in_browser(chart_obj: Any, backend: str) -> bool:
+def _open_chart_in_browser(chart_obj: Any, backend: str) -> str | None:
     """Open an altair or plotly chart in the default browser.
 
     Args:
@@ -16,7 +16,7 @@ def _open_chart_in_browser(chart_obj: Any, backend: str) -> bool:
         backend: Either "altair" or "plotly"
 
     Returns:
-        True if successfully opened, False otherwise
+        The file URL if successfully opened, None otherwise
     """
     try:
         if backend == "altair":
@@ -25,16 +25,17 @@ def _open_chart_in_browser(chart_obj: Any, backend: str) -> bool:
             with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False) as f:
                 f.write(html_content)
                 temp_path = f.name
-            webbrowser.open(f"file://{temp_path}")
-            return True
+            file_url = f"file://{temp_path}"
+            webbrowser.open(file_url)
+            return file_url
         elif backend == "plotly":
             # Plotly can write HTML and auto-open
             temp_path = Path(tempfile.gettempdir()) / "bsl_chart.html"
             chart_obj.write_html(str(temp_path), auto_open=True)
-            return True
+            return f"file://{temp_path}"
     except Exception:
-        return False
-    return False
+        return None
+    return None
 
 
 def generate_chart_with_data(
@@ -143,8 +144,9 @@ def generate_chart_with_data(
                     if open_in_browser:
                         # Get chart object and open in browser for altair/plotly
                         chart_obj = query_result.chart(spec=spec, backend=backend, format="static")
-                        if _open_chart_in_browser(chart_obj, backend):
-                            print(f"\n📊 Chart opened in browser ({backend})")
+                        chart_url = _open_chart_in_browser(chart_obj, backend)
+                        if chart_url:
+                            print(f"\n📊 Chart opened in browser ({backend}): {chart_url}")
                         else:
                             msg = f"⚠️  Could not open {backend} chart in browser"
                             error_callback(msg) if error_callback else print(f"\n{msg}")
@@ -182,8 +184,9 @@ def generate_chart_with_data(
                     if open_in_browser:
                         # Get chart object and open in browser for altair/plotly
                         chart_obj = query_result.chart(spec=spec, backend=backend, format="static")
-                        if _open_chart_in_browser(chart_obj, backend):
-                            print(f"\n📊 Chart opened in browser ({backend})")
+                        chart_url = _open_chart_in_browser(chart_obj, backend)
+                        if chart_url:
+                            print(f"\n📊 Chart opened in browser ({backend}): {chart_url}")
                         else:
                             msg = f"⚠️  Could not open {backend} chart in browser"
                             error_callback(msg) if error_callback else print(f"\n{msg}")

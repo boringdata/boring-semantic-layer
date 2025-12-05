@@ -159,10 +159,10 @@ class TestLangChainAgent:
 
             assert "vega_spec" in result or "data" in result
             mock_chart.assert_called_once()
-            # Altair backend should pass return_json=True
+            # CLI mode: always return_json=False to show table in terminal
             call_kwargs = mock_chart.call_args[1]
             assert call_kwargs["default_backend"] == "altair"
-            assert call_kwargs["return_json"] is True
+            assert call_kwargs["return_json"] is False
 
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     @patch("boring_semantic_layer.agents.backends.langchain.init_chat_model")

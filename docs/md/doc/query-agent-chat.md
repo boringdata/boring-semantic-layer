@@ -72,7 +72,7 @@ bsl chat --sm path/to/your/model.yaml "What are the top 5 origins by flight coun
 
 | Flag | Description |
 |------|-------------|
-| `--chart-backend` | Chart renderer: `plotext` (terminal), `altair`, or `plotly` |
-| `--profile` | Profile name to use` |
+| `--chart-backend` | Chart renderer: `plotext` (terminal, default), `altair` (opens in browser), or `plotly` (opens in browser) |
+| `--profile` | Profile name to use |
 | `--profile-file` | Path to a custom profiles file |
 
