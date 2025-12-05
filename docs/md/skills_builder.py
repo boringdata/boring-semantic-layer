@@ -86,15 +86,15 @@ class SkillBuilder:
     def transform_prompt_for_skill(self, content: str, tool: str = "claude-code") -> str:
         """Transform a LangChain prompt for use as a CLI skill.
 
-        Replaces the 'Additional Information' section that references get_documentation()
-        with a static version built from index.json.
+        Replaces the 'Additional Resources' section that references get_documentation()
+        with a static version built from index.json with GitHub URLs.
 
         Args:
             content: The prompt content to transform
             tool: The target tool (claude-code, cursor, codex) - determines docs path
         """
-        # Pattern to match the Additional Information section
-        pattern = r"## Additional Information.*"
+        # Pattern to match the Additional Resources section (including any variation)
+        pattern = r"## Additional (Resources|Information).*"
         replacement = self.build_additional_info_for_skill(tool)
 
         # Replace the section (DOTALL makes . match newlines)

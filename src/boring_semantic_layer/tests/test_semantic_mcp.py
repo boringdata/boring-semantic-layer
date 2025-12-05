@@ -314,8 +314,8 @@ class TestQueryModel:
             assert result.content[0].text is not None
 
     @pytest.mark.asyncio
-    async def test_query_without_chart_spec_returns_records_only(self, sample_models):
-        """Test query without chart_spec returns only records in new format."""
+    async def test_query_with_get_chart_false_returns_records_only(self, sample_models):
+        """Test query with get_chart=False returns only records."""
         mcp = MCPSemanticModel(models=sample_models)
 
         async with Client(mcp) as client:
@@ -325,6 +325,7 @@ class TestQueryModel:
                     "model_name": "flights",
                     "dimensions": ["carrier"],
                     "measures": ["flight_count"],
+                    "get_chart": False,
                 },
             )
 
@@ -346,10 +347,8 @@ class TestQueryModel:
                     "model_name": "flights",
                     "dimensions": ["carrier"],
                     "measures": ["flight_count"],
-                    "chart_spec": {
-                        "backend": "altair",
-                        "format": "json",
-                    },
+                    "chart_backend": "altair",
+                    "chart_format": "json",
                 },
             )
 
@@ -358,8 +357,11 @@ class TestQueryModel:
             assert "chart" in data
             assert isinstance(data["records"], list)
             assert isinstance(data["chart"], dict)
+            # New format wraps chart data
+            assert data["chart"]["backend"] == "altair"
+            assert data["chart"]["format"] == "json"
             # Altair JSON spec should have basic Vega-Lite structure
-            assert "$schema" in data["chart"] or "mark" in data["chart"]
+            assert "$schema" in data["chart"]["data"] or "mark" in data["chart"]["data"]
 
     @pytest.mark.asyncio
     async def test_query_with_chart_spec_plotly_json(self, sample_models):
@@ -373,10 +375,8 @@ class TestQueryModel:
                     "model_name": "flights",
                     "dimensions": ["carrier"],
                     "measures": ["flight_count"],
-                    "chart_spec": {
-                        "backend": "plotly",
-                        "format": "json",
-                    },
+                    "chart_backend": "plotly",
+                    "chart_format": "json",
                 },
             )
 
@@ -385,8 +385,10 @@ class TestQueryModel:
             assert "chart" in data
             assert isinstance(data["records"], list)
             assert isinstance(data["chart"], dict)
+            # New format wraps chart data
+            assert data["chart"]["backend"] == "plotly"
             # Plotly JSON spec should have data and layout
-            assert "data" in data["chart"] or "layout" in data["chart"]
+            assert "data" in data["chart"]["data"] or "layout" in data["chart"]["data"]
 
     @pytest.mark.asyncio
     async def test_query_with_chart_spec_custom_spec(self, sample_models):
@@ -400,10 +402,10 @@ class TestQueryModel:
                     "model_name": "flights",
                     "dimensions": ["carrier"],
                     "measures": ["flight_count"],
+                    "chart_backend": "altair",
+                    "chart_format": "json",
                     "chart_spec": {
-                        "backend": "altair",
                         "spec": {"mark": "line", "title": "Custom Chart"},
-                        "format": "json",
                     },
                 },
             )
@@ -413,7 +415,7 @@ class TestQueryModel:
             assert "chart" in data
             assert isinstance(data["chart"], dict)
             # Check that custom spec was applied - mark type should be line
-            assert data["chart"].get("mark", {}).get("type") == "line"
+            assert data["chart"]["data"].get("mark", {}).get("type") == "line"
 
     @pytest.mark.asyncio
     async def test_query_with_chart_spec_non_json_format(self, sample_models):
@@ -427,10 +429,8 @@ class TestQueryModel:
                     "model_name": "flights",
                     "dimensions": ["carrier"],
                     "measures": ["flight_count"],
-                    "chart_spec": {
-                        "backend": "altair",
-                        "format": "static",
-                    },
+                    "chart_backend": "altair",
+                    "chart_format": "static",
                 },
             )
 

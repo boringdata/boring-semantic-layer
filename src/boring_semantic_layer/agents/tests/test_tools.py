@@ -25,7 +25,7 @@ class TestToolDefinitions:
         from boring_semantic_layer.agents.tools import TOOL_DEFINITIONS
 
         assert isinstance(TOOL_DEFINITIONS, list)
-        assert len(TOOL_DEFINITIONS) == 3
+        assert len(TOOL_DEFINITIONS) == 4  # list_models, get_model, query_model, get_documentation
 
     def test_tool_definitions_openai_format(self):
         from boring_semantic_layer.agents.tools import TOOL_DEFINITIONS
@@ -160,9 +160,8 @@ class TestBSLToolsExecute:
 
         result_dict = json.loads(result)
         assert "flights" in result_dict
-        assert "dimensions" in result_dict["flights"]
-        assert "measures" in result_dict["flights"]
-        assert "description" in result_dict["flights"]
+        # list_models now returns {model_name: description} format
+        assert result_dict["flights"] == "Test flight data"
 
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     def test_execute_get_documentation_valid_topic(self, mock_from_yaml, tmp_path, mock_models):
@@ -353,7 +352,8 @@ class TestBSLToolsListModels:
         result = bsl.execute("list_models", {})
 
         data = json.loads(result)
-        assert data["flights"]["description"] == "Test flight data"
+        # list_models returns {model_name: description} format
+        assert data["flights"] == "Test flight data"
 
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     def test_list_models_without_description(self, mock_from_yaml, tmp_path):
@@ -372,7 +372,8 @@ class TestBSLToolsListModels:
         result = bsl.execute("list_models", {})
 
         data = json.loads(result)
-        assert "description" not in data["test"]
+        # When no description, falls back to default "Semantic model: {name}"
+        assert data["test"] == "Semantic model: test"
 
 
 class TestGetMdDir:
@@ -391,3 +392,196 @@ class TestGetMdDir:
         assert (md_dir / "index.json").exists()
         assert (md_dir / "prompts").exists()
         assert (md_dir / "doc").exists()
+
+
+class TestQueryModelExplicitParams:
+    """Tests for query_model with explicit chart/record parameters."""
+
+    @patch("boring_semantic_layer.agents.tools.from_yaml")
+    def test_query_model_get_records_param(self, mock_from_yaml, tmp_path, mock_models):
+        """Test that get_records param is passed to generate_chart_with_data."""
+        from boring_semantic_layer.agents.tools import BSLTools
+
+        mock_from_yaml.return_value = mock_models
+        model_file = tmp_path / "test.yml"
+        model_file.write_text("test")
+
+        bsl = BSLTools(model_path=model_file)
+
+        with (
+            patch("boring_semantic_layer.agents.tools.safe_eval") as mock_eval,
+            patch("boring_semantic_layer.agents.tools.generate_chart_with_data") as mock_chart,
+        ):
+            mock_eval.return_value = Mock()
+            mock_chart.return_value = '{"data": []}'
+
+            bsl.execute("query_model", {"query": "test", "get_records": False})
+
+            mock_chart.assert_called_once()
+            call_kwargs = mock_chart.call_args.kwargs
+            assert call_kwargs["get_records"] is False
+
+    @patch("boring_semantic_layer.agents.tools.from_yaml")
+    def test_query_model_records_limit_param(self, mock_from_yaml, tmp_path, mock_models):
+        """Test that records_limit param is passed to generate_chart_with_data."""
+        from boring_semantic_layer.agents.tools import BSLTools
+
+        mock_from_yaml.return_value = mock_models
+        model_file = tmp_path / "test.yml"
+        model_file.write_text("test")
+
+        bsl = BSLTools(model_path=model_file)
+
+        with (
+            patch("boring_semantic_layer.agents.tools.safe_eval") as mock_eval,
+            patch("boring_semantic_layer.agents.tools.generate_chart_with_data") as mock_chart,
+        ):
+            mock_eval.return_value = Mock()
+            mock_chart.return_value = '{"data": []}'
+
+            bsl.execute("query_model", {"query": "test", "records_limit": 50})
+
+            mock_chart.assert_called_once()
+            call_kwargs = mock_chart.call_args.kwargs
+            assert call_kwargs["records_limit"] == 50
+
+    @patch("boring_semantic_layer.agents.tools.from_yaml")
+    def test_query_model_get_chart_false(self, mock_from_yaml, tmp_path, mock_models):
+        """Test that get_chart=False disables chart generation."""
+        from boring_semantic_layer.agents.tools import BSLTools
+
+        mock_from_yaml.return_value = mock_models
+        model_file = tmp_path / "test.yml"
+        model_file.write_text("test")
+
+        bsl = BSLTools(model_path=model_file)
+
+        with (
+            patch("boring_semantic_layer.agents.tools.safe_eval") as mock_eval,
+            patch("boring_semantic_layer.agents.tools.generate_chart_with_data") as mock_chart,
+        ):
+            mock_eval.return_value = Mock()
+            mock_chart.return_value = '{"data": []}'
+
+            bsl.execute("query_model", {"query": "test", "get_chart": False})
+
+            mock_chart.assert_called_once()
+            call_kwargs = mock_chart.call_args.kwargs
+            assert call_kwargs["get_chart"] is False
+
+    @patch("boring_semantic_layer.agents.tools.from_yaml")
+    def test_query_model_chart_backend_override(self, mock_from_yaml, tmp_path, mock_models):
+        """Test that chart_backend param overrides default backend."""
+        from boring_semantic_layer.agents.tools import BSLTools
+
+        mock_from_yaml.return_value = mock_models
+        model_file = tmp_path / "test.yml"
+        model_file.write_text("test")
+
+        # Initialize with plotext as default
+        bsl = BSLTools(model_path=model_file, chart_backend="plotext")
+
+        with (
+            patch("boring_semantic_layer.agents.tools.safe_eval") as mock_eval,
+            patch("boring_semantic_layer.agents.tools.generate_chart_with_data") as mock_chart,
+        ):
+            mock_eval.return_value = Mock()
+            mock_chart.return_value = '{"chart": "data"}'
+
+            # Override with altair at query time
+            bsl.execute("query_model", {"query": "test", "chart_backend": "altair"})
+
+            mock_chart.assert_called_once()
+            call_kwargs = mock_chart.call_args.kwargs
+            assert call_kwargs["chart_backend"] == "altair"
+
+    @patch("boring_semantic_layer.agents.tools.from_yaml")
+    def test_query_model_chart_format_param(self, mock_from_yaml, tmp_path, mock_models):
+        """Test that chart_format param is passed to generate_chart_with_data."""
+        from boring_semantic_layer.agents.tools import BSLTools
+
+        mock_from_yaml.return_value = mock_models
+        model_file = tmp_path / "test.yml"
+        model_file.write_text("test")
+
+        bsl = BSLTools(model_path=model_file)
+
+        with (
+            patch("boring_semantic_layer.agents.tools.safe_eval") as mock_eval,
+            patch("boring_semantic_layer.agents.tools.generate_chart_with_data") as mock_chart,
+        ):
+            mock_eval.return_value = Mock()
+            mock_chart.return_value = '{"chart": "data"}'
+
+            bsl.execute("query_model", {"query": "test", "chart_format": "json"})
+
+            mock_chart.assert_called_once()
+            call_kwargs = mock_chart.call_args.kwargs
+            assert call_kwargs["chart_format"] == "json"
+
+    @patch("boring_semantic_layer.agents.tools.from_yaml")
+    def test_query_model_all_params_combined(self, mock_from_yaml, tmp_path, mock_models):
+        """Test query_model with all explicit params together."""
+        from boring_semantic_layer.agents.tools import BSLTools
+
+        mock_from_yaml.return_value = mock_models
+        model_file = tmp_path / "test.yml"
+        model_file.write_text("test")
+
+        bsl = BSLTools(model_path=model_file)
+
+        with (
+            patch("boring_semantic_layer.agents.tools.safe_eval") as mock_eval,
+            patch("boring_semantic_layer.agents.tools.generate_chart_with_data") as mock_chart,
+        ):
+            mock_eval.return_value = Mock()
+            mock_chart.return_value = '{"full": "response"}'
+
+            bsl.execute(
+                "query_model",
+                {
+                    "query": "flights.aggregate('count')",
+                    "get_records": True,
+                    "records_limit": 25,
+                    "get_chart": True,
+                    "chart_backend": "plotly",
+                    "chart_format": "json",
+                    "chart_spec": {"chart_type": "bar"},
+                },
+            )
+
+            mock_chart.assert_called_once()
+            call_kwargs = mock_chart.call_args.kwargs
+            assert call_kwargs["get_records"] is True
+            assert call_kwargs["records_limit"] == 25
+            assert call_kwargs["get_chart"] is True
+            assert call_kwargs["chart_backend"] == "plotly"
+            assert call_kwargs["chart_format"] == "json"
+            assert call_kwargs["chart_spec"] == {"chart_type": "bar"}
+
+    @patch("boring_semantic_layer.agents.tools.from_yaml")
+    def test_query_model_default_params_use_instance_backend(
+        self, mock_from_yaml, tmp_path, mock_models
+    ):
+        """Test that default backend comes from BSLTools instance."""
+        from boring_semantic_layer.agents.tools import BSLTools
+
+        mock_from_yaml.return_value = mock_models
+        model_file = tmp_path / "test.yml"
+        model_file.write_text("test")
+
+        bsl = BSLTools(model_path=model_file, chart_backend="altair")
+
+        with (
+            patch("boring_semantic_layer.agents.tools.safe_eval") as mock_eval,
+            patch("boring_semantic_layer.agents.tools.generate_chart_with_data") as mock_chart,
+        ):
+            mock_eval.return_value = Mock()
+            mock_chart.return_value = '{"chart": "data"}'
+
+            # No chart_backend in params
+            bsl.execute("query_model", {"query": "test"})
+
+            mock_chart.assert_called_once()
+            call_kwargs = mock_chart.call_args.kwargs
+            assert call_kwargs["default_backend"] == "altair"

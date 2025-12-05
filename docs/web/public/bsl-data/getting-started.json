@@ -3,7 +3,7 @@
   "queries": {
     "query_by_origin": {
       "code": "# Group flights by origin airport\nresult = flights_st.group_by(\"origin\").aggregate(\n    \"flight_count\",\n    \"total_distance\",\n    \"avg_duration\"\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_czopjcyz2zgbhbon46go7sz27y\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_26yj2ehdcrfehdopnkoi4qc2pe\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36morigin [dim]\u001b[0m\n  \u001b[36mdestination [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[35mavg_duration [measure]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n    \u001b[36morigin\u001b[0m\n\n\u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  groups:\n    \u001b[36morigin\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m\n    \u001b[35mtotal_distance\u001b[0m\n    \u001b[35mavg_duration\u001b[0m",
       "table": {
         "columns": [
@@ -14,16 +14,16 @@
         ],
         "data": [
           [
-            "LAX",
-            3,
-            3483,
-            153.33333333333334
-          ],
-          [
             "NYC",
             3,
             8480,
             340.0
+          ],
+          [
+            "LAX",
+            3,
+            3483,
+            153.33333333333334
           ],
           [
             "SFO",
@@ -43,7 +43,7 @@
             }
           },
           "data": {
-            "name": "data-0137bc47e458ebaf211d83de5a1f535d"
+            "name": "data-dfae5a7d110f4eb85b9621aef0662545"
           },
           "mark": {
             "type": "bar"
@@ -95,9 +95,15 @@
             }
           ],
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-0137bc47e458ebaf211d83de5a1f535d": [
+            "data-dfae5a7d110f4eb85b9621aef0662545": [
+              {
+                "origin": "SFO",
+                "flight_count": 2,
+                "total_distance": 3249,
+                "avg_duration": 212.5
+              },
               {
                 "origin": "NYC",
                 "flight_count": 3,
@@ -109,12 +115,6 @@
                 "flight_count": 3,
                 "total_distance": 3483,
                 "avg_duration": 153.33333333333334
-              },
-              {
-                "origin": "SFO",
-                "flight_count": 2,
-                "total_distance": 3249,
-                "avg_duration": 212.5
               }
             ]
           }
@@ -123,7 +123,7 @@
     },
     "query_by_destination": {
       "code": "# Group flights by destination airport\nresult = flights_st.group_by(\"destination\").aggregate(\n    \"flight_count\",\n    \"total_distance\"\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"destination\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_czopjcyz2zgbhbon46go7sz27y\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"destination\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_26yj2ehdcrfehdopnkoi4qc2pe\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36morigin [dim]\u001b[0m\n  \u001b[36mdestination [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[35mavg_duration [measure]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n    \u001b[36mdestination\u001b[0m\n\n\u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  groups:\n    \u001b[36mdestination\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m\n    \u001b[35mtotal_distance\u001b[0m",
       "table": {
         "columns": [
@@ -133,11 +133,6 @@
         ],
         "data": [
           [
-            "SFO",
-            3,
-            3596
-          ],
-          [
             "NYC",
             2,
             5691
@@ -146,6 +141,11 @@
             "LAX",
             3,
             5925
+          ],
+          [
+            "SFO",
+            3,
+            3596
           ]
         ]
       },
@@ -159,7 +159,7 @@
             }
           },
           "data": {
-            "name": "data-5b11c0130dbedb35bf74107f4b9dbe42"
+            "name": "data-cbc2017950637ecb595e89a655ea8797"
           },
           "mark": {
             "type": "bar"
@@ -210,13 +210,13 @@
             }
           ],
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-5b11c0130dbedb35bf74107f4b9dbe42": [
+            "data-cbc2017950637ecb595e89a655ea8797": [
               {
-                "destination": "SFO",
-                "flight_count": 3,
-                "total_distance": 3596
+                "destination": "NYC",
+                "flight_count": 2,
+                "total_distance": 5691
               },
               {
                 "destination": "LAX",
@@ -224,9 +224,9 @@
                 "total_distance": 5925
               },
               {
-                "destination": "NYC",
-                "flight_count": 2,
-                "total_distance": 5691
+                "destination": "SFO",
+                "flight_count": 3,
+                "total_distance": 3596
               }
             ]
           }

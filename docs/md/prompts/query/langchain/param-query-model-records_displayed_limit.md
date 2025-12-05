@@ -1,0 +1,1 @@
+Max records to display in terminal/CLI output (default: 10). This only affects what the user sees in the terminal table, not what data is returned to the LLM. Use this to keep terminal output manageable while still sending more data to the LLM via `records_limit`.

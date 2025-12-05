@@ -1,20 +1,24 @@
 """
-Rich CLI Frontend for LangChain Agent
+Rich CLI Frontend for BSL Agents
 
-This module provides a beautiful terminal interface for the LangChain agent
+This module provides a beautiful terminal interface for BSL agents
 using Rich for formatting, loading spinners, and styled output.
+
+Supports multiple backends:
+- langchain: Simple tool-calling loop (default)
+- langgraph: Full ReAct agent with LangGraph
+- openai: OpenAI Assistants API
 """
 
 import json
 import logging
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
 from rich.status import Status
-
-from boring_semantic_layer.agents.backends.langchain import LangChainAgent
 
 # Disable httpx and openai logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -36,18 +40,31 @@ def display_tool_call(function_name: str, function_args: dict, status: Status | 
         status.stop()
 
     if function_name == "query_model" and "query" in function_args:
-        call_params = {"query": function_args["query"]}
-        # Only include non-default parameters
+        query = function_args["query"]
+        # Format query nicely - preserve line breaks for multiline queries
+        if "\n" in query:
+            # Multiline query - display with proper formatting
+            console.print("Call bsl query_bsl", style="dim")
+            # Add slight indent to query lines
+            for line in query.split("\n"):
+                console.print(f"  {line}", style="dim")
+        else:
+            # Single line query
+            console.print(f"Call bsl query_bsl {query}", style="dim")
+
+        # Show non-default parameters on separate line if present
+        extra_params = {}
         if function_args.get("limit", 10) != 10:
-            call_params["limit"] = function_args["limit"]
+            extra_params["limit"] = function_args["limit"]
         if function_args.get("chart_spec"):
-            call_params["chart_spec"] = function_args["chart_spec"]
-        if function_args.get("chart_backend"):
-            call_params["chart_backend"] = function_args["chart_backend"]
-        call_json = json.dumps(call_params)
-        console.print(f"Call bsl query_bsl {call_json}", style="dim")
+            extra_params["chart_spec"] = function_args["chart_spec"]
+        if extra_params:
+            console.print(f"  params: {json.dumps(extra_params)}", style="dim")
     elif function_name == "list_models":
-        console.print("Call bsl list_bsl {}", style="dim")
+        console.print("Call bsl list_models", style="dim")
+    elif function_name == "get_model":
+        model_name = function_args.get("model_name", "?")
+        console.print(f"Call bsl get_model {model_name}", style="dim")
 
 
 def display_error(error_msg: str, status: Status | None = None):
@@ -64,6 +81,21 @@ def display_error(error_msg: str, status: Status | None = None):
     console.print(error_msg, style="red")
 
 
+def display_thinking(thinking_text: str, status: Status | None = None):
+    """Display the LLM's reasoning/thinking text in grey.
+
+    Args:
+        thinking_text: The LLM's reasoning text before tool calls
+        status: Optional Status spinner to stop before displaying
+    """
+    # Stop spinner before thinking output
+    if status:
+        status.stop()
+
+    # Display thinking text in dim/grey style
+    console.print(f"\n{thinking_text}", style="dim italic")
+
+
 def start_chat(
     model_path: Path,
     llm_model: str = "gpt-4",
@@ -72,6 +104,7 @@ def start_chat(
     profile: str | None = None,
     profile_file: Path | None = None,
     env_path: Path | str | None = None,
+    backend: Literal["langchain", "langgraph", "openai", "deepagent"] = "langgraph",
 ):
     """
     Start an interactive chat session with rich formatting.
@@ -86,6 +119,7 @@ def start_chat(
         profile: Optional profile name to use for database connection
         profile_file: Optional path to profiles.yml file
         env_path: Optional path to a .env file to load credentials from
+        backend: Agent backend to use (langchain, langgraph, or openai)
     """
     # Load environment variables
     load_dotenv(dotenv_path=env_path)
@@ -116,17 +150,69 @@ def start_chat(
             console.print("  GOOGLE_API_KEY=your-key-here", style="dim")
             return
 
-    # Initialize agent
+    # Initialize agent based on selected backend
     try:
-        with Status("[dim]Loading semantic models...", console=console):
-            agent = LangChainAgent(
-                model_path=model_path,
-                llm_model=llm_model,
-                chart_backend=chart_backend,
-                profile=profile,
-                profile_file=profile_file,
-            )
-        console.print("✅ Models loaded successfully\n", style="green")
+        with Status(f"[dim]Loading semantic models ({backend} backend)...", console=console):
+            if backend == "langchain":
+                from boring_semantic_layer.agents.backends.langchain import LangChainAgent
+
+                agent = LangChainAgent(
+                    model_path=model_path,
+                    llm_model=llm_model,
+                    chart_backend=chart_backend,
+                    profile=profile,
+                    profile_file=profile_file,
+                )
+            elif backend == "langgraph":
+                from boring_semantic_layer.agents.backends.langgraph_react import (
+                    LangGraphReActAgent,
+                )
+
+                agent = LangGraphReActAgent(
+                    model_path=model_path,
+                    llm_model=llm_model,
+                    chart_backend=chart_backend,
+                    profile=profile,
+                    profile_file=profile_file,
+                )
+            elif backend == "openai":
+                from boring_semantic_layer.agents.backends.openai_assistant import (
+                    OpenAIAssistantAgent,
+                )
+
+                agent = OpenAIAssistantAgent(
+                    model_path=model_path,
+                    llm_model=llm_model,
+                    chart_backend=chart_backend,
+                    profile=profile,
+                    profile_file=profile_file,
+                )
+            elif backend == "deepagent":
+                from boring_semantic_layer.agents.backends.deepagent import (
+                    DeepAgentBackend,
+                )
+
+                agent = DeepAgentBackend(
+                    model_path=model_path,
+                    llm_model=llm_model,
+                    chart_backend=chart_backend,
+                    profile=profile,
+                    profile_file=profile_file,
+                )
+            else:
+                console.print(f"❌ Unknown backend: {backend}", style="bold red")
+                return
+
+        backend_names = {
+            "langchain": "LangChain",
+            "langgraph": "LangGraph ReAct",
+            "openai": "OpenAI Assistants",
+            "deepagent": "DeepAgents (Planning)",
+        }
+        console.print(
+            f"✅ Models loaded successfully ({backend_names[backend]} backend)\n",
+            style="green",
+        )
     except Exception as e:
         console.print(f"❌ Error loading models: {e}", style="bold red")
         return
@@ -146,6 +232,7 @@ def start_chat(
                 initial_query,
                 on_tool_call=lambda fn, args: display_tool_call(fn, args, status),
                 on_error=lambda msg: display_error(msg, status),
+                on_thinking=lambda text: display_thinking(text, status),
             )
         finally:
             status.stop()
@@ -161,6 +248,7 @@ def start_chat(
         Panel.fit(
             f"[bold cyan]Boring Semantic Layer - Chat Interface[/bold cyan]\n\n"
             f"Model: {llm_model}\n"
+            f"Backend: {backend_names[backend]}\n"
             f"Charts: Enabled ({chart_backend})\n\n"
             f"Type your questions in natural language!\n"
             f"Commands: [dim]quit, exit, q[/dim]",
@@ -196,6 +284,7 @@ def start_chat(
                     user_input,
                     on_tool_call=lambda fn, args, s=status: display_tool_call(fn, args, s),
                     on_error=lambda msg, s=status: display_error(msg, s),
+                    on_thinking=lambda text, s=status: display_thinking(text, s),
                 )
             finally:
                 status.stop()

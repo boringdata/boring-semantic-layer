@@ -69,7 +69,7 @@ class TestLangChainAgent:
         # Assertions
         assert agent.llm_model == "gpt-4"
         assert agent.chart_backend == "plotext"
-        assert len(agent.tools) == 3  # list_models, query_model, and get_documentation
+        assert len(agent.tools) == 4  # list_models, get_model, query_model, get_documentation
         assert agent.conversation_history == []
         mock_from_yaml.assert_called_once()
         mock_init_chat.assert_called_once_with("gpt-4", temperature=0)
@@ -97,11 +97,10 @@ class TestLangChainAgent:
         # Execute list_models via BSLTools
         result = agent.execute("list_models", {})
 
-        # Parse JSON result
+        # Parse JSON result - list_models now returns {model_name: description}
         result_dict = json.loads(result)
         assert "flights" in result_dict
-        assert "dimensions" in result_dict["flights"]
-        assert "measures" in result_dict["flights"]
+        assert result_dict["flights"] == "Test description"
 
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     @patch("boring_semantic_layer.agents.backends.langchain.init_chat_model")
@@ -160,10 +159,10 @@ class TestLangChainAgent:
 
             assert "vega_spec" in result or "data" in result
             mock_chart.assert_called_once()
-            # Altair backend should pass return_json=True
+            # CLI mode: always return_json=False to show table in terminal
             call_kwargs = mock_chart.call_args[1]
             assert call_kwargs["default_backend"] == "altair"
-            assert call_kwargs["return_json"] is True
+            assert call_kwargs["return_json"] is False
 
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     @patch("boring_semantic_layer.agents.backends.langchain.init_chat_model")
@@ -235,8 +234,10 @@ class TestLangChainAgent:
         # Create a mock query result with execute() and chart() methods
         mock_query_result = Mock()
         mock_df = Mock()
-        mock_df.to_json.return_value = '{"data": []}'
-        mock_df.__len__ = Mock(return_value=5)  # Mock len() for result_df
+        # to_json(orient="records") returns a JSON array, not an object
+        mock_df.to_json.return_value = '[{"flight_count": 100}, {"flight_count": 200}]'
+        mock_df.__len__ = Mock(return_value=2)  # Mock len() for result_df
+        mock_df.columns = ["flight_count"]  # Mock columns attribute
         mock_query_result.execute.return_value = mock_df
         mock_query_result.chart.return_value = None  # chart() renders to terminal
 
@@ -252,7 +253,10 @@ class TestLangChainAgent:
 
             # Should successfully unwrap and call generate_chart_with_data
             assert "error" not in result.lower()
-            assert "successfully" in result.lower()
+            # New response format includes total_rows and columns
+            result_dict = json.loads(result)
+            assert result_dict["total_rows"] == 2
+            assert "flight_count" in result_dict["columns"]
             mock_eval.assert_called_once()
             mock_query_result.execute.assert_called_once()
             # With plotext backend and no chart_spec, chart() should be called
@@ -701,21 +705,30 @@ bsl = BSLTools(
     profile_file=Path("profiles.yml"),
 )
 
-# Verify we have all 3 tools
+# Verify we have all 4 tools
 tool_names = [t["function"]["name"] for t in bsl.tools]
 print(f"Available tools: {tool_names}")
 assert "list_models" in tool_names, f"Missing list_models, got: {tool_names}"
+assert "get_model" in tool_names, f"Missing get_model, got: {tool_names}"
 assert "query_model" in tool_names, f"Missing query_model, got: {tool_names}"
 assert "get_documentation" in tool_names, f"Missing get_documentation, got: {tool_names}"
 
-# Test 1: list_models tool
+# Test 1: list_models tool - returns {model_name: description}
 print("\\n=== Testing list_models tool ===")
 result = bsl.execute("list_models", {})
 print(f"list_models result: {result[:200]}...")
 assert "items" in result, f"items not in list_models result: {result}"
-assert "category" in result, f"category not in list_models result: {result}"
-assert "item_count" in result, f"item_count not in list_models result: {result}"
+# Description may be "Simple items table" or fallback "Semantic model: items"
+assert "Simple items table" in result or "Semantic model: items" in result, f"description not in list_models result: {result}"
 print("✓ list_models tool works!")
+
+# Test 1b: get_model tool - returns dimensions and measures
+print("\\n=== Testing get_model tool ===")
+result = bsl.execute("get_model", {"model_name": "items"})
+print(f"get_model result: {result[:200]}...")
+assert "category" in result, f"category not in get_model result: {result}"
+assert "item_count" in result, f"item_count not in get_model result: {result}"
+print("✓ get_model tool works!")
 
 # Test 2: get_documentation tool
 print("\\n=== Testing get_documentation tool ===")

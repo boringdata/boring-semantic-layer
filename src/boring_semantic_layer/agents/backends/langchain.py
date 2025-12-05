@@ -40,6 +40,7 @@ class LangChainAgent(BSLTools):
         user_input: str,
         on_tool_call: Callable[[str, dict], None] | None = None,
         on_error: Callable[[str], None] | None = None,
+        on_thinking: Callable[[str], None] | None = None,
     ) -> tuple[str, str]:
         """Run a chat query with tool calling loop."""
         self._error_callback = on_error
@@ -55,6 +56,10 @@ class LangChainAgent(BSLTools):
 
         for _ in range(5):
             response = llm_with_tools.invoke(messages)
+
+            # Display LLM's reasoning/thinking text if present (before tool calls)
+            if response.content and response.tool_calls and on_thinking:
+                on_thinking(response.content)
 
             if not response.tool_calls:
                 tool_output = "\n\n".join(all_tool_outputs) if all_tool_outputs else ""

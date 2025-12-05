@@ -50,30 +50,65 @@ class AnyTable(Protocol):
     def __getitem__(self, name: str) -> ir.Value: ...
 
 
+class _PrefixProxy:
+    """Proxy for chained attribute access like t.airports.state.
+
+    When accessing t.airports on a joined model, returns this proxy
+    which tracks the prefix and resolves t.airports.state to the
+    dimension named "airports.state".
+
+    Only supports single-depth: prefix.column (e.g., "airports.state").
+    """
+
+    __slots__ = ("_resolver", "_prefix")
+
+    def __init__(self, resolver: _Resolver, prefix: str):
+        object.__setattr__(self, "_resolver", resolver)
+        object.__setattr__(self, "_prefix", prefix)
+
+    def __getattr__(self, name: str):
+        full_name = f"{self._prefix}.{name}"
+        # Try to resolve the full prefixed name as a dimension
+        if full_name in self._resolver._dims:
+            return self._resolver._dims[full_name](self._resolver._t).name(full_name)
+
+        # Fallback to raw table column access
+        return getattr(self._resolver._t, name)
+
+
 @frozen
 class _Resolver:
     """Resolver for dimensions in filter/join predicates.
 
     Provides attribute access to dimensions and raw table columns,
     resolving dimension functions to named expressions.
+
+    Supports chained access for joined models:
+    - t.state -> resolves "state" dimension
+    - t.airports.state -> resolves "airports.state" dimension
     """
 
     _t: ir.Table
     _dims: dict[str, Callable] = field(factory=dict)
 
     def __getattr__(self, name: str):
-        return (
-            self._dims[name](self._t).name(name)
-            if name in self._dims
-            else next(
-                (
-                    dim_func(self._t).name(dim_name)
-                    for dim_name, dim_func in self._dims.items()
-                    if dim_name.endswith(f".{name}")
-                ),
-                getattr(self._t, name),
-            )
-        )
+        # Direct match in dims
+        if name in self._dims:
+            return self._dims[name](self._t).name(name)
+
+        # Check if name is a table prefix (e.g., "airports" in "airports.state")
+        prefix_pattern = f"{name}."
+        has_prefixed_dims = any(k.startswith(prefix_pattern) for k in self._dims)
+        if has_prefixed_dims:
+            return _PrefixProxy(resolver=self, prefix=name)
+
+        # Try suffix match (e.g., "state" matches "airports.state")
+        for dim_name, dim_func in self._dims.items():
+            if dim_name.endswith(f".{name}"):
+                return dim_func(self._t).name(dim_name)
+
+        # Fallback to raw table column
+        return getattr(self._t, name)
 
     def __getitem__(self, name: str):
         return getattr(self._t, name)
@@ -468,4 +503,3 @@ def _convert_semantic_unnest(node: SemanticUnnestOp, catalog, *args):
         raise ValueError(f"Failed to unnest column '{node.column}': {e}") from e
 
     return unpack_struct_if_needed(unnested, node.column)
-
