@@ -284,10 +284,8 @@ def build_dependency_graph(
 
     graph = {}
 
-    # Build extended table with all dimensions for measure analysis
     extended_table = _build_extended_table(base_table, dimensions)
 
-    # Extract dependencies for dimensions and measures
     for name, obj in {**dimensions, **measures}.items():
         try:
             table = extended_table if name in measures else base_table
@@ -297,13 +295,11 @@ def build_dependency_graph(
             resolved = _resolve_expr(obj.expr, table)
             table_op = to_node(table)
 
-            # Collect Field nodes from both ibis and xorq
             fields = []
             for f in walk_nodes((XorqField,), resolved):
                 if hasattr(f, "name") and hasattr(f, "rel") and f.rel == table_op:
                     fields.append(f)
 
-            # Also try ibis Field if available
             if IbisField is not None:
                 for f in walk_nodes((IbisField,), resolved):
                     if hasattr(f, "name") and hasattr(f, "rel") and f.rel == table_op:
@@ -382,11 +378,6 @@ def _classify_dependencies(
     }
 
 
-# ==============================================================================
-# Generic Traversal Utilities for Semantic Tables
-# ==============================================================================
-
-
 def traverse_roots_with(roots: Any, transform: Any) -> Result[list[Any], Exception]:
     """
     Traverse semantic table roots and apply a transformation function to each.
@@ -430,14 +421,11 @@ def extract_column_from_dimension(dimension: Any, table: Any) -> Maybe[str]:
     """
     from .ops import _extract_columns_from_callable, _is_deferred
 
-    # Extract the expression from Dimension wrapper if needed
     expr = dimension.expr if hasattr(dimension, "expr") else dimension
 
-    # Handle Deferred expressions like _.city
     if _is_deferred(expr):
         return _safe_extract_from_deferred(expr, table)
 
-    # Handle regular callables using column extraction
     if callable(expr):
         extraction_result = _extract_columns_from_callable(expr, table)
         if extraction_result.is_success() and extraction_result.columns:
@@ -448,7 +436,6 @@ def extract_column_from_dimension(dimension: Any, table: Any) -> Maybe[str]:
 
 @safe
 def _extract_from_deferred(deferred_expr: Any, table: Any) -> str:
-    """Safely extract column name from Deferred expression."""
     resolved = deferred_expr.resolve(table)
     if hasattr(resolved, "get_name"):
         return resolved.get_name()
@@ -456,7 +443,6 @@ def _extract_from_deferred(deferred_expr: Any, table: Any) -> str:
 
 
 def _safe_extract_from_deferred(deferred_expr: Any, table: Any) -> Maybe[str]:
-    """Extract column name from Deferred expression, returning Maybe."""
     result = _extract_from_deferred(deferred_expr, table)
     return result.map(Some).value_or(Nothing)
 
@@ -480,18 +466,15 @@ def build_column_index_from_roots(roots: Any) -> Result[dict[str, list[int]], Ex
     column_index = {}
 
     for idx, root in enumerate(roots):
-        # Skip unnamed roots
         if not hasattr(root, "name") or not root.name:
             continue
 
-        # Get table safely using returns pattern (no try/catch!)
         table_result = _safe_to_untagged(root)
         if isinstance(table_result, Failure):
             return table_result
 
-        table = table_result.value_or(None)  # Pattern match: we know it's Success here
+        table = table_result.value_or(None)
 
-        # Index all columns in this table
         for col in table.columns:
             if col not in column_index:
                 column_index[col] = []
