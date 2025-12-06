@@ -2401,6 +2401,131 @@ def _update_measure_refs_in_calc(expr, prefix_map: dict[str, str]):
         return expr
 
 
+def _build_column_rename_map(
+    all_roots: Sequence[SemanticTable],
+    field_accessor: callable,
+) -> dict[str, str]:
+    """
+    Build a mapping of dimension names to their renamed column names in joined tables.
+
+    When Ibis joins tables with duplicate column names, it renames columns from later
+    tables with '_right' suffix. This function determines which dimensions will need
+    to access renamed columns.
+
+    Uses graph_utils for generic traversal and the returns library for safe handling.
+
+    Args:
+        all_roots: List of root semantic tables in join order
+        field_accessor: Function to get fields (dimensions) from a root
+
+    Returns:
+        Dict mapping dimension names like 'airports.city' to renamed columns like 'city_right'
+    """
+    from .graph_utils import build_column_index_from_roots, extract_column_from_dimension
+
+    # Build column index using graph_utils (returns Result)
+    from returns.result import Failure
+
+    column_index_result = build_column_index_from_roots(all_roots)
+    if isinstance(column_index_result, Failure):
+        # If we can't build the index, return empty map (dimensions will use fallback behavior)
+        return {}
+
+    column_index = column_index_result.value_or({})
+
+    # Process dimensions and determine which need renamed columns
+    rename_map = {}
+
+    for idx, root in enumerate(all_roots):
+        if not root.name:
+            continue
+
+        fields_dict = field_accessor(root)
+        if not fields_dict:
+            continue
+
+        # Get table safely - skip if fails (no try/catch needed!)
+        from .graph_utils import _safe_to_untagged
+
+        table_result = _safe_to_untagged(root)
+        if isinstance(table_result, Failure):
+            continue
+
+        root_tbl = table_result.value_or(None)
+
+        for field_name, field_value in fields_dict.items():
+            # Extract column name using graph_utils (returns Maybe)
+            column_maybe = extract_column_from_dimension(field_value, root_tbl)
+
+            # Use Maybe pattern from returns library
+            column_maybe.bind_optional(
+                lambda base_column: _check_and_add_rename(
+                    rename_map=rename_map,
+                    base_column=base_column,
+                    prefixed_name=f"{root.name}.{field_name}",
+                    table_idx=idx,
+                    column_index=column_index,
+                )
+            )
+
+    return rename_map
+
+
+def _check_and_add_rename(
+    rename_map: dict[str, str],
+    base_column: str,
+    prefixed_name: str,
+    table_idx: int,
+    column_index: dict[str, list[int]],
+) -> None:
+    """
+    Check if a column needs renaming and add to rename map if so.
+
+    Helper function for _build_column_rename_map that encapsulates the
+    rename decision logic.
+
+    Args:
+        rename_map: Map to update with renames
+        base_column: The base column name
+        prefixed_name: The prefixed dimension name (e.g., 'airports.city')
+        table_idx: Index of the current table
+        column_index: Index of column occurrences
+    """
+    if base_column in column_index:
+        tables_with_column = column_index[base_column]
+        # Check if any table before this one has the same column
+        earlier_tables = [t for t in tables_with_column if t < table_idx]
+        if earlier_tables:
+            # This column will be renamed with _right suffix
+            rename_map[prefixed_name] = f"{base_column}_right"
+
+
+def _wrap_dimension_for_renamed_column(dimension: Dimension, renamed_column: str) -> Dimension:
+    """
+    Wrap a dimension to access a renamed column in a joined table.
+
+    Args:
+        dimension: The original dimension
+        renamed_column: The renamed column name (e.g., 'city_right')
+
+    Returns:
+        A new Dimension that accesses the renamed column
+    """
+    # Create a new callable that accesses the renamed column
+    def renamed_accessor(table: ir.Table) -> ir.Value:
+        return table[renamed_column]
+
+    # Return a new Dimension with the wrapped callable but same metadata
+    return Dimension(
+        expr=renamed_accessor,
+        description=dimension.description,
+        is_entity=dimension.is_entity,
+        is_time_dimension=dimension.is_time_dimension,
+        is_event_timestamp=dimension.is_event_timestamp,
+        smallest_time_grain=dimension.smallest_time_grain,
+    )
+
+
 def _merge_fields_with_prefixing(
     all_roots: Sequence[SemanticTable],
     field_accessor: callable,
@@ -2421,6 +2546,7 @@ def _merge_fields_with_prefixing(
     merged_fields = {}
 
     is_calc_measures = False
+    is_dimensions = False
     if all_roots:
         sample_fields = field_accessor(all_roots[0])
         if sample_fields:
@@ -2431,6 +2557,12 @@ def _merge_fields_with_prefixing(
                 first_val,
                 MeasureRef | AllOf | BinOp | int | float,
             )
+            is_dimensions = isinstance(first_val, Dimension)
+
+    # For dimensions, build a column rename map to handle Ibis join conflicts
+    column_rename_map = {}
+    if is_dimensions:
+        column_rename_map = _build_column_rename_map(all_roots, field_accessor)
 
     for root in all_roots:
         root_name = root.name
@@ -2457,6 +2589,11 @@ def _merge_fields_with_prefixing(
                 # If it's a calculated measure, update internal MeasureRefs
                 if is_calc_measures:
                     field_value = _update_measure_refs_in_calc(field_value, prefix_map)
+                # If it's a dimension that needs column renaming, wrap the callable
+                elif is_dimensions and prefixed_name in column_rename_map:
+                    field_value = _wrap_dimension_for_renamed_column(
+                        field_value, column_rename_map[prefixed_name]
+                    )
 
                 merged_fields[prefixed_name] = field_value
             else:

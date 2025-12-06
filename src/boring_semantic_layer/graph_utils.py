@@ -5,7 +5,7 @@ from typing import Any
 from ibis.expr.operations.core import Node as IbisNode
 from ibis.expr.types import Expr as IbisExpr
 from returns.maybe import Maybe, Nothing, Some
-from returns.result import Failure, Result, Success
+from returns.result import Failure, Result, Success, safe
 from xorq.common.utils.graph_utils import (
     replace_nodes as _xorq_replace_nodes,
 )
@@ -36,6 +36,9 @@ __all__ = [
     "graph_invert",
     "graph_to_dict",
     "build_dependency_graph",
+    "extract_column_from_dimension",
+    "build_column_index_from_roots",
+    "traverse_roots_with",
 ]
 
 
@@ -377,3 +380,127 @@ def _classify_dependencies(
         )
         for f in fields
     }
+
+
+# ==============================================================================
+# Generic Traversal Utilities for Semantic Tables
+# ==============================================================================
+
+
+def traverse_roots_with(roots: Any, transform: Any) -> Result[list[Any], Exception]:
+    """
+    Traverse semantic table roots and apply a transformation function to each.
+
+    This is a generic traversal utility that handles errors safely using the
+    returns library.
+
+    Args:
+        roots: Sequence of semantic table roots
+        transform: Function to apply to each root (root -> Result[T, Exception])
+
+    Returns:
+        Result containing list of successful transformations or first error
+    """
+    from returns.result import Result, Success
+
+    results = []
+    for root in roots:
+        result = transform(root)
+        if isinstance(result, Failure):
+            return result
+        if isinstance(result, Success):
+            results.append(result.unwrap())
+
+    return Success(results)
+
+
+def extract_column_from_dimension(dimension: Any, table: Any) -> Maybe[str]:
+    """
+    Extract the column name accessed by a dimension expression.
+
+    Handles both Deferred expressions (_.column) and regular callables (lambda t: t.column).
+    Uses the returns library for safe extraction without exceptions.
+
+    Args:
+        dimension: The dimension object or callable
+        table: The table to resolve against
+
+    Returns:
+        Maybe[str] containing the column name if successful, Nothing otherwise
+    """
+    from .ops import _extract_columns_from_callable, _is_deferred
+
+    # Extract the expression from Dimension wrapper if needed
+    expr = dimension.expr if hasattr(dimension, "expr") else dimension
+
+    # Handle Deferred expressions like _.city
+    if _is_deferred(expr):
+        return _safe_extract_from_deferred(expr, table)
+
+    # Handle regular callables using column extraction
+    if callable(expr):
+        extraction_result = _extract_columns_from_callable(expr, table)
+        if extraction_result.is_success() and extraction_result.columns:
+            return Some(next(iter(extraction_result.columns)))
+
+    return Nothing
+
+
+@safe
+def _extract_from_deferred(deferred_expr: Any, table: Any) -> str:
+    """Safely extract column name from Deferred expression."""
+    resolved = deferred_expr.resolve(table)
+    if hasattr(resolved, "get_name"):
+        return resolved.get_name()
+    raise ValueError("No get_name method")
+
+
+def _safe_extract_from_deferred(deferred_expr: Any, table: Any) -> Maybe[str]:
+    """Extract column name from Deferred expression, returning Maybe."""
+    result = _extract_from_deferred(deferred_expr, table)
+    return result.map(Some).value_or(Nothing)
+
+
+def build_column_index_from_roots(roots: Any) -> Result[dict[str, list[int]], Exception]:
+    """
+    Build an index of which columns appear in which tables.
+
+    This is a generic utility for tracking column occurrences across joined tables,
+    which is essential for determining when Ibis will rename columns with _right suffix.
+
+    Uses safe operations - no try/catch needed with returns library.
+
+    Args:
+        roots: Sequence of semantic table roots in join order
+
+    Returns:
+        Result containing dict mapping column names to list of table indices,
+        or Failure if table extraction fails
+    """
+    column_index = {}
+
+    for idx, root in enumerate(roots):
+        # Skip unnamed roots
+        if not hasattr(root, "name") or not root.name:
+            continue
+
+        # Get table safely using returns pattern (no try/catch!)
+        table_result = _safe_to_untagged(root)
+        if isinstance(table_result, Failure):
+            return table_result
+
+        table = table_result.value_or(None)  # Pattern match: we know it's Success here
+
+        # Index all columns in this table
+        for col in table.columns:
+            if col not in column_index:
+                column_index[col] = []
+            column_index[col].append(idx)
+
+    return Success(column_index)
+
+
+@safe
+def _safe_to_untagged(root: Any) -> Any:
+    """Safely convert root to untagged table."""
+    return root.to_untagged()

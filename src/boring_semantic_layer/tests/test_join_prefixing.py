@@ -1006,6 +1006,86 @@ class TestEdgeCases:
         # Sum of percentages should be 1.0
         assert pytest.approx(result["revenue_pct"].sum(), abs=0.01) == 1.0
 
+    def test_duplicate_column_names_in_joins(self, con):
+        """Test that dimensions with duplicate column names resolve to correct table.
+
+        Regression test for issue #132: When joining tables with columns that have
+        the same name (e.g., 'city' in both aircraft and airports), dimension
+        expressions should resolve to the correct column from the correct table.
+
+        Ibis renames duplicate columns with '_right' suffix, and our dimension
+        resolution logic must account for this.
+        """
+        # Create test data - aircraft and airports both have 'city' column
+        aircraft_df = pd.DataFrame(
+            {
+                "tail_num": ["N123", "N456"],
+                "city": ["FOREST HILLS", "ATLANTA"],  # Aircraft registrant city
+            },
+        )
+        airports_df = pd.DataFrame(
+            {
+                "code": ["JFK", "ATL"],
+                "city": ["NEW YORK", "ATLANTA"],  # Airport city
+            },
+        )
+        flights_df = pd.DataFrame(
+            {
+                "origin": ["JFK", "ATL", "JFK"],
+                "tail_num": ["N123", "N456", "N123"],
+            },
+        )
+
+        aircraft_tbl = con.create_table("aircraft_dup_test", aircraft_df)
+        airports_tbl = con.create_table("airports_dup_test", airports_df)
+        flights_tbl = con.create_table("flights_dup_test", flights_df)
+
+        # Create semantic tables
+        aircraft = to_semantic_table(aircraft_tbl, "aircraft").with_dimensions(
+            tail_num=lambda t: t.tail_num,
+            city=lambda t: t.city,
+        )
+        airports = to_semantic_table(airports_tbl, "airports").with_dimensions(
+            code=lambda t: t.code,
+            city=lambda t: t.city,
+        )
+        flights = (
+            to_semantic_table(flights_tbl, "flights")
+            .with_dimensions(
+                origin=lambda t: t.origin,
+                tail_num=lambda t: t.tail_num,
+            )
+            .with_measures(flight_count=lambda t: t.count())
+            .join_many(aircraft, lambda f, a: f.tail_num == a.tail_num)
+            .join_many(airports, lambda f, ap: f.origin == ap.code)
+        )
+
+        # Query airports.city for JFK flights - should return NEW YORK, not FOREST HILLS
+        result = (
+            flights.filter(lambda t: t.origin == "JFK")
+            .group_by("airports.city")
+            .aggregate("flights.flight_count")
+            .execute()
+        )
+
+        # Verify we get NEW YORK (from airports), not FOREST HILLS (from aircraft)
+        assert "NEW YORK" in result["airports.city"].values
+        ny_row = result[result["airports.city"] == "NEW YORK"]
+        assert ny_row["flights.flight_count"].values[0] == 2
+
+        # Also test aircraft.city to ensure both dimensions work correctly
+        result_aircraft = (
+            flights.filter(lambda t: t.origin == "JFK")
+            .group_by("aircraft.city")
+            .aggregate("flights.flight_count")
+            .execute()
+        )
+
+        # Verify we get FOREST HILLS (from aircraft) for JFK flights
+        assert "FOREST HILLS" in result_aircraft["aircraft.city"].values
+        fh_row = result_aircraft[result_aircraft["aircraft.city"] == "FOREST HILLS"]
+        assert fh_row["flights.flight_count"].values[0] == 2
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
