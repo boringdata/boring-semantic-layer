@@ -208,6 +208,18 @@ def _filter_by_attribute(items: dict[str, Any], attr: str) -> dict[str, Any]:
     return {name: item for name, item in items.items() if getattr(item, attr, False)}
 
 
+def find_entity_dimensions(expr: IbisExpr | XorqExpr) -> dict[str, Any]:
+    """Find all entity dimensions in the expression tree."""
+    dimensions, _ = find_dimensions_and_measures(expr)
+    return _filter_by_attribute(dimensions, "is_entity")
+
+
+def find_event_timestamp_dimensions(expr: IbisExpr | XorqExpr) -> dict[str, Any]:
+    """Find all event timestamp dimensions in the expression tree."""
+    dimensions, _ = find_dimensions_and_measures(expr)
+    return _filter_by_attribute(dimensions, "is_event_timestamp")
+
+
 def graph_predecessors(graph: dict[str, dict], node: str) -> set[str]:
     """Get direct dependencies of a node."""
     return set(graph.get(node, {}).get("deps", {}).keys())
