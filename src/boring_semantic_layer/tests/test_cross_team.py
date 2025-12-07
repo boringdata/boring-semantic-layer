@@ -1,11 +1,9 @@
 import ibis
 import pandas as pd
-import pytest
 
 from boring_semantic_layer import to_semantic_table
 
 
-@pytest.mark.skip(reason="Known issue on join-across-multiple-tables branch - column renaming logic needs fix")
 def test_cross_team_aggregated_measure_refs():
     marketing_df = pd.DataFrame(
         {"customer_id": [1, 2], "segment": ["A", "B"], "monthly_spend": [100, 200]},
