@@ -519,12 +519,6 @@ def _safe_extract_from_deferred(deferred_expr: Any, table: Any) -> Maybe[str]:
     return result.map(Some).value_or(Nothing)
 
 
-@safe
-def _safe_to_untagged(root: Any) -> Any:
-    """Safely convert root to untagged table."""
-    return root.to_untagged()
-
-
 def build_column_index_from_roots(
     roots: Sequence[Any],
 ) -> Result[dict[str, list[int]], Exception]:
@@ -548,10 +542,9 @@ def build_column_index_from_roots(
         if not hasattr(root, "name") or not root.name:
             return acc_result
 
-        return acc_result.bind(
-            lambda column_index: _safe_to_untagged(root).map(
-                lambda table: _update_column_index(column_index, table, idx)
-            )
+        table = root.to_untagged()
+        return acc_result.map(
+            lambda column_index: _update_column_index(column_index, table, idx)
         )
 
     def _update_column_index(column_index, table, idx):

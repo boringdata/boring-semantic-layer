@@ -2444,14 +2444,7 @@ def _build_column_rename_map(
         if not fields_dict:
             continue
 
-        # Get table safely - skip if fails (no try/catch needed!)
-        from .graph_utils import _safe_to_untagged
-
-        table_result = _safe_to_untagged(root)
-        if isinstance(table_result, Failure):
-            continue
-
-        root_tbl = table_result.value_or(None)
+        root_tbl = root.to_untagged()
 
         for field_name, field_value in fields_dict.items():
             # Extract column name using graph_utils (returns Maybe)
