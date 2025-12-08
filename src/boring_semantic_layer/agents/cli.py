@@ -242,23 +242,6 @@ def cmd_chat(args):
     )
 
 
-# TODO: Add tests for cmd_render before re-enabling
-# def cmd_render(args):
-#     """Render markdown files with BSL queries."""
-#     from boring_semantic_layer.chart.md_renderer import cmd_render as render_func
-#
-#     success = render_func(
-#         md_path=args.input,
-#         output=args.output,
-#         format=args.format,
-#         images_dir=args.images_dir,
-#         watch=args.watch,
-#     )
-#
-#     if not success:
-#         sys.exit(1)
-
-
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -319,43 +302,6 @@ def main():
         help="Optional initial query to run",
     )
     chat_parser.set_defaults(func=cmd_chat)
-
-    # TODO: Add tests for render command before re-enabling
-    # # Render command
-    # render_parser = subparsers.add_parser(
-    #     "render",
-    #     help="Render markdown files with BSL queries to HTML or markdown with images",
-    # )
-    # render_parser.add_argument(
-    #     "input",
-    #     type=Path,
-    #     help="Path to input markdown file",
-    # )
-    # render_parser.add_argument(
-    #     "-o",
-    #     "--output",
-    #     type=Path,
-    #     help="Path to output file (default: input file with .html or _rendered.md suffix)",
-    # )
-    # render_parser.add_argument(
-    #     "-f",
-    #     "--format",
-    #     choices=["html", "markdown"],
-    #     default="html",
-    #     help="Output format (default: html)",
-    # )
-    # render_parser.add_argument(
-    #     "--images-dir",
-    #     type=Path,
-    #     help="Directory for exported images (markdown format only, default: <output>_images)",
-    # )
-    # render_parser.add_argument(
-    #     "-w",
-    #     "--watch",
-    #     action="store_true",
-    #     help="Watch for file changes and auto-regenerate output",
-    # )
-    # render_parser.set_defaults(func=cmd_render)
 
     # Skill command with subcommands
     skill_parser = subparsers.add_parser(

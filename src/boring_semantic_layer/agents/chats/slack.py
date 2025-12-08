@@ -51,9 +51,12 @@ class BSLSlackBot:
         import ibis
 
         from boring_semantic_layer.chart import chart
+        from boring_semantic_layer.utils import safe_eval
 
         try:
-            result = eval(query_str, {**self.agent.models, "ibis": ibis})
+            result = safe_eval(query_str, context={**self.agent.models, "ibis": ibis})
+            if hasattr(result, "unwrap"):
+                result = result.unwrap()
             fd, path = tempfile.mkstemp(suffix=".png")
             os.close(fd)
             chart(result, backend=self.chart_backend, format="file", filename=path)

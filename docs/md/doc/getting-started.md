@@ -110,51 +110,54 @@ bsl chat --sm https://raw.githubusercontent.com/boringdata/boring-semantic-layer
 Here's a minimal example showing how to define your own semantic model:
 
 ```yaml
-# my_flights.yaml - Minimal BSL semantic model
+# my_model.yaml - Minimal BSL semantic model
 
 # Database profile - loads remote parquet into in-memory DuckDB
 profile:
   type: duckdb
   database: ":memory:"
   tables:
-    flights_tbl: "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev/flights.parquet"
+    orders_tbl: "path/to/orders.parquet"
 
 # Semantic model definition
-flights:
-  table: flights_tbl
-  description: "Flight data with origin, destination, and metrics"
+orders:
+  table: orders_tbl
+  description: "Order data with categories and metrics"
 
   dimensions:
-    origin:
-      expr: _.origin
-      description: "Origin airport code"
-    destination:
-      expr: _.destination
-      description: "Destination airport code"
-    carrier: _.carrier
+    category:
+      expr: _.category
+      description: "Product category"
+    region:
+      expr: _.region
+      description: "Sales region"
+    status: _.status
 
   measures:
-    flight_count:
+    order_count:
       expr: _.count()
-      description: "Total number of flights"
-    total_distance:
-      expr: _.distance.sum()
-      description: "Total distance flown"
-    avg_delay:
-      expr: _.dep_delay.mean()
-      description: "Average departure delay"
+      description: "Total number of orders"
+    total_sales:
+      expr: _.amount.sum()
+      description: "Total sales amount"
+    avg_order_value:
+      expr: _.amount.mean()
+      description: "Average order value"
 ```
 
 Then run:
 
 ```bash
-bsl chat --sm my_flights.yaml
+bsl chat --sm my_model.yaml
 ```
 
 See [Query Agent Chat](/examples/query-agent-chat) for full documentation on YAML models with joins and advanced features.
 
 ## Next Steps
 
+- [Chat with your data](/examples/query-agent-chat) using natural language
+- Define models in [YAML configuration](/examples/yaml-config)
+- Configure database connections with [Profiles](/examples/profile)
 - Learn how to [Build Semantic Tables](/examples/semantic-table) with dimensions, measures, and joins
 - Explore [Query Methods](/examples/query-methods) for retrieving data
 - Discover how to [Compose Models](/examples/compose) together

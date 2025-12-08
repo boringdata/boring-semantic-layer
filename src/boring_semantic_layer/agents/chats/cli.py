@@ -217,13 +217,11 @@ def start_chat(
         console.print(f"❌ Error loading models: {e}", style="bold red")
         return
 
-    # Create status message based on model
     status_msg = f"[dim]Calling {llm_model}...[/dim]"
 
-    # Handle initial query (non-interactive mode)
+    # Non-interactive mode
     if initial_query:
         console.print(f"[bold blue]bsl>>[/bold blue] {initial_query}")
-
         status = Status(status_msg, console=console)
         status.start()
         try:
@@ -237,13 +235,11 @@ def start_chat(
         finally:
             status.stop()
 
-        # Display the agent's summary (if meaningful)
         if agent_response and agent_response.strip():
             console.print(f"\n💬 {agent_response}")
+        return
 
-        return  # Exit after processing initial query
-
-    # Print welcome message for interactive mode
+    # Welcome message
     console.print(
         Panel.fit(
             f"[bold cyan]Boring Semantic Layer - Chat Interface[/bold cyan]\n\n"
@@ -255,23 +251,15 @@ def start_chat(
             border_style="cyan",
         )
     )
-
-    console.print("\n[dim]Example questions:[/dim]")
-    console.print("  [dim]• What data is available?[/dim]")
-    console.print("  [dim]• Show me flight counts by carrier[/dim]")
-    console.print("  [dim]• Number of flights per month[/dim]\n")
+    console.print("\n[dim]Example: What data is available? | Show me sales by category[/dim]\n")
 
     # Interactive loop
     while True:
         try:
-            # Get user input
             user_input = console.input("\n[bold blue]bsl>>[/bold blue] ").strip()
-
             if not user_input:
                 continue
-
-            if user_input.lower() in ["quit", "exit", "q"]:
-                console.print("\n👋 Goodbye!", style="bold green")
+            if user_input.lower() in ("quit", "exit", "q"):
                 break
 
             # Process the query with loading spinner
@@ -294,8 +282,8 @@ def start_chat(
                 console.print(f"\n💬 {agent_response}")
 
         except KeyboardInterrupt:
-            console.print("\n\n👋 Goodbye!", style="bold green")
             break
         except Exception as e:
             console.print(f"\n❌ Error: {e}", style="bold red")
-            console.print("Please try again.\n", style="dim")
+
+    console.print("\n👋 Goodbye!", style="bold green")

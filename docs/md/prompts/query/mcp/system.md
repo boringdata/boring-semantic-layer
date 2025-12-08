@@ -14,7 +14,7 @@ This server provides a semantic layer for querying structured data with support 
 1. ALWAYS start by calling list_models() to see available models
 2. ALWAYS call get_model(model_name) to understand dimensions and measures before querying
 3. When using joined models (multiple tables), ALWAYS prefix dimension/measure names with table name
-   Example: "flights.arr_time" not just "arr_time"
+   Example: "orders.created_at" not just "created_at"
 4. For time-based queries, use time_grain parameter (e.g., "TIME_GRAIN_YEAR", "TIME_GRAIN_MONTH")
 5. Time dimensions must be explicitly included in dimensions parameter when using time_grain
 

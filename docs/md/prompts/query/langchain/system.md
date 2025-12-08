@@ -24,18 +24,18 @@ You are an expert at querying semantic models using the Boring Semantic Layer (B
 
 **Examples of WRONG guessing:**
 ```
-WRONG: .filter(lambda t: t.origin.isin(["JFK", "LGA", "EWR"]))  # Guessing NYC airports - STOP! Query first!
+WRONG: .filter(lambda t: t.region.isin(["US", "EU", "APAC"]))  # Guessing regions - STOP! Query first!
 WRONG: .filter(lambda t: t.code == 'NYC')      # Guessing code format
 WRONG: .filter(lambda t: t.name == 'Acme Co')  # Guessing exact string
-WRONG: .filter(lambda t: t.region == 'West')   # Guessing category value
+WRONG: .filter(lambda t: t.category == 'Electronics')   # Guessing category value
 
 RIGHT: First query to discover actual values, then filter with real data
 ```
 
-**Even if you "know" the answer (like airport codes), you MUST query first** because:
+**Even if you "know" the answer, you MUST query first** because:
 - The data might use different codes than you expect
 - The data might not include all values you assume
-- The data might use city names, not airport codes
+- The data might use different naming conventions
 
 ## Multi-Hop Query Strategy
 
@@ -55,14 +55,14 @@ RIGHT: First query to discover actual values, then filter with real data
 
 **CLI behavior:** Table auto-displays when `get_records=true`, hidden when `get_records=false`.
 
-**Example - User asks "flights from New York":**
+**Example - User asks "orders from California":**
 ```
-Step 1: DISCOVER - What airports exist? Which are in New York?
-        query_model(query="flights.group_by('origin').aggregate('flight_count')", records_limit=50, get_chart=false)
-        -> Table shows data, LLM receives records to find NY airports
+Step 1: DISCOVER - What regions exist? Which are in California?
+        query_model(query="orders.group_by('region').aggregate('order_count')", records_limit=50, get_chart=false)
+        -> Table shows data, LLM receives records to find CA regions
 
 Step 2: FILTER - Use discovered values
-        query_model(query="flights.filter(lambda t: t.origin.isin(['JFK', 'LGA'])).group_by('origin').aggregate('flight_count')", get_records=false)
+        query_model(query="orders.filter(lambda t: t.region.isin(['CA', 'California'])).group_by('region').aggregate('order_count')", get_records=false)
         -> Chart displayed to user, no records returned to LLM
 ```
 
