@@ -4,6 +4,9 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+# Skip entire module if deepagents is not installed (optional dependency)
+pytest.importorskip("deepagents", reason="deepagents not installed")
+
 
 @pytest.fixture
 def mock_models():
