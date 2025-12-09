@@ -230,7 +230,7 @@ def test_get_records_false_cli_mode(mock_query_result, capsys):
     assert "origin" in result_dict["columns"]
     assert "records" not in result_dict
     assert "note" in result_dict
-    assert "get_records=false" in result_dict["note"]
+    assert "Records not returned" in result_dict["note"]
 
     # Table should NOT have been displayed (get_records=False hides table)
     captured = capsys.readouterr()
@@ -238,7 +238,7 @@ def test_get_records_false_cli_mode(mock_query_result, capsys):
 
 
 def test_records_limit_truncation_message(mock_query_result):
-    """Test that records_limit shows truncation message when data is truncated."""
+    """Test that records_limit shows truncation info when data is truncated."""
     # Create a larger dataframe
     df = pd.DataFrame(
         {"origin": [f"AIRPORT_{i}" for i in range(20)], "flight_count": list(range(20))}
@@ -253,14 +253,12 @@ def test_records_limit_truncation_message(mock_query_result):
         return_json=True,
     )
 
-    # Should return JSON with truncation note
+    # Should return JSON with truncation info via returned_rows
     result_dict = json.loads(result)
     assert result_dict["total_rows"] == 20
     assert result_dict["returned_rows"] == 5
     assert len(result_dict["records"]) == 5
-    assert "note" in result_dict
-    assert "5 of 20" in result_dict["note"]
-    assert "records_limit" in result_dict["note"]
+    # The simplified response uses returned_rows to indicate truncation (no note)
 
 
 def test_no_truncation_message_when_all_returned(mock_query_result):
@@ -324,7 +322,6 @@ def test_cli_mode_with_chart_includes_chart_info(mock_query_result, capsys):
     result_dict = json.loads(result)
     assert "chart" in result_dict
     assert result_dict["chart"]["backend"] == "plotext"
-    assert result_dict["chart"]["format"] == "static"
     assert result_dict["chart"]["displayed"] is True
 
 
@@ -704,8 +701,8 @@ class TestRecordsDisplayedLimit:
         assert len(result_dict["records"]) == 50
         assert result_dict["total_rows"] == 50
 
-    def test_note_shows_both_limits_when_different(self, capsys):
-        """Test that note shows both LLM and display limits when they differ."""
+    def test_returned_rows_shows_truncation(self, capsys):
+        """Test that returned_rows shows truncation when limits differ."""
         mock_result = Mock()
         df = pd.DataFrame(
             {"origin": [f"AIRPORT_{i}" for i in range(20)], "flight_count": list(range(20))}
@@ -723,7 +720,7 @@ class TestRecordsDisplayedLimit:
         )
 
         result_dict = json.loads(result)
-        # Note should mention both LLM records and displayed rows
-        assert "note" in result_dict
-        assert "15" in result_dict["note"]  # LLM records
-        assert "5" in result_dict["note"]  # Displayed rows
+        # Should show truncation via returned_rows
+        assert result_dict["returned_rows"] == 15
+        assert result_dict["total_rows"] == 20
+        assert len(result_dict["records"]) == 15
