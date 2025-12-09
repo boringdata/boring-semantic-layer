@@ -6,22 +6,22 @@ Query a semantic model with support for filters and time dimensions.
 
 1. **ALWAYS call get_model() first** to see available dimensions and measures
 2. **Use correct dimension/measure names**:
-   - For joined models, names MUST include table prefix (e.g., "flights.arr_time")
+   - For joined models, names MUST include table prefix (e.g., "orders.created_at")
    - Check get_model() output - if you see dots in names, the model is joined
 3. **When using time_grain, MUST include the time dimension in dimensions list**:
-    CORRECT: dimensions=["flights.arr_time"], time_grain="TIME_GRAIN_YEAR"
+    CORRECT: dimensions=["orders.created_at"], time_grain="TIME_GRAIN_YEAR"
    L WRONG: dimensions=[], time_grain="TIME_GRAIN_YEAR"  # Missing time dimension!
 4. **For filters with lists, use "values" (plural), not "value"**:
-    CORRECT: {"field": "carrier", "operator": "in", "values": ["AA", "UA"]}
-   L WRONG: {"field": "carrier", "operator": "in", "value": ["AA", "UA"]}
+    CORRECT: {"field": "status", "operator": "in", "values": ["active", "pending"]}
+   L WRONG: {"field": "status", "operator": "in", "value": ["active", "pending"]}
 
 ## Arguments
 
 - **model_name** (string, required): Name of the model to query
-- **dimensions** (list[string], optional): List of dimension names to group by (e.g., ['flights.origin', 'flights.destination'])
-- **measures** (list[string], optional): List of measure names to aggregate (e.g., ['flights.flight_count', 'flights.avg_distance'])
+- **dimensions** (list[string], optional): List of dimension names to group by (e.g., ['orders.region', 'flights.destination'])
+- **measures** (list[string], optional): List of measure names to aggregate (e.g., ['orders.total_sales', 'flights.avg_distance'])
 - **filters** (list[dict], optional): List of JSON filter objects (see Filter Structure below)
-- **order_by** (list[list[string]], optional): List of [field, direction] pairs for sorting (e.g., [['flights.flight_count', 'desc']])
+- **order_by** (list[list[string]], optional): List of [field, direction] pairs for sorting (e.g., [['orders.total_sales', 'desc']])
 - **limit** (integer, optional): Maximum number of rows to return
 - **time_grain** (string, optional): Time grain for aggregating time-based dimensions (e.g., "TIME_GRAIN_DAY", "TIME_GRAIN_MONTH")
 - **time_range** (dict, optional): Time range filter with 'start' and 'end' keys (ISO 8601 format)
@@ -123,11 +123,11 @@ Complex nested filter with time ranges:
         {
             "operator": "AND",
             "conditions": [
-                {"field": "flight_date", "operator": ">=", "value": "2024-01-01"},
-                {"field": "flight_date", "operator": "<", "value": "2024-04-01"}
+                {"field": "order_date", "operator": ">=", "value": "2024-01-01"},
+                {"field": "order_date", "operator": "<", "value": "2024-04-01"}
             ]
         },
-        {"field": "carrier.country", "operator": "eq", "value": "US"}
+        {"field": "customer.country", "operator": "eq", "value": "US"}
     ]
 }]
 ```
@@ -223,9 +223,9 @@ When None, returns only data: `{"records": [...]}`
 
 ```python
 query_model(
-    model_name="flights",
-    dimensions=["flights.carrier"],
-    measures=["flights.flight_count"]
+    model_name="orders",
+    dimensions=["orders.category"],
+    measures=["orders.total_sales"]
 )
 ```
 
@@ -234,11 +234,11 @@ query_model(
 MUST include time dimension in dimensions list:
 ```python
 query_model(
-    model_name="flights",
-    dimensions=["flights.arr_time"],  #  REQUIRED when using time_grain
-    measures=["flights.flight_count"],
+    model_name="orders",
+    dimensions=["orders.created_at"],  #  REQUIRED when using time_grain
+    measures=["orders.total_sales"],
     time_grain="TIME_GRAIN_YEAR",
-    order_by=[["flights.arr_time", "asc"]]
+    order_by=[["orders.created_at", "asc"]]
 )
 ```
 
@@ -246,12 +246,12 @@ query_model(
 
 ```python
 query_model(
-    model_name="flights",
-    dimensions=["flights.origin"],
-    measures=["flights.flight_count"],
+    model_name="orders",
+    dimensions=["orders.region"],
+    measures=["orders.total_sales"],
     filters=[
-        {"field": "flights.carrier", "operator": "in", "values": ["AA", "UA"]},
-        {"field": "flights.distance", "operator": ">", "value": 1000}
+        {"field": "orders.status", "operator": "in", "values": ["completed", "shipped"]},
+        {"field": "orders.amount", "operator": ">", "value": 100}
     ]
 )
 ```

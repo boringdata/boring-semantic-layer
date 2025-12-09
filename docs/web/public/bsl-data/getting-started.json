@@ -1,9 +1,9 @@
 {
-  "markdown": "# Getting Started with BSL\n\nBSL (Boring Semantic Layer) is a lightweight semantic layer built on top of Ibis. It allows you to define your data models once and query them anywhere.\n\n## Installation\n\n```bash\npip install boring-semantic-layer\n```\n\n## Quick Start\n\nLet's create your first Semantic Table using synthetic data in Ibis.\n\n```setup_flights\nimport ibis\nfrom boring_semantic_layer import to_semantic_table\n\n# Create sample flight data\nflights_tbl = ibis.memtable({\n    \"origin\": [\"NYC\", \"LAX\", \"NYC\", \"SFO\", \"LAX\", \"NYC\", \"SFO\", \"LAX\"],\n    \"destination\": [\"LAX\", \"NYC\", \"SFO\", \"NYC\", \"SFO\", \"LAX\", \"LAX\", \"SFO\"],\n    \"distance\": [2789, 2789, 2902, 2902, 347, 2789, 347, 347],\n    \"duration\": [330, 330, 360, 360, 65, 330, 65, 65],\n})\n```\n\nYou can then convert these tables in Semantic Tables that contains dimensios and measures definitions:\n\n```define_semantic_table\n# Define semantic table with dimensions and measures\nflights_st = (\n    to_semantic_table(flights_tbl, name=\"flights\")\n    .with_dimensions(\n        origin=lambda t: t.origin,\n        destination=lambda t: t.destination,\n    )\n    .with_measures(\n        flight_count=lambda t: t.count(),\n        total_distance=lambda t: t.distance.sum(),\n        avg_duration=lambda t: t.duration.mean(),\n    )\n)\n```\n\n## Query Your Data\n\nNow let's query the semantic table by grouping flights by origin:\n\n```query_by_origin\n# Group flights by origin airport\nresult = flights_st.group_by(\"origin\").aggregate(\n    \"flight_count\",\n    \"total_distance\",\n    \"avg_duration\"\n)\n```\n\n<bslquery code-block=\"query_by_origin\"></bslquery>\n\nYou can also group by destination:\n\n```query_by_destination\n# Group flights by destination airport\nresult = flights_st.group_by(\"destination\").aggregate(\n    \"flight_count\",\n    \"total_distance\"\n)\n```\n\n<bslquery code-block=\"query_by_destination\"></bslquery>\n\n## Next Steps\n\n- Learn how to [Build Semantic Tables](/examples/semantic-table) with dimensions, measures, and joins\n- Explore [Query Methods](/examples/query-methods) for retrieving data\n- Discover how to [Compose Models](/examples/compose) together\n",
+  "markdown": "# Getting Started with BSL\n\nBSL (Boring Semantic Layer) is a lightweight semantic layer built on top of Ibis. It allows you to define your data models once and query them anywhere.\n\n## Installation\n\n```bash\npip install boring-semantic-layer\n```\n\n## Quick Start\n\nLet's create your first Semantic Table using synthetic data in Ibis.\n\n```setup_flights\nimport ibis\nfrom boring_semantic_layer import to_semantic_table\n\n# Create sample flight data\nflights_tbl = ibis.memtable({\n    \"origin\": [\"NYC\", \"LAX\", \"NYC\", \"SFO\", \"LAX\", \"NYC\", \"SFO\", \"LAX\"],\n    \"destination\": [\"LAX\", \"NYC\", \"SFO\", \"NYC\", \"SFO\", \"LAX\", \"LAX\", \"SFO\"],\n    \"distance\": [2789, 2789, 2902, 2902, 347, 2789, 347, 347],\n    \"duration\": [330, 330, 360, 360, 65, 330, 65, 65],\n})\n```\n\nYou can then convert these tables in Semantic Tables that contains dimensios and measures definitions:\n\n```define_semantic_table\n# Define semantic table with dimensions and measures\nflights_st = (\n    to_semantic_table(flights_tbl, name=\"flights\")\n    .with_dimensions(\n        origin=lambda t: t.origin,\n        destination=lambda t: t.destination,\n    )\n    .with_measures(\n        flight_count=lambda t: t.count(),\n        total_distance=lambda t: t.distance.sum(),\n        avg_duration=lambda t: t.duration.mean(),\n    )\n)\n```\n\n## Query Your Data\n\nNow let's query the semantic table by grouping flights by origin:\n\n```query_by_origin\n# Group flights by origin airport\nresult = flights_st.group_by(\"origin\").aggregate(\n    \"flight_count\",\n    \"total_distance\",\n    \"avg_duration\"\n)\n```\n\n<bslquery code-block=\"query_by_origin\"></bslquery>\n\nYou can also group by destination:\n\n```query_by_destination\n# Group flights by destination airport\nresult = flights_st.group_by(\"destination\").aggregate(\n    \"flight_count\",\n    \"total_distance\"\n)\n```\n\n<bslquery code-block=\"query_by_destination\"></bslquery>\n\n## Chat with Your Data\n\nBSL includes a built-in chat interface to query your semantic models using natural language.\n\n### 1. Install the agent extra\n\n```bash\npip install 'boring-semantic-layer[agent]'\n\n# Install your LLM provider\npip install langchain-anthropic  # or langchain-openai, langchain-google-genai\n```\n\n### 2. Set your API key\n\nCreate a `.env` file:\n\n```bash\nANTHROPIC_API_KEY=sk-ant-...  # or OPENAI_API_KEY, GOOGLE_API_KEY\n```\n\n### 3. Start chatting\n\nTry the built-in flights demo model (loads remote data automatically):\n\n```bash\n# Interactive mode\nbsl chat --sm https://raw.githubusercontent.com/boringdata/boring-semantic-layer/main/examples/flights.yml\n\n# Or pass a question directly\nbsl chat --sm https://raw.githubusercontent.com/boringdata/boring-semantic-layer/main/examples/flights.yml \\\n  \"What are the top 5 origins by flight count?\"\n\n```\n\n### Create your own YAML model\n\nHere's a minimal example showing how to define your own semantic model:\n\n```yaml\n# my_model.yaml - Minimal BSL semantic model\n\n# Database profile - loads remote parquet into in-memory DuckDB\nprofile:\n  type: duckdb\n  database: \":memory:\"\n  tables:\n    orders_tbl: \"path/to/orders.parquet\"\n\n# Semantic model definition\norders:\n  table: orders_tbl\n  description: \"Order data with categories and metrics\"\n\n  dimensions:\n    category:\n      expr: _.category\n      description: \"Product category\"\n    region:\n      expr: _.region\n      description: \"Sales region\"\n    status: _.status\n\n  measures:\n    order_count:\n      expr: _.count()\n      description: \"Total number of orders\"\n    total_sales:\n      expr: _.amount.sum()\n      description: \"Total sales amount\"\n    avg_order_value:\n      expr: _.amount.mean()\n      description: \"Average order value\"\n```\n\nThen run:\n\n```bash\nbsl chat --sm my_model.yaml\n```\n\nSee [Query Agent Chat](/examples/query-agent-chat) for full documentation on YAML models with joins and advanced features.\n\n## Next Steps\n\n- [Chat with your data](/examples/query-agent-chat) using natural language\n- Define models in [YAML configuration](/examples/yaml-config)\n- Configure database connections with [Profiles](/examples/profile)\n- Learn how to [Build Semantic Tables](/examples/semantic-table) with dimensions, measures, and joins\n- Explore [Query Methods](/examples/query-methods) for retrieving data\n- Discover how to [Compose Models](/examples/compose) together\n",
   "queries": {
     "query_by_origin": {
       "code": "# Group flights by origin airport\nresult = flights_st.group_by(\"origin\").aggregate(\n    \"flight_count\",\n    \"total_distance\",\n    \"avg_duration\"\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_czopjcyz2zgbhbon46go7sz27y\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_odohhsmxh5dtjklxz2uplvpd3e\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36morigin [dim]\u001b[0m\n  \u001b[36mdestination [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[35mavg_duration [measure]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n    \u001b[36morigin\u001b[0m\n\n\u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  groups:\n    \u001b[36morigin\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m\n    \u001b[35mtotal_distance\u001b[0m\n    \u001b[35mavg_duration\u001b[0m",
       "table": {
         "columns": [
@@ -13,6 +13,12 @@
           "avg_duration"
         ],
         "data": [
+          [
+            "SFO",
+            2,
+            3249,
+            212.5
+          ],
           [
             "LAX",
             3,
@@ -24,12 +30,6 @@
             3,
             8480,
             340.0
-          ],
-          [
-            "SFO",
-            2,
-            3249,
-            212.5
           ]
         ]
       },
@@ -43,7 +43,7 @@
             }
           },
           "data": {
-            "name": "data-0137bc47e458ebaf211d83de5a1f535d"
+            "name": "data-6a5c6500dd6e1fd5a2687fe537305e7e"
           },
           "mark": {
             "type": "bar"
@@ -95,14 +95,14 @@
             }
           ],
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-0137bc47e458ebaf211d83de5a1f535d": [
+            "data-6a5c6500dd6e1fd5a2687fe537305e7e": [
               {
-                "origin": "NYC",
-                "flight_count": 3,
-                "total_distance": 8480,
-                "avg_duration": 340.0
+                "origin": "SFO",
+                "flight_count": 2,
+                "total_distance": 3249,
+                "avg_duration": 212.5
               },
               {
                 "origin": "LAX",
@@ -111,10 +111,10 @@
                 "avg_duration": 153.33333333333334
               },
               {
-                "origin": "SFO",
-                "flight_count": 2,
-                "total_distance": 3249,
-                "avg_duration": 212.5
+                "origin": "NYC",
+                "flight_count": 3,
+                "total_distance": 8480,
+                "avg_duration": 340.0
               }
             ]
           }
@@ -123,7 +123,7 @@
     },
     "query_by_destination": {
       "code": "# Group flights by destination airport\nresult = flights_st.group_by(\"destination\").aggregate(\n    \"flight_count\",\n    \"total_distance\"\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"destination\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_czopjcyz2zgbhbon46go7sz27y\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"destination\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\"\n  FROM (\n    SELECT\n      *\n    FROM \"ibis_pandas_memtable_odohhsmxh5dtjklxz2uplvpd3e\" AS \"t0\"\n  ) AS \"t1\"\n  GROUP BY\n    1\n) AS \"t2\"",
       "plan": "r0 := \u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mflights\u001b[0m\n  \u001b[36morigin [dim]\u001b[0m\n  \u001b[36mdestination [dim]\u001b[0m\n  \u001b[35mflight_count [measure]\u001b[0m\n  \u001b[35mtotal_distance [measure]\u001b[0m\n  \u001b[35mavg_duration [measure]\u001b[0m\n\nr1 := \u001b[1;32mGroupBy\u001b[0m[\u001b[93mr0\u001b[0m]\n  keys:\n    \u001b[36mdestination\u001b[0m\n\n\u001b[1;32mAggregate\u001b[0m[\u001b[93mr1\u001b[0m]\n  groups:\n    \u001b[36mdestination\u001b[0m\n  metrics:\n    \u001b[35mflight_count\u001b[0m\n    \u001b[35mtotal_distance\u001b[0m",
       "table": {
         "columns": [
@@ -133,6 +133,11 @@
         ],
         "data": [
           [
+            "LAX",
+            3,
+            5925
+          ],
+          [
             "SFO",
             3,
             3596
@@ -141,11 +146,6 @@
             "NYC",
             2,
             5691
-          ],
-          [
-            "LAX",
-            3,
-            5925
           ]
         ]
       },
@@ -159,7 +159,7 @@
             }
           },
           "data": {
-            "name": "data-5b11c0130dbedb35bf74107f4b9dbe42"
+            "name": "data-cbc2017950637ecb595e89a655ea8797"
           },
           "mark": {
             "type": "bar"
@@ -210,13 +210,13 @@
             }
           ],
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-5b11c0130dbedb35bf74107f4b9dbe42": [
+            "data-cbc2017950637ecb595e89a655ea8797": [
               {
-                "destination": "SFO",
-                "flight_count": 3,
-                "total_distance": 3596
+                "destination": "NYC",
+                "flight_count": 2,
+                "total_distance": 5691
               },
               {
                 "destination": "LAX",
@@ -224,9 +224,9 @@
                 "total_distance": 5925
               },
               {
-                "destination": "NYC",
-                "flight_count": 2,
-                "total_distance": 5691
+                "destination": "SFO",
+                "flight_count": 3,
+                "total_distance": 3596
               }
             ]
           }

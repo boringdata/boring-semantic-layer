@@ -8,6 +8,15 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# Shared backend configuration - single source of truth
+BACKEND_NAMES = {
+    "langchain": "LangChain",
+    "langgraph": "LangGraph ReAct",
+    "deepagent": "DeepAgents (Planning)",
+}
+BACKEND_CHOICES = list(BACKEND_NAMES.keys())
+DEFAULT_BACKEND = "deepagent"
+
 # Tool configurations - how each tool stores skills
 TOOL_CONFIGS = {
     "claude-code": {
@@ -228,6 +237,8 @@ def cmd_chat(args):
 
     # Note: profile.py handles BSL_PROFILE_FILE env var and auto-selection
 
+    backend = args.backend if hasattr(args, "backend") else DEFAULT_BACKEND
+
     start_chat(
         model_path=model_path,
         llm_model=llm_model,
@@ -236,24 +247,8 @@ def cmd_chat(args):
         profile=profile,
         profile_file=profile_file,
         env_path=env_path,  # Pass through for start_chat's internal use
+        backend=backend,
     )
-
-
-# TODO: Add tests for cmd_render before re-enabling
-# def cmd_render(args):
-#     """Render markdown files with BSL queries."""
-#     from boring_semantic_layer.chart.md_renderer import cmd_render as render_func
-#
-#     success = render_func(
-#         md_path=args.input,
-#         output=args.output,
-#         format=args.format,
-#         images_dir=args.images_dir,
-#         watch=args.watch,
-#     )
-#
-#     if not success:
-#         sys.exit(1)
 
 
 def main():
@@ -296,6 +291,12 @@ def main():
         help="LLM model to use (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-1.5-pro)",
     )
     chat_parser.add_argument(
+        "--backend",
+        choices=BACKEND_CHOICES,
+        default=DEFAULT_BACKEND,
+        help="Agent backend: deepagent (Planning, default), langgraph (ReAct), langchain (simple loop)",
+    )
+    chat_parser.add_argument(
         "--profile",
         "-p",
         help="Profile name to use for database connection (e.g., 'my_flights_db')",
@@ -310,43 +311,6 @@ def main():
         help="Optional initial query to run",
     )
     chat_parser.set_defaults(func=cmd_chat)
-
-    # TODO: Add tests for render command before re-enabling
-    # # Render command
-    # render_parser = subparsers.add_parser(
-    #     "render",
-    #     help="Render markdown files with BSL queries to HTML or markdown with images",
-    # )
-    # render_parser.add_argument(
-    #     "input",
-    #     type=Path,
-    #     help="Path to input markdown file",
-    # )
-    # render_parser.add_argument(
-    #     "-o",
-    #     "--output",
-    #     type=Path,
-    #     help="Path to output file (default: input file with .html or _rendered.md suffix)",
-    # )
-    # render_parser.add_argument(
-    #     "-f",
-    #     "--format",
-    #     choices=["html", "markdown"],
-    #     default="html",
-    #     help="Output format (default: html)",
-    # )
-    # render_parser.add_argument(
-    #     "--images-dir",
-    #     type=Path,
-    #     help="Directory for exported images (markdown format only, default: <output>_images)",
-    # )
-    # render_parser.add_argument(
-    #     "-w",
-    #     "--watch",
-    #     action="store_true",
-    #     help="Watch for file changes and auto-regenerate output",
-    # )
-    # render_parser.set_defaults(func=cmd_render)
 
     # Skill command with subcommands
     skill_parser = subparsers.add_parser(

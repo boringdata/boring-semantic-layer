@@ -3,7 +3,7 @@
   "queries": {
     "setup_airports": {
       "code": "import ibis\nfrom boring_semantic_layer import to_semantic_table\n\n# Create synthetic airports data\nairports_data = ibis.memtable({\n    \"code\": [\"JFK\", \"LAX\", \"ORD\", \"ATL\", \"DFW\", \"DEN\", \"SFO\", \"LAS\", \"SEA\", \"PHX\",\n             \"IAH\", \"MCO\", \"EWR\", \"BOS\", \"MIA\", \"SAN\", \"LGA\", \"PHL\", \"DTW\", \"MSP\"],\n    \"city\": [\"NEW YORK\", \"LOS ANGELES\", \"CHICAGO\", \"ATLANTA\", \"DALLAS\", \"DENVER\",\n             \"SAN FRANCISCO\", \"LAS VEGAS\", \"SEATTLE\", \"PHOENIX\", \"HOUSTON\", \"ORLANDO\",\n             \"NEWARK\", \"BOSTON\", \"MIAMI\", \"SAN DIEGO\", \"NEW YORK\", \"PHILADELPHIA\",\n             \"DETROIT\", \"MINNEAPOLIS\"],\n    \"state\": [\"NY\", \"CA\", \"IL\", \"GA\", \"TX\", \"CO\", \"CA\", \"NV\", \"WA\", \"AZ\",\n              \"TX\", \"FL\", \"NJ\", \"MA\", \"FL\", \"CA\", \"NY\", \"PA\", \"MI\", \"MN\"],\n    \"fac_type\": [\"AIRPORT\", \"AIRPORT\", \"AIRPORT\", \"AIRPORT\", \"AIRPORT\", \"AIRPORT\",\n                 \"AIRPORT\", \"AIRPORT\", \"AIRPORT\", \"AIRPORT\", \"AIRPORT\", \"AIRPORT\",\n                 \"AIRPORT\", \"AIRPORT\", \"AIRPORT\", \"AIRPORT\", \"AIRPORT\", \"AIRPORT\",\n                 \"AIRPORT\", \"AIRPORT\"],\n    \"elevation\": [13, 128, 672, 1026, 607, 5433, 13, 2181, 433, 1135,\n                  97, 96, 18, 19, 8, 17, 21, 36, 645, 841]\n})\n\n# Define semantic table\nairports = (\n    to_semantic_table(airports_data, name=\"airports\")\n    .with_dimensions(\n        code=lambda t: t.code,\n        city=lambda t: t.city,\n        state=lambda t: t.state,\n        fac_type=lambda t: t.fac_type,\n        elevation=lambda t: t.elevation,\n    )\n    .with_measures(\n        airport_count=lambda t: t.count(),\n        avg_elevation=lambda t: t.elevation.mean(),\n    )\n)",
-      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\"",
+      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\"",
       "plan": "\u001b[1;34mSemanticTable\u001b[0m: \u001b[1;34mairports\u001b[0m\n  \u001b[36mcode [dim]\u001b[0m\n  \u001b[36mcity [dim]\u001b[0m\n  \u001b[36mstate [dim]\u001b[0m\n  \u001b[36mfac_type [dim]\u001b[0m\n  \u001b[36melevation [dim]\u001b[0m\n  \u001b[35mairport_count [measure]\u001b[0m\n  \u001b[35mavg_elevation [measure]\u001b[0m",
       "table": {
         "columns": [
@@ -159,8 +159,8 @@
     },
     "query_index_all": {
       "code": "# Index all dimensions (None means all)\nresult = airports.index(None).limit(10)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    *\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          'code' AS \"fieldName\",\n          'code' AS \"fieldPath\",\n          'string' AS \"fieldType\",\n          \"t3\".\"value\" AS \"fieldValue\",\n          \"t3\".\"weight\"\n        FROM (\n          SELECT\n            \"t0\".\"code\" AS \"value\",\n            COUNT(*) AS \"weight\"\n          FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n          GROUP BY\n            1\n        ) AS \"t3\"\n      ) AS \"t8\"\n      UNION ALL\n      SELECT\n        *\n      FROM (\n        SELECT\n          'city' AS \"fieldName\",\n          'city' AS \"fieldPath\",\n          'string' AS \"fieldType\",\n          \"t4\".\"value\" AS \"fieldValue\",\n          \"t4\".\"weight\"\n        FROM (\n          SELECT\n            \"t0\".\"city\" AS \"value\",\n            COUNT(*) AS \"weight\"\n          FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n          GROUP BY\n            1\n        ) AS \"t4\"\n      ) AS \"t9\"\n    ) AS \"t10\"\n    UNION ALL\n    SELECT\n      *\n    FROM (\n      SELECT\n        'state' AS \"fieldName\",\n        'state' AS \"fieldPath\",\n        'string' AS \"fieldType\",\n        \"t2\".\"value\" AS \"fieldValue\",\n        \"t2\".\"weight\"\n      FROM (\n        SELECT\n          \"t0\".\"state\" AS \"value\",\n          COUNT(*) AS \"weight\"\n        FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n        GROUP BY\n          1\n      ) AS \"t2\"\n    ) AS \"t7\"\n  ) AS \"t12\"\n  UNION ALL\n  SELECT\n    *\n  FROM (\n    SELECT\n      'fac_type' AS \"fieldName\",\n      'fac_type' AS \"fieldPath\",\n      'string' AS \"fieldType\",\n      \"t1\".\"value\" AS \"fieldValue\",\n      \"t1\".\"weight\"\n    FROM (\n      SELECT\n        \"t0\".\"fac_type\" AS \"value\",\n        COUNT(*) AS \"weight\"\n      FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n      GROUP BY\n        1\n    ) AS \"t1\"\n  ) AS \"t6\"\n) AS \"t13\"\nUNION ALL\nSELECT\n  *\nFROM (\n  SELECT\n    'elevation' AS \"fieldName\",\n    'elevation' AS \"fieldPath\",\n    'number' AS \"fieldType\",\n    CAST(\"t11\".\"min_val\" AS TEXT) || ' to ' || CAST(\"t11\".\"max_val\" AS TEXT) AS \"fieldValue\",\n    \"t11\".\"weight\"\n  FROM (\n    SELECT\n      MIN(\"t5\".\"value\") AS \"min_val\",\n      MAX(\"t5\".\"value\") AS \"max_val\",\n      COUNT(*) AS \"weight\"\n    FROM (\n      SELECT\n        \"t0\".\"elevation\" AS \"value\"\n      FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n      WHERE\n        \"t0\".\"elevation\" IS NOT NULL\n    ) AS \"t5\"\n  ) AS \"t11\"\n) AS \"t14\"\nLIMIT 10",
-      "plan": "<boring_semantic_layer.ops.SemanticLimitOp object at 0x14f6978f0>",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    *\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          'code' AS \"fieldName\",\n          'code' AS \"fieldPath\",\n          'string' AS \"fieldType\",\n          \"t3\".\"value\" AS \"fieldValue\",\n          \"t3\".\"weight\"\n        FROM (\n          SELECT\n            \"t0\".\"code\" AS \"value\",\n            COUNT(*) AS \"weight\"\n          FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n          GROUP BY\n            1\n        ) AS \"t3\"\n      ) AS \"t8\"\n      UNION ALL\n      SELECT\n        *\n      FROM (\n        SELECT\n          'city' AS \"fieldName\",\n          'city' AS \"fieldPath\",\n          'string' AS \"fieldType\",\n          \"t4\".\"value\" AS \"fieldValue\",\n          \"t4\".\"weight\"\n        FROM (\n          SELECT\n            \"t0\".\"city\" AS \"value\",\n            COUNT(*) AS \"weight\"\n          FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n          GROUP BY\n            1\n        ) AS \"t4\"\n      ) AS \"t9\"\n    ) AS \"t10\"\n    UNION ALL\n    SELECT\n      *\n    FROM (\n      SELECT\n        'state' AS \"fieldName\",\n        'state' AS \"fieldPath\",\n        'string' AS \"fieldType\",\n        \"t2\".\"value\" AS \"fieldValue\",\n        \"t2\".\"weight\"\n      FROM (\n        SELECT\n          \"t0\".\"state\" AS \"value\",\n          COUNT(*) AS \"weight\"\n        FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n        GROUP BY\n          1\n      ) AS \"t2\"\n    ) AS \"t7\"\n  ) AS \"t12\"\n  UNION ALL\n  SELECT\n    *\n  FROM (\n    SELECT\n      'fac_type' AS \"fieldName\",\n      'fac_type' AS \"fieldPath\",\n      'string' AS \"fieldType\",\n      \"t1\".\"value\" AS \"fieldValue\",\n      \"t1\".\"weight\"\n    FROM (\n      SELECT\n        \"t0\".\"fac_type\" AS \"value\",\n        COUNT(*) AS \"weight\"\n      FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n      GROUP BY\n        1\n    ) AS \"t1\"\n  ) AS \"t6\"\n) AS \"t13\"\nUNION ALL\nSELECT\n  *\nFROM (\n  SELECT\n    'elevation' AS \"fieldName\",\n    'elevation' AS \"fieldPath\",\n    'number' AS \"fieldType\",\n    CAST(\"t11\".\"min_val\" AS TEXT) || ' to ' || CAST(\"t11\".\"max_val\" AS TEXT) AS \"fieldValue\",\n    \"t11\".\"weight\"\n  FROM (\n    SELECT\n      MIN(\"t5\".\"value\") AS \"min_val\",\n      MAX(\"t5\".\"value\") AS \"max_val\",\n      COUNT(*) AS \"weight\"\n    FROM (\n      SELECT\n        \"t0\".\"elevation\" AS \"value\"\n      FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n      WHERE\n        \"t0\".\"elevation\" IS NOT NULL\n    ) AS \"t5\"\n  ) AS \"t11\"\n) AS \"t14\"\nLIMIT 10",
+      "plan": "<boring_semantic_layer.ops.SemanticLimitOp object at 0x1373496d0>",
       "table": {
         "columns": [
           "fieldName",
@@ -181,14 +181,7 @@
             "code",
             "code",
             "string",
-            "PHX",
-            1
-          ],
-          [
-            "code",
-            "code",
-            "string",
-            "LAS",
+            "ATL",
             1
           ],
           [
@@ -209,6 +202,27 @@
             "code",
             "code",
             "string",
+            "JFK",
+            1
+          ],
+          [
+            "code",
+            "code",
+            "string",
+            "PHL",
+            1
+          ],
+          [
+            "code",
+            "code",
+            "string",
+            "PHX",
+            1
+          ],
+          [
+            "code",
+            "code",
+            "string",
             "MCO",
             1
           ],
@@ -223,21 +237,7 @@
             "code",
             "code",
             "string",
-            "SFO",
-            1
-          ],
-          [
-            "code",
-            "code",
-            "string",
-            "IAH",
-            1
-          ],
-          [
-            "code",
-            "code",
-            "string",
-            "SAN",
+            "LAS",
             1
           ]
         ]
@@ -252,7 +252,7 @@
             }
           },
           "data": {
-            "name": "data-121002bd1367b3f1db9ee373a3bf74ff"
+            "name": "data-55d03c99dc49a4c2028723e367cecc17"
           },
           "mark": {
             "type": "text"
@@ -264,28 +264,14 @@
           },
           "height": 400,
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-121002bd1367b3f1db9ee373a3bf74ff": [
+            "data-55d03c99dc49a4c2028723e367cecc17": [
               {
                 "fieldName": "code",
                 "fieldPath": "code",
                 "fieldType": "string",
-                "fieldValue": "PHX",
-                "weight": 1
-              },
-              {
-                "fieldName": "code",
-                "fieldPath": "code",
-                "fieldType": "string",
-                "fieldValue": "LGA",
-                "weight": 1
-              },
-              {
-                "fieldName": "code",
-                "fieldPath": "code",
-                "fieldType": "string",
-                "fieldValue": "SFO",
+                "fieldValue": "LAS",
                 "weight": 1
               },
               {
@@ -306,35 +292,49 @@
                 "fieldName": "code",
                 "fieldPath": "code",
                 "fieldType": "string",
-                "fieldValue": "DEN",
+                "fieldValue": "PHX",
                 "weight": 1
               },
               {
                 "fieldName": "code",
                 "fieldPath": "code",
                 "fieldType": "string",
-                "fieldValue": "BOS",
+                "fieldValue": "SEA",
                 "weight": 1
               },
               {
                 "fieldName": "code",
                 "fieldPath": "code",
                 "fieldType": "string",
-                "fieldValue": "LAX",
+                "fieldValue": "DTW",
                 "weight": 1
               },
               {
                 "fieldName": "code",
                 "fieldPath": "code",
                 "fieldType": "string",
-                "fieldValue": "ORD",
+                "fieldValue": "DFW",
                 "weight": 1
               },
               {
                 "fieldName": "code",
                 "fieldPath": "code",
                 "fieldType": "string",
-                "fieldValue": "MSP",
+                "fieldValue": "MIA",
+                "weight": 1
+              },
+              {
+                "fieldName": "code",
+                "fieldPath": "code",
+                "fieldType": "string",
+                "fieldValue": "LGA",
+                "weight": 1
+              },
+              {
+                "fieldName": "code",
+                "fieldPath": "code",
+                "fieldType": "string",
+                "fieldValue": "ATL",
                 "weight": 1
               }
             ]
@@ -344,8 +344,8 @@
     },
     "query_index_specific": {
       "code": "# Index only state and city\nresult = (\n    airports.index(lambda t: [t.state, t.city])\n    .order_by(lambda t: t.weight.desc())\n    .limit(10)\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    *\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            'code' AS \"fieldName\",\n            'code' AS \"fieldPath\",\n            'string' AS \"fieldType\",\n            \"t3\".\"value\" AS \"fieldValue\",\n            \"t3\".\"weight\"\n          FROM (\n            SELECT\n              \"t0\".\"code\" AS \"value\",\n              COUNT(*) AS \"weight\"\n            FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n            GROUP BY\n              1\n          ) AS \"t3\"\n        ) AS \"t8\"\n        UNION ALL\n        SELECT\n          *\n        FROM (\n          SELECT\n            'city' AS \"fieldName\",\n            'city' AS \"fieldPath\",\n            'string' AS \"fieldType\",\n            \"t4\".\"value\" AS \"fieldValue\",\n            \"t4\".\"weight\"\n          FROM (\n            SELECT\n              \"t0\".\"city\" AS \"value\",\n              COUNT(*) AS \"weight\"\n            FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n            GROUP BY\n              1\n          ) AS \"t4\"\n        ) AS \"t9\"\n      ) AS \"t10\"\n      UNION ALL\n      SELECT\n        *\n      FROM (\n        SELECT\n          'state' AS \"fieldName\",\n          'state' AS \"fieldPath\",\n          'string' AS \"fieldType\",\n          \"t2\".\"value\" AS \"fieldValue\",\n          \"t2\".\"weight\"\n        FROM (\n          SELECT\n            \"t0\".\"state\" AS \"value\",\n            COUNT(*) AS \"weight\"\n          FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n          GROUP BY\n            1\n        ) AS \"t2\"\n      ) AS \"t7\"\n    ) AS \"t12\"\n    UNION ALL\n    SELECT\n      *\n    FROM (\n      SELECT\n        'fac_type' AS \"fieldName\",\n        'fac_type' AS \"fieldPath\",\n        'string' AS \"fieldType\",\n        \"t1\".\"value\" AS \"fieldValue\",\n        \"t1\".\"weight\"\n      FROM (\n        SELECT\n          \"t0\".\"fac_type\" AS \"value\",\n          COUNT(*) AS \"weight\"\n        FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n        GROUP BY\n          1\n      ) AS \"t1\"\n    ) AS \"t6\"\n  ) AS \"t13\"\n  UNION ALL\n  SELECT\n    *\n  FROM (\n    SELECT\n      'elevation' AS \"fieldName\",\n      'elevation' AS \"fieldPath\",\n      'number' AS \"fieldType\",\n      CAST(\"t11\".\"min_val\" AS TEXT) || ' to ' || CAST(\"t11\".\"max_val\" AS TEXT) AS \"fieldValue\",\n      \"t11\".\"weight\"\n    FROM (\n      SELECT\n        MIN(\"t5\".\"value\") AS \"min_val\",\n        MAX(\"t5\".\"value\") AS \"max_val\",\n        COUNT(*) AS \"weight\"\n      FROM (\n        SELECT\n          \"t0\".\"elevation\" AS \"value\"\n        FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n        WHERE\n          \"t0\".\"elevation\" IS NOT NULL\n      ) AS \"t5\"\n    ) AS \"t11\"\n  ) AS \"t14\"\n) AS \"t15\"\nORDER BY\n  \"t15\".\"weight\" DESC\nLIMIT 10",
-      "plan": "<boring_semantic_layer.ops.SemanticLimitOp object at 0x14f683d10>",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    *\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            'code' AS \"fieldName\",\n            'code' AS \"fieldPath\",\n            'string' AS \"fieldType\",\n            \"t3\".\"value\" AS \"fieldValue\",\n            \"t3\".\"weight\"\n          FROM (\n            SELECT\n              \"t0\".\"code\" AS \"value\",\n              COUNT(*) AS \"weight\"\n            FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n            GROUP BY\n              1\n          ) AS \"t3\"\n        ) AS \"t8\"\n        UNION ALL\n        SELECT\n          *\n        FROM (\n          SELECT\n            'city' AS \"fieldName\",\n            'city' AS \"fieldPath\",\n            'string' AS \"fieldType\",\n            \"t4\".\"value\" AS \"fieldValue\",\n            \"t4\".\"weight\"\n          FROM (\n            SELECT\n              \"t0\".\"city\" AS \"value\",\n              COUNT(*) AS \"weight\"\n            FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n            GROUP BY\n              1\n          ) AS \"t4\"\n        ) AS \"t9\"\n      ) AS \"t10\"\n      UNION ALL\n      SELECT\n        *\n      FROM (\n        SELECT\n          'state' AS \"fieldName\",\n          'state' AS \"fieldPath\",\n          'string' AS \"fieldType\",\n          \"t2\".\"value\" AS \"fieldValue\",\n          \"t2\".\"weight\"\n        FROM (\n          SELECT\n            \"t0\".\"state\" AS \"value\",\n            COUNT(*) AS \"weight\"\n          FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n          GROUP BY\n            1\n        ) AS \"t2\"\n      ) AS \"t7\"\n    ) AS \"t12\"\n    UNION ALL\n    SELECT\n      *\n    FROM (\n      SELECT\n        'fac_type' AS \"fieldName\",\n        'fac_type' AS \"fieldPath\",\n        'string' AS \"fieldType\",\n        \"t1\".\"value\" AS \"fieldValue\",\n        \"t1\".\"weight\"\n      FROM (\n        SELECT\n          \"t0\".\"fac_type\" AS \"value\",\n          COUNT(*) AS \"weight\"\n        FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n        GROUP BY\n          1\n      ) AS \"t1\"\n    ) AS \"t6\"\n  ) AS \"t13\"\n  UNION ALL\n  SELECT\n    *\n  FROM (\n    SELECT\n      'elevation' AS \"fieldName\",\n      'elevation' AS \"fieldPath\",\n      'number' AS \"fieldType\",\n      CAST(\"t11\".\"min_val\" AS TEXT) || ' to ' || CAST(\"t11\".\"max_val\" AS TEXT) AS \"fieldValue\",\n      \"t11\".\"weight\"\n    FROM (\n      SELECT\n        MIN(\"t5\".\"value\") AS \"min_val\",\n        MAX(\"t5\".\"value\") AS \"max_val\",\n        COUNT(*) AS \"weight\"\n      FROM (\n        SELECT\n          \"t0\".\"elevation\" AS \"value\"\n        FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n        WHERE\n          \"t0\".\"elevation\" IS NOT NULL\n      ) AS \"t5\"\n    ) AS \"t11\"\n  ) AS \"t14\"\n) AS \"t15\"\nORDER BY\n  \"t15\".\"weight\" DESC\nLIMIT 10",
+      "plan": "<boring_semantic_layer.ops.SemanticLimitOp object at 0x137337530>",
       "table": {
         "columns": [
           "fieldName",
@@ -380,14 +380,14 @@
             "state",
             "state",
             "string",
-            "FL",
+            "NY",
             2
           ],
           [
             "state",
             "state",
             "string",
-            "NY",
+            "FL",
             2
           ],
           [
@@ -405,24 +405,24 @@
             2
           ],
           [
-            "state",
-            "state",
+            "city",
+            "city",
             "string",
-            "AZ",
+            "BOSTON",
             1
           ],
           [
-            "state",
-            "state",
+            "city",
+            "city",
             "string",
-            "NV",
+            "SAN DIEGO",
             1
           ],
           [
-            "state",
-            "state",
+            "city",
+            "city",
             "string",
-            "MI",
+            "CHICAGO",
             1
           ]
         ]
@@ -437,7 +437,7 @@
             }
           },
           "data": {
-            "name": "data-f7fc7188aa7efb7c294f1f0fb98b2809"
+            "name": "data-c5296ab9b3a74f7c6ba39b9060b5bedd"
           },
           "mark": {
             "type": "text"
@@ -449,9 +449,9 @@
           },
           "height": 400,
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-f7fc7188aa7efb7c294f1f0fb98b2809": [
+            "data-c5296ab9b3a74f7c6ba39b9060b5bedd": [
               {
                 "fieldName": "fac_type",
                 "fieldPath": "fac_type",
@@ -474,17 +474,17 @@
                 "weight": 3
               },
               {
-                "fieldName": "city",
-                "fieldPath": "city",
-                "fieldType": "string",
-                "fieldValue": "NEW YORK",
-                "weight": 2
-              },
-              {
                 "fieldName": "state",
                 "fieldPath": "state",
                 "fieldType": "string",
                 "fieldValue": "NY",
+                "weight": 2
+              },
+              {
+                "fieldName": "city",
+                "fieldPath": "city",
+                "fieldType": "string",
+                "fieldValue": "NEW YORK",
                 "weight": 2
               },
               {
@@ -502,24 +502,24 @@
                 "weight": 2
               },
               {
-                "fieldName": "city",
-                "fieldPath": "city",
+                "fieldName": "code",
+                "fieldPath": "code",
                 "fieldType": "string",
-                "fieldValue": "DALLAS",
+                "fieldValue": "LAX",
                 "weight": 1
               },
               {
-                "fieldName": "city",
-                "fieldPath": "city",
+                "fieldName": "code",
+                "fieldPath": "code",
                 "fieldType": "string",
-                "fieldValue": "SAN FRANCISCO",
+                "fieldValue": "DEN",
                 "weight": 1
               },
               {
-                "fieldName": "city",
-                "fieldPath": "city",
+                "fieldName": "code",
+                "fieldPath": "code",
                 "fieldType": "string",
-                "fieldValue": "LAS VEGAS",
+                "fieldValue": "BOS",
                 "weight": 1
               }
             ]
@@ -529,8 +529,8 @@
     },
     "query_autocomplete": {
       "code": "# Get city suggestions starting with \"SAN\"\nresult = (\n    airports.index(lambda t: t.city)\n    .filter(lambda t: t.fieldValue.like(\"SAN%\"))\n    .order_by(lambda t: t.weight.desc())\n    .limit(10)\n)",
-      "sql": "SELECT\n  'city' AS \"fieldName\",\n  'city' AS \"fieldPath\",\n  'string' AS \"fieldType\",\n  \"t1\".\"value\" AS \"fieldValue\",\n  \"t1\".\"weight\"\nFROM (\n  SELECT\n    \"t0\".\"city\" AS \"value\",\n    COUNT(*) AS \"weight\"\n  FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n  GROUP BY\n    1\n) AS \"t1\"\nWHERE\n  \"t1\".\"value\" LIKE 'SAN%'\nORDER BY\n  \"t1\".\"weight\" DESC\nLIMIT 10",
-      "plan": "<boring_semantic_layer.ops.SemanticLimitOp object at 0x14f5a9130>",
+      "sql": "SELECT\n  'city' AS \"fieldName\",\n  'city' AS \"fieldPath\",\n  'string' AS \"fieldType\",\n  \"t1\".\"value\" AS \"fieldValue\",\n  \"t1\".\"weight\"\nFROM (\n  SELECT\n    \"t0\".\"city\" AS \"value\",\n    COUNT(*) AS \"weight\"\n  FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n  GROUP BY\n    1\n) AS \"t1\"\nWHERE\n  \"t1\".\"value\" LIKE 'SAN%'\nORDER BY\n  \"t1\".\"weight\" DESC\nLIMIT 10",
+      "plan": "<boring_semantic_layer.ops.SemanticLimitOp object at 0x1373a73b0>",
       "table": {
         "columns": [
           "fieldName",
@@ -578,7 +578,7 @@
           },
           "height": 400,
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
             "data-74617ccf07655ebdcf6519b63e86e8a1": [
               {
@@ -602,8 +602,8 @@
     },
     "query_by_type": {
       "code": "# Get only string field values\nresult = (\n    airports.index(None)\n    .filter(lambda t: t.fieldType == \"string\")\n    .order_by(lambda t: t.weight.desc())\n    .limit(10)\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    *\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            'code' AS \"fieldName\",\n            'code' AS \"fieldPath\",\n            'string' AS \"fieldType\",\n            \"t3\".\"value\" AS \"fieldValue\",\n            \"t3\".\"weight\"\n          FROM (\n            SELECT\n              \"t0\".\"code\" AS \"value\",\n              COUNT(*) AS \"weight\"\n            FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n            GROUP BY\n              1\n          ) AS \"t3\"\n        ) AS \"t8\"\n        UNION ALL\n        SELECT\n          *\n        FROM (\n          SELECT\n            'city' AS \"fieldName\",\n            'city' AS \"fieldPath\",\n            'string' AS \"fieldType\",\n            \"t4\".\"value\" AS \"fieldValue\",\n            \"t4\".\"weight\"\n          FROM (\n            SELECT\n              \"t0\".\"city\" AS \"value\",\n              COUNT(*) AS \"weight\"\n            FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n            GROUP BY\n              1\n          ) AS \"t4\"\n        ) AS \"t9\"\n      ) AS \"t10\"\n      UNION ALL\n      SELECT\n        *\n      FROM (\n        SELECT\n          'state' AS \"fieldName\",\n          'state' AS \"fieldPath\",\n          'string' AS \"fieldType\",\n          \"t2\".\"value\" AS \"fieldValue\",\n          \"t2\".\"weight\"\n        FROM (\n          SELECT\n            \"t0\".\"state\" AS \"value\",\n            COUNT(*) AS \"weight\"\n          FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n          GROUP BY\n            1\n        ) AS \"t2\"\n      ) AS \"t7\"\n    ) AS \"t12\"\n    UNION ALL\n    SELECT\n      *\n    FROM (\n      SELECT\n        'fac_type' AS \"fieldName\",\n        'fac_type' AS \"fieldPath\",\n        'string' AS \"fieldType\",\n        \"t1\".\"value\" AS \"fieldValue\",\n        \"t1\".\"weight\"\n      FROM (\n        SELECT\n          \"t0\".\"fac_type\" AS \"value\",\n          COUNT(*) AS \"weight\"\n        FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n        GROUP BY\n          1\n      ) AS \"t1\"\n    ) AS \"t6\"\n  ) AS \"t13\"\n  UNION ALL\n  SELECT\n    *\n  FROM (\n    SELECT\n      'elevation' AS \"fieldName\",\n      'elevation' AS \"fieldPath\",\n      'number' AS \"fieldType\",\n      CAST(\"t11\".\"min_val\" AS TEXT) || ' to ' || CAST(\"t11\".\"max_val\" AS TEXT) AS \"fieldValue\",\n      \"t11\".\"weight\"\n    FROM (\n      SELECT\n        MIN(\"t5\".\"value\") AS \"min_val\",\n        MAX(\"t5\".\"value\") AS \"max_val\",\n        COUNT(*) AS \"weight\"\n      FROM (\n        SELECT\n          \"t0\".\"elevation\" AS \"value\"\n        FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n        WHERE\n          \"t0\".\"elevation\" IS NOT NULL\n      ) AS \"t5\"\n    ) AS \"t11\"\n  ) AS \"t14\"\n) AS \"t15\"\nWHERE\n  \"t15\".\"fieldType\" = 'string'\nORDER BY\n  \"t15\".\"weight\" DESC\nLIMIT 10",
-      "plan": "<boring_semantic_layer.ops.SemanticLimitOp object at 0x14f5ab350>",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    *\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            'code' AS \"fieldName\",\n            'code' AS \"fieldPath\",\n            'string' AS \"fieldType\",\n            \"t3\".\"value\" AS \"fieldValue\",\n            \"t3\".\"weight\"\n          FROM (\n            SELECT\n              \"t0\".\"code\" AS \"value\",\n              COUNT(*) AS \"weight\"\n            FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n            GROUP BY\n              1\n          ) AS \"t3\"\n        ) AS \"t8\"\n        UNION ALL\n        SELECT\n          *\n        FROM (\n          SELECT\n            'city' AS \"fieldName\",\n            'city' AS \"fieldPath\",\n            'string' AS \"fieldType\",\n            \"t4\".\"value\" AS \"fieldValue\",\n            \"t4\".\"weight\"\n          FROM (\n            SELECT\n              \"t0\".\"city\" AS \"value\",\n              COUNT(*) AS \"weight\"\n            FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n            GROUP BY\n              1\n          ) AS \"t4\"\n        ) AS \"t9\"\n      ) AS \"t10\"\n      UNION ALL\n      SELECT\n        *\n      FROM (\n        SELECT\n          'state' AS \"fieldName\",\n          'state' AS \"fieldPath\",\n          'string' AS \"fieldType\",\n          \"t2\".\"value\" AS \"fieldValue\",\n          \"t2\".\"weight\"\n        FROM (\n          SELECT\n            \"t0\".\"state\" AS \"value\",\n            COUNT(*) AS \"weight\"\n          FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n          GROUP BY\n            1\n        ) AS \"t2\"\n      ) AS \"t7\"\n    ) AS \"t12\"\n    UNION ALL\n    SELECT\n      *\n    FROM (\n      SELECT\n        'fac_type' AS \"fieldName\",\n        'fac_type' AS \"fieldPath\",\n        'string' AS \"fieldType\",\n        \"t1\".\"value\" AS \"fieldValue\",\n        \"t1\".\"weight\"\n      FROM (\n        SELECT\n          \"t0\".\"fac_type\" AS \"value\",\n          COUNT(*) AS \"weight\"\n        FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n        GROUP BY\n          1\n      ) AS \"t1\"\n    ) AS \"t6\"\n  ) AS \"t13\"\n  UNION ALL\n  SELECT\n    *\n  FROM (\n    SELECT\n      'elevation' AS \"fieldName\",\n      'elevation' AS \"fieldPath\",\n      'number' AS \"fieldType\",\n      CAST(\"t11\".\"min_val\" AS TEXT) || ' to ' || CAST(\"t11\".\"max_val\" AS TEXT) AS \"fieldValue\",\n      \"t11\".\"weight\"\n    FROM (\n      SELECT\n        MIN(\"t5\".\"value\") AS \"min_val\",\n        MAX(\"t5\".\"value\") AS \"max_val\",\n        COUNT(*) AS \"weight\"\n      FROM (\n        SELECT\n          \"t0\".\"elevation\" AS \"value\"\n        FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n        WHERE\n          \"t0\".\"elevation\" IS NOT NULL\n      ) AS \"t5\"\n    ) AS \"t11\"\n  ) AS \"t14\"\n) AS \"t15\"\nWHERE\n  \"t15\".\"fieldType\" = 'string'\nORDER BY\n  \"t15\".\"weight\" DESC\nLIMIT 10",
+      "plan": "<boring_semantic_layer.ops.SemanticLimitOp object at 0x137369610>",
       "table": {
         "columns": [
           "fieldName",
@@ -628,10 +628,10 @@
             3
           ],
           [
-            "state",
-            "state",
+            "city",
+            "city",
             "string",
-            "TX",
+            "NEW YORK",
             2
           ],
           [
@@ -645,42 +645,42 @@
             "state",
             "state",
             "string",
+            "TX",
+            2
+          ],
+          [
+            "state",
+            "state",
+            "string",
             "NY",
             2
           ],
           [
-            "city",
-            "city",
+            "code",
+            "code",
             "string",
-            "NEW YORK",
-            2
-          ],
-          [
-            "state",
-            "state",
-            "string",
-            "CO",
+            "LGA",
             1
           ],
           [
-            "state",
-            "state",
+            "code",
+            "code",
             "string",
-            "MA",
+            "ORD",
             1
           ],
           [
-            "state",
-            "state",
+            "code",
+            "code",
             "string",
-            "MI",
+            "SEA",
             1
           ],
           [
-            "state",
-            "state",
+            "code",
+            "code",
             "string",
-            "NV",
+            "DTW",
             1
           ]
         ]
@@ -695,7 +695,7 @@
             }
           },
           "data": {
-            "name": "data-18b3a96b7a35df5253ca9a84a64bb01d"
+            "name": "data-00e4eee86d66540953c2682437cc12c6"
           },
           "mark": {
             "type": "text"
@@ -707,9 +707,9 @@
           },
           "height": 400,
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-18b3a96b7a35df5253ca9a84a64bb01d": [
+            "data-00e4eee86d66540953c2682437cc12c6": [
               {
                 "fieldName": "fac_type",
                 "fieldPath": "fac_type",
@@ -725,6 +725,13 @@
                 "weight": 3
               },
               {
+                "fieldName": "city",
+                "fieldPath": "city",
+                "fieldType": "string",
+                "fieldValue": "NEW YORK",
+                "weight": 2
+              },
+              {
                 "fieldName": "state",
                 "fieldPath": "state",
                 "fieldType": "string",
@@ -735,42 +742,21 @@
                 "fieldName": "state",
                 "fieldPath": "state",
                 "fieldType": "string",
-                "fieldValue": "FL",
+                "fieldValue": "TX",
                 "weight": 2
               },
               {
                 "fieldName": "state",
                 "fieldPath": "state",
                 "fieldType": "string",
-                "fieldValue": "TX",
-                "weight": 2
-              },
-              {
-                "fieldName": "city",
-                "fieldPath": "city",
-                "fieldType": "string",
-                "fieldValue": "NEW YORK",
+                "fieldValue": "FL",
                 "weight": 2
               },
               {
                 "fieldName": "code",
                 "fieldPath": "code",
                 "fieldType": "string",
-                "fieldValue": "ATL",
-                "weight": 1
-              },
-              {
-                "fieldName": "code",
-                "fieldPath": "code",
-                "fieldType": "string",
-                "fieldValue": "JFK",
-                "weight": 1
-              },
-              {
-                "fieldName": "code",
-                "fieldPath": "code",
-                "fieldType": "string",
-                "fieldValue": "LAS",
+                "fieldValue": "PHL",
                 "weight": 1
               },
               {
@@ -778,6 +764,20 @@
                 "fieldPath": "code",
                 "fieldType": "string",
                 "fieldValue": "PHX",
+                "weight": 1
+              },
+              {
+                "fieldName": "code",
+                "fieldPath": "code",
+                "fieldType": "string",
+                "fieldValue": "LGA",
+                "weight": 1
+              },
+              {
+                "fieldName": "code",
+                "fieldPath": "code",
+                "fieldType": "string",
+                "fieldValue": "MCO",
                 "weight": 1
               }
             ]
@@ -787,8 +787,8 @@
     },
     "query_custom_weight": {
       "code": "# Find states with most airports\nresult = (\n    airports.index(lambda t: t.state, by=\"airport_count\")\n    .order_by(lambda t: t.weight.desc())\n    .limit(10)\n)",
-      "sql": "SELECT\n  'state' AS \"fieldName\",\n  'state' AS \"fieldPath\",\n  'string' AS \"fieldType\",\n  \"t1\".\"value\" AS \"fieldValue\",\n  \"t1\".\"weight\"\nFROM (\n  SELECT\n    \"t0\".\"state\" AS \"value\",\n    COUNT(*) AS \"weight\"\n  FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n  GROUP BY\n    1\n) AS \"t1\"\nORDER BY\n  \"t1\".\"weight\" DESC\nLIMIT 10",
-      "plan": "<boring_semantic_layer.ops.SemanticLimitOp object at 0x14f5a80b0>",
+      "sql": "SELECT\n  'state' AS \"fieldName\",\n  'state' AS \"fieldPath\",\n  'string' AS \"fieldType\",\n  \"t1\".\"value\" AS \"fieldValue\",\n  \"t1\".\"weight\"\nFROM (\n  SELECT\n    \"t0\".\"state\" AS \"value\",\n    COUNT(*) AS \"weight\"\n  FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n  GROUP BY\n    1\n) AS \"t1\"\nORDER BY\n  \"t1\".\"weight\" DESC\nLIMIT 10",
+      "plan": "<boring_semantic_layer.ops.SemanticLimitOp object at 0x1373ceff0>",
       "table": {
         "columns": [
           "fieldName",
@@ -809,7 +809,7 @@
             "state",
             "state",
             "string",
-            "FL",
+            "TX",
             2
           ],
           [
@@ -823,28 +823,21 @@
             "state",
             "state",
             "string",
-            "TX",
+            "FL",
             2
           ],
           [
             "state",
             "state",
             "string",
+            "AZ",
+            1
+          ],
+          [
+            "state",
+            "state",
+            "string",
             "CO",
-            1
-          ],
-          [
-            "state",
-            "state",
-            "string",
-            "MA",
-            1
-          ],
-          [
-            "state",
-            "state",
-            "string",
-            "GA",
             1
           ],
           [
@@ -858,14 +851,21 @@
             "state",
             "state",
             "string",
-            "PA",
+            "MI",
             1
           ],
           [
             "state",
             "state",
             "string",
-            "NJ",
+            "GA",
+            1
+          ],
+          [
+            "state",
+            "state",
+            "string",
+            "MA",
             1
           ]
         ]
@@ -880,7 +880,7 @@
             }
           },
           "data": {
-            "name": "data-f19d579fadf1adecd744e3db51e4a448"
+            "name": "data-901bfa774b589c5ed74240962ddfe040"
           },
           "mark": {
             "type": "text"
@@ -892,9 +892,9 @@
           },
           "height": 400,
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-f19d579fadf1adecd744e3db51e4a448": [
+            "data-901bfa774b589c5ed74240962ddfe040": [
               {
                 "fieldName": "state",
                 "fieldPath": "state",
@@ -913,13 +913,6 @@
                 "fieldName": "state",
                 "fieldPath": "state",
                 "fieldType": "string",
-                "fieldValue": "FL",
-                "weight": 2
-              },
-              {
-                "fieldName": "state",
-                "fieldPath": "state",
-                "fieldType": "string",
                 "fieldValue": "TX",
                 "weight": 2
               },
@@ -927,28 +920,14 @@
                 "fieldName": "state",
                 "fieldPath": "state",
                 "fieldType": "string",
-                "fieldValue": "GA",
-                "weight": 1
+                "fieldValue": "FL",
+                "weight": 2
               },
               {
                 "fieldName": "state",
                 "fieldPath": "state",
                 "fieldType": "string",
-                "fieldValue": "MN",
-                "weight": 1
-              },
-              {
-                "fieldName": "state",
-                "fieldPath": "state",
-                "fieldType": "string",
-                "fieldValue": "CO",
-                "weight": 1
-              },
-              {
-                "fieldName": "state",
-                "fieldPath": "state",
-                "fieldType": "string",
-                "fieldValue": "MA",
+                "fieldValue": "NV",
                 "weight": 1
               },
               {
@@ -964,6 +943,27 @@
                 "fieldType": "string",
                 "fieldValue": "PA",
                 "weight": 1
+              },
+              {
+                "fieldName": "state",
+                "fieldPath": "state",
+                "fieldType": "string",
+                "fieldValue": "WA",
+                "weight": 1
+              },
+              {
+                "fieldName": "state",
+                "fieldPath": "state",
+                "fieldType": "string",
+                "fieldValue": "MI",
+                "weight": 1
+              },
+              {
+                "fieldName": "state",
+                "fieldPath": "state",
+                "fieldType": "string",
+                "fieldValue": "AZ",
+                "weight": 1
               }
             ]
           }
@@ -972,8 +972,8 @@
     },
     "query_sampled": {
       "code": "# Sample 100 rows before indexing\nresult = (\n    airports.index(None, sample=100)\n    .filter(lambda t: t.fieldType == \"string\")\n    .order_by(lambda t: t.weight.desc())\n    .limit(10)\n)",
-      "sql": "WITH \"t1\" AS (\n  SELECT\n    *\n  FROM \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t0\"\n  LIMIT 100\n)\nSELECT\n  *\nFROM (\n  SELECT\n    *\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            'code' AS \"fieldName\",\n            'code' AS \"fieldPath\",\n            'string' AS \"fieldType\",\n            \"t5\".\"value\" AS \"fieldValue\",\n            \"t5\".\"weight\"\n          FROM (\n            SELECT\n              \"t2\".\"code\" AS \"value\",\n              COUNT(*) AS \"weight\"\n            FROM \"t1\" AS \"t2\"\n            GROUP BY\n              1\n          ) AS \"t5\"\n        ) AS \"t10\"\n        UNION ALL\n        SELECT\n          *\n        FROM (\n          SELECT\n            'city' AS \"fieldName\",\n            'city' AS \"fieldPath\",\n            'string' AS \"fieldType\",\n            \"t6\".\"value\" AS \"fieldValue\",\n            \"t6\".\"weight\"\n          FROM (\n            SELECT\n              \"t2\".\"city\" AS \"value\",\n              COUNT(*) AS \"weight\"\n            FROM \"t1\" AS \"t2\"\n            GROUP BY\n              1\n          ) AS \"t6\"\n        ) AS \"t11\"\n      ) AS \"t12\"\n      UNION ALL\n      SELECT\n        *\n      FROM (\n        SELECT\n          'state' AS \"fieldName\",\n          'state' AS \"fieldPath\",\n          'string' AS \"fieldType\",\n          \"t4\".\"value\" AS \"fieldValue\",\n          \"t4\".\"weight\"\n        FROM (\n          SELECT\n            \"t2\".\"state\" AS \"value\",\n            COUNT(*) AS \"weight\"\n          FROM \"t1\" AS \"t2\"\n          GROUP BY\n            1\n        ) AS \"t4\"\n      ) AS \"t9\"\n    ) AS \"t14\"\n    UNION ALL\n    SELECT\n      *\n    FROM (\n      SELECT\n        'fac_type' AS \"fieldName\",\n        'fac_type' AS \"fieldPath\",\n        'string' AS \"fieldType\",\n        \"t3\".\"value\" AS \"fieldValue\",\n        \"t3\".\"weight\"\n      FROM (\n        SELECT\n          \"t2\".\"fac_type\" AS \"value\",\n          COUNT(*) AS \"weight\"\n        FROM \"t1\" AS \"t2\"\n        GROUP BY\n          1\n      ) AS \"t3\"\n    ) AS \"t8\"\n  ) AS \"t15\"\n  UNION ALL\n  SELECT\n    *\n  FROM (\n    SELECT\n      'elevation' AS \"fieldName\",\n      'elevation' AS \"fieldPath\",\n      'number' AS \"fieldType\",\n      CAST(\"t13\".\"min_val\" AS TEXT) || ' to ' || CAST(\"t13\".\"max_val\" AS TEXT) AS \"fieldValue\",\n      \"t13\".\"weight\"\n    FROM (\n      SELECT\n        MIN(\"t7\".\"value\") AS \"min_val\",\n        MAX(\"t7\".\"value\") AS \"max_val\",\n        COUNT(*) AS \"weight\"\n      FROM (\n        SELECT\n          \"t2\".\"elevation\" AS \"value\"\n        FROM \"t1\" AS \"t2\"\n        WHERE\n          \"t2\".\"elevation\" IS NOT NULL\n      ) AS \"t7\"\n    ) AS \"t13\"\n  ) AS \"t16\"\n) AS \"t17\"\nWHERE\n  \"t17\".\"fieldType\" = 'string'\nORDER BY\n  \"t17\".\"weight\" DESC\nLIMIT 10",
-      "plan": "<boring_semantic_layer.ops.SemanticLimitOp object at 0x14f695eb0>",
+      "sql": "WITH \"t1\" AS (\n  SELECT\n    *\n  FROM \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t0\"\n  LIMIT 100\n)\nSELECT\n  *\nFROM (\n  SELECT\n    *\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            'code' AS \"fieldName\",\n            'code' AS \"fieldPath\",\n            'string' AS \"fieldType\",\n            \"t5\".\"value\" AS \"fieldValue\",\n            \"t5\".\"weight\"\n          FROM (\n            SELECT\n              \"t2\".\"code\" AS \"value\",\n              COUNT(*) AS \"weight\"\n            FROM \"t1\" AS \"t2\"\n            GROUP BY\n              1\n          ) AS \"t5\"\n        ) AS \"t10\"\n        UNION ALL\n        SELECT\n          *\n        FROM (\n          SELECT\n            'city' AS \"fieldName\",\n            'city' AS \"fieldPath\",\n            'string' AS \"fieldType\",\n            \"t6\".\"value\" AS \"fieldValue\",\n            \"t6\".\"weight\"\n          FROM (\n            SELECT\n              \"t2\".\"city\" AS \"value\",\n              COUNT(*) AS \"weight\"\n            FROM \"t1\" AS \"t2\"\n            GROUP BY\n              1\n          ) AS \"t6\"\n        ) AS \"t11\"\n      ) AS \"t12\"\n      UNION ALL\n      SELECT\n        *\n      FROM (\n        SELECT\n          'state' AS \"fieldName\",\n          'state' AS \"fieldPath\",\n          'string' AS \"fieldType\",\n          \"t4\".\"value\" AS \"fieldValue\",\n          \"t4\".\"weight\"\n        FROM (\n          SELECT\n            \"t2\".\"state\" AS \"value\",\n            COUNT(*) AS \"weight\"\n          FROM \"t1\" AS \"t2\"\n          GROUP BY\n            1\n        ) AS \"t4\"\n      ) AS \"t9\"\n    ) AS \"t14\"\n    UNION ALL\n    SELECT\n      *\n    FROM (\n      SELECT\n        'fac_type' AS \"fieldName\",\n        'fac_type' AS \"fieldPath\",\n        'string' AS \"fieldType\",\n        \"t3\".\"value\" AS \"fieldValue\",\n        \"t3\".\"weight\"\n      FROM (\n        SELECT\n          \"t2\".\"fac_type\" AS \"value\",\n          COUNT(*) AS \"weight\"\n        FROM \"t1\" AS \"t2\"\n        GROUP BY\n          1\n      ) AS \"t3\"\n    ) AS \"t8\"\n  ) AS \"t15\"\n  UNION ALL\n  SELECT\n    *\n  FROM (\n    SELECT\n      'elevation' AS \"fieldName\",\n      'elevation' AS \"fieldPath\",\n      'number' AS \"fieldType\",\n      CAST(\"t13\".\"min_val\" AS TEXT) || ' to ' || CAST(\"t13\".\"max_val\" AS TEXT) AS \"fieldValue\",\n      \"t13\".\"weight\"\n    FROM (\n      SELECT\n        MIN(\"t7\".\"value\") AS \"min_val\",\n        MAX(\"t7\".\"value\") AS \"max_val\",\n        COUNT(*) AS \"weight\"\n      FROM (\n        SELECT\n          \"t2\".\"elevation\" AS \"value\"\n        FROM \"t1\" AS \"t2\"\n        WHERE\n          \"t2\".\"elevation\" IS NOT NULL\n      ) AS \"t7\"\n    ) AS \"t13\"\n  ) AS \"t16\"\n) AS \"t17\"\nWHERE\n  \"t17\".\"fieldType\" = 'string'\nORDER BY\n  \"t17\".\"weight\" DESC\nLIMIT 10",
+      "plan": "<boring_semantic_layer.ops.SemanticLimitOp object at 0x137731730>",
       "table": {
         "columns": [
           "fieldName",
@@ -1026,31 +1026,31 @@
             2
           ],
           [
-            "code",
-            "code",
+            "state",
+            "state",
             "string",
-            "ATL",
+            "AZ",
             1
           ],
           [
-            "code",
-            "code",
+            "state",
+            "state",
             "string",
-            "SEA",
+            "NJ",
             1
           ],
           [
-            "code",
-            "code",
+            "state",
+            "state",
             "string",
-            "SFO",
+            "WA",
             1
           ],
           [
-            "code",
-            "code",
+            "state",
+            "state",
             "string",
-            "IAH",
+            "IL",
             1
           ]
         ]
@@ -1065,7 +1065,7 @@
             }
           },
           "data": {
-            "name": "data-0629f909963f7fa78135c48f89fcaaa5"
+            "name": "data-4383e3b69f5f6e9e55afbde886f01e28"
           },
           "mark": {
             "type": "text"
@@ -1077,9 +1077,9 @@
           },
           "height": 400,
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-0629f909963f7fa78135c48f89fcaaa5": [
+            "data-4383e3b69f5f6e9e55afbde886f01e28": [
               {
                 "fieldName": "fac_type",
                 "fieldPath": "fac_type",
@@ -1093,6 +1093,13 @@
                 "fieldType": "string",
                 "fieldValue": "CA",
                 "weight": 3
+              },
+              {
+                "fieldName": "state",
+                "fieldPath": "state",
+                "fieldType": "string",
+                "fieldValue": "NY",
+                "weight": 2
               },
               {
                 "fieldName": "city",
@@ -1116,38 +1123,31 @@
                 "weight": 2
               },
               {
+                "fieldName": "code",
+                "fieldPath": "code",
+                "fieldType": "string",
+                "fieldValue": "MSP",
+                "weight": 1
+              },
+              {
                 "fieldName": "state",
                 "fieldPath": "state",
                 "fieldType": "string",
-                "fieldValue": "NY",
-                "weight": 2
-              },
-              {
-                "fieldName": "city",
-                "fieldPath": "city",
-                "fieldType": "string",
-                "fieldValue": "DALLAS",
+                "fieldValue": "GA",
                 "weight": 1
               },
               {
-                "fieldName": "city",
-                "fieldPath": "city",
+                "fieldName": "state",
+                "fieldPath": "state",
                 "fieldType": "string",
-                "fieldValue": "SAN DIEGO",
+                "fieldValue": "CO",
                 "weight": 1
               },
               {
-                "fieldName": "city",
-                "fieldPath": "city",
+                "fieldName": "state",
+                "fieldPath": "state",
                 "fieldType": "string",
-                "fieldValue": "MIAMI",
-                "weight": 1
-              },
-              {
-                "fieldName": "city",
-                "fieldPath": "city",
-                "fieldType": "string",
-                "fieldValue": "HOUSTON",
+                "fieldValue": "MA",
                 "weight": 1
               }
             ]
@@ -1157,8 +1157,8 @@
     },
     "query_index_joins": {
       "code": "# Create synthetic flights data\nflights_data = ibis.memtable({\n    \"flight_id\": list(range(1, 31)),\n    \"carrier\": [\"AA\", \"UA\", \"DL\", \"WN\", \"B6\", \"AA\", \"UA\", \"DL\", \"WN\", \"B6\"] * 3,\n    \"origin\": [\"JFK\", \"LAX\", \"ORD\", \"ATL\", \"DFW\", \"SFO\", \"SEA\", \"DEN\", \"PHX\", \"BOS\"] * 3,\n})\n\nflights = (\n    to_semantic_table(flights_data, name=\"flights\")\n    .with_dimensions(\n        carrier=lambda t: t.carrier,\n        origin=lambda t: t.origin,\n    )\n    .with_measures(\n        flight_count=lambda t: t.count(),\n    )\n)\n\n# Join flights with airports\nflights_with_origin = flights.join_one(airports, lambda f, a: f.origin == a.code)\n\n# Index across the join\nresult = (\n    flights_with_origin.index([\"flights.carrier\", \"airports.state\"])\n    .order_by(lambda t: t.weight.desc())\n    .limit(10)\n)",
-      "sql": "WITH \"t5\" AS (\n  SELECT\n    \"t2\".\"flight_id\",\n    \"t2\".\"carrier\",\n    \"t2\".\"origin\",\n    \"t3\".\"code\",\n    \"t3\".\"city\",\n    \"t3\".\"state\",\n    \"t3\".\"fac_type\",\n    \"t3\".\"elevation\"\n  FROM \"ibis_pandas_memtable_dl2q4g4pgnd3hnndbidzl7xjwm\" AS \"t2\"\n  INNER JOIN \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t3\"\n    ON \"t2\".\"origin\" = \"t3\".\"code\"\n), \"t9\" AS (\n  SELECT\n    \"t7\".\"fac_type\" AS \"value\",\n    COUNT(*) AS \"weight\"\n  FROM \"t5\" AS \"t7\"\n  GROUP BY\n    1\n), \"t10\" AS (\n  SELECT\n    \"t7\".\"state\" AS \"value\",\n    COUNT(*) AS \"weight\"\n  FROM \"t5\" AS \"t7\"\n  GROUP BY\n    1\n), \"t11\" AS (\n  SELECT\n    \"t7\".\"city\" AS \"value\",\n    COUNT(*) AS \"weight\"\n  FROM \"t5\" AS \"t7\"\n  GROUP BY\n    1\n), \"t12\" AS (\n  SELECT\n    \"t7\".\"code\" AS \"value\",\n    COUNT(*) AS \"weight\"\n  FROM \"t5\" AS \"t7\"\n  GROUP BY\n    1\n), \"t13\" AS (\n  SELECT\n    \"t7\".\"origin\" AS \"value\",\n    COUNT(*) AS \"weight\"\n  FROM \"t5\" AS \"t7\"\n  GROUP BY\n    1\n), \"t14\" AS (\n  SELECT\n    \"t7\".\"carrier\" AS \"value\",\n    COUNT(*) AS \"weight\"\n  FROM \"t5\" AS \"t7\"\n  GROUP BY\n    1\n), \"t22\" AS (\n  SELECT\n    MIN(\"t8\".\"value\") AS \"min_val\",\n    MAX(\"t8\".\"value\") AS \"max_val\",\n    COUNT(*) AS \"weight\"\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        \"t3\".\"elevation\" AS \"value\"\n      FROM \"ibis_pandas_memtable_dl2q4g4pgnd3hnndbidzl7xjwm\" AS \"t2\"\n      INNER JOIN \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t3\"\n        ON \"t2\".\"origin\" = \"t3\".\"code\"\n    ) AS \"t4\"\n    WHERE\n      \"t4\".\"value\" IS NOT NULL\n  ) AS \"t8\"\n)\nSELECT\n  *\nFROM (\n  SELECT\n    *\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            *\n          FROM (\n            SELECT\n              *\n            FROM (\n              SELECT\n                *\n              FROM (\n                SELECT\n                  *\n                FROM (\n                  SELECT\n                    *\n                  FROM (\n                    SELECT\n                      *\n                    FROM (\n                      SELECT\n                        *\n                      FROM (\n                        SELECT\n                          *\n                        FROM (\n                          SELECT\n                            *\n                          FROM (\n                            SELECT\n                              *\n                            FROM (\n                              SELECT\n                                'carrier' AS \"fieldName\",\n                                'flights.carrier' AS \"fieldPath\",\n                                'string' AS \"fieldType\",\n                                \"t21\".\"value\" AS \"fieldValue\",\n                                \"t21\".\"weight\"\n                              FROM \"t14\" AS \"t21\"\n                            ) AS \"t34\"\n                            UNION ALL\n                            SELECT\n                              *\n                            FROM (\n                              SELECT\n                                'origin' AS \"fieldName\",\n                                'flights.origin' AS \"fieldPath\",\n                                'string' AS \"fieldType\",\n                                \"t20\".\"value\" AS \"fieldValue\",\n                                \"t20\".\"weight\"\n                              FROM \"t13\" AS \"t20\"\n                            ) AS \"t32\"\n                          ) AS \"t37\"\n                          UNION ALL\n                          SELECT\n                            *\n                          FROM (\n                            SELECT\n                              'code' AS \"fieldName\",\n                              'airports.code' AS \"fieldPath\",\n                              'string' AS \"fieldType\",\n                              \"t19\".\"value\" AS \"fieldValue\",\n                              \"t19\".\"weight\"\n                            FROM \"t12\" AS \"t19\"\n                          ) AS \"t30\"\n                        ) AS \"t38\"\n                        UNION ALL\n                        SELECT\n                          *\n                        FROM (\n                          SELECT\n                            'city' AS \"fieldName\",\n                            'airports.city' AS \"fieldPath\",\n                            'string' AS \"fieldType\",\n                            \"t18\".\"value\" AS \"fieldValue\",\n                            \"t18\".\"weight\"\n                          FROM \"t11\" AS \"t18\"\n                        ) AS \"t28\"\n                      ) AS \"t39\"\n                      UNION ALL\n                      SELECT\n                        *\n                      FROM (\n                        SELECT\n                          'state' AS \"fieldName\",\n                          'airports.state' AS \"fieldPath\",\n                          'string' AS \"fieldType\",\n                          \"t17\".\"value\" AS \"fieldValue\",\n                          \"t17\".\"weight\"\n                        FROM \"t10\" AS \"t17\"\n                      ) AS \"t26\"\n                    ) AS \"t40\"\n                    UNION ALL\n                    SELECT\n                      *\n                    FROM (\n                      SELECT\n                        'fac_type' AS \"fieldName\",\n                        'airports.fac_type' AS \"fieldPath\",\n                        'string' AS \"fieldType\",\n                        \"t16\".\"value\" AS \"fieldValue\",\n                        \"t16\".\"weight\"\n                      FROM \"t9\" AS \"t16\"\n                    ) AS \"t24\"\n                  ) AS \"t41\"\n                  UNION ALL\n                  SELECT\n                    *\n                  FROM (\n                    SELECT\n                      'elevation' AS \"fieldName\",\n                      'airports.elevation' AS \"fieldPath\",\n                      'number' AS \"fieldType\",\n                      CAST(\"t36\".\"min_val\" AS TEXT) || ' to ' || CAST(\"t36\".\"max_val\" AS TEXT) AS \"fieldValue\",\n                      \"t36\".\"weight\"\n                    FROM \"t22\" AS \"t36\"\n                  ) AS \"t44\"\n                ) AS \"t45\"\n                UNION ALL\n                SELECT\n                  *\n                FROM (\n                  SELECT\n                    'flight_id' AS \"fieldName\",\n                    'flight_id' AS \"fieldPath\",\n                    'number' AS \"fieldType\",\n                    CAST(\"t35\".\"min_val\" AS TEXT) || ' to ' || CAST(\"t35\".\"max_val\" AS TEXT) AS \"fieldValue\",\n                    \"t35\".\"weight\"\n                  FROM (\n                    SELECT\n                      MIN(\"t15\".\"value\") AS \"min_val\",\n                      MAX(\"t15\".\"value\") AS \"max_val\",\n                      COUNT(*) AS \"weight\"\n                    FROM (\n                      SELECT\n                        *\n                      FROM (\n                        SELECT\n                          \"t2\".\"flight_id\" AS \"value\"\n                        FROM \"ibis_pandas_memtable_dl2q4g4pgnd3hnndbidzl7xjwm\" AS \"t2\"\n                        INNER JOIN \"ibis_pandas_memtable_urggzhirzbhlzh3ptrgfatvraa\" AS \"t3\"\n                          ON \"t2\".\"origin\" = \"t3\".\"code\"\n                      ) AS \"t6\"\n                      WHERE\n                        \"t6\".\"value\" IS NOT NULL\n                    ) AS \"t15\"\n                  ) AS \"t35\"\n                ) AS \"t42\"\n              ) AS \"t46\"\n              UNION ALL\n              SELECT\n                *\n              FROM (\n                SELECT\n                  'carrier' AS \"fieldName\",\n                  'carrier' AS \"fieldPath\",\n                  'string' AS \"fieldType\",\n                  \"t21\".\"value\" AS \"fieldValue\",\n                  \"t21\".\"weight\"\n                FROM \"t14\" AS \"t21\"\n              ) AS \"t33\"\n            ) AS \"t47\"\n            UNION ALL\n            SELECT\n              *\n            FROM (\n              SELECT\n                'origin' AS \"fieldName\",\n                'origin' AS \"fieldPath\",\n                'string' AS \"fieldType\",\n                \"t20\".\"value\" AS \"fieldValue\",\n                \"t20\".\"weight\"\n              FROM \"t13\" AS \"t20\"\n            ) AS \"t31\"\n          ) AS \"t48\"\n          UNION ALL\n          SELECT\n            *\n          FROM (\n            SELECT\n              'code' AS \"fieldName\",\n              'code' AS \"fieldPath\",\n              'string' AS \"fieldType\",\n              \"t19\".\"value\" AS \"fieldValue\",\n              \"t19\".\"weight\"\n            FROM \"t12\" AS \"t19\"\n          ) AS \"t29\"\n        ) AS \"t49\"\n        UNION ALL\n        SELECT\n          *\n        FROM (\n          SELECT\n            'city' AS \"fieldName\",\n            'city' AS \"fieldPath\",\n            'string' AS \"fieldType\",\n            \"t18\".\"value\" AS \"fieldValue\",\n            \"t18\".\"weight\"\n          FROM \"t11\" AS \"t18\"\n        ) AS \"t27\"\n      ) AS \"t50\"\n      UNION ALL\n      SELECT\n        *\n      FROM (\n        SELECT\n          'state' AS \"fieldName\",\n          'state' AS \"fieldPath\",\n          'string' AS \"fieldType\",\n          \"t17\".\"value\" AS \"fieldValue\",\n          \"t17\".\"weight\"\n        FROM \"t10\" AS \"t17\"\n      ) AS \"t25\"\n    ) AS \"t51\"\n    UNION ALL\n    SELECT\n      *\n    FROM (\n      SELECT\n        'fac_type' AS \"fieldName\",\n        'fac_type' AS \"fieldPath\",\n        'string' AS \"fieldType\",\n        \"t16\".\"value\" AS \"fieldValue\",\n        \"t16\".\"weight\"\n      FROM \"t9\" AS \"t16\"\n    ) AS \"t23\"\n  ) AS \"t52\"\n  UNION ALL\n  SELECT\n    *\n  FROM (\n    SELECT\n      'elevation' AS \"fieldName\",\n      'elevation' AS \"fieldPath\",\n      'number' AS \"fieldType\",\n      CAST(\"t36\".\"min_val\" AS TEXT) || ' to ' || CAST(\"t36\".\"max_val\" AS TEXT) AS \"fieldValue\",\n      \"t36\".\"weight\"\n    FROM \"t22\" AS \"t36\"\n  ) AS \"t43\"\n) AS \"t53\"\nORDER BY\n  \"t53\".\"weight\" DESC\nLIMIT 10",
-      "plan": "<boring_semantic_layer.ops.SemanticLimitOp object at 0x14f6a6ed0>",
+      "sql": "WITH \"t5\" AS (\n  SELECT\n    \"t2\".\"flight_id\",\n    \"t2\".\"carrier\",\n    \"t2\".\"origin\",\n    \"t3\".\"code\",\n    \"t3\".\"city\",\n    \"t3\".\"state\",\n    \"t3\".\"fac_type\",\n    \"t3\".\"elevation\"\n  FROM \"ibis_pandas_memtable_mt3ogadybffsrdfoyppmykqw7m\" AS \"t2\"\n  INNER JOIN \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t3\"\n    ON \"t2\".\"origin\" = \"t3\".\"code\"\n), \"t9\" AS (\n  SELECT\n    \"t7\".\"fac_type\" AS \"value\",\n    COUNT(*) AS \"weight\"\n  FROM \"t5\" AS \"t7\"\n  GROUP BY\n    1\n), \"t10\" AS (\n  SELECT\n    \"t7\".\"state\" AS \"value\",\n    COUNT(*) AS \"weight\"\n  FROM \"t5\" AS \"t7\"\n  GROUP BY\n    1\n), \"t11\" AS (\n  SELECT\n    \"t7\".\"city\" AS \"value\",\n    COUNT(*) AS \"weight\"\n  FROM \"t5\" AS \"t7\"\n  GROUP BY\n    1\n), \"t12\" AS (\n  SELECT\n    \"t7\".\"code\" AS \"value\",\n    COUNT(*) AS \"weight\"\n  FROM \"t5\" AS \"t7\"\n  GROUP BY\n    1\n), \"t13\" AS (\n  SELECT\n    \"t7\".\"origin\" AS \"value\",\n    COUNT(*) AS \"weight\"\n  FROM \"t5\" AS \"t7\"\n  GROUP BY\n    1\n), \"t14\" AS (\n  SELECT\n    \"t7\".\"carrier\" AS \"value\",\n    COUNT(*) AS \"weight\"\n  FROM \"t5\" AS \"t7\"\n  GROUP BY\n    1\n), \"t22\" AS (\n  SELECT\n    MIN(\"t8\".\"value\") AS \"min_val\",\n    MAX(\"t8\".\"value\") AS \"max_val\",\n    COUNT(*) AS \"weight\"\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        \"t3\".\"elevation\" AS \"value\"\n      FROM \"ibis_pandas_memtable_mt3ogadybffsrdfoyppmykqw7m\" AS \"t2\"\n      INNER JOIN \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t3\"\n        ON \"t2\".\"origin\" = \"t3\".\"code\"\n    ) AS \"t4\"\n    WHERE\n      \"t4\".\"value\" IS NOT NULL\n  ) AS \"t8\"\n)\nSELECT\n  *\nFROM (\n  SELECT\n    *\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            *\n          FROM (\n            SELECT\n              *\n            FROM (\n              SELECT\n                *\n              FROM (\n                SELECT\n                  *\n                FROM (\n                  SELECT\n                    *\n                  FROM (\n                    SELECT\n                      *\n                    FROM (\n                      SELECT\n                        *\n                      FROM (\n                        SELECT\n                          *\n                        FROM (\n                          SELECT\n                            *\n                          FROM (\n                            SELECT\n                              *\n                            FROM (\n                              SELECT\n                                'carrier' AS \"fieldName\",\n                                'flights.carrier' AS \"fieldPath\",\n                                'string' AS \"fieldType\",\n                                \"t21\".\"value\" AS \"fieldValue\",\n                                \"t21\".\"weight\"\n                              FROM \"t14\" AS \"t21\"\n                            ) AS \"t34\"\n                            UNION ALL\n                            SELECT\n                              *\n                            FROM (\n                              SELECT\n                                'origin' AS \"fieldName\",\n                                'flights.origin' AS \"fieldPath\",\n                                'string' AS \"fieldType\",\n                                \"t20\".\"value\" AS \"fieldValue\",\n                                \"t20\".\"weight\"\n                              FROM \"t13\" AS \"t20\"\n                            ) AS \"t32\"\n                          ) AS \"t37\"\n                          UNION ALL\n                          SELECT\n                            *\n                          FROM (\n                            SELECT\n                              'code' AS \"fieldName\",\n                              'airports.code' AS \"fieldPath\",\n                              'string' AS \"fieldType\",\n                              \"t19\".\"value\" AS \"fieldValue\",\n                              \"t19\".\"weight\"\n                            FROM \"t12\" AS \"t19\"\n                          ) AS \"t30\"\n                        ) AS \"t38\"\n                        UNION ALL\n                        SELECT\n                          *\n                        FROM (\n                          SELECT\n                            'city' AS \"fieldName\",\n                            'airports.city' AS \"fieldPath\",\n                            'string' AS \"fieldType\",\n                            \"t18\".\"value\" AS \"fieldValue\",\n                            \"t18\".\"weight\"\n                          FROM \"t11\" AS \"t18\"\n                        ) AS \"t28\"\n                      ) AS \"t39\"\n                      UNION ALL\n                      SELECT\n                        *\n                      FROM (\n                        SELECT\n                          'state' AS \"fieldName\",\n                          'airports.state' AS \"fieldPath\",\n                          'string' AS \"fieldType\",\n                          \"t17\".\"value\" AS \"fieldValue\",\n                          \"t17\".\"weight\"\n                        FROM \"t10\" AS \"t17\"\n                      ) AS \"t26\"\n                    ) AS \"t40\"\n                    UNION ALL\n                    SELECT\n                      *\n                    FROM (\n                      SELECT\n                        'fac_type' AS \"fieldName\",\n                        'airports.fac_type' AS \"fieldPath\",\n                        'string' AS \"fieldType\",\n                        \"t16\".\"value\" AS \"fieldValue\",\n                        \"t16\".\"weight\"\n                      FROM \"t9\" AS \"t16\"\n                    ) AS \"t24\"\n                  ) AS \"t41\"\n                  UNION ALL\n                  SELECT\n                    *\n                  FROM (\n                    SELECT\n                      'elevation' AS \"fieldName\",\n                      'airports.elevation' AS \"fieldPath\",\n                      'number' AS \"fieldType\",\n                      CAST(\"t36\".\"min_val\" AS TEXT) || ' to ' || CAST(\"t36\".\"max_val\" AS TEXT) AS \"fieldValue\",\n                      \"t36\".\"weight\"\n                    FROM \"t22\" AS \"t36\"\n                  ) AS \"t44\"\n                ) AS \"t45\"\n                UNION ALL\n                SELECT\n                  *\n                FROM (\n                  SELECT\n                    'flight_id' AS \"fieldName\",\n                    'flight_id' AS \"fieldPath\",\n                    'number' AS \"fieldType\",\n                    CAST(\"t35\".\"min_val\" AS TEXT) || ' to ' || CAST(\"t35\".\"max_val\" AS TEXT) AS \"fieldValue\",\n                    \"t35\".\"weight\"\n                  FROM (\n                    SELECT\n                      MIN(\"t15\".\"value\") AS \"min_val\",\n                      MAX(\"t15\".\"value\") AS \"max_val\",\n                      COUNT(*) AS \"weight\"\n                    FROM (\n                      SELECT\n                        *\n                      FROM (\n                        SELECT\n                          \"t2\".\"flight_id\" AS \"value\"\n                        FROM \"ibis_pandas_memtable_mt3ogadybffsrdfoyppmykqw7m\" AS \"t2\"\n                        INNER JOIN \"ibis_pandas_memtable_vikekal7azhztit44eo6ccl5f4\" AS \"t3\"\n                          ON \"t2\".\"origin\" = \"t3\".\"code\"\n                      ) AS \"t6\"\n                      WHERE\n                        \"t6\".\"value\" IS NOT NULL\n                    ) AS \"t15\"\n                  ) AS \"t35\"\n                ) AS \"t42\"\n              ) AS \"t46\"\n              UNION ALL\n              SELECT\n                *\n              FROM (\n                SELECT\n                  'carrier' AS \"fieldName\",\n                  'carrier' AS \"fieldPath\",\n                  'string' AS \"fieldType\",\n                  \"t21\".\"value\" AS \"fieldValue\",\n                  \"t21\".\"weight\"\n                FROM \"t14\" AS \"t21\"\n              ) AS \"t33\"\n            ) AS \"t47\"\n            UNION ALL\n            SELECT\n              *\n            FROM (\n              SELECT\n                'origin' AS \"fieldName\",\n                'origin' AS \"fieldPath\",\n                'string' AS \"fieldType\",\n                \"t20\".\"value\" AS \"fieldValue\",\n                \"t20\".\"weight\"\n              FROM \"t13\" AS \"t20\"\n            ) AS \"t31\"\n          ) AS \"t48\"\n          UNION ALL\n          SELECT\n            *\n          FROM (\n            SELECT\n              'code' AS \"fieldName\",\n              'code' AS \"fieldPath\",\n              'string' AS \"fieldType\",\n              \"t19\".\"value\" AS \"fieldValue\",\n              \"t19\".\"weight\"\n            FROM \"t12\" AS \"t19\"\n          ) AS \"t29\"\n        ) AS \"t49\"\n        UNION ALL\n        SELECT\n          *\n        FROM (\n          SELECT\n            'city' AS \"fieldName\",\n            'city' AS \"fieldPath\",\n            'string' AS \"fieldType\",\n            \"t18\".\"value\" AS \"fieldValue\",\n            \"t18\".\"weight\"\n          FROM \"t11\" AS \"t18\"\n        ) AS \"t27\"\n      ) AS \"t50\"\n      UNION ALL\n      SELECT\n        *\n      FROM (\n        SELECT\n          'state' AS \"fieldName\",\n          'state' AS \"fieldPath\",\n          'string' AS \"fieldType\",\n          \"t17\".\"value\" AS \"fieldValue\",\n          \"t17\".\"weight\"\n        FROM \"t10\" AS \"t17\"\n      ) AS \"t25\"\n    ) AS \"t51\"\n    UNION ALL\n    SELECT\n      *\n    FROM (\n      SELECT\n        'fac_type' AS \"fieldName\",\n        'fac_type' AS \"fieldPath\",\n        'string' AS \"fieldType\",\n        \"t16\".\"value\" AS \"fieldValue\",\n        \"t16\".\"weight\"\n      FROM \"t9\" AS \"t16\"\n    ) AS \"t23\"\n  ) AS \"t52\"\n  UNION ALL\n  SELECT\n    *\n  FROM (\n    SELECT\n      'elevation' AS \"fieldName\",\n      'elevation' AS \"fieldPath\",\n      'number' AS \"fieldType\",\n      CAST(\"t36\".\"min_val\" AS TEXT) || ' to ' || CAST(\"t36\".\"max_val\" AS TEXT) AS \"fieldValue\",\n      \"t36\".\"weight\"\n    FROM \"t22\" AS \"t36\"\n  ) AS \"t43\"\n) AS \"t53\"\nORDER BY\n  \"t53\".\"weight\" DESC\nLIMIT 10",
+      "plan": "<boring_semantic_layer.ops.SemanticLimitOp object at 0x13771fa10>",
       "table": {
         "columns": [
           "fieldName",
@@ -1168,6 +1168,13 @@
           "weight"
         ],
         "data": [
+          [
+            "fac_type",
+            "airports.fac_type",
+            "string",
+            "AIRPORT",
+            30
+          ],
           [
             "flight_id",
             "flight_id",
@@ -1183,6 +1190,13 @@
             30
           ],
           [
+            "fac_type",
+            "fac_type",
+            "string",
+            "AIRPORT",
+            30
+          ],
+          [
             "elevation",
             "elevation",
             "number",
@@ -1190,50 +1204,36 @@
             30
           ],
           [
-            "fac_type",
-            "fac_type",
-            "string",
-            "AIRPORT",
-            30
-          ],
-          [
-            "fac_type",
-            "airports.fac_type",
-            "string",
-            "AIRPORT",
-            30
-          ],
-          [
             "carrier",
-            "carrier",
+            "flights.carrier",
             "string",
             "B6",
             6
           ],
           [
             "carrier",
-            "carrier",
+            "flights.carrier",
             "string",
             "WN",
             6
           ],
           [
-            "state",
-            "state",
-            "string",
-            "CA",
-            6
-          ],
-          [
             "carrier",
-            "carrier",
+            "flights.carrier",
             "string",
             "AA",
             6
           ],
           [
             "carrier",
+            "flights.carrier",
+            "string",
+            "UA",
+            6
+          ],
+          [
             "carrier",
+            "flights.carrier",
             "string",
             "DL",
             6
@@ -1250,7 +1250,7 @@
             }
           },
           "data": {
-            "name": "data-b8aaf10866bd41e79ee320e96eb56fc6"
+            "name": "data-55f49858117a532f348ee487173843af"
           },
           "mark": {
             "type": "text"
@@ -1262,9 +1262,23 @@
           },
           "height": 400,
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-b8aaf10866bd41e79ee320e96eb56fc6": [
+            "data-55f49858117a532f348ee487173843af": [
+              {
+                "fieldName": "fac_type",
+                "fieldPath": "fac_type",
+                "fieldType": "string",
+                "fieldValue": "AIRPORT",
+                "weight": 30
+              },
+              {
+                "fieldName": "elevation",
+                "fieldPath": "airports.elevation",
+                "fieldType": "number",
+                "fieldValue": "13 to 5433",
+                "weight": 30
+              },
               {
                 "fieldName": "elevation",
                 "fieldPath": "elevation",
@@ -1280,13 +1294,6 @@
                 "weight": 30
               },
               {
-                "fieldName": "elevation",
-                "fieldPath": "airports.elevation",
-                "fieldType": "number",
-                "fieldValue": "13 to 5433",
-                "weight": 30
-              },
-              {
                 "fieldName": "fac_type",
                 "fieldPath": "airports.fac_type",
                 "fieldType": "string",
@@ -1294,22 +1301,8 @@
                 "weight": 30
               },
               {
-                "fieldName": "fac_type",
-                "fieldPath": "fac_type",
-                "fieldType": "string",
-                "fieldValue": "AIRPORT",
-                "weight": 30
-              },
-              {
-                "fieldName": "state",
-                "fieldPath": "state",
-                "fieldType": "string",
-                "fieldValue": "CA",
-                "weight": 6
-              },
-              {
                 "fieldName": "carrier",
-                "fieldPath": "flights.carrier",
+                "fieldPath": "carrier",
                 "fieldType": "string",
                 "fieldValue": "AA",
                 "weight": 6
@@ -1322,10 +1315,10 @@
                 "weight": 6
               },
               {
-                "fieldName": "carrier",
-                "fieldPath": "carrier",
+                "fieldName": "state",
+                "fieldPath": "airports.state",
                 "fieldType": "string",
-                "fieldValue": "B6",
+                "fieldValue": "CA",
                 "weight": 6
               },
               {
@@ -1333,6 +1326,13 @@
                 "fieldPath": "flights.carrier",
                 "fieldType": "string",
                 "fieldValue": "UA",
+                "weight": 6
+              },
+              {
+                "fieldName": "carrier",
+                "fieldPath": "flights.carrier",
+                "fieldType": "string",
+                "fieldValue": "AA",
                 "weight": 6
               }
             ]

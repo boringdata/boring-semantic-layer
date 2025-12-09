@@ -186,3 +186,61 @@ def test_is_url_other_schemes():
     """Test _is_url rejects non-http schemes."""
     assert _is_url("ftp://example.com/file.yml") is False
     assert _is_url("file:///local/file.yml") is False
+
+
+def test_safe_eval_multiline_method_chaining():
+    """Test that multiline method chaining works (LLM-generated queries).
+
+    LLMs often generate queries like:
+        model.filter(...)
+        .group_by(...)
+        .aggregate(...)
+
+    This should work by wrapping in parentheses automatically.
+    """
+
+    class MockModel:
+        def filter(self, fn):
+            return self
+
+        def with_dimensions(self, **kwargs):
+            return self
+
+        def group_by(self, *args):
+            return self
+
+        def aggregate(self, *args):
+            return "SUCCESS"
+
+    multiline_query = """model.filter(lambda t: t.origin == 'NYC')
+.with_dimensions(arr_week=lambda t: t.arr_time.truncate('W'))
+.group_by('arr_week')
+.aggregate('flight_count')"""
+
+    result = safe_eval(multiline_query, context={"model": MockModel()})
+    assert isinstance(result, Success)
+    assert result.unwrap() == "SUCCESS"
+
+
+def test_safe_eval_multiline_with_leading_newline():
+    """Test multiline query starting with the model name on first line."""
+
+    class MockModel:
+        def filter(self, fn):
+            return self
+
+        def group_by(self, *args):
+            return self
+
+        def aggregate(self, *args):
+            return "DONE"
+
+    # Query that starts with model on its own line
+    query = """model
+.filter(lambda t: t.x > 0)
+.group_by('y')
+.aggregate('z')"""
+
+    result = safe_eval(query, context={"model": MockModel()})
+    assert isinstance(result, Success)
+    assert result.unwrap() == "DONE"

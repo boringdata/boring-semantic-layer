@@ -119,7 +119,7 @@
           },
           "height": 400,
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
             "data-65b589ba3da7959d7f1e1d2c1bdd1c23": [
               {
@@ -224,7 +224,7 @@
           },
           "height": 400,
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
             "data-614905082e7810dae76519e0046336d6": [
               {
@@ -338,7 +338,7 @@
           },
           "height": 400,
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
             "data-614905082e7810dae76519e0046336d6": [
               {
@@ -385,10 +385,6 @@
         ],
         "data": [
           [
-            "2024-01-01",
-            145
-          ],
-          [
             "2024-01-02",
             152
           ],
@@ -403,6 +399,10 @@
           [
             "2024-01-04",
             139
+          ],
+          [
+            "2024-01-01",
+            145
           ],
           [
             "2024-01-06",
@@ -423,7 +423,7 @@
             }
           },
           "data": {
-            "name": "data-8b1ee61201d81af8b26fae237cb7e273"
+            "name": "data-d6cf5c8be724cff5c40b36e0f66d2b45"
           },
           "mark": {
             "type": "line"
@@ -442,7 +442,6 @@
             ],
             "x": {
               "axis": {
-                "format": "%Y-%m-%d",
                 "labelAngle": -45
               },
               "field": "date",
@@ -455,16 +454,20 @@
           },
           "height": 400,
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-8b1ee61201d81af8b26fae237cb7e273": [
-              {
-                "date": "2024-01-04T00:00:00",
-                "flight_count": 139
-              },
+            "data-d6cf5c8be724cff5c40b36e0f66d2b45": [
               {
                 "date": "2024-01-07T00:00:00",
                 "flight_count": 143
+              },
+              {
+                "date": "2024-01-01T00:00:00",
+                "flight_count": 145
+              },
+              {
+                "date": "2024-01-04T00:00:00",
+                "flight_count": 139
               },
               {
                 "date": "2024-01-06T00:00:00",
@@ -481,10 +484,6 @@
               {
                 "date": "2024-01-05T00:00:00",
                 "flight_count": 156
-              },
-              {
-                "date": "2024-01-01T00:00:00",
-                "flight_count": 145
               }
             ]
           }
@@ -502,22 +501,6 @@
         ],
         "data": [
           [
-            "2024-01-01",
-            145
-          ],
-          [
-            "2024-01-04",
-            139
-          ],
-          [
-            "2024-01-07",
-            143
-          ],
-          [
-            "2024-01-06",
-            161
-          ],
-          [
             "2024-01-02",
             152
           ],
@@ -528,6 +511,22 @@
           [
             "2024-01-05",
             156
+          ],
+          [
+            "2024-01-01",
+            145
+          ],
+          [
+            "2024-01-07",
+            143
+          ],
+          [
+            "2024-01-04",
+            139
+          ],
+          [
+            "2024-01-06",
+            161
           ]
         ]
       },
@@ -541,7 +540,7 @@
             }
           },
           "data": {
-            "name": "data-deb52877e92066bd77f13500f6d5c3bb"
+            "name": "data-1052fb8dd8733632cb19f9b960b59af6"
           },
           "mark": {
             "type": "line"
@@ -560,7 +559,6 @@
             ],
             "x": {
               "axis": {
-                "format": "%Y-%m-%d",
                 "labelAngle": -45
               },
               "field": "date",
@@ -573,16 +571,20 @@
           },
           "height": 400,
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-deb52877e92066bd77f13500f6d5c3bb": [
-              {
-                "date": "2024-01-01T00:00:00",
-                "flight_count": 145
-              },
+            "data-1052fb8dd8733632cb19f9b960b59af6": [
               {
                 "date": "2024-01-07T00:00:00",
                 "flight_count": 143
+              },
+              {
+                "date": "2024-01-04T00:00:00",
+                "flight_count": 139
+              },
+              {
+                "date": "2024-01-01T00:00:00",
+                "flight_count": 145
               },
               {
                 "date": "2024-01-06T00:00:00",
@@ -599,10 +601,6 @@
               {
                 "date": "2024-01-05T00:00:00",
                 "flight_count": 156
-              },
-              {
-                "date": "2024-01-04T00:00:00",
-                "flight_count": 139
               }
             ]
           }
@@ -621,9 +619,24 @@
         ],
         "data": [
           [
+            "SFO",
+            "LAX",
+            27
+          ],
+          [
+            "LAX",
+            "JFK",
+            43
+          ],
+          [
             "JFK",
             "SFO",
             32
+          ],
+          [
+            "JFK",
+            "LAX",
+            45
           ],
           [
             "SFO",
@@ -632,23 +645,8 @@
           ],
           [
             "LAX",
-            "JFK",
-            43
-          ],
-          [
-            "SFO",
-            "LAX",
-            27
-          ],
-          [
-            "LAX",
             "SFO",
             28
-          ],
-          [
-            "JFK",
-            "LAX",
-            45
           ]
         ]
       },
@@ -661,7 +659,7 @@
             }
           },
           "data": {
-            "name": "data-7f035986ebe0cbbfbc13ae640371a550"
+            "name": "data-fd5a8ee8881568d383f1b589e063982d"
           },
           "mark": {
             "type": "rect"
@@ -698,18 +696,18 @@
           },
           "height": 400,
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-7f035986ebe0cbbfbc13ae640371a550": [
+            "data-fd5a8ee8881568d383f1b589e063982d": [
               {
                 "origin": "SFO",
                 "dest": "JFK",
                 "flight_count": 31
               },
               {
-                "origin": "SFO",
-                "dest": "LAX",
-                "flight_count": 27
+                "origin": "LAX",
+                "dest": "JFK",
+                "flight_count": 43
               },
               {
                 "origin": "JFK",
@@ -717,19 +715,19 @@
                 "flight_count": 45
               },
               {
-                "origin": "JFK",
-                "dest": "SFO",
-                "flight_count": 32
-              },
-              {
                 "origin": "LAX",
                 "dest": "SFO",
                 "flight_count": 28
               },
               {
-                "origin": "LAX",
-                "dest": "JFK",
-                "flight_count": 43
+                "origin": "JFK",
+                "dest": "SFO",
+                "flight_count": 32
+              },
+              {
+                "origin": "SFO",
+                "dest": "LAX",
+                "flight_count": 27
               }
             ]
           }
@@ -748,9 +746,9 @@
         ],
         "data": [
           [
-            "ATL",
-            145,
-            1650.0
+            "SFO",
+            89,
+            1200.0
           ],
           [
             "ORD",
@@ -758,19 +756,19 @@
             950.0
           ],
           [
+            "DFW",
+            98,
+            1100.0
+          ],
+          [
             "JFK",
             150,
             2475.0
           ],
           [
-            "DEN",
-            78,
-            900.0
-          ],
-          [
-            "SFO",
-            89,
-            1200.0
+            "ATL",
+            145,
+            1650.0
           ]
         ]
       },
@@ -783,7 +781,7 @@
             }
           },
           "data": {
-            "name": "data-ce717f099c6f718307e8f56af6ec5e58"
+            "name": "data-62ce4949515880c025fe98aa4caf0f5e"
           },
           "mark": {
             "type": "bar"
@@ -834,18 +832,13 @@
             }
           ],
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
-            "data-ce717f099c6f718307e8f56af6ec5e58": [
+            "data-62ce4949515880c025fe98aa4caf0f5e": [
               {
                 "origin": "JFK",
                 "flight_count": 150,
                 "avg_distance": 2475.0
-              },
-              {
-                "origin": "ORD",
-                "flight_count": 112,
-                "avg_distance": 950.0
               },
               {
                 "origin": "ATL",
@@ -853,14 +846,19 @@
                 "avg_distance": 1650.0
               },
               {
+                "origin": "ORD",
+                "flight_count": 112,
+                "avg_distance": 950.0
+              },
+              {
                 "origin": "DEN",
                 "flight_count": 78,
                 "avg_distance": 900.0
               },
               {
-                "origin": "SFO",
-                "flight_count": 89,
-                "avg_distance": 1200.0
+                "origin": "LAX",
+                "flight_count": 135,
+                "avg_distance": 1850.0
               }
             ]
           }
@@ -936,7 +934,7 @@
           },
           "height": 400,
           "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v6.1.0.json",
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
           "datasets": {
             "data-65b589ba3da7959d7f1e1d2c1bdd1c23": [
               {

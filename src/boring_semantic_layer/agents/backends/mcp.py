@@ -171,6 +171,41 @@ class MCPSemanticModel(FastMCP):
                     description=load_prompt(PROMPTS_DIR, "tool-query-param-time_range.md"),
                 ),
             ] = None,
+            get_records: Annotated[
+                bool,
+                Field(
+                    default=True,
+                    description=load_prompt(PROMPTS_DIR, "tool-query-param-get_records.md"),
+                ),
+            ] = True,
+            records_limit: Annotated[
+                int | None,
+                Field(
+                    default=None,
+                    description=load_prompt(PROMPTS_DIR, "tool-query-param-records_limit.md"),
+                ),
+            ] = None,
+            get_chart: Annotated[
+                bool,
+                Field(
+                    default=True,
+                    description=load_prompt(PROMPTS_DIR, "tool-query-param-get_chart.md"),
+                ),
+            ] = True,
+            chart_backend: Annotated[
+                str | None,
+                Field(
+                    default=None,
+                    description=load_prompt(PROMPTS_DIR, "tool-query-param-chart_backend.md"),
+                ),
+            ] = None,
+            chart_format: Annotated[
+                str | None,
+                Field(
+                    default=None,
+                    description=load_prompt(PROMPTS_DIR, "tool-query-param-chart_format.md"),
+                ),
+            ] = None,
             chart_spec: Annotated[
                 dict[str, Any] | None,
                 BeforeValidator(_parse_json_string),
@@ -194,7 +229,16 @@ class MCPSemanticModel(FastMCP):
                 time_range=time_range,
             )
 
-            return generate_chart_with_data(query_result, chart_spec, default_backend="altair")
+            return generate_chart_with_data(
+                query_result,
+                get_records=get_records,
+                records_limit=records_limit,
+                get_chart=get_chart,
+                chart_backend=chart_backend,
+                chart_format=chart_format,
+                chart_spec=chart_spec,
+                default_backend="altair",
+            )
 
 
 def create_mcp_server(
