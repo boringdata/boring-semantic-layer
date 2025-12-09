@@ -3,188 +3,91 @@
 # Each covers a critical feature or common failure mode
 
 questions:
-  # =============================================================================
-  # CORE FUNCTIONALITY - Basic query patterns that must always work
-  # =============================================================================
+  # Core functionality
   - id: core_001
     question: "Show flights per year based on arrival time"
-    category: core
-    difficulty: medium
     features: [truncate, with_dimensions, time_dimension]
-    notes: "Time truncation - fundamental feature"
 
   - id: core_002
     question: "How many flights were there in 2003?"
-    category: core
-    difficulty: medium
     features: [filter_timestamp, year_method]
-    notes: "Timestamp filtering - common edge case"
 
   - id: core_003
     question: "Which carriers have flights with distance greater than 2000 miles?"
-    category: core
-    difficulty: easy
     features: [filter_numeric, lambda_expression]
-    notes: "Basic filtering"
 
   - id: core_004
     question: "Show flights from JFK or LAX with distance over 1000 miles"
-    category: core
-    difficulty: medium
     features: [multiple_conditions, logical_operators]
-    notes: "Compound filters with isin/and"
 
-  # =============================================================================
-  # JOINS - Multi-table queries
-  # =============================================================================
+  # Joins
   - id: join_001
     question: "Show the flight count by carrier name (not code)"
-    category: join
-    difficulty: medium
     features: [join_carriers, access_joined_dimension]
-    notes: "Basic join usage"
 
   - id: join_002
     question: "What aircraft manufacturers have the most flights?"
-    category: join
-    difficulty: hard
     features: [multi_level_join]
-    notes: "Multi-level join (flights -> aircraft -> aircraft_models)"
 
-  # =============================================================================
-  # ADVANCED - Complex analytics patterns
-  # =============================================================================
+  # Advanced analytics
   - id: advanced_001
     question: "What is each carrier's market share as a percentage of total flights?"
-    category: advanced
-    difficulty: hard
     features: [percentage_of_total, all_method]
-    notes: "Percentage of total with t.all()"
 
   - id: advanced_002
     question: "Calculate the running total of flights by departure date"
-    category: advanced
-    difficulty: hard
     features: [window_functions, cumsum]
-    notes: "Window functions"
 
-  # =============================================================================
-  # MULTI-HOP - Requires exploration then query
-  # =============================================================================
+  # Multi-hop reasoning
   - id: multihop_001
     question: "Which carrier has the highest average delay, and what routes do they fly most?"
-    category: multihop
-    difficulty: hard
     features: [multi_step_reasoning, exploration, follow_up_query]
-    notes: "Two-step reasoning"
 
   - id: multihop_002
     question: "What percentage of flights from Texas airports are operated by Southwest (WN)?"
-    category: multihop
-    difficulty: hard
     features: [join_airports, filter_by_state, percentage_calculation]
-    notes: "Discover values then filter"
 
-  # =============================================================================
-  # TOOL INTERACTION - Proper tool usage
-  # =============================================================================
+  # Tool interaction
   - id: tool_001
     question: "What models are available and what fields does the flights model have?"
-    category: tool_interaction
-    difficulty: easy
     features: [list_models, get_model, sequential_tools]
-    notes: "Tests list_models -> get_model flow"
 
   - id: tool_002
     question: "Show me flights grouped by a field that doesn't exist: foo_bar"
-    category: tool_interaction
-    difficulty: medium
     features: [error_handling, invalid_field, recovery]
-    notes: "Error handling and recovery"
 
-  # =============================================================================
-  # OUTPUT CONFIG - Chart/table control
-  # =============================================================================
+  # Output configuration
   - id: output_001
     question: "Show me a bar chart of flights by carrier"
-    category: output_config
-    difficulty: easy
     features: [chart_type_bar, chart_spec]
-    notes: "Explicit chart type request"
 
   - id: output_002
     question: "Give me just the raw data for top 5 carriers, no chart needed"
-    category: output_config
-    difficulty: easy
     features: [get_chart_false, records_only]
-    notes: "Tests get_chart=false"
 
-  # =============================================================================
-  # IBIS SYNTAX - Correct expression patterns
-  # =============================================================================
+  # Ibis syntax
   - id: ibis_001
     question: "Show carriers where the carrier code is in the list AA, UA, DL"
-    category: ibis_syntax
-    difficulty: medium
     features: [isin_method, list_filter]
-    notes: "Tests .isin() vs Python 'in'"
 
   - id: ibis_002
     question: "Show flights where distance is between 500 and 1500 miles"
-    category: ibis_syntax
-    difficulty: medium
     features: [between_filter, compound_condition]
-    notes: "Tests ibis.and_() for compound conditions"
 
   - id: ibis_003
     question: "Show flights ordered by distance descending"
-    category: ibis_syntax
-    difficulty: medium
     features: [order_by, ibis_desc]
-    notes: "Tests ibis.desc() for sorting"
 
-  # =============================================================================
-  # RESOLUTION STRATEGY - Ambiguous query handling
-  # =============================================================================
+  # Resolution strategy
   - id: strategy_001
     question: "Show me flight data"
-    category: resolution_strategy
-    difficulty: easy
     features: [ambiguous_query, default_aggregation]
-    notes: "Vague query - agent picks sensible defaults"
 
   - id: strategy_002
     question: "Compare the busiest airports"
-    category: resolution_strategy
-    difficulty: medium
     features: [ambiguous_comparison, top_n_selection]
-    notes: "Agent decides 'busiest' definition"
 
-  # =============================================================================
-  # EDGE CASES
-  # =============================================================================
+  # Edge cases
   - id: edge_001
     question: "Show me the flight data as a table, not a chart"
-    category: edge_case
-    difficulty: easy
     features: [chart_spec, table_display]
-    notes: "Table-only output"
-
-# Metadata
-metadata:
-  total_questions: 20
-  model_file: "examples/flights.yml"
-  categories:
-    - core
-    - join
-    - advanced
-    - multihop
-    - tool_interaction
-    - output_config
-    - ibis_syntax
-    - resolution_strategy
-    - edge_case
-  difficulty_levels:
-    - easy
-    - medium
-    - hard

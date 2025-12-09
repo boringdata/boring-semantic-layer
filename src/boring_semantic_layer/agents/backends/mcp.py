@@ -175,35 +175,35 @@ class MCPSemanticModel(FastMCP):
                 bool,
                 Field(
                     default=True,
-                    description="Return data records to LLM (default: true)",
+                    description=load_prompt(PROMPTS_DIR, "tool-query-param-get_records.md"),
                 ),
             ] = True,
             records_limit: Annotated[
                 int | None,
                 Field(
                     default=None,
-                    description="Max records returned to LLM",
+                    description=load_prompt(PROMPTS_DIR, "tool-query-param-records_limit.md"),
                 ),
             ] = None,
             get_chart: Annotated[
                 bool,
                 Field(
                     default=True,
-                    description="Generate chart visualization (default: true)",
+                    description=load_prompt(PROMPTS_DIR, "tool-query-param-get_chart.md"),
                 ),
             ] = True,
             chart_backend: Annotated[
                 str | None,
                 Field(
                     default=None,
-                    description="Override chart backend (altair, plotly, plotext)",
+                    description=load_prompt(PROMPTS_DIR, "tool-query-param-chart_backend.md"),
                 ),
             ] = None,
             chart_format: Annotated[
                 str | None,
                 Field(
                     default=None,
-                    description="Override chart format (json, static, string)",
+                    description=load_prompt(PROMPTS_DIR, "tool-query-param-chart_format.md"),
                 ),
             ] = None,
             chart_spec: Annotated[

@@ -8,6 +8,15 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# Shared backend configuration - single source of truth
+BACKEND_NAMES = {
+    "langchain": "LangChain",
+    "langgraph": "LangGraph ReAct",
+    "deepagent": "DeepAgents (Planning)",
+}
+BACKEND_CHOICES = list(BACKEND_NAMES.keys())
+DEFAULT_BACKEND = "deepagent"
+
 # Tool configurations - how each tool stores skills
 TOOL_CONFIGS = {
     "claude-code": {
@@ -228,7 +237,7 @@ def cmd_chat(args):
 
     # Note: profile.py handles BSL_PROFILE_FILE env var and auto-selection
 
-    backend = args.backend if hasattr(args, "backend") else "langgraph"
+    backend = args.backend if hasattr(args, "backend") else DEFAULT_BACKEND
 
     start_chat(
         model_path=model_path,
@@ -283,9 +292,9 @@ def main():
     )
     chat_parser.add_argument(
         "--backend",
-        choices=["langchain", "langgraph", "openai", "deepagent"],
-        default="langgraph",
-        help="Agent backend: langgraph (ReAct, default), langchain (simple loop), openai (Assistants), deepagent (Planning)",
+        choices=BACKEND_CHOICES,
+        default=DEFAULT_BACKEND,
+        help="Agent backend: deepagent (Planning, default), langgraph (ReAct), langchain (simple loop)",
     )
     chat_parser.add_argument(
         "--profile",

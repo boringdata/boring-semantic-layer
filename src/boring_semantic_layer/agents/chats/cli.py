@@ -1,14 +1,4 @@
-"""
-Rich CLI Frontend for BSL Agents
-
-This module provides a beautiful terminal interface for BSL agents
-using Rich for formatting, loading spinners, and styled output.
-
-Supports multiple backends:
-- langchain: Simple tool-calling loop (default)
-- langgraph: Full ReAct agent with LangGraph
-- openai: OpenAI Assistants API
-"""
+"""Rich CLI Frontend for BSL Agents."""
 
 import json
 import logging
@@ -20,9 +10,10 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.status import Status
 
-# Disable httpx and openai logging
+from boring_semantic_layer.agents.cli import BACKEND_NAMES, DEFAULT_BACKEND
+
+# Disable httpx logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("openai").setLevel(logging.WARNING)
 
 console = Console()
 
@@ -104,23 +95,9 @@ def start_chat(
     profile: str | None = None,
     profile_file: Path | None = None,
     env_path: Path | str | None = None,
-    backend: Literal["langchain", "langgraph", "openai", "deepagent"] = "langgraph",
+    backend: Literal["langchain", "langgraph", "deepagent"] = DEFAULT_BACKEND,
 ):
-    """
-    Start an interactive chat session with rich formatting.
-
-    Args:
-        model_path: Path to YAML semantic model definition
-        llm_model: LLM model to use. Supports OpenAI (gpt-4), Anthropic (claude-*),
-                  Google (gemini-*). Auto-detects based on available API keys.
-                  (default: gpt-4, or auto-selected)
-        chart_backend: Chart backend to use (default: plotext)
-        initial_query: Optional query to run immediately (exits after response if provided)
-        profile: Optional profile name to use for database connection
-        profile_file: Optional path to profiles.yml file
-        env_path: Optional path to a .env file to load credentials from
-        backend: Agent backend to use (langchain, langgraph, or openai)
-    """
+    """Start an interactive chat session with rich formatting."""
     # Load environment variables
     load_dotenv(dotenv_path=env_path)
 
@@ -175,18 +152,6 @@ def start_chat(
                     profile=profile,
                     profile_file=profile_file,
                 )
-            elif backend == "openai":
-                from boring_semantic_layer.agents.backends.openai_assistant import (
-                    OpenAIAssistantAgent,
-                )
-
-                agent = OpenAIAssistantAgent(
-                    model_path=model_path,
-                    llm_model=llm_model,
-                    chart_backend=chart_backend,
-                    profile=profile,
-                    profile_file=profile_file,
-                )
             elif backend == "deepagent":
                 from boring_semantic_layer.agents.backends.deepagent import (
                     DeepAgentBackend,
@@ -203,14 +168,8 @@ def start_chat(
                 console.print(f"❌ Unknown backend: {backend}", style="bold red")
                 return
 
-        backend_names = {
-            "langchain": "LangChain",
-            "langgraph": "LangGraph ReAct",
-            "openai": "OpenAI Assistants",
-            "deepagent": "DeepAgents (Planning)",
-        }
         console.print(
-            f"✅ Models loaded successfully ({backend_names[backend]} backend)\n",
+            f"✅ Models loaded successfully ({BACKEND_NAMES[backend]} backend)\n",
             style="green",
         )
     except Exception as e:
@@ -244,7 +203,7 @@ def start_chat(
         Panel.fit(
             f"[bold cyan]Boring Semantic Layer - Chat Interface[/bold cyan]\n\n"
             f"Model: {llm_model}\n"
-            f"Backend: {backend_names[backend]}\n"
+            f"Backend: {BACKEND_NAMES[backend]}\n"
             f"Charts: Enabled ({chart_backend})\n\n"
             f"Type your questions in natural language!\n"
             f"Commands: [dim]quit, exit, q[/dim]",
