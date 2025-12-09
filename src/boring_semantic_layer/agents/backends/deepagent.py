@@ -5,15 +5,31 @@ DeepAgents automatically handles multi-step planning, making it better
 at discovering values before filtering.
 """
 
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 
-from deepagents import create_deep_agent
-from dotenv import load_dotenv
-from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage
+# Suppress deprecation warnings from deepagents SummarizationMiddleware
+# These are internal to the deepagents library and will be fixed upstream
+warnings.filterwarnings(
+    "ignore",
+    message="max_tokens_before_summary is deprecated",
+    category=DeprecationWarning,
+    module="deepagents.graph",
+)
+warnings.filterwarnings(
+    "ignore",
+    message="messages_to_keep is deprecated",
+    category=DeprecationWarning,
+    module="deepagents.graph",
+)
 
-from boring_semantic_layer.agents.tools import BSLTools
+from deepagents import create_deep_agent  # noqa: E402
+from dotenv import load_dotenv  # noqa: E402
+from langchain.chat_models import init_chat_model  # noqa: E402
+from langchain_core.messages import HumanMessage  # noqa: E402
+
+from boring_semantic_layer.agents.tools import BSLTools  # noqa: E402
 
 load_dotenv()
 
