@@ -18,14 +18,14 @@ def mock_models():
 class TestLangGraphReActAgentInit:
     """Tests for LangGraphReActAgent initialization."""
 
-    @patch("boring_semantic_layer.agents.backends.langgraph_react.create_agent")
-    @patch("boring_semantic_layer.agents.backends.langgraph_react.init_chat_model")
+    @patch("boring_semantic_layer.agents.backends.langgraph.create_agent")
+    @patch("boring_semantic_layer.agents.backends.langgraph.init_chat_model")
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     def test_init_creates_agent(
         self, mock_from_yaml, mock_init_chat, mock_create_agent, tmp_path, mock_models
     ):
         """Test that initialization creates the LangGraph agent."""
-        from boring_semantic_layer.agents.backends.langgraph_react import LangGraphReActAgent
+        from boring_semantic_layer.agents.backends.langgraph import LangGraphReActAgent
 
         mock_from_yaml.return_value = mock_models
         mock_llm = Mock()
@@ -40,14 +40,14 @@ class TestLangGraphReActAgentInit:
         mock_init_chat.assert_called_once_with("gpt-4", temperature=0)
         mock_create_agent.assert_called_once()
 
-    @patch("boring_semantic_layer.agents.backends.langgraph_react.create_agent")
-    @patch("boring_semantic_layer.agents.backends.langgraph_react.init_chat_model")
+    @patch("boring_semantic_layer.agents.backends.langgraph.create_agent")
+    @patch("boring_semantic_layer.agents.backends.langgraph.init_chat_model")
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     def test_init_with_profile(
         self, mock_from_yaml, mock_init_chat, mock_create_agent, tmp_path, mock_models
     ):
         """Test initialization with profile settings."""
-        from boring_semantic_layer.agents.backends.langgraph_react import LangGraphReActAgent
+        from boring_semantic_layer.agents.backends.langgraph import LangGraphReActAgent
 
         mock_from_yaml.return_value = mock_models
         mock_init_chat.return_value = Mock()
@@ -68,14 +68,14 @@ class TestLangGraphReActAgentInit:
         assert agent.profile == "dev"
         assert agent.chart_backend == "altair"
 
-    @patch("boring_semantic_layer.agents.backends.langgraph_react.create_agent")
-    @patch("boring_semantic_layer.agents.backends.langgraph_react.init_chat_model")
+    @patch("boring_semantic_layer.agents.backends.langgraph.create_agent")
+    @patch("boring_semantic_layer.agents.backends.langgraph.init_chat_model")
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     def test_init_empty_history(
         self, mock_from_yaml, mock_init_chat, mock_create_agent, tmp_path, mock_models
     ):
         """Test that conversation history starts empty."""
-        from boring_semantic_layer.agents.backends.langgraph_react import LangGraphReActAgent
+        from boring_semantic_layer.agents.backends.langgraph import LangGraphReActAgent
 
         mock_from_yaml.return_value = mock_models
         mock_init_chat.return_value = Mock()
@@ -91,14 +91,14 @@ class TestLangGraphReActAgentInit:
 class TestLangGraphReActAgentQuery:
     """Tests for LangGraphReActAgent.query() method."""
 
-    @patch("boring_semantic_layer.agents.backends.langgraph_react.create_agent")
-    @patch("boring_semantic_layer.agents.backends.langgraph_react.init_chat_model")
+    @patch("boring_semantic_layer.agents.backends.langgraph.create_agent")
+    @patch("boring_semantic_layer.agents.backends.langgraph.init_chat_model")
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     def test_query_returns_tuple(
         self, mock_from_yaml, mock_init_chat, mock_create_agent, tmp_path, mock_models
     ):
         """Test that query returns tuple of (tool_outputs, response)."""
-        from boring_semantic_layer.agents.backends.langgraph_react import LangGraphReActAgent
+        from boring_semantic_layer.agents.backends.langgraph import LangGraphReActAgent
 
         mock_from_yaml.return_value = mock_models
         mock_init_chat.return_value = Mock()
@@ -117,14 +117,14 @@ class TestLangGraphReActAgentQuery:
         assert isinstance(result, tuple)
         assert len(result) == 2
 
-    @patch("boring_semantic_layer.agents.backends.langgraph_react.create_agent")
-    @patch("boring_semantic_layer.agents.backends.langgraph_react.init_chat_model")
+    @patch("boring_semantic_layer.agents.backends.langgraph.create_agent")
+    @patch("boring_semantic_layer.agents.backends.langgraph.init_chat_model")
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     def test_query_calls_on_tool_call_callback(
         self, mock_from_yaml, mock_init_chat, mock_create_agent, tmp_path, mock_models
     ):
         """Test that on_tool_call callback is invoked for tool calls."""
-        from boring_semantic_layer.agents.backends.langgraph_react import LangGraphReActAgent
+        from boring_semantic_layer.agents.backends.langgraph import LangGraphReActAgent
 
         mock_from_yaml.return_value = mock_models
         mock_init_chat.return_value = Mock()
@@ -149,14 +149,14 @@ class TestLangGraphReActAgentQuery:
         assert len(tool_calls) == 1
         assert tool_calls[0][0] == "list_models"
 
-    @patch("boring_semantic_layer.agents.backends.langgraph_react.create_agent")
-    @patch("boring_semantic_layer.agents.backends.langgraph_react.init_chat_model")
+    @patch("boring_semantic_layer.agents.backends.langgraph.create_agent")
+    @patch("boring_semantic_layer.agents.backends.langgraph.init_chat_model")
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     def test_query_calls_on_thinking_callback(
         self, mock_from_yaml, mock_init_chat, mock_create_agent, tmp_path, mock_models
     ):
         """Test that on_thinking callback is invoked for thinking text before tools."""
-        from boring_semantic_layer.agents.backends.langgraph_react import LangGraphReActAgent
+        from boring_semantic_layer.agents.backends.langgraph import LangGraphReActAgent
 
         mock_from_yaml.return_value = mock_models
         mock_init_chat.return_value = Mock()
@@ -185,14 +185,14 @@ class TestLangGraphReActAgentQuery:
 class TestLangGraphReActAgentHistory:
     """Tests for conversation history management."""
 
-    @patch("boring_semantic_layer.agents.backends.langgraph_react.create_agent")
-    @patch("boring_semantic_layer.agents.backends.langgraph_react.init_chat_model")
+    @patch("boring_semantic_layer.agents.backends.langgraph.create_agent")
+    @patch("boring_semantic_layer.agents.backends.langgraph.init_chat_model")
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     def test_reset_history(
         self, mock_from_yaml, mock_init_chat, mock_create_agent, tmp_path, mock_models
     ):
         """Test that reset_history clears conversation history."""
-        from boring_semantic_layer.agents.backends.langgraph_react import LangGraphReActAgent
+        from boring_semantic_layer.agents.backends.langgraph import LangGraphReActAgent
 
         mock_from_yaml.return_value = mock_models
         mock_init_chat.return_value = Mock()
@@ -213,14 +213,14 @@ class TestLangGraphReActAgentHistory:
         agent.reset_history()
         assert agent.conversation_history == []
 
-    @patch("boring_semantic_layer.agents.backends.langgraph_react.create_agent")
-    @patch("boring_semantic_layer.agents.backends.langgraph_react.init_chat_model")
+    @patch("boring_semantic_layer.agents.backends.langgraph.create_agent")
+    @patch("boring_semantic_layer.agents.backends.langgraph.init_chat_model")
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     def test_history_bounded_at_20(
         self, mock_from_yaml, mock_init_chat, mock_create_agent, tmp_path, mock_models
     ):
         """Test that history is bounded at 20 messages."""
-        from boring_semantic_layer.agents.backends.langgraph_react import LangGraphReActAgent
+        from boring_semantic_layer.agents.backends.langgraph import LangGraphReActAgent
 
         mock_from_yaml.return_value = mock_models
         mock_init_chat.return_value = Mock()

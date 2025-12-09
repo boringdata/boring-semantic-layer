@@ -141,7 +141,7 @@ def start_chat(
                     profile_file=profile_file,
                 )
             elif backend == "langgraph":
-                from boring_semantic_layer.agents.backends.langgraph_react import (
+                from boring_semantic_layer.agents.backends.langgraph import (
                     LangGraphReActAgent,
                 )
 

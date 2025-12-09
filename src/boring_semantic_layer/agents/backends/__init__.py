@@ -7,7 +7,7 @@ Available backends:
 """
 
 from boring_semantic_layer.agents.backends.langchain import LangChainAgent
-from boring_semantic_layer.agents.backends.langgraph_react import LangGraphReActAgent
+from boring_semantic_layer.agents.backends.langgraph import LangGraphReActAgent
 
 __all__ = [
     "LangChainAgent",
