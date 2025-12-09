@@ -1,5 +1,8 @@
 # Boring Semantic Layer (BSL)
 
+[![Run in Smithery](https://smithery.ai/badge/skills/boringdata)](https://smithery.ai/skills?ns=boringdata&utm_source=github&utm_medium=badge)
+
+
 The Boring Semantic Layer (BSL) is a lightweight semantic layer based on [Ibis](https://ibis-project.org/).
 
 **Key Features:**
