@@ -25,7 +25,7 @@ Instead of spine-based bucketing, use **CurrentTimeFreshnessStrategy**:
 
 ## API Design
 
-### Step 1: Define FeatureView with Windows
+### Step 1: Define Semantic Table with Windows
 
 ```python
 from boring_semantic_layer import entity_dimension, time_dimension, windowed_measure

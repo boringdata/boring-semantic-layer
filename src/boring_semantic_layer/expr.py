@@ -311,35 +311,6 @@ class SemanticModel(SemanticTable):
     def get_calculated_measures(self):
         return self.op().get_calculated_measures()
 
-    def is_feature_view(self) -> bool:
-        """Check if this semantic model is a valid FeatureView.
-
-        A FeatureView is defined as a semantic model with:
-        - Exactly 1 entity dimension (join key)
-        - Exactly 1 event timestamp dimension (for point-in-time correctness)
-
-        This matches the Feast FeatureView concept where features are organized
-        around a single entity and timestamp for feature engineering.
-
-        Returns:
-            True if the model has exactly 1 entity and 1 event timestamp, False otherwise
-
-        Examples:
-            >>> from boring_semantic_layer import entity_dimension, time_dimension, to_semantic_table
-            >>> model = (
-            ...     to_semantic_table(tbl, name="balance_features")
-            ...     .with_dimensions(
-            ...         business_id=entity_dimension(lambda t: t.business_id),
-            ...         statement_date=time_dimension(lambda t: t.statement_date),
-            ...     )
-            ... )
-            >>> model.is_feature_view()
-            True
-        """
-        from .graph_utils import is_feature_view as _is_feature_view
-
-        return _is_feature_view(self)
-
     @property
     def _dims(self):
         return self.op()._dims
