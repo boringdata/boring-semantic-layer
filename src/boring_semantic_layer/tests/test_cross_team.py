@@ -46,12 +46,13 @@ def test_cross_team_aggregated_measure_refs():
     ).with_measures(avg_case_value=lambda t: t.avg_monthly_spend / t.case_count)
 
     # Sane query: pick the calculated measure at the requested grain
-    df = cross_team.group_by("segment").aggregate("avg_case_value").order_by("segment").execute()
+    # Note: After join, dimensions are prefixed with table names
+    df = cross_team.group_by("marketing.segment").aggregate("avg_case_value").order_by("marketing.segment").execute()
 
     # One case per customer, so:
     # segment A: 100 / 1 = 100
     # segment B: 200 / 1 = 200
     assert df.to_dict(orient="list") == {
-        "segment": ["A", "B"],
+        "marketing.segment": ["A", "B"],
         "avg_case_value": [100.0, 200.0],
     }
