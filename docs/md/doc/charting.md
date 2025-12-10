@@ -288,6 +288,6 @@ with open("my_chart.png", "wb") as f:
 
 ## Next Steps
 
-- Learn about [Query Methods](query-methods.md) to build complex queries
-- Explore [YAML Configuration](yaml-config.md) for declarative semantic models
-- See [Compose Models](compose.md) for joining semantic tables
+- Learn about [Query Methods](/querying/methods) to build complex queries
+- Explore [YAML Configuration](/building/yaml) for declarative semantic models
+- See [Compose Models](/building/compose) for joining semantic tables
