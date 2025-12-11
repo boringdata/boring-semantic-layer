@@ -16,7 +16,6 @@ from langchain.agents.middleware import (
 )
 from langchain.agents.middleware.summarization import SummarizationMiddleware
 from langchain.chat_models import init_chat_model
-from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
 from langchain_core.messages import HumanMessage
 
 from boring_semantic_layer.agents.tools import BSLTools
@@ -30,7 +29,7 @@ class LangGraphBackend(BSLTools):
     Uses LangGraph create_agent with selective middleware:
     - TodoListMiddleware for planning (write_todos)
     - SummarizationMiddleware for long conversations
-    - AnthropicPromptCachingMiddleware for efficiency
+    - AnthropicPromptCachingMiddleware for efficiency (Anthropic models only)
     - NO FilesystemMiddleware (no ls, read_file, etc.)
     - NO SubAgentMiddleware (no task tool)
     """
@@ -53,36 +52,44 @@ class LangGraphBackend(BSLTools):
         self.llm = init_chat_model(llm_model, temperature=0)
         self.conversation_history: list = []
 
+        # Build middleware list
+        middleware = [
+            TodoListMiddleware(),  # Planning with write_todos
+            ContextEditingMiddleware(
+                edits=[
+                    # Clear get_documentation immediately after use (keep=0)
+                    ClearToolUsesEdit(
+                        trigger=2000,
+                        keep=0,
+                        exclude_tools=["query_model", "list_models", "get_model"],
+                    ),
+                    # Keep only last get_model result
+                    ClearToolUsesEdit(
+                        trigger=3500,
+                        keep=1,
+                        exclude_tools=["query_model", "list_models", "get_documentation"],
+                    ),
+                ]
+            ),
+            SummarizationMiddleware(
+                model=self.llm,
+                trigger=("tokens", 6000),  # Summarize earlier to reduce context
+                keep=("messages", 3),
+            ),
+        ]
+
+        # Add Anthropic prompt caching middleware only for Anthropic models
+        if llm_model.startswith("anthropic:") or "claude" in llm_model.lower():
+            from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
+
+            middleware.append(AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"))
+
         # Create agent with selective middleware (no filesystem/subagent tools)
         self.agent = create_agent(
             self.llm,
             tools=self.get_callable_tools(),
             system_prompt=self.system_prompt,
-            middleware=[
-                TodoListMiddleware(),  # Planning with write_todos
-                ContextEditingMiddleware(
-                    edits=[
-                        # Clear get_documentation immediately after use (keep=0)
-                        ClearToolUsesEdit(
-                            trigger=2000,
-                            keep=0,
-                            exclude_tools=["query_model", "list_models", "get_model"],
-                        ),
-                        # Keep only last get_model result
-                        ClearToolUsesEdit(
-                            trigger=3500,
-                            keep=1,
-                            exclude_tools=["query_model", "list_models", "get_documentation"],
-                        ),
-                    ]
-                ),
-                SummarizationMiddleware(
-                    model=self.llm,
-                    trigger=("tokens", 6000),  # Summarize earlier to reduce context
-                    keep=("messages", 3),
-                ),
-                AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
-            ],
+            middleware=middleware,
         )
 
     def query(
