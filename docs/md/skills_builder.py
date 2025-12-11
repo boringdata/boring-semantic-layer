@@ -88,6 +88,7 @@ class SkillBuilder:
 
         Replaces the 'Additional Resources' section that references get_documentation()
         with a static version built from index.json with GitHub URLs.
+        If no such section exists, appends the Additional Information section.
 
         Args:
             content: The prompt content to transform
@@ -97,8 +98,13 @@ class SkillBuilder:
         pattern = r"## Additional (Resources|Information).*"
         replacement = self.build_additional_info_for_skill(tool)
 
-        # Replace the section (DOTALL makes . match newlines)
-        return re.sub(pattern, replacement, content, flags=re.DOTALL)
+        # Check if section exists
+        if re.search(pattern, content):
+            # Replace the section (DOTALL makes . match newlines)
+            return re.sub(pattern, replacement, content, flags=re.DOTALL)
+        else:
+            # Append the section if it doesn't exist
+            return content.rstrip() + "\n\n" + replacement
 
     def build_query_expert_claude_code(self) -> str:
         """Build Claude Code bsl-query-expert SKILL.md content."""
