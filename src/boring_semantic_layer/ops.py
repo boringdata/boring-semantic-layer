@@ -2508,16 +2508,12 @@ def _build_column_rename_map(
             column_maybe = extract_column_from_dimension(field_value, root_tbl)
 
             # Use Maybe pattern from returns library
-            # Capture loop variables to avoid late binding issues (B023)
             column_maybe.bind_optional(
-                lambda base_column,
-                root=root,
-                field_name=field_name,
-                idx=idx: _check_and_add_rename(
+                lambda base_column: _check_and_add_rename(  # noqa: B023
                     rename_map=rename_map,
                     base_column=base_column,
-                    prefixed_name=f"{root.name}.{field_name}",
-                    table_idx=idx,
+                    prefixed_name=f"{root.name}.{field_name}",  # noqa: B023
+                    table_idx=idx,  # noqa: B023
                     column_index=column_index,
                     join_keys=join_keys,
                 )
