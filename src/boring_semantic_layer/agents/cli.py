@@ -8,15 +8,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Shared backend configuration - single source of truth
-BACKEND_NAMES = {
-    "langchain": "LangChain",
-    "langgraph": "LangGraph ReAct",
-    "deepagent": "DeepAgents (Planning)",
-}
-BACKEND_CHOICES = list(BACKEND_NAMES.keys())
-DEFAULT_BACKEND = "deepagent"
-
 # Tool configurations - how each tool stores skills
 TOOL_CONFIGS = {
     "claude-code": {
@@ -230,14 +221,15 @@ def cmd_chat(args):
             return
 
     # Get LLM from args (no validation - let LangChain handle it)
-    llm_model = args.llm if hasattr(args, "llm") and args.llm else "gpt-4"
+    llm_model = (
+        args.llm if hasattr(args, "llm") and args.llm else "anthropic:claude-opus-4-20250514"
+    )
     initial_query = " ".join(args.query) if hasattr(args, "query") and args.query else None
     profile = args.profile if hasattr(args, "profile") else None
     profile_file = args.profile_file if hasattr(args, "profile_file") else None
+    auto_exit = args.auto_exit if hasattr(args, "auto_exit") else False
 
     # Note: profile.py handles BSL_PROFILE_FILE env var and auto-selection
-
-    backend = args.backend if hasattr(args, "backend") else DEFAULT_BACKEND
 
     start_chat(
         model_path=model_path,
@@ -247,7 +239,7 @@ def cmd_chat(args):
         profile=profile,
         profile_file=profile_file,
         env_path=env_path,  # Pass through for start_chat's internal use
-        backend=backend,
+        auto_exit=auto_exit,
     )
 
 
@@ -287,14 +279,8 @@ def main():
     )
     chat_parser.add_argument(
         "--llm",
-        default="gpt-4",
-        help="LLM model to use (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-1.5-pro)",
-    )
-    chat_parser.add_argument(
-        "--backend",
-        choices=BACKEND_CHOICES,
-        default=DEFAULT_BACKEND,
-        help="Agent backend: deepagent (Planning, default), langgraph (ReAct), langchain (simple loop)",
+        default="anthropic:claude-opus-4-20250514",
+        help="LLM model to use. Format: [provider:]model (e.g., gpt-4o, openai:gpt-4o, anthropic:claude-sonnet-4-20250514, google_genai:gemini-1.5-pro)",
     )
     chat_parser.add_argument(
         "--profile",
@@ -309,6 +295,11 @@ def main():
         "query",
         nargs="*",
         help="Optional initial query to run",
+    )
+    chat_parser.add_argument(
+        "--auto-exit",
+        action="store_true",
+        help="Exit after running the initial query (non-interactive mode)",
     )
     chat_parser.set_defaults(func=cmd_chat)
 

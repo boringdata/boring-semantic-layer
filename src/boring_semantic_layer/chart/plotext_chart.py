@@ -76,24 +76,25 @@ class PlotextBackend(ChartBackend):
         dimensions: Sequence[str],
         measures: Sequence[str],
         time_dimension: str | None = None,
-    ) -> str:
+    ) -> str | None:
         """
         Auto-detect appropriate chart type based on query structure.
 
         Uses shared detection logic with Plotext-specific adjustments:
         - "indicator" → "simple" (terminal text display)
         - Two non-time dimensions → "scatter" instead of "heatmap"
+        - "table" → None (skip charting for complex queries)
         """
         # Use shared generic detection
         chart_type = detect_chart_type_generic(list(dimensions), list(measures), time_dimension)
 
         # Plotext-specific overrides
-        if chart_type == "indicator":
-            return "simple"  # Terminal text display
-        elif chart_type == "heatmap":
-            return "scatter"  # Plotext doesn't have good heatmap support
-
-        return chart_type
+        overrides = {
+            "indicator": "simple",  # Terminal text display
+            "heatmap": "scatter",  # Plotext doesn't have good heatmap support
+            "table": None,  # Skip charting for complex queries
+        }
+        return overrides.get(chart_type, chart_type)
 
     def prepare_data(
         self,
@@ -120,11 +121,15 @@ class PlotextBackend(ChartBackend):
         self,
         df: Any,
         params: dict[str, Any],
-        chart_type: str,
+        chart_type: str | None,
         spec: dict[str, Any] | None = None,
     ) -> Any:
         """Create Plotext chart (renders to terminal)."""
         import plotext as plt
+
+        # Skip charting if chart_type is None (complex query not suitable for charting)
+        if chart_type is None:
+            return None
 
         plt.clear_figure()
         plt.clear_data()
@@ -161,8 +166,6 @@ class PlotextBackend(ChartBackend):
         # Route to chart-specific renderer
         if chart_type == "simple":
             self._create_simple_chart(plt, df, measures, chart_title)
-        elif chart_type == "table":
-            self._create_table_chart(plt, df, chart_title)
         elif chart_type == "bar":
             self._create_bar_chart(plt, df, dimensions, measures, chart_title)
         elif chart_type == "line":
@@ -180,13 +183,6 @@ class PlotextBackend(ChartBackend):
             value = df[measures[0]].iloc[0]
             plt.text(f"{measures[0]}: {value}", x=0.5, y=0.5)
             plt.title(chart_title or measures[0])
-
-    def _create_table_chart(self, plt, df, chart_title):
-        """Create table display."""
-        plt.theme("clear")
-        table_str = df.to_string(index=False)
-        plt.text("\n".join(table_str.split("\n")), x=0, y=0)
-        plt.title(chart_title or "Data Table")
 
     def _create_bar_chart(self, plt, df, dimensions, measures, chart_title):
         """Create bar chart."""
@@ -371,6 +367,10 @@ class PlotextBackend(ChartBackend):
 
     def format_output(self, chart_obj: Any, format: str = "static") -> Any:
         """Format Plotext chart output."""
+        # Skip if no chart (complex query not suitable for charting)
+        if chart_obj is None:
+            return None
+
         # Validate format
         validate_format(format, ["static", "interactive", "string"])
 

@@ -179,6 +179,8 @@ class TestBSLToolsExecute:
 
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     def test_execute_get_documentation_invalid_topic(self, mock_from_yaml, tmp_path, mock_models):
+        from langchain_core.tools import ToolException
+
         from boring_semantic_layer.agents.tools import BSLTools
 
         mock_from_yaml.return_value = mock_models
@@ -186,10 +188,11 @@ class TestBSLToolsExecute:
         model_file.write_text("test")
 
         bsl = BSLTools(model_path=model_file)
-        result = bsl.execute("get_documentation", {"topic": "nonexistent-topic"})
 
-        assert "❌" in result
-        assert "Unknown topic" in result
+        with pytest.raises(ToolException) as exc_info:
+            bsl._get_documentation(topic="nonexistent-topic")
+
+        assert "Unknown topic" in str(exc_info.value)
 
 
 class TestBSLToolsQueryModel:
@@ -244,6 +247,8 @@ class TestBSLToolsQueryModel:
 
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     def test_query_model_handles_exception(self, mock_from_yaml, tmp_path, mock_models):
+        from langchain_core.tools import ToolException
+
         from boring_semantic_layer.agents.tools import BSLTools
 
         mock_from_yaml.return_value = mock_models
@@ -255,13 +260,15 @@ class TestBSLToolsQueryModel:
         with patch("boring_semantic_layer.agents.tools.safe_eval") as mock_eval:
             mock_eval.side_effect = ValueError("Invalid query")
 
-            result = bsl.execute("query_model", {"query": "bad query"})
+            with pytest.raises(ToolException) as exc_info:
+                bsl._query_model(query="bad query")
 
-            assert "❌" in result
-            assert "Invalid query" in result
+            assert "Invalid query" in str(exc_info.value)
 
     @patch("boring_semantic_layer.agents.tools.from_yaml")
     def test_query_model_handles_failure_result(self, mock_from_yaml, tmp_path, mock_models):
+        from langchain_core.tools import ToolException
+
         from boring_semantic_layer.agents.tools import BSLTools
 
         mock_from_yaml.return_value = mock_models
@@ -273,35 +280,42 @@ class TestBSLToolsQueryModel:
         with patch("boring_semantic_layer.agents.tools.safe_eval") as mock_eval:
             mock_eval.return_value = Failure(ValueError("Query failed"))
 
-            result = bsl.execute("query_model", {"query": "test"})
+            with pytest.raises(ToolException) as exc_info:
+                bsl._query_model(query="test")
 
-            assert "❌" in result
+            assert "Query failed" in str(exc_info.value)
 
     @patch("boring_semantic_layer.agents.tools.from_yaml")
-    def test_query_model_unwraps_success_result(self, mock_from_yaml, tmp_path, mock_models):
+    @patch("boring_semantic_layer.agents.tools.generate_chart_with_data")
+    def test_query_model_unwraps_success_result(
+        self, mock_chart, mock_from_yaml, tmp_path, mock_models
+    ):
         from boring_semantic_layer.agents.tools import BSLTools
 
         mock_from_yaml.return_value = mock_models
+        mock_chart.return_value = '{"success": true}'
         model_file = tmp_path / "test.yml"
         model_file.write_text("test")
 
         bsl = BSLTools(model_path=model_file)
 
         mock_query_result = Mock()
-        mock_df = Mock()
-        mock_df.__len__ = Mock(return_value=5)
-        mock_query_result.execute.return_value = mock_df
-        mock_query_result.chart.return_value = None
 
         with patch("boring_semantic_layer.agents.tools.safe_eval") as mock_eval:
             mock_eval.return_value = Success(mock_query_result)
 
-            bsl.execute("query_model", {"query": "test"})
+            bsl._query_model(query="test")
 
-            mock_query_result.execute.assert_called_once()
+            # Verify Success result was unwrapped and passed to chart generator
+            mock_chart.assert_called_once()
+            assert mock_chart.call_args[0][0] is mock_query_result
 
     @patch("boring_semantic_layer.agents.tools.from_yaml")
-    def test_query_model_calls_error_callback(self, mock_from_yaml, tmp_path, mock_models):
+    def test_query_model_raises_tool_exception_on_error(
+        self, mock_from_yaml, tmp_path, mock_models
+    ):
+        from langchain_core.tools import ToolException
+
         from boring_semantic_layer.agents.tools import BSLTools
 
         mock_from_yaml.return_value = mock_models
@@ -316,10 +330,12 @@ class TestBSLToolsQueryModel:
         with patch("boring_semantic_layer.agents.tools.safe_eval") as mock_eval:
             mock_eval.side_effect = ValueError("Test error")
 
-            bsl.execute("query_model", {"query": "test"})
+            with pytest.raises(ToolException) as exc_info:
+                bsl._query_model(query="test")
 
+            assert "Query Error" in str(exc_info.value)
             assert len(error_messages) == 1
-            assert "❌ Query Error" in error_messages[0]
+            assert "Query Error" in error_messages[0]
 
 
 class TestBSLToolsListModels:

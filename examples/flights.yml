@@ -151,6 +151,9 @@ flights:
       description: "Arrival timestamp"
       is_time_dimension: true
       smallest_time_grain: "TIME_GRAIN_DAY"
+    distance:
+      expr: _.distance
+      description: "Flight distance in miles"
 
   measures:
     flight_count:

@@ -580,6 +580,7 @@ tomlkit==0.13.3
     # via snowflake-connector-python
 toolz==1.1.0
     # via
+    #   boring-semantic-layer
     #   dask
     #   ibis-framework
     #   partd

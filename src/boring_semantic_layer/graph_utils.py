@@ -1,8 +1,9 @@
 """Graph utilities with functional programming support."""
 
+from collections.abc import Callable, Sequence
 from functools import reduce as functools_reduce
 from operator import methodcaller
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from ibis.expr.operations.core import Node as IbisNode
 from ibis.expr.types import Expr as IbisExpr
@@ -195,9 +196,7 @@ def find_dimensions_and_measures(
 
     roots = _find_all_root_models(to_node(expr))
 
-    dimensions = _merge_fields_with_prefixing(
-        roots, lambda r: _get_field_dict(r, "dimensions")
-    )
+    dimensions = _merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, "dimensions"))
     measures = _merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, "measures"))
 
     return (dimensions, measures)
@@ -466,8 +465,11 @@ def traverse_roots_with(
     Returns:
         Result containing list of successful transformations or first error
     """
+
     # Use railway-oriented programming with .bind for proper error propagation
-    def accumulate_result(acc_result: Result[list[Any], Exception], root: Any) -> Result[list[Any], Exception]:
+    def accumulate_result(
+        acc_result: Result[list[Any], Exception], root: Any
+    ) -> Result[list[Any], Exception]:
         # Short-circuit if already failed
         return acc_result.bind(
             lambda acc_list: transform(root).map(lambda value: acc_list + [value])
@@ -543,9 +545,7 @@ def build_column_index_from_roots(
             return acc_result
 
         table = root.to_untagged()
-        return acc_result.map(
-            lambda column_index: _update_column_index(column_index, table, idx)
-        )
+        return acc_result.map(lambda column_index: _update_column_index(column_index, table, idx))
 
     def _update_column_index(column_index, table, idx):
         """Update column index with table columns."""

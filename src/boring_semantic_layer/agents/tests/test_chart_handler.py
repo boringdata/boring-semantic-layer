@@ -366,7 +366,7 @@ def test_static_format_message_in_api_mode():
 
 
 def test_chart_spec_passed_to_chart_method(mock_query_result):
-    """Test that chart_spec is correctly passed to chart method."""
+    """Test that chart_spec is correctly passed to chart method (legacy nested format)."""
     custom_spec = {"chart_type": "bar", "theme": "dark"}
 
     result = generate_chart_with_data(
@@ -383,6 +383,65 @@ def test_chart_spec_passed_to_chart_method(mock_query_result):
 
     # Verify chart was called with the custom spec
     mock_query_result.chart.assert_called_with(spec=custom_spec, backend="altair", format="json")
+
+
+def test_chart_spec_direct_format(mock_query_result):
+    """Test that chart_spec works with direct format (no nested 'spec' key).
+
+    LLMs typically send: {"chart_type": "bar"} not {"spec": {"chart_type": "bar"}}
+    """
+    direct_spec = {"chart_type": "bar"}
+
+    result = generate_chart_with_data(
+        query_result=mock_query_result,
+        get_chart=True,
+        chart_spec=direct_spec,  # Direct format, not nested
+        chart_backend="plotext",
+        chart_format="json",
+        return_json=True,
+    )
+
+    result_dict = json.loads(result)
+    assert "chart" in result_dict
+
+    # Verify chart was called with the direct spec (not None)
+    mock_query_result.chart.assert_called_with(spec=direct_spec, backend="plotext", format="json")
+
+
+def test_chart_spec_direct_vs_nested_equivalence(mock_query_result):
+    """Test that both direct and nested chart_spec formats work equivalently."""
+    spec_content = {"chart_type": "line", "title": "My Chart"}
+
+    # Reset mock between calls
+    mock_query_result.chart.reset_mock()
+
+    # Test direct format
+    generate_chart_with_data(
+        query_result=mock_query_result,
+        get_chart=True,
+        chart_spec=spec_content,  # Direct: {"chart_type": "line", ...}
+        chart_backend="plotext",
+        chart_format="json",
+        return_json=True,
+    )
+    direct_call = mock_query_result.chart.call_args
+
+    mock_query_result.chart.reset_mock()
+
+    # Test nested format
+    generate_chart_with_data(
+        query_result=mock_query_result,
+        get_chart=True,
+        chart_spec={"spec": spec_content},  # Nested: {"spec": {"chart_type": "line", ...}}
+        chart_backend="plotext",
+        chart_format="json",
+        return_json=True,
+    )
+    nested_call = mock_query_result.chart.call_args
+
+    # Both should result in the same spec being passed to chart()
+    assert direct_call == nested_call
+    assert direct_call.kwargs["spec"] == spec_content
 
 
 def test_error_callback_called_on_chart_error(capsys):
@@ -724,3 +783,82 @@ class TestRecordsDisplayedLimit:
         assert result_dict["returned_rows"] == 15
         assert result_dict["total_rows"] == 20
         assert len(result_dict["records"]) == 15
+
+
+class TestChartTypeOverride:
+    """Tests for explicit chart_type override in spec."""
+
+    def test_chart_type_override_line_to_bar(self):
+        """Test that explicit chart_type in spec overrides auto-detected type."""
+        from boring_semantic_layer.chart.utils import override_chart_type_from_spec
+
+        # Auto-detected "line" should be overridden to "bar"
+        result = override_chart_type_from_spec("line", {"chart_type": "bar"})
+        assert result == "bar"
+
+    def test_chart_type_override_bar_to_line(self):
+        """Test that explicit chart_type in spec overrides auto-detected type."""
+        from boring_semantic_layer.chart.utils import override_chart_type_from_spec
+
+        # Auto-detected "bar" should be overridden to "line"
+        result = override_chart_type_from_spec("bar", {"chart_type": "line"})
+        assert result == "line"
+
+    def test_chart_type_no_override_when_spec_none(self):
+        """Test that chart_type is preserved when spec is None."""
+        from boring_semantic_layer.chart.utils import override_chart_type_from_spec
+
+        result = override_chart_type_from_spec("bar", None)
+        assert result == "bar"
+
+    def test_chart_type_no_override_when_chart_type_missing(self):
+        """Test that chart_type is preserved when spec doesn't have chart_type."""
+        from boring_semantic_layer.chart.utils import override_chart_type_from_spec
+
+        result = override_chart_type_from_spec("bar", {"theme": "dark"})
+        assert result == "bar"
+
+    def test_plotext_backend_uses_override(self):
+        """Test that PlotextBackend.create_chart respects chart_type override."""
+        from boring_semantic_layer.chart.plotext_chart import PlotextBackend
+
+        backend = PlotextBackend()
+        df = pd.DataFrame({"month": [1, 2, 3], "count": [100, 150, 120]})
+        params = {"dimensions": ["month"], "measures": ["count"], "time_dimension": None}
+
+        # Create chart with auto-detected "bar" but override to "line"
+        # We can't easily verify the chart type from plotext, but we can verify
+        # that no exception is raised when a valid override is provided
+        chart_obj = backend.create_chart(df, params, "bar", spec={"chart_type": "line"})
+        assert chart_obj is not None
+
+    def test_chart_init_fast_path_with_explicit_type(self):
+        """Test that chart/__init__.py uses fast path when chart_type is explicit."""
+        from pathlib import Path
+
+        from boring_semantic_layer import from_yaml
+
+        # Load models
+        models = from_yaml(
+            str(Path("examples/flights.yml")),
+            profile_path=str(Path("examples/profiles.yml")),
+        )
+        flights = models["flights"]
+
+        # Create a query
+        query = (
+            flights.with_dimensions(month=lambda t: t.dep_time.month())
+            .group_by("month")
+            .aggregate("flight_count")
+            .order_by("month")
+        )
+
+        # Execute with explicit chart_type - should use fast path
+        from boring_semantic_layer.chart import chart as create_chart
+
+        # This should not raise an error and should use explicit type
+        result = create_chart(
+            query, spec={"chart_type": "line"}, backend="plotext", format="static"
+        )
+        # Result is None for plotext static format (renders to terminal)
+        assert result is None  # plotext static format returns None after rendering

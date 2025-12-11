@@ -236,14 +236,14 @@ class TestPlotextChartTypes:
         assert chart_str is not None
         assert isinstance(chart_str, str)
 
-    def test_table_complex_query(self, flights_model):
-        """Test table fallback for complex queries."""
+    def test_complex_query_skips_charting(self, flights_model):
+        """Test that complex queries skip charting (return None)."""
         result = flights_model.group_by("origin", "destination", "carrier").aggregate(
             "flight_count", "avg_distance"
         )
         chart_str = result.chart(backend="plotext", format="string")
-        assert chart_str is not None
-        assert isinstance(chart_str, str)
+        # Complex queries with 3+ dimensions now return None instead of table chart
+        assert chart_str is None
 
 
 class TestChartDetectionLogic:

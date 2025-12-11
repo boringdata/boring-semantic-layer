@@ -141,13 +141,21 @@ def _patched_ibis_asc(expr):
 def _patched_ibis_cases(*args, else_=None, **kwargs):
     """Patch ibis.cases to work with xorq expressions.
 
-    If any of the arguments contain xorq expressions, use xorq's case function
-    (xorq uses 'case' instead of 'cases').
+    If any of the arguments contain xorq expressions, use xorq's case function.
+    xorq uses a builder pattern: case().when(cond, val).else_(default).end()
+    while ibis.cases uses functional: cases((cond, val), ..., else_=default)
     """
     # Check if any arguments or the else_ clause contain xorq expressions
     if _contains_xorq_exprs(*args, else_=else_):
-        # xorq uses 'case' instead of 'cases'
-        return xibis.case(*args, else_=else_, **kwargs)
+        # Convert from ibis.cases functional syntax to xorq builder pattern
+        # ibis.cases((cond1, val1), (cond2, val2), else_=default)
+        # -> xibis.case().when(cond1, val1).when(cond2, val2).else_(default).end()
+        builder = xibis.case()
+        for condition, value in args:
+            builder = builder.when(condition, value)
+        if else_ is not None:
+            builder = builder.else_(else_)
+        return builder.end()
 
     return _original_ibis_cases(*args, else_=else_, **kwargs)
 

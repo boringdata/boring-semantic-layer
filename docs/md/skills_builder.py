@@ -105,6 +105,11 @@ class SkillBuilder:
         # Read the LangChain system prompt and transform it for skills
         content = self.read_prompt("query/langchain", "system.md")
         content = self.transform_prompt_for_skill(content, tool="claude-code")
+
+        # Include tool-query-model.md content since skills can't call get_documentation()
+        tool_query_content = self.read_prompt("query/langchain", "tool-query-model.md")
+        content += "\n## Query Syntax Reference\n\n" + tool_query_content
+
         frontmatter = """---
 name: bsl-query-expert
 description: Query BSL semantic models with group_by, aggregate, filter, and visualizations. Use for data analysis from existing semantic tables.
@@ -130,6 +135,11 @@ description: Build BSL semantic models with dimensions, measures, joins, and YAM
         # Read the LangChain system prompt and transform it for skills
         content = self.read_prompt("query/langchain", "system.md")
         content = self.transform_prompt_for_skill(content, tool="codex")
+
+        # Include tool-query-model.md content since skills can't call get_documentation()
+        tool_query_content = self.read_prompt("query/langchain", "tool-query-model.md")
+        content += "\n## Query Syntax Reference\n\n" + tool_query_content
+
         header = """# BSL Query Expert - Codex Skill
 
 This skill helps with querying Boring Semantic Layer (BSL) models.
@@ -153,6 +163,11 @@ This skill helps with building Boring Semantic Layer (BSL) semantic models.
         # Read the LangChain system prompt and transform it for skills
         content = self.read_prompt("query/langchain", "system.md")
         content = self.transform_prompt_for_skill(content, tool="cursor")
+
+        # Include tool-query-model.md content since skills can't call get_documentation()
+        tool_query_content = self.read_prompt("query/langchain", "tool-query-model.md")
+        content += "\n## Query Syntax Reference\n\n" + tool_query_content
+
         frontmatter = """---
 description: Query BSL semantic models with group_by, aggregate, filter, and visualizations
 globs:

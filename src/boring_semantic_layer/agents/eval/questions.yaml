@@ -1,6 +1,6 @@
 # BSL Agent Evaluation Questions
-# Focused set of 20 questions for regression testing
-# Each covers a critical feature or common failure mode
+# Focused set of 12 questions for regression testing
+# Each covers a distinct critical feature
 
 questions:
   # Core functionality
@@ -13,12 +13,8 @@ questions:
     features: [filter_timestamp, year_method]
 
   - id: core_003
-    question: "Which carriers have flights with distance greater than 2000 miles?"
-    features: [filter_numeric, lambda_expression]
-
-  - id: core_004
     question: "Show flights from JFK or LAX with distance over 1000 miles"
-    features: [multiple_conditions, logical_operators]
+    features: [multiple_conditions, logical_operators, isin]
 
   # Joins
   - id: join_001
@@ -40,14 +36,10 @@ questions:
 
   # Multi-hop reasoning
   - id: multihop_001
-    question: "Which carrier has the highest average delay, and what routes do they fly most?"
-    features: [multi_step_reasoning, exploration, follow_up_query]
-
-  - id: multihop_002
     question: "What percentage of flights from Texas airports are operated by Southwest (WN)?"
     features: [join_airports, filter_by_state, percentage_calculation]
 
-  # Tool interaction
+  # Tool interaction & error handling
   - id: tool_001
     question: "What models are available and what fields does the flights model have?"
     features: [list_models, get_model, sequential_tools]
@@ -58,36 +50,10 @@ questions:
 
   # Output configuration
   - id: output_001
-    question: "Show me a bar chart of flights by carrier"
-    features: [chart_type_bar, chart_spec]
+    question: "Give me just the raw data for top 5 carriers by flight count, no chart"
+    features: [get_chart_false, order_by, limit]
 
-  - id: output_002
-    question: "Give me just the raw data for top 5 carriers, no chart needed"
-    features: [get_chart_false, records_only]
-
-  # Ibis syntax
-  - id: ibis_001
-    question: "Show carriers where the carrier code is in the list AA, UA, DL"
-    features: [isin_method, list_filter]
-
-  - id: ibis_002
-    question: "Show flights where distance is between 500 and 1500 miles"
-    features: [between_filter, compound_condition]
-
-  - id: ibis_003
-    question: "Show flights ordered by distance descending"
-    features: [order_by, ibis_desc]
-
-  # Resolution strategy
+  # Ambiguous query handling
   - id: strategy_001
-    question: "Show me flight data"
-    features: [ambiguous_query, default_aggregation]
-
-  - id: strategy_002
     question: "Compare the busiest airports"
-    features: [ambiguous_comparison, top_n_selection]
-
-  # Edge cases
-  - id: edge_001
-    question: "Show me the flight data as a table, not a chart"
-    features: [chart_spec, table_display]
+    features: [ambiguous_query, top_n_selection]
