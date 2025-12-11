@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -165,6 +165,7 @@ dependencies = [
     { name = "packaging" },
     { name = "pyyaml" },
     { name = "returns" },
+    { name = "toolz" },
     { name = "xorq" },
 ]
 
@@ -247,6 +248,7 @@ requires-dist = [
     { name = "returns", specifier = ">=0.26.0" },
     { name = "rich", marker = "extra == 'agent'", specifier = ">=13.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.7" },
+    { name = "toolz", specifier = ">=1.0.0" },
     { name = "urllib3", marker = "extra == 'dev'", specifier = ">=2.2.3" },
     { name = "vl-convert-python", marker = "extra == 'viz-altair'", specifier = ">=1.0.0" },
     { name = "xorq", specifier = ">=0.3.4" },

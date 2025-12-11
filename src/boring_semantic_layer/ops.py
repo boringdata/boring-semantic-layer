@@ -2426,26 +2426,27 @@ def _extract_join_key_column_names(source: Relation) -> set[str]:
         if isinstance(node, SemanticJoinOp) and node.on:
             # Evaluate the join predicate with expressions, not operations
             try:
-                left_expr = node.left.to_expr() if hasattr(node.left, 'to_expr') else node.left
-                right_expr = node.right.to_expr() if hasattr(node.right, 'to_expr') else node.right
+                left_expr = node.left.to_expr() if hasattr(node.left, "to_expr") else node.left
+                right_expr = node.right.to_expr() if hasattr(node.right, "to_expr") else node.right
                 pred_expr = node.on(left_expr, right_expr)
 
                 # Walk the predicate to find Field nodes
                 from .graph_utils import walk_nodes
+
                 fields = list(walk_nodes(Field, pred_expr))
                 for field in fields:
-                    if hasattr(field, 'name'):
+                    if hasattr(field, "name"):
                         join_keys.add(field.name)
             except Exception:
                 # If we can't extract keys, continue - better to skip than fail
                 pass
 
         # Recursively search in left and right
-        if hasattr(node, 'left') and isinstance(node.left, Relation):
+        if hasattr(node, "left") and isinstance(node.left, Relation):
             find_joins(node.left)
-        if hasattr(node, 'right') and isinstance(node.right, Relation):
+        if hasattr(node, "right") and isinstance(node.right, Relation):
             find_joins(node.right)
-        if hasattr(node, 'source') and isinstance(node.source, Relation):
+        if hasattr(node, "source") and isinstance(node.source, Relation):
             find_joins(node.source)
 
     find_joins(source)
@@ -2474,10 +2475,10 @@ def _build_column_rename_map(
     Returns:
         Dict mapping dimension names like 'airports.city' to renamed columns like 'city_right'
     """
-    from .graph_utils import build_column_index_from_roots, extract_column_from_dimension
-
     # Build column index using graph_utils (returns Result)
     from returns.result import Failure
+
+    from .graph_utils import build_column_index_from_roots, extract_column_from_dimension
 
     column_index_result = build_column_index_from_roots(all_roots)
     if isinstance(column_index_result, Failure):
@@ -2508,11 +2509,11 @@ def _build_column_rename_map(
 
             # Use Maybe pattern from returns library
             column_maybe.bind_optional(
-                lambda base_column: _check_and_add_rename(
+                lambda base_column: _check_and_add_rename(  # noqa: B023
                     rename_map=rename_map,
                     base_column=base_column,
-                    prefixed_name=f"{root.name}.{field_name}",
-                    table_idx=idx,
+                    prefixed_name=f"{root.name}.{field_name}",  # noqa: B023
+                    table_idx=idx,  # noqa: B023
                     column_index=column_index,
                     join_keys=join_keys,
                 )
@@ -2567,6 +2568,7 @@ def _wrap_dimension_for_renamed_column(dimension: Dimension, renamed_column: str
     Returns:
         A new Dimension that accesses the renamed column
     """
+
     # Create a new callable that accesses the renamed column
     def renamed_accessor(table: ir.Table) -> ir.Value:
         return table[renamed_column]

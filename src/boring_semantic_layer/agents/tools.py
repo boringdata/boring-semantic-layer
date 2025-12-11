@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import ibis
+from langchain_core.tools import ToolException
 
 from boring_semantic_layer import from_yaml
 from boring_semantic_layer.agents.utils.chart_handler import generate_chart_with_data
@@ -164,7 +165,8 @@ class BSLTools:
         """Get LangChain-compatible callable tools for create_agent.
 
         Converts the JSON Schema tool definitions to actual callable functions
-        that LangGraph's create_agent can use.
+        that LangGraph's create_agent can use. Tools raise ToolException on errors,
+        which are handled by LangChain and returned to the LLM as error messages.
         """
         from langchain_core.tools import StructuredTool
 
@@ -176,6 +178,7 @@ class BSLTools:
                 func=self._list_models,
                 name="list_models",
                 description=self.tools[0]["function"]["description"],
+                handle_tool_error=True,
             )
         )
 
@@ -185,6 +188,7 @@ class BSLTools:
                 func=self._get_model,
                 name="get_model",
                 description=self.tools[1]["function"]["description"],
+                handle_tool_error=True,
             )
         )
 
@@ -194,6 +198,7 @@ class BSLTools:
                 func=self._query_model,
                 name="query_model",
                 description=self.tools[2]["function"]["description"],
+                handle_tool_error=True,
             )
         )
 
@@ -203,6 +208,7 @@ class BSLTools:
                 func=self._get_documentation,
                 name="get_documentation",
                 description=self.tools[3]["function"]["description"],
+                handle_tool_error=True,
             )
         )
 
@@ -219,7 +225,7 @@ class BSLTools:
         """Return detailed schema for a specific model."""
         if model_name not in self.models:
             available = ", ".join(self.models.keys())
-            return f"❌ Model '{model_name}' not found. Available models: {available}"
+            raise ToolException(f"Model '{model_name}' not found. Available models: {available}")
 
         model = self.models[model_name]
 
@@ -307,7 +313,6 @@ class BSLTools:
             max_error_len = 300
             if len(error_str) > max_error_len:
                 # Try to extract just the key error message
-                # Look for common patterns like "has no attribute 'xxx'"
                 import re
 
                 attr_match = re.search(r"'[^']+' object has no attribute '[^']+'", error_str)
@@ -315,31 +320,43 @@ class BSLTools:
                 if attr_match:
                     error_str = attr_match.group(0)
                 elif type_match:
-                    # Extract the type error part
                     error_str = error_str[:max_error_len] + "..."
                 else:
                     error_str = error_str[:max_error_len] + "..."
 
-            # Build concise error message for LLM (no traceback to save tokens)
-            error_msg = f"❌ Query Error: {error_str}"
-            # Add guidance for common errors
+            # Build error message with guidance for common errors
+            error_msg = f"Query Error: {error_str}"
             if "truth value" in error_str.lower() and "ibis" in error_str.lower():
-                error_msg += "\n\n⚠️ Don't use Python's `in` operator with Ibis columns. Use `.isin()` instead:\n  WRONG: t.col in ['a', 'b']\n  CORRECT: t.col.isin(['a', 'b'])"
+                error_msg += "\n\nTip: Don't use Python's `in` operator with Ibis columns. Use `.isin()` instead:\n  WRONG: t.col in ['a', 'b']\n  CORRECT: t.col.isin(['a', 'b'])"
             elif "has no attribute" in error_str or "AttributeError" in error_str:
                 if model_name:
                     schema = self._get_model(model_name)
-                    error_msg += f"\n\n📋 Available fields for '{model_name}':\n{schema}"
+                    error_msg += f"\n\nAvailable fields for '{model_name}':\n{schema}"
                 else:
-                    error_msg += "\n\n⚠️ This usually means you used a field/method that doesn't exist. Call get_model(model_name) to see the exact dimensions and measures available."
-            if self._error_callback:
-                self._error_callback(f"❌ Query Error: {error_str}")
-            return error_msg
+                    error_msg += "\n\nTip: This usually means you used a field/method that doesn't exist. Call get_model(model_name) to see the exact dimensions and measures available."
 
-    def _get_documentation(self, topic: str) -> str:
+            # Always add guidance to check documentation
+            error_msg += '\n\n**IMPORTANT**: Call `get_documentation("query-methods")` or any relevant topic to learn the correct syntax before retrying.'
+
+            if self._error_callback:
+                self._error_callback(error_msg)
+            raise ToolException(error_msg) from e
+
+    def _get_documentation(self, topic: str, max_chars: int = 2000) -> str:
+        """Get documentation, truncated to save context tokens."""
         topics, _ = _get_topics()
         if topic in topics:
             topic_info = topics[topic]
             source_path = topic_info.get("source") if isinstance(topic_info, dict) else topic_info
             doc_content = load_prompt(_get_md_dir(), source_path)
-            return doc_content or f"❌ File not found: {source_path}"
-        return f"❌ Unknown topic '{topic}'. Available topics: {', '.join(topics.keys())}"
+            if not doc_content:
+                raise ToolException(f"Documentation file not found: {source_path}")
+            # Truncate to save context - LLM should internalize key points
+            if len(doc_content) > max_chars:
+                doc_content = (
+                    doc_content[:max_chars] + "\n\n[...truncated - key syntax shown above]"
+                )
+            return doc_content
+        raise ToolException(
+            f"Unknown topic '{topic}'. Available topics: {', '.join(topics.keys())}"
+        )

@@ -99,18 +99,27 @@ def chart(
         result = flights.group_by("carrier").aggregate("flight_count")
         chart(result, format="json")
     """
-    from .utils import get_chart_detection_params
+    from .utils import extract_aggregate_metadata, get_chart_detection_params
 
     backend_instance = get_backend(backend)
 
     # Execute query
     df = semantic_aggregate.execute()
 
-    # Get chart parameters
-    dimensions, measures, time_dimension = get_chart_detection_params(semantic_aggregate, df)
+    # Check if chart_type is explicitly specified - skip expensive auto-detection
+    if spec and "chart_type" in spec:
+        # Fast path: use explicit chart type, minimal metadata extraction
+        dimensions, measures, *_ = extract_aggregate_metadata(semantic_aggregate)
+        chart_type = spec["chart_type"]
+        time_dimension = None  # Not needed when chart type is explicit
+    else:
+        # Auto-detect chart type (may involve graph traversal)
+        dimensions, measures, time_dimension = get_chart_detection_params(semantic_aggregate, df)
+        chart_type = backend_instance.detect_chart_type(dimensions, measures, time_dimension)
 
-    # Detect chart type
-    chart_type = backend_instance.detect_chart_type(dimensions, measures, time_dimension)
+    # Skip charting if chart_type is None (e.g., complex query not suitable for charting)
+    if chart_type is None:
+        return None
 
     # Prepare data
     df_prepared, params = backend_instance.prepare_data(

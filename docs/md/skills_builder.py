@@ -88,6 +88,7 @@ class SkillBuilder:
 
         Replaces the 'Additional Resources' section that references get_documentation()
         with a static version built from index.json with GitHub URLs.
+        If no such section exists, appends the Additional Information section.
 
         Args:
             content: The prompt content to transform
@@ -97,14 +98,24 @@ class SkillBuilder:
         pattern = r"## Additional (Resources|Information).*"
         replacement = self.build_additional_info_for_skill(tool)
 
-        # Replace the section (DOTALL makes . match newlines)
-        return re.sub(pattern, replacement, content, flags=re.DOTALL)
+        # Check if section exists
+        if re.search(pattern, content):
+            # Replace the section (DOTALL makes . match newlines)
+            return re.sub(pattern, replacement, content, flags=re.DOTALL)
+        else:
+            # Append the section if it doesn't exist
+            return content.rstrip() + "\n\n" + replacement
 
     def build_query_expert_claude_code(self) -> str:
         """Build Claude Code bsl-query-expert SKILL.md content."""
         # Read the LangChain system prompt and transform it for skills
         content = self.read_prompt("query/langchain", "system.md")
         content = self.transform_prompt_for_skill(content, tool="claude-code")
+
+        # Include tool-query-model.md content since skills can't call get_documentation()
+        tool_query_content = self.read_prompt("query/langchain", "tool-query-model.md")
+        content += "\n## Query Syntax Reference\n\n" + tool_query_content
+
         frontmatter = """---
 name: bsl-query-expert
 description: Query BSL semantic models with group_by, aggregate, filter, and visualizations. Use for data analysis from existing semantic tables.
@@ -130,6 +141,11 @@ description: Build BSL semantic models with dimensions, measures, joins, and YAM
         # Read the LangChain system prompt and transform it for skills
         content = self.read_prompt("query/langchain", "system.md")
         content = self.transform_prompt_for_skill(content, tool="codex")
+
+        # Include tool-query-model.md content since skills can't call get_documentation()
+        tool_query_content = self.read_prompt("query/langchain", "tool-query-model.md")
+        content += "\n## Query Syntax Reference\n\n" + tool_query_content
+
         header = """# BSL Query Expert - Codex Skill
 
 This skill helps with querying Boring Semantic Layer (BSL) models.
@@ -153,6 +169,11 @@ This skill helps with building Boring Semantic Layer (BSL) semantic models.
         # Read the LangChain system prompt and transform it for skills
         content = self.read_prompt("query/langchain", "system.md")
         content = self.transform_prompt_for_skill(content, tool="cursor")
+
+        # Include tool-query-model.md content since skills can't call get_documentation()
+        tool_query_content = self.read_prompt("query/langchain", "tool-query-model.md")
+        content += "\n## Query Syntax Reference\n\n" + tool_query_content
+
         frontmatter = """---
 description: Query BSL semantic models with group_by, aggregate, filter, and visualizations
 globs:

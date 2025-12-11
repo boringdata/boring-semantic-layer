@@ -204,12 +204,12 @@ flights_st = flights_st.with_dimensions(
     arr_year=lambda t: t.arr_time.truncate("Y"),
     arr_month=lambda t: t.arr_time.truncate("M"),
 
-    # Categorize numeric values
-    distance_bucket=lambda t: ibis.case()
-        .when(t.distance < 500, "Short")
-        .when(t.distance < 1500, "Medium")
-        .else_("Long")
-        .end()
+    # Categorize numeric values (use ibis.cases - PLURAL, not ibis.case)
+    distance_bucket=lambda t: ibis.cases(
+        (t.distance < 500, "Short"),
+        (t.distance < 1500, "Medium"),
+        else_="Long"
+    )
 )
 ```
 

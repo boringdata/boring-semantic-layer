@@ -27,17 +27,25 @@ pip install langchain-google-genai
 
 See the LangChain docs for available models: [Anthropic](https://python.langchain.com/docs/integrations/chat/anthropic/) | [OpenAI](https://python.langchain.com/docs/integrations/chat/openai/) | [Google](https://python.langchain.com/docs/integrations/chat/google_generative_ai/)
 
+Set your API key for your preferred LLM provider:
+
+```bash
+# For Claude models
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# For GPT models
+export OPENAI_API_KEY=sk-...
+
+# For Gemini models
+export GOOGLE_API_KEY=...
+```
+
 ## Configuration
 
-Set your API key and optionally the semantic model path in a `.env` file or as environment variables:
+You can optionally set the semantic model path in a `.env` file or as environment variables:
 
 ```bash
 # .env
-
-# LLM API key (pick one)
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-GOOGLE_API_KEY=...
 
 # Optional: default semantic model path (avoids --sm flag)
 BSL_MODEL_PATH=path/to/your/model.yaml

@@ -199,8 +199,13 @@ def detect_time_dimension(
         if time_dim:
             return time_dim
 
-    # Strategy 3: Check dependency graph
-    return detect_time_dimension_from_graph(semantic_aggregate, dimensions, dims_dict)
+    # Strategy 3: Check dependency graph (may fail for computed dimensions)
+    try:
+        return detect_time_dimension_from_graph(semantic_aggregate, dimensions, dims_dict)
+    except Exception:
+        # If graph traversal fails (e.g., computed dimension like dep_time.month()),
+        # fall back to None - the chart will still work without time dimension detection
+        return None
 
 
 def get_chart_detection_params(
@@ -220,7 +225,13 @@ def get_chart_detection_params(
         Tuple of (dimensions, measures, time_dimension)
     """
     dimensions, measures, *_ = extract_aggregate_metadata(semantic_aggregate)
-    time_dimension = detect_time_dimension(semantic_aggregate, dimensions, df)
+
+    # Time dimension detection can fail for computed dimensions (e.g., dep_time.month())
+    # because it traverses the expression graph which may trigger Ibis evaluation errors
+    try:
+        time_dimension = detect_time_dimension(semantic_aggregate, dimensions, df)
+    except Exception:
+        time_dimension = None
 
     return dimensions, measures, time_dimension
 

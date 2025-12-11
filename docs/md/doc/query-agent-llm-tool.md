@@ -92,11 +92,11 @@ sm.group_by("origin").aggregate("flight_count")
 
 Returns BSL documentation split into topics (query syntax, methods, charting, etc.). The LLM can explore relevant topics on demand to learn how to construct valid queries and charts.
 
-## LangChain Reference Implementation
+## LangGraph Reference Implementation
 
-For multi-turn conversations with history management, we provide a LangChain-based agent:
+For multi-turn conversations with history management, we provide a LangGraph-based agent:
 
-👉 [`langchain.py`](https://github.com/boringdata/boring-semantic-layer/blob/main/src/boring_semantic_layer/agents/backends/langchain.py)
+👉 [`langgraph.py`](https://github.com/boringdata/boring-semantic-layer/blob/main/src/boring_semantic_layer/agents/backends/langgraph.py)
 
 This implementation powers the [BSL CLI demo chat](/agents/chat).
 
@@ -107,11 +107,11 @@ Install the agent dependencies plus your LLM provider:
 ```bash
 pip install boring-semantic-layer[agent]
 
+# Anthropic (recommended)
+pip install langchain-anthropic
+
 # OpenAI
 pip install langchain-openai
-
-# Anthropic
-pip install langchain-anthropic
 
 # Google
 pip install langchain-google-genai
@@ -121,11 +121,11 @@ pip install langchain-google-genai
 
 ```python
 from pathlib import Path
-from boring_semantic_layer.agents.backends.langchain import LangChainAgent
+from boring_semantic_layer.agents.backends import LangGraphBackend
 
-agent = LangChainAgent(
-    model_path=Path("flights.yaml"),      # Semantic model YAML
-    llm_model="gpt-4o",                   # LLM to use
+agent = LangGraphBackend(
+    model_path=Path("flights.yml"),
+    llm_model="anthropic:claude-sonnet-4-20250514",  # or "openai:gpt-4o"
     chart_backend="plotext",              # plotext, altair, or plotly
     profile="dev",                        # Profile name (optional)
     profile_file=Path("profiles.yml"),    # Profile file path (optional)

@@ -163,53 +163,33 @@ class TestStartChat:
     @patch("boring_semantic_layer.agents.chats.cli.load_dotenv")
     @patch("os.getenv")
     @patch("boring_semantic_layer.agents.chats.cli.console")
-    def test_start_chat_auto_selects_claude(self, mock_console, mock_getenv, mock_dotenv, tmp_path):
-        """Test that Claude is auto-selected when ANTHROPIC_API_KEY is set."""
+    def test_start_chat_loads_models_with_api_key(
+        self, mock_console, mock_getenv, mock_dotenv, tmp_path
+    ):
+        """Test that models load successfully when API key is available."""
         from boring_semantic_layer.agents.chats.cli import start_chat
 
-        def getenv_side_effect(key):
-            if key == "ANTHROPIC_API_KEY":
-                return "sk-ant-test"
-            return None
-
-        mock_getenv.side_effect = getenv_side_effect
+        mock_getenv.return_value = "test-api-key"
 
         model_file = tmp_path / "test.yml"
-        model_file.write_text("test: {}")
+        model_file.write_text("test:\n  table: dummy_table")
 
-        # Mock the agent loading to avoid actual import
-        import contextlib
+        # Mock everything to avoid actual imports and chat loop
+        mock_backend = Mock()
+        mock_backend.query = Mock(return_value=([], "Test response"))
 
         with (
             patch("boring_semantic_layer.agents.chats.cli.Status"),
-            contextlib.suppress(Exception),
+            patch(
+                "boring_semantic_layer.agents.backends.LangGraphBackend", return_value=mock_backend
+            ),
         ):
-            start_chat(model_path=model_file)
+            # Use initial_query with auto_exit to avoid chat loop
+            start_chat(model_path=model_file, initial_query="test query", auto_exit=True)
 
-        # Should print auto-select message
+        # Should print models loaded message
         call_args = str(mock_console.print.call_args_list)
-        assert "Claude" in call_args or "ANTHROPIC" in call_args
-
-    @patch("boring_semantic_layer.agents.chats.cli.load_dotenv")
-    @patch("os.getenv")
-    @patch("boring_semantic_layer.agents.chats.cli.console")
-    def test_start_chat_unknown_backend_error(
-        self, mock_console, mock_getenv, mock_dotenv, tmp_path
-    ):
-        """Test that unknown backend shows error."""
-        from boring_semantic_layer.agents.chats.cli import start_chat
-
-        mock_getenv.return_value = "test-key"
-
-        model_file = tmp_path / "test.yml"
-        model_file.write_text("test: {}")
-
-        with patch("boring_semantic_layer.agents.chats.cli.Status"):
-            start_chat(model_path=model_file, backend="unknown_backend")
-
-        # Should print error
-        call_args = str(mock_console.print.call_args_list)
-        assert "Unknown backend" in call_args
+        assert "Models loaded" in call_args
 
     @patch("boring_semantic_layer.agents.chats.cli.load_dotenv")
     @patch("os.getenv")
@@ -230,18 +210,18 @@ class TestStartChat:
         model_file = tmp_path / "test.yml"
         model_file.write_text("test: {}")
 
-        # Mock the langchain backend
+        # Mock the LangGraphBackend
         mock_agent = Mock()
         mock_agent.query.return_value = ("", "Test response")
 
         with patch(
-            "boring_semantic_layer.agents.backends.langchain.LangChainAgent",
+            "boring_semantic_layer.agents.backends.LangGraphBackend",
             return_value=mock_agent,
         ):
             start_chat(
                 model_path=model_file,
-                backend="langchain",
                 initial_query="What data is available?",
+                auto_exit=True,
             )
 
         # Should have called query with initial_query

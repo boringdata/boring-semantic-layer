@@ -21,6 +21,8 @@ help:
 	@echo "  make skills-build                      - Build AI assistant skills from prompts"
 	@echo "  make skills-check                      - Check if skills are up to date"
 	@echo "  make eval                              - Run agent evaluation (quick: 5 questions)"
+	@echo "  make eval LLM=openai:gpt-4o            - Run eval with specific LLM"
+	@echo "  make eval EVAL_MAX=10                  - Run eval with N questions"
 	@echo "  make check                             - Run all checks (tests + examples + docs + skills)"
 	@echo "  make check IBIS_VERSION=all            - Run all checks with all ibis versions"
 	@echo "  make clean                             - Clean build artifacts"
@@ -119,27 +121,36 @@ skills-check:
 	uv run python docs/md/skills_builder.py --check
 
 # Agent evaluation variables
-CATEGORY ?=
 LLM ?= gpt-4
 EVAL_MAX ?= 5
+QUESTION ?=
+VERBOSE ?=
+
+# Build verbose flag
+VERBOSE_FLAG := $(if $(VERBOSE),-v,)
 
 # Run agent evaluation (quick mode - 5 questions by default)
+# Usage: make eval [LLM=model] [EVAL_MAX=n] [QUESTION=id] [VERBOSE=1]
 eval:
 	@echo "Running agent evaluation..."
-ifdef CATEGORY
-	uv run python -m boring_semantic_layer.agents.eval.eval --llm $(LLM) --max $(EVAL_MAX) --category $(CATEGORY)
+ifdef QUESTION
+	uv run python -m boring_semantic_layer.agents.eval.eval --llm $(LLM) -q $(QUESTION) $(VERBOSE_FLAG)
 else
-	uv run python -m boring_semantic_layer.agents.eval.eval --llm $(LLM) --max $(EVAL_MAX)
+	uv run python -m boring_semantic_layer.agents.eval.eval --llm $(LLM) --max $(EVAL_MAX) $(VERBOSE_FLAG)
 endif
 
 # Run full agent evaluation (all questions)
 eval-full:
 	@echo "Running full agent evaluation..."
-ifdef CATEGORY
-	uv run python -m boring_semantic_layer.agents.eval.eval --llm $(LLM) --category $(CATEGORY)
+ifdef QUESTION
+	uv run python -m boring_semantic_layer.agents.eval.eval --llm $(LLM) -q $(QUESTION) $(VERBOSE_FLAG)
 else
-	uv run python -m boring_semantic_layer.agents.eval.eval --llm $(LLM)
+	uv run python -m boring_semantic_layer.agents.eval.eval --llm $(LLM) $(VERBOSE_FLAG)
 endif
+
+# List available evaluation questions
+eval-list:
+	@uv run python -m boring_semantic_layer.agents.eval.eval --list-questions
 
 # Run all checks (CI target)
 check:

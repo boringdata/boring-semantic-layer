@@ -127,6 +127,17 @@ result = flights_st.group_by().aggregate("flight_count", "total_distance", "avg_
 
 The `aggregate()` method calculates measures after grouping. You can reference pre-defined measures or compute new ones on-the-fly.
 
+<note type="warning">
+**CRITICAL**: `aggregate()` takes **measure names as strings**, not expressions or lambdas directly. Use measure names from `get_model()` output.
+```python
+# ✅ CORRECT - measure names as strings
+model.group_by("category").aggregate("flight_count", "total_revenue")
+
+# ❌ WRONG - no standalone lambdas in aggregate
+model.aggregate(total=lambda t: t.sum())  # ERROR!
+```
+</note>
+
 ### Pre-defined Measures
 
 Reference measures by their string names:
@@ -217,6 +228,48 @@ result = (
 - **`filter()`**: Use lambda or `_` syntax to apply conditions before aggregation
 - **`order_by()`**: Use `ibis.desc()` for descending order, or column name for ascending
 - **`limit()`**: Restrict the number of rows returned
+
+### Critical Filter Patterns
+
+**Multiple conditions** - use `ibis.and_()` or `ibis.or_()`:
+
+```python
+# Multiple conditions with AND
+model.filter(lambda t: ibis.and_(t.amount > 1000, t.year >= 2023))
+
+# Multiple conditions with OR
+model.filter(lambda t: ibis.or_(t.status == "active", t.status == "pending"))
+```
+
+**IN operator** - MUST use `.isin()` method:
+
+```python
+# ✅ CORRECT - use .isin() method
+model.filter(lambda t: t.region.isin(["US", "EU", "APAC"]))
+
+# ❌ WRONG - Python's 'in' does NOT work!
+model.filter(lambda t: t.region in ["US", "EU"])  # ERROR: truth value of Ibis expression is not defined
+```
+
+**Lambda column names** - use column names directly, never prefix with model name:
+
+```python
+# ✅ CORRECT - use column name directly
+model.filter(lambda t: t.carrier == "AA")
+
+# ❌ WRONG - do NOT prefix with model name
+model.filter(lambda t: t.model.carrier == "AA")  # ERROR!
+```
+
+**Joined columns** - use exact prefixed name from `get_model()`:
+
+```python
+# If get_model() shows "customers.country", use it exactly:
+model.filter(lambda t: t.customers.country == "US")
+
+# ❌ WRONG - don't call methods on ID columns
+model.filter(lambda t: t.customer_id.country())  # ERROR: no such method!
+```
 
 ## nest()
 
