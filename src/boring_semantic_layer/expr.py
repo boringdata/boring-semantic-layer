@@ -365,6 +365,8 @@ class SemanticModel(SemanticTable):
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue],
         how: str = "inner",
+        use_asof: bool = False,
+        tolerance: str | None = None,
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics.
 
@@ -372,13 +374,17 @@ class SemanticModel(SemanticTable):
             other: The semantic model to join with
             on: Lambda function taking (left, right) tables and returning a boolean condition.
                 Can reference both semantic dimensions and raw table columns.
+                For asof joins, use inequality (>=, <=) for temporal matching.
+                Combine multiple conditions with & operator.
             how: Join type - "inner", "left", "right", or "outer" (default: "inner")
+            use_asof: If True, performs an asof (temporal) join instead of regular join.
+            tolerance: Time tolerance for asof joins (e.g., "1s", "1d", "1h"). Only used when use_asof=True.
 
         Returns:
             SemanticJoin: The joined semantic model
 
         Examples:
-            Join on semantic dimensions:
+            Regular join on semantic dimensions:
             >>> orders.join_one(customers, lambda o, c: o.customer_id == c.customer_id)
 
             Join on raw columns (not defined as dimensions):
@@ -387,15 +393,25 @@ class SemanticModel(SemanticTable):
             Different join types:
             >>> orders.join_one(customers, lambda o, c: o.customer_id == c.customer_id, how="left")
             >>> orders.join_one(customers, lambda o, c: o.customer_id == c.customer_id, how="outer")
+
+            Asof (temporal) join - combine conditions with &:
+            >>> events.join_one(
+            ...     sensors,
+            ...     lambda e, s: (e.event_time >= s.timestamp) & (e.site == s.site),
+            ...     use_asof=True,
+            ...     tolerance="1s"
+            ... )
         """
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how)
+        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how, use_asof=use_asof, tolerance=tolerance)
 
     def join_many(
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue],
         how: str = "left",
+        use_asof: bool = False,
+        tolerance: str | None = None,
     ) -> SemanticJoin:
         """Join with one-to-many relationship semantics.
 
@@ -403,13 +419,17 @@ class SemanticModel(SemanticTable):
             other: The semantic model to join with
             on: Lambda function taking (left, right) tables and returning a boolean condition.
                 Can reference both semantic dimensions and raw table columns.
+                For asof joins, use inequality (>=, <=) for temporal matching.
+                Combine multiple conditions with & operator.
             how: Join type - "inner", "left", "right", or "outer" (default: "left")
+            use_asof: If True, performs an asof (temporal) join instead of regular join.
+            tolerance: Time tolerance for asof joins (e.g., "1s", "1d", "1h"). Only used when use_asof=True.
 
         Returns:
             SemanticJoin: The joined semantic model
 
         Examples:
-            Join on semantic dimensions:
+            Regular join on semantic dimensions:
             >>> customer.join_many(orders, lambda c, o: c.customer_id == o.customer_id)
 
             Join on raw columns:
@@ -418,9 +438,17 @@ class SemanticModel(SemanticTable):
             Different join types:
             >>> customer.join_many(orders, lambda c, o: c.customer_id == o.customer_id, how="inner")
             >>> customer.join_many(orders, lambda c, o: c.customer_id == o.customer_id, how="right")
+
+            Asof (temporal) join - combine conditions with &:
+            >>> customer.join_many(
+            ...     orders,
+            ...     lambda c, o: (c.signup_time >= o.order_time) & (c.region == o.region),
+            ...     use_asof=True,
+            ...     tolerance="30d"
+            ... )
         """
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how)
+        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how, use_asof=use_asof, tolerance=tolerance)
 
     def join_cross(self, other: SemanticModel) -> SemanticJoin:
         """Cross join (Cartesian product) with another semantic model.
@@ -536,8 +564,10 @@ class SemanticJoin(SemanticTable):
         right: SemanticTableOp,
         on: Callable[[Any, Any], ir.BooleanValue] | None = None,
         how: str = "inner",
+        use_asof: bool = False,
+        tolerance: str | None = None,
     ) -> None:
-        op = SemanticJoinOp(left=left, right=right, on=on, how=how)
+        op = SemanticJoinOp(left=left, right=right, on=on, how=how, use_asof=use_asof, tolerance=tolerance)
         super().__init__(op)
 
     @property
@@ -555,6 +585,14 @@ class SemanticJoin(SemanticTable):
     @property
     def how(self):
         return self.op().how
+
+    @property
+    def use_asof(self):
+        return self.op().use_asof
+
+    @property
+    def tolerance(self):
+        return self.op().tolerance
 
     @property
     def values(self):
@@ -726,6 +764,8 @@ class SemanticJoin(SemanticTable):
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue],
         how: str = "inner",
+        use_asof: bool = False,
+        tolerance: str | None = None,
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics.
 
@@ -733,6 +773,8 @@ class SemanticJoin(SemanticTable):
             other: The semantic model to join with
             on: Lambda function taking (left, right) tables and returning a boolean condition
             how: Join type - "inner", "left", "right", or "full" (default: "inner")
+            use_asof: If True, performs an asof (temporal) join instead of regular join
+            tolerance: Time tolerance for asof joins (e.g., "1s", "1d", "1h")
 
         Returns:
             SemanticJoin: The joined semantic model
@@ -742,6 +784,8 @@ class SemanticJoin(SemanticTable):
             right=other.op() if isinstance(other, SemanticModel) else other,
             on=on,
             how=how,
+            use_asof=use_asof,
+            tolerance=tolerance,
         )
 
     def join_many(
@@ -749,6 +793,8 @@ class SemanticJoin(SemanticTable):
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue],
         how: str = "left",
+        use_asof: bool = False,
+        tolerance: str | None = None,
     ) -> SemanticJoin:
         """Join with one-to-many relationship semantics.
 
@@ -756,6 +802,8 @@ class SemanticJoin(SemanticTable):
             other: The semantic model to join with
             on: Lambda function taking (left, right) tables and returning a boolean condition
             how: Join type - "inner", "left", "right", or "full" (default: "left")
+            use_asof: If True, performs an asof (temporal) join instead of regular join
+            tolerance: Time tolerance for asof joins (e.g., "1s", "1d", "1h")
 
         Returns:
             SemanticJoin: The joined semantic model
@@ -765,6 +813,8 @@ class SemanticJoin(SemanticTable):
             right=other.op() if isinstance(other, SemanticModel) else other,
             on=on,
             how=how,
+            use_asof=use_asof,
+            tolerance=tolerance,
         )
 
     def join_cross(self, other: SemanticModel) -> SemanticJoin:
@@ -1054,6 +1104,8 @@ class SemanticAggregate(SemanticTable):
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue],
         how: str = "inner",
+        use_asof: bool = False,
+        tolerance: str | None = None,
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
         return SemanticJoin(
@@ -1061,6 +1113,8 @@ class SemanticAggregate(SemanticTable):
             right=other.op(),
             on=on,
             how=how,
+            use_asof=use_asof,
+            tolerance=tolerance,
         )
 
     def join_many(
@@ -1068,6 +1122,8 @@ class SemanticAggregate(SemanticTable):
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue],
         how: str = "left",
+        use_asof: bool = False,
+        tolerance: str | None = None,
     ) -> SemanticJoin:
         """Join with one-to-many relationship semantics."""
         return SemanticJoin(
@@ -1075,6 +1131,8 @@ class SemanticAggregate(SemanticTable):
             right=other.op(),
             on=on,
             how=how,
+            use_asof=use_asof,
+            tolerance=tolerance,
         )
 
     def join_cross(self, other: SemanticModel) -> SemanticJoin:

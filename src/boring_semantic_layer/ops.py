@@ -1386,6 +1386,8 @@ class SemanticJoinOp(Relation):
     on: (
         Callable[[Any, Any], Any] | None
     )  # Returns BooleanValue from either ibis or xorq.vendor.ibis
+    use_asof: bool = False  # Whether to use asof join for temporal joins
+    tolerance: str | None = None  # Tolerance for asof joins (e.g., "1s", "1d")
 
     def __init__(
         self,
@@ -1393,12 +1395,16 @@ class SemanticJoinOp(Relation):
         right: Relation,
         how: str = "inner",
         on: Callable[[Any, Any], Any] | None = None,
+        use_asof: bool = False,
+        tolerance: str | None = None,
     ) -> None:
         super().__init__(
             left=Relation.__coerce__(left),
             right=Relation.__coerce__(right),
             how=how,
             on=on,
+            use_asof=use_asof,
+            tolerance=tolerance,
         )
 
     def __repr__(self) -> str:
@@ -1924,15 +1930,39 @@ class SemanticJoinOp(Relation):
             else self.right.to_untagged()
         )
 
-        return (
-            left_tbl.join(
+        if self.use_asof:
+            # Asof join - temporal join with nearest-key matching
+            if self.on is None:
+                raise ValueError("Asof joins require an 'on' condition specifying the temporal column")
+
+            # Get the join condition - user can combine temporal & equality conditions with &
+            # e.g., lambda e, s: (e.event_time >= s.reading_time) & (e.site == s.site)
+            join_condition = self.on(_Resolver(left_tbl), _Resolver(right_tbl))
+
+            # Build kwargs for asof_join
+            asof_kwargs = {}
+            if self.tolerance is not None:
+                # Convert string tolerance to ibis interval
+                asof_kwargs['tolerance'] = ibis.interval(seconds=int(self.tolerance.rstrip('s'))) if self.tolerance.endswith('s') else ibis.interval(days=int(self.tolerance.rstrip('d')))
+
+            # Ibis asof_join accepts combined conditions directly!
+            # It automatically handles (inequality & equality) patterns
+            return left_tbl.asof_join(
                 right_tbl,
-                self.on(_Resolver(left_tbl), _Resolver(right_tbl)),
-                how=self.how,
+                on=join_condition,
+                **asof_kwargs,
             )
-            if self.on is not None
-            else left_tbl.join(right_tbl, how=self.how)
-        )
+        else:
+            # Regular join
+            return (
+                left_tbl.join(
+                    right_tbl,
+                    self.on(_Resolver(left_tbl), _Resolver(right_tbl)),
+                    how=self.how,
+                )
+                if self.on is not None
+                else left_tbl.join(right_tbl, how=self.how)
+            )
 
     def execute(self):
         return self.to_untagged().execute()
