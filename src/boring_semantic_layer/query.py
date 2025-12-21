@@ -203,6 +203,26 @@ class Filter:
         if not isinstance(self.filter, dict | str) and not callable(self.filter):
             raise ValueError("Filter must be a dict, string, or callable")
 
+    def _convert_filter_value(self, value: Any) -> Any:
+        """
+        Convert string date/timestamp values to ibis literals for proper SQL generation.
+
+        This fixes TYPE_MISMATCH errors on backends like Athena that require typed
+        date literals. Uses a simple loop to avoid nested try/except blocks.
+        """
+        if not isinstance(value, str):
+            return value
+
+        # Try parsing as timestamp first (more general), then date
+        for dtype in ("timestamp", "date"):
+            try:
+                return ibis.literal(value, type=dtype)
+            except (ValueError, TypeError):
+                pass
+
+        # Not a date/timestamp, return original value
+        return value
+
     def _get_field_expr(self, field: str) -> Any:
         """Get field expression using ibis._ for unbound reference.
 
@@ -247,7 +267,9 @@ class Filter:
             values = filter_obj.get("values")
             if values is None:
                 raise ValueError(f"Operator '{op}' requires 'values' field")
-            return OPERATOR_MAPPING[op](field_expr, values)
+            # Convert each value for date/timestamp support
+            converted_values = [self._convert_filter_value(v) for v in values]
+            return OPERATOR_MAPPING[op](field_expr, converted_values)
 
         # Null checks
         if op in ("is null", "is not null"):
@@ -261,7 +283,9 @@ class Filter:
         value = filter_obj.get("value")
         if value is None:
             raise ValueError(f"Operator '{op}' requires 'value' field")
-        return OPERATOR_MAPPING[op](field_expr, value)
+        # Convert value for date/timestamp support
+        converted_value = self._convert_filter_value(value)
+        return OPERATOR_MAPPING[op](field_expr, converted_value)
 
     def to_callable(self) -> Callable:
         """Convert filter to callable that can be used with SemanticTable.filter()."""
@@ -443,4 +467,3 @@ def query(
         result = result.limit(limit)
 
     return result
-
