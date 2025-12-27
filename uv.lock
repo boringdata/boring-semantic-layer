@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -251,7 +251,7 @@ requires-dist = [
     { name = "toolz", specifier = ">=1.0.0" },
     { name = "urllib3", marker = "extra == 'dev'", specifier = ">=2.2.3" },
     { name = "vl-convert-python", marker = "extra == 'viz-altair'", specifier = ">=1.0.0" },
-    { name = "xorq", specifier = ">=0.3.4" },
+    { name = "xorq", specifier = ">=0.3.5" },
     { name = "xorq", marker = "extra == 'examples'" },
     { name = "xorq", extras = ["duckdb"], marker = "extra == 'examples'", specifier = ">=0.3.4" },
 ]
@@ -3845,7 +3845,7 @@ wheels = [
 
 [[package]]
 name = "xorq"
-version = "0.3.4"
+version = "0.3.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "atpublic" },
@@ -3878,9 +3878,9 @@ dependencies = [
     { name = "uv" },
     { name = "xorq-datafusion" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cf/b4/8b15aa105b966290d650666f213052633c0c3874e507bfaa945205a67229/xorq-0.3.4.tar.gz", hash = "sha256:f47c417bcc23dd33501f87fd5386f9d2513f6b5e59c91b27267153a94db868cb", size = 1413906, upload-time = "2025-11-19T16:50:07.802Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fb/31/4f04db68b5f52f42628aae0652e2120cd9203a9582d8c51f8e952f5d344b/xorq-0.3.5.tar.gz", hash = "sha256:e1b7c31fe0a0cd5b40a89b44cc78b7da48db5ae9b06f559263adda0dda0b67f9", size = 1423037, upload-time = "2025-12-22T13:00:15.213Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d1/9a/3462e33887935096419f40a6985b630ed865a65b473c3498fb360e5a90c8/xorq-0.3.4-py3-none-any.whl", hash = "sha256:a950778e080a6a2f94f4171b2963b6a4ca066f4cd0f5be8d9497040aebce4c9d", size = 1633356, upload-time = "2025-11-19T16:50:05.102Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/36/3746bf0d00a7a6fbce74586ccd33ab2d617295c7d7945cda9da3fee3e594/xorq-0.3.5-py3-none-any.whl", hash = "sha256:44bceb7f5dab67639f77fa968c49d5ae5a154ea5ee2f46eef3c491af52f2b62c", size = 1647540, upload-time = "2025-12-22T13:00:17.096Z" },
 ]
 
 [package.optional-dependencies]
