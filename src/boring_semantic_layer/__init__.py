@@ -72,16 +72,6 @@ try:
 except ImportError:
     _MCP_AVAILABLE = False
 
-# Install window compatibility if xorq is available
-# This allows users to use `import ibis` seamlessly with xorq backend
-try:
-    from .window_compat import install_window_compatibility
-
-    install_window_compatibility()
-
-    _XORQ_AVAILABLE = True
-except ImportError:
-    _XORQ_AVAILABLE = False
 
 
 def __getattr__(name):
