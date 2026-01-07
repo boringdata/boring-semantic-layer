@@ -1039,11 +1039,59 @@ def test_database_list_to_tuple_conversion():
             "database": ["catalog", "schema"],  # List form
         }
 
-        result = _load_table_for_yaml_model(model_config, {}, "my_table")
+        tables_dict, table = _load_table_for_yaml_model(model_config, {}, "my_table")
 
         # Verify table was called with tuple (converted from list)
         mock_connection.table.assert_called_once_with("my_table", database=("catalog", "schema"))
-        assert "my_table" in result
+        assert "my_table" in tables_dict
+        assert table is mock_table
+
+
+def test_database_kwarg_does_not_mutate_shared_tables():
+    """Test that database kwarg doesn't affect other models using the same table."""
+    import ibis
+
+    con = ibis.duckdb.connect()
+
+    # Create two schemas with same table name but different data
+    con.raw_sql("CREATE SCHEMA schema_a")
+    con.raw_sql("CREATE SCHEMA schema_b")
+    con.raw_sql("CREATE TABLE schema_a.data (id INTEGER, source VARCHAR)")
+    con.raw_sql("CREATE TABLE schema_b.data (id INTEGER, source VARCHAR)")
+    con.raw_sql("INSERT INTO schema_a.data VALUES (1, 'A')")
+    con.raw_sql("INSERT INTO schema_b.data VALUES (2, 'B')")
+
+    # Also create a default table
+    con.raw_sql("CREATE TABLE data (id INTEGER, source VARCHAR)")
+    con.raw_sql("INSERT INTO data VALUES (0, 'default')")
+
+    # Config with two models: first uses database override, second uses default
+    config = {
+        "model_a": {
+            "table": "data",
+            "database": "schema_a",
+            "dimensions": {"id": "_.id", "source": "_.source"},
+            "measures": {"count": "_.count()"},
+        },
+        "model_b": {
+            "table": "data",
+            # No database - should use default table, not schema_a
+            "dimensions": {"id": "_.id", "source": "_.source"},
+            "measures": {"count": "_.count()"},
+        },
+    }
+
+    # Provide the default table
+    default_table = con.table("data")
+    models = from_config(config, tables={"data": default_table})
+
+    # model_a should get data from schema_a
+    result_a = models["model_a"].group_by("source").aggregate("count").execute()
+    assert result_a.iloc[0]["source"] == "A"
+
+    # model_b should get data from default table, NOT schema_a
+    result_b = models["model_b"].group_by("source").aggregate("count").execute()
+    assert result_b.iloc[0]["source"] == "default"
 
 
 def test_from_config_matches_from_yaml(sample_tables):

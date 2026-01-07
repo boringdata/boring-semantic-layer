@@ -188,12 +188,17 @@ def _load_table_for_yaml_model(
     model_config: dict[str, Any],
     existing_tables: dict[str, Any],
     table_name: str,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], Any]:
     """Load table from model config profile if specified, verify it exists.
 
     Supports optional 'database' kwarg in model_config which is passed to
     connection.table(). The database can be a string or list for multi-part
     identifiers (e.g., ["catalog", "schema"] for catalog.schema.table).
+
+    Returns:
+        A tuple of (updated_tables_dict, table_for_this_model).
+        - updated_tables_dict: Only modified when loading from a profile (persisted)
+        - table_for_this_model: The specific table for this model (may be database-overridden)
     """
     tables = existing_tables.copy()
 
@@ -209,27 +214,30 @@ def _load_table_for_yaml_model(
         connection = get_connection(profile_config)
         if table_name in tables:
             raise ValueError(f"Table name conflict: {table_name} already exists")
-        tables[table_name] = connection.table(table_name, database=database)
+        table = connection.table(table_name, database=database)
+        tables[table_name] = table
+        return tables, table
     elif database is not None:
-        # database specified without profile - need to reload from existing connection
-        # This requires the table to already exist in tables dict
+        # database specified without profile - reload from existing connection
+        # This table is NOT persisted to avoid affecting other models
         if table_name not in tables:
             available = ", ".join(sorted(tables.keys()))
             raise KeyError(
                 f"Table '{table_name}' not found. When using 'database' without 'profile', "
                 f"provide the table via the 'tables' parameter. Available: {available}"
             )
-        # Get the connection from the existing table and reload with database
         existing_table = tables[table_name]
         connection = existing_table.op().source
-        tables[table_name] = connection.table(table_name, database=database)
+        table = connection.table(table_name, database=database)
+        # Return original tables (unmodified) but with the database-specific table for this model
+        return tables, table
 
     # Verify table exists
     if table_name not in tables:
         available = ", ".join(sorted(tables.keys()))
         raise KeyError(f"Table '{table_name}' not found. Available: {available}")
 
-    return tables
+    return tables, tables[table_name]
 
 
 def from_config(
@@ -309,8 +317,7 @@ def from_config(
             raise ValueError(f"Model '{name}' must specify 'table' field")
 
         # Load table if needed and verify it exists
-        tables = _load_table_for_yaml_model(model_config, tables, table_name)
-        table = tables[table_name]
+        tables, table = _load_table_for_yaml_model(model_config, tables, table_name)
 
         # Parse dimensions and measures
         dimensions = {
