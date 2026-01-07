@@ -189,8 +189,19 @@ def _load_table_for_yaml_model(
     existing_tables: dict[str, Any],
     table_name: str,
 ) -> dict[str, Any]:
-    """Load table from model config profile if specified, verify it exists."""
+    """Load table from model config profile if specified, verify it exists.
+
+    Supports optional 'database' kwarg in model_config which is passed to
+    connection.table(). The database can be a string or list for multi-part
+    identifiers (e.g., ["catalog", "schema"] for catalog.schema.table).
+    """
     tables = existing_tables.copy()
+
+    # Get optional database kwarg for connection.table()
+    database = model_config.get("database")
+    # Convert list to tuple for ibis (which expects tuple for multi-part identifiers)
+    if isinstance(database, list):
+        database = tuple(database)
 
     # Load table from model-specific profile if needed
     if "profile" in model_config:
@@ -198,7 +209,20 @@ def _load_table_for_yaml_model(
         connection = get_connection(profile_config)
         if table_name in tables:
             raise ValueError(f"Table name conflict: {table_name} already exists")
-        tables[table_name] = connection.table(table_name)
+        tables[table_name] = connection.table(table_name, database=database)
+    elif database is not None:
+        # database specified without profile - need to reload from existing connection
+        # This requires the table to already exist in tables dict
+        if table_name not in tables:
+            available = ", ".join(sorted(tables.keys()))
+            raise KeyError(
+                f"Table '{table_name}' not found. When using 'database' without 'profile', "
+                f"provide the table via the 'tables' parameter. Available: {available}"
+            )
+        # Get the connection from the existing table and reload with database
+        existing_table = tables[table_name]
+        connection = existing_table.op().source
+        tables[table_name] = connection.table(table_name, database=database)
 
     # Verify table exists
     if table_name not in tables:
@@ -235,6 +259,7 @@ def from_config(
             "flights": {
                 "table": "flights_tbl",
                 "description": "Flight data model",
+                "database": ["analytics", "prod"],  # optional: catalog.schema
                 "dimensions": {
                     "origin": {"expr": "_.origin", "description": "Origin airport"},
                     "destination": "_.destination",
@@ -245,6 +270,11 @@ def from_config(
                 },
             }
         }
+
+    The optional 'database' field can be a string or list for multi-part identifiers
+    (e.g., ["catalog", "schema"] for catalog.schema.table). This is passed to
+    ibis connection.table() and is useful for loading tables from different
+    databases/schemas under the same connection.
 
     Example usage with pre-loaded tables:
         >>> import ibis
@@ -344,6 +374,9 @@ def from_yaml(
         flights:
           table: flights_tbl
           description: "Flight data model"
+          database:  # optional: for loading from specific database/schema
+            - analytics
+            - prod
           dimensions:
             origin:
               expr: _.origin

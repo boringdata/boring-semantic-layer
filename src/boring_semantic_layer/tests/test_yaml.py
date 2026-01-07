@@ -960,6 +960,92 @@ def test_from_config_error_missing_table(sample_tables):
         from_config(config, tables=sample_tables)
 
 
+def test_load_model_with_database_kwarg():
+    """Test loading a model with database kwarg for multi-part table identifiers."""
+    import ibis
+
+    # Create a DuckDB connection with a schema
+    con = ibis.duckdb.connect()
+
+    # Create a schema and table in that schema
+    con.raw_sql("CREATE SCHEMA test_schema")
+    con.raw_sql("CREATE TABLE test_schema.my_table (id INTEGER, value VARCHAR)")
+    con.raw_sql("INSERT INTO test_schema.my_table VALUES (1, 'a'), (2, 'b')")
+
+    # Test via from_config with a table that has the connection
+    config = {
+        "test_model": {
+            "table": "my_table",
+            "database": "test_schema",
+            "dimensions": {"id": "_.id", "value": "_.value"},
+            "measures": {"count": "_.count()"},
+        }
+    }
+
+    # Create a table reference that has the connection
+    base_table = con.table("my_table", database="test_schema")
+    models = from_config(config, tables={"my_table": base_table})
+    model = models["test_model"]
+
+    # Verify the model works
+    result = model.group_by().aggregate("count").execute()
+    assert result.iloc[0]["count"] == 2
+
+
+def test_load_model_with_database_list_kwarg():
+    """Test that database kwarg list gets converted to tuple for ibis."""
+    import ibis
+
+    con = ibis.duckdb.connect()
+
+    # Create schema and table
+    con.raw_sql("CREATE SCHEMA analytics")
+    con.raw_sql("CREATE TABLE analytics.events (event_id INTEGER, event_name VARCHAR)")
+    con.raw_sql("INSERT INTO analytics.events VALUES (1, 'click'), (2, 'view')")
+
+    config = {
+        "events": {
+            "table": "events",
+            "database": "analytics",
+            "dimensions": {"event_id": "_.event_id", "event_name": "_.event_name"},
+            "measures": {"event_count": "_.count()"},
+        }
+    }
+
+    # Create base table with connection
+    base_table = con.table("events", database="analytics")
+    models = from_config(config, tables={"events": base_table})
+    model = models["events"]
+
+    # Verify the model works
+    result = model.group_by("event_name").aggregate("event_count").execute()
+    assert len(result) == 2
+
+
+def test_database_list_to_tuple_conversion():
+    """Test that database list is converted to tuple in _load_table_for_yaml_model."""
+    from unittest.mock import MagicMock, patch
+
+    from boring_semantic_layer.yaml import _load_table_for_yaml_model
+
+    # Mock the get_connection to return a mock connection
+    mock_connection = MagicMock()
+    mock_table = MagicMock()
+    mock_connection.table.return_value = mock_table
+
+    with patch("boring_semantic_layer.yaml.get_connection", return_value=mock_connection):
+        model_config = {
+            "profile": {"type": "duckdb"},
+            "database": ["catalog", "schema"],  # List form
+        }
+
+        result = _load_table_for_yaml_model(model_config, {}, "my_table")
+
+        # Verify table was called with tuple (converted from list)
+        mock_connection.table.assert_called_once_with("my_table", database=("catalog", "schema"))
+        assert "my_table" in result
+
+
 def test_from_config_matches_from_yaml(sample_tables):
     """Test that from_config produces same result as from_yaml."""
     yaml_content = """
