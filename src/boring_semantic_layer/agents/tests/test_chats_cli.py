@@ -161,15 +161,10 @@ class TestStartChat:
         assert "API key" in call_args or "Error" in call_args
 
     @patch("boring_semantic_layer.agents.chats.cli.load_dotenv")
-    @patch("os.getenv")
     @patch("boring_semantic_layer.agents.chats.cli.console")
-    def test_start_chat_loads_models_with_api_key(
-        self, mock_console, mock_getenv, mock_dotenv, tmp_path
-    ):
+    def test_start_chat_loads_models_with_api_key(self, mock_console, mock_dotenv, tmp_path):
         """Test that models load successfully when API key is available."""
         from boring_semantic_layer.agents.chats.cli import start_chat
-
-        mock_getenv.return_value = "test-api-key"
 
         model_file = tmp_path / "test.yml"
         model_file.write_text("test:\n  table: dummy_table")
@@ -178,10 +173,20 @@ class TestStartChat:
         mock_backend = Mock()
         mock_backend.query = Mock(return_value=([], "Test response"))
 
+        # Patch os.getenv specifically for API key check only
+        def mock_getenv(key, default=None):
+            import os
+
+            if key == "ANTHROPIC_API_KEY":
+                return "test-api-key"
+            return os._Environ.__getitem__(os.environ, key) if key in os.environ else default
+
         with (
+            patch("os.getenv", side_effect=mock_getenv),
             patch("boring_semantic_layer.agents.chats.cli.Status"),
             patch(
-                "boring_semantic_layer.agents.backends.LangGraphBackend", return_value=mock_backend
+                "boring_semantic_layer.agents.backends.LangGraphBackend",
+                return_value=mock_backend,
             ),
         ):
             # Use initial_query with auto_exit to avoid chat loop
@@ -192,16 +197,12 @@ class TestStartChat:
         assert "Models loaded" in call_args
 
     @patch("boring_semantic_layer.agents.chats.cli.load_dotenv")
-    @patch("os.getenv")
     @patch("boring_semantic_layer.agents.chats.cli.console")
     @patch("boring_semantic_layer.agents.chats.cli.Status")
-    def test_start_chat_initial_query_mode(
-        self, mock_status, mock_console, mock_getenv, mock_dotenv, tmp_path
-    ):
+    def test_start_chat_initial_query_mode(self, mock_status, mock_console, mock_dotenv, tmp_path):
         """Test non-interactive mode with initial query."""
         from boring_semantic_layer.agents.chats.cli import start_chat
 
-        mock_getenv.return_value = "test-key"
         mock_status_instance = Mock()
         mock_status.return_value = mock_status_instance
         mock_status_instance.__enter__ = Mock(return_value=mock_status_instance)
@@ -214,9 +215,20 @@ class TestStartChat:
         mock_agent = Mock()
         mock_agent.query.return_value = ("", "Test response")
 
-        with patch(
-            "boring_semantic_layer.agents.backends.LangGraphBackend",
-            return_value=mock_agent,
+        # Patch os.getenv specifically for API key check only
+        def mock_getenv(key, default=None):
+            import os
+
+            if key == "ANTHROPIC_API_KEY":
+                return "test-key"
+            return os._Environ.__getitem__(os.environ, key) if key in os.environ else default
+
+        with (
+            patch("os.getenv", side_effect=mock_getenv),
+            patch(
+                "boring_semantic_layer.agents.backends.LangGraphBackend",
+                return_value=mock_agent,
+            ),
         ):
             start_chat(
                 model_path=model_file,
