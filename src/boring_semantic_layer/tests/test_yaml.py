@@ -1094,6 +1094,62 @@ def test_database_kwarg_does_not_mutate_shared_tables():
     assert result_b.iloc[0]["source"] == "default"
 
 
+def test_multiple_models_different_databases_same_table():
+    """Test multiple models can use same table name with different database overrides."""
+    import ibis
+
+    con = ibis.duckdb.connect()
+
+    # Create schemas with same table name but different data
+    con.raw_sql("CREATE SCHEMA schema_a")
+    con.raw_sql("CREATE SCHEMA schema_b")
+    con.raw_sql("CREATE TABLE schema_a.data (id INTEGER, source VARCHAR)")
+    con.raw_sql("CREATE TABLE schema_b.data (id INTEGER, source VARCHAR)")
+    con.raw_sql("INSERT INTO schema_a.data VALUES (1, 'A')")
+    con.raw_sql("INSERT INTO schema_b.data VALUES (2, 'B')")
+
+    # Default table for the base connection
+    con.raw_sql("CREATE TABLE data (id INTEGER, source VARCHAR)")
+    con.raw_sql("INSERT INTO data VALUES (0, 'default')")
+
+    # Three models: two with different database overrides, one without
+    config = {
+        "model_a": {
+            "table": "data",
+            "database": "schema_a",
+            "dimensions": {"source": "_.source"},
+            "measures": {"count": "_.count()"},
+        },
+        "model_b": {
+            "table": "data",
+            "database": "schema_b",
+            "dimensions": {"source": "_.source"},
+            "measures": {"count": "_.count()"},
+        },
+        "model_default": {
+            "table": "data",
+            # No database override
+            "dimensions": {"source": "_.source"},
+            "measures": {"count": "_.count()"},
+        },
+    }
+
+    default_table = con.table("data")
+    models = from_config(config, tables={"data": default_table})
+
+    # Each model should get its own data
+    assert (
+        models["model_a"].group_by("source").aggregate("count").execute().iloc[0]["source"] == "A"
+    )
+    assert (
+        models["model_b"].group_by("source").aggregate("count").execute().iloc[0]["source"] == "B"
+    )
+    assert (
+        models["model_default"].group_by("source").aggregate("count").execute().iloc[0]["source"]
+        == "default"
+    )
+
+
 def test_from_config_matches_from_yaml(sample_tables):
     """Test that from_config produces same result as from_yaml."""
     yaml_content = """
