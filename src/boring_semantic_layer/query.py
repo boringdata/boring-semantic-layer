@@ -6,16 +6,97 @@ Provides parameter-based querying as an alternative to method chaining.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from operator import eq, ge, gt, le, lt, ne
 from typing import Any, ClassVar, Literal
 
 import ibis
+import ibis.expr.datatypes as dt
+import ibis.expr.types as ir
 from attrs import frozen
 from ibis.common.collections import FrozenDict
 from toolz import curry
 
 from .utils import safe_eval
+
+# Regex patterns for date/timestamp detection
+_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_TIMESTAMP_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}")
+
+
+def _convert_filter_value(
+    value: Any,
+    target_type: dt.DataType | None = None,
+) -> Any:
+    """
+    Convert string date/timestamp values to ibis literals for proper SQL generation.
+
+    This fixes TYPE_MISMATCH errors on backends like Athena that require typed
+    date/timestamp literals instead of string comparisons.
+
+    Args:
+        value: The filter value to potentially convert.
+        target_type: The column's data type (if known). When provided, conversion
+            matches the column type exactly. When None, uses pattern matching
+            to infer the appropriate type.
+
+    Returns:
+        An ibis literal with proper typing for date/timestamp values,
+        or the original value unchanged for non-temporal types.
+    """
+    if not isinstance(value, str):
+        return value
+
+    # If we know the target column type, match it exactly
+    if target_type is not None:
+        if target_type.is_date():
+            try:
+                return ibis.literal(value, type="date")
+            except (ValueError, TypeError):
+                pass
+        elif target_type.is_timestamp():
+            try:
+                return ibis.literal(value, type="timestamp")
+            except (ValueError, TypeError):
+                pass
+        # Not a temporal type or parsing failed, return as-is
+        return value
+
+    # Fallback: infer type from string pattern
+    # Date-only pattern: YYYY-MM-DD (no time component) -> date literal
+    if _DATE_PATTERN.match(value):
+        try:
+            return ibis.literal(value, type="date")
+        except (ValueError, TypeError):
+            pass
+    # Timestamp pattern: has time component -> timestamp literal
+    elif _TIMESTAMP_PATTERN.match(value):
+        try:
+            return ibis.literal(value, type="timestamp")
+        except (ValueError, TypeError):
+            pass
+
+    # Not a recognized date/timestamp pattern, return original
+    return value
+
+
+def _get_column_type(table: ir.Table, field: str) -> dt.DataType | None:
+    """
+    Get the data type of a column from a table.
+
+    Handles prefixed field names (e.g., 'customers.country' -> 'country').
+
+    Returns None if the field doesn't exist in the table.
+    """
+    # Handle prefixed field names
+    if "." in field:
+        _, field = field.split(".", 1)
+
+    if field in table.columns:
+        return table[field].type()
+    return None
+
 
 # Time grain type alias
 TimeGrain = Literal[
@@ -216,16 +297,28 @@ class Filter:
             return getattr(ibis._, field_name)
         return getattr(ibis._, field)
 
-    def _parse_json_filter(self, filter_obj: FrozenDict) -> Any:
-        """Parse JSON filter object into ibis expression."""
+    def _parse_json_filter(
+        self,
+        filter_obj: FrozenDict,
+        table: ir.Table | None = None,
+    ) -> Any:
+        """
+        Parse JSON filter object into ibis expression.
+
+        Args:
+            filter_obj: The filter specification dict.
+            table: Optional table for type-aware date/timestamp conversion.
+                When provided, filter values are converted to match the column's
+                actual data type, preventing TYPE_MISMATCH errors on strict backends.
+        """
         # Compound filters (AND/OR)
         if filter_obj.get("operator") in self.COMPOUND_OPERATORS:
             conditions = filter_obj.get("conditions")
             if not conditions:
                 raise ValueError("Compound filter must have non-empty conditions list")
-            expr = self._parse_json_filter(conditions[0])
+            expr = self._parse_json_filter(conditions[0], table)
             for cond in conditions[1:]:
-                next_expr = self._parse_json_filter(cond)
+                next_expr = self._parse_json_filter(cond, table)
                 expr = OPERATOR_MAPPING[filter_obj["operator"]](expr, next_expr)
             return expr
 
@@ -242,12 +335,17 @@ class Filter:
         if op not in self.OPERATORS:
             raise ValueError(f"Unsupported operator: {op}")
 
+        # Get target column type for value conversion
+        target_type = _get_column_type(table, field) if table is not None else None
+
         # List membership operators
         if op in ("in", "not in"):
             values = filter_obj.get("values")
             if values is None:
                 raise ValueError(f"Operator '{op}' requires 'values' field")
-            return OPERATOR_MAPPING[op](field_expr, values)
+            # Convert each value for date/timestamp support
+            converted_values = [_convert_filter_value(v, target_type) for v in values]
+            return OPERATOR_MAPPING[op](field_expr, converted_values)
 
         # Null checks
         if op in ("is null", "is not null"):
@@ -261,13 +359,19 @@ class Filter:
         value = filter_obj.get("value")
         if value is None:
             raise ValueError(f"Operator '{op}' requires 'value' field")
-        return OPERATOR_MAPPING[op](field_expr, value)
+        # Convert value for date/timestamp support
+        converted_value = _convert_filter_value(value, target_type)
+        return OPERATOR_MAPPING[op](field_expr, converted_value)
 
     def to_callable(self) -> Callable:
         """Convert filter to callable that can be used with SemanticTable.filter()."""
         if isinstance(self.filter, dict):
-            expr = self._parse_json_filter(self.filter)
-            return lambda t: expr.resolve(t)
+            # Defer parsing until we have the table for type-aware conversion
+            def apply_filter(t: ir.Table) -> ir.Table:
+                expr = self._parse_json_filter(self.filter, table=t)
+                return expr.resolve(t)
+
+            return apply_filter
         elif isinstance(self.filter, str):
             expr = safe_eval(
                 self.filter,
@@ -443,4 +547,3 @@ def query(
         result = result.limit(limit)
 
     return result
-
