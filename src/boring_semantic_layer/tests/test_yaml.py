@@ -960,6 +960,196 @@ def test_from_config_error_missing_table(sample_tables):
         from_config(config, tables=sample_tables)
 
 
+def test_load_model_with_database_kwarg():
+    """Test loading a model with database kwarg for multi-part table identifiers."""
+    import ibis
+
+    # Create a DuckDB connection with a schema
+    con = ibis.duckdb.connect()
+
+    # Create a schema and table in that schema
+    con.raw_sql("CREATE SCHEMA test_schema")
+    con.raw_sql("CREATE TABLE test_schema.my_table (id INTEGER, value VARCHAR)")
+    con.raw_sql("INSERT INTO test_schema.my_table VALUES (1, 'a'), (2, 'b')")
+
+    # Test via from_config with a table that has the connection
+    config = {
+        "test_model": {
+            "table": "my_table",
+            "database": "test_schema",
+            "dimensions": {"id": "_.id", "value": "_.value"},
+            "measures": {"count": "_.count()"},
+        }
+    }
+
+    # Create a table reference that has the connection
+    base_table = con.table("my_table", database="test_schema")
+    models = from_config(config, tables={"my_table": base_table})
+    model = models["test_model"]
+
+    # Verify the model works
+    result = model.group_by().aggregate("count").execute()
+    assert result.iloc[0]["count"] == 2
+
+
+def test_load_model_with_database_list_kwarg():
+    """Test that database kwarg list gets converted to tuple for ibis."""
+    import ibis
+
+    con = ibis.duckdb.connect()
+
+    # Create schema and table
+    con.raw_sql("CREATE SCHEMA analytics")
+    con.raw_sql("CREATE TABLE analytics.events (event_id INTEGER, event_name VARCHAR)")
+    con.raw_sql("INSERT INTO analytics.events VALUES (1, 'click'), (2, 'view')")
+
+    config = {
+        "events": {
+            "table": "events",
+            "database": "analytics",
+            "dimensions": {"event_id": "_.event_id", "event_name": "_.event_name"},
+            "measures": {"event_count": "_.count()"},
+        }
+    }
+
+    # Create base table with connection
+    base_table = con.table("events", database="analytics")
+    models = from_config(config, tables={"events": base_table})
+    model = models["events"]
+
+    # Verify the model works
+    result = model.group_by("event_name").aggregate("event_count").execute()
+    assert len(result) == 2
+
+
+def test_database_list_to_tuple_conversion():
+    """Test that database list is converted to tuple in _load_table_for_yaml_model."""
+    from unittest.mock import MagicMock, patch
+
+    from boring_semantic_layer.yaml import _load_table_for_yaml_model
+
+    # Mock the get_connection to return a mock connection
+    mock_connection = MagicMock()
+    mock_table = MagicMock()
+    mock_connection.table.return_value = mock_table
+
+    with patch("boring_semantic_layer.yaml.get_connection", return_value=mock_connection):
+        model_config = {
+            "profile": {"type": "duckdb"},
+            "database": ["catalog", "schema"],  # List form
+        }
+
+        tables_dict, table = _load_table_for_yaml_model(model_config, {}, "my_table")
+
+        # Verify table was called with tuple (converted from list)
+        mock_connection.table.assert_called_once_with("my_table", database=("catalog", "schema"))
+        assert "my_table" in tables_dict
+        assert table is mock_table
+
+
+def test_database_kwarg_does_not_mutate_shared_tables():
+    """Test that database kwarg doesn't affect other models using the same table."""
+    import ibis
+
+    con = ibis.duckdb.connect()
+
+    # Create two schemas with same table name but different data
+    con.raw_sql("CREATE SCHEMA schema_a")
+    con.raw_sql("CREATE SCHEMA schema_b")
+    con.raw_sql("CREATE TABLE schema_a.data (id INTEGER, source VARCHAR)")
+    con.raw_sql("CREATE TABLE schema_b.data (id INTEGER, source VARCHAR)")
+    con.raw_sql("INSERT INTO schema_a.data VALUES (1, 'A')")
+    con.raw_sql("INSERT INTO schema_b.data VALUES (2, 'B')")
+
+    # Also create a default table
+    con.raw_sql("CREATE TABLE data (id INTEGER, source VARCHAR)")
+    con.raw_sql("INSERT INTO data VALUES (0, 'default')")
+
+    # Config with two models: first uses database override, second uses default
+    config = {
+        "model_a": {
+            "table": "data",
+            "database": "schema_a",
+            "dimensions": {"id": "_.id", "source": "_.source"},
+            "measures": {"count": "_.count()"},
+        },
+        "model_b": {
+            "table": "data",
+            # No database - should use default table, not schema_a
+            "dimensions": {"id": "_.id", "source": "_.source"},
+            "measures": {"count": "_.count()"},
+        },
+    }
+
+    # Provide the default table
+    default_table = con.table("data")
+    models = from_config(config, tables={"data": default_table})
+
+    # model_a should get data from schema_a
+    result_a = models["model_a"].group_by("source").aggregate("count").execute()
+    assert result_a.iloc[0]["source"] == "A"
+
+    # model_b should get data from default table, NOT schema_a
+    result_b = models["model_b"].group_by("source").aggregate("count").execute()
+    assert result_b.iloc[0]["source"] == "default"
+
+
+def test_multiple_models_different_databases_same_table():
+    """Test multiple models can use same table name with different database overrides."""
+    import ibis
+
+    con = ibis.duckdb.connect()
+
+    # Create schemas with same table name but different data
+    con.raw_sql("CREATE SCHEMA schema_a")
+    con.raw_sql("CREATE SCHEMA schema_b")
+    con.raw_sql("CREATE TABLE schema_a.data (id INTEGER, source VARCHAR)")
+    con.raw_sql("CREATE TABLE schema_b.data (id INTEGER, source VARCHAR)")
+    con.raw_sql("INSERT INTO schema_a.data VALUES (1, 'A')")
+    con.raw_sql("INSERT INTO schema_b.data VALUES (2, 'B')")
+
+    # Default table for the base connection
+    con.raw_sql("CREATE TABLE data (id INTEGER, source VARCHAR)")
+    con.raw_sql("INSERT INTO data VALUES (0, 'default')")
+
+    # Three models: two with different database overrides, one without
+    config = {
+        "model_a": {
+            "table": "data",
+            "database": "schema_a",
+            "dimensions": {"source": "_.source"},
+            "measures": {"count": "_.count()"},
+        },
+        "model_b": {
+            "table": "data",
+            "database": "schema_b",
+            "dimensions": {"source": "_.source"},
+            "measures": {"count": "_.count()"},
+        },
+        "model_default": {
+            "table": "data",
+            # No database override
+            "dimensions": {"source": "_.source"},
+            "measures": {"count": "_.count()"},
+        },
+    }
+
+    default_table = con.table("data")
+    models = from_config(config, tables={"data": default_table})
+
+    # Each model should get its own data
+    assert (
+        models["model_a"].group_by("source").aggregate("count").execute().iloc[0]["source"] == "A"
+    )
+    assert (
+        models["model_b"].group_by("source").aggregate("count").execute().iloc[0]["source"] == "B"
+    )
+    assert (
+        models["model_default"].group_by("source").aggregate("count").execute().iloc[0]["source"]
+        == "default"
+    )
+
+
 def test_from_config_matches_from_yaml(sample_tables):
     """Test that from_config produces same result as from_yaml."""
     yaml_content = """
