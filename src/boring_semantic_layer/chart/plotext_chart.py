@@ -421,25 +421,51 @@ def chart(
 
 
 def display_table(df: Any, limit: int = 10) -> None:
-    """Display DataFrame as a rich table in the terminal."""
-    try:
-        from rich.console import Console
-        from rich.table import Table as RichTable
+    """Display DataFrame as an ASCII table in the terminal."""
+    # Get column names and calculate widths
+    columns = list(df.columns)
+    widths = [len(str(col)) for col in columns]
 
-        console = Console()
-        table = RichTable(show_header=True, header_style="bold cyan")
+    # Update widths based on data
+    for _, row in df.head(limit).iterrows():
+        for i, val in enumerate(row):
+            widths[i] = max(widths[i], len(str(val)))
 
-        for col in df.columns:
-            table.add_column(col)
+    # Build table with box drawing characters
+    lines = []
 
-        row_count = len(df)
-        for _, row in df.head(limit).iterrows():
-            table.add_row(*[str(val) for val in row])
+    # Top border
+    top = "┌" + "┬".join("─" * (w + 2) for w in widths) + "┐"
+    lines.append(top)
 
-        console.print(table)
-        if row_count > limit:
-            console.print(f"\n[dim]Showing {limit} of {row_count} rows[/dim]")
-    except ImportError:
-        print(df.head(limit).to_string(index=False))
-        if len(df) > limit:
-            print(f"\nShowing {limit} of {len(df)} rows")
+    # Header row
+    header_cells = []
+    for col, width in zip(columns, widths):
+        padding = width - len(str(col))
+        header_cells.append(f" {col}{' ' * padding} ")
+    lines.append("│" + "│".join(header_cells) + "│")
+
+    # Header separator
+    separator = "├" + "┼".join("─" * (w + 2) for w in widths) + "┤"
+    lines.append(separator)
+
+    # Data rows
+    for _, row in df.head(limit).iterrows():
+        row_cells = []
+        for val, width in zip(row, widths):
+            val_str = str(val)
+            padding = width - len(val_str)
+            row_cells.append(f" {val_str}{' ' * padding} ")
+        lines.append("│" + "│".join(row_cells) + "│")
+
+    # Bottom border
+    bottom = "└" + "┴".join("─" * (w + 2) for w in widths) + "┘"
+    lines.append(bottom)
+
+    # Print the table
+    print("\n".join(lines))
+
+    # Add row count info if truncated
+    row_count = len(df)
+    if row_count > limit:
+        print(f"\nShowing {limit} of {row_count} rows")

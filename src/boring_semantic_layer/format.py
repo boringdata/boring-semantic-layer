@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import sys
+
 try:
     from ibis.expr.format import fmt, render_fields
 except ImportError:
@@ -22,6 +25,53 @@ from boring_semantic_layer.ops import (
 )
 
 
+def _supports_color() -> bool:
+    """Detect if terminal supports color output."""
+    # Check NO_COLOR environment variable
+    if os.environ.get("NO_COLOR"):
+        return False
+
+    # Check if output is a TTY
+    if not hasattr(sys.stdout, "isatty") or not sys.stdout.isatty():
+        return False
+
+    # Check TERM environment variable
+    term = os.environ.get("TERM", "")
+    if term in ("dumb", ""):
+        return False
+
+    return True
+
+
+# Determine color support once
+_USE_COLOR = _supports_color()
+
+
+def _get_colors():
+    """Get color codes based on terminal support."""
+    if _USE_COLOR:
+        return {
+            "DIM": "\033[36m",
+            "MEASURE": "\033[35m",
+            "CALC": "\033[33m",
+            "HEADER": "\033[1;34m",
+            "OP": "\033[1;32m",
+            "REF": "\033[93m",
+            "RESET": "\033[0m",
+        }
+    else:
+        # No colors, return empty strings
+        return {
+            "DIM": "",
+            "MEASURE": "",
+            "CALC": "",
+            "HEADER": "",
+            "OP": "",
+            "REF": "",
+            "RESET": "",
+        }
+
+
 @fmt.register(SemanticTableOp)
 def _format_semantic_table(op: SemanticTableOp, **kwargs):
     dims = object.__getattribute__(op, "dimensions")
@@ -29,43 +79,43 @@ def _format_semantic_table(op: SemanticTableOp, **kwargs):
     calc_measures = object.__getattribute__(op, "calc_measures")
     name = object.__getattribute__(op, "name")
 
-    DIM_COLOR = "\033[36m"
-    MEASURE_COLOR = "\033[35m"
-    CALC_COLOR = "\033[33m"
-    HEADER_COLOR = "\033[1;34m"
-    RESET = "\033[0m"
+    c = _get_colors()
 
-    name_part = f": {HEADER_COLOR}{name}{RESET}" if name else ""
-    lines = [f"{HEADER_COLOR}SemanticTable{RESET}{name_part}"]
+    name_part = f": {c['HEADER']}{name}{c['RESET']}" if name else ""
+    lines = [f"{c['HEADER']}SemanticTable{c['RESET']}{name_part}"]
 
     # Show dimensions with color coding and special markers
     if dims:
         for dim_name, dim_obj in dims.items():
-            # Add unicode markers for special dimension types
+            # Add markers for special dimension types (only when not using color)
             marker = ""
-            if dim_obj.is_entity:
-                marker = "🔑 "  # Key emoji for entity dimensions
-            elif dim_obj.is_event_timestamp:
-                marker = "⏱️ "  # Stopwatch for event timestamp dimensions
+            if not _USE_COLOR:
+                if dim_obj.is_entity:
+                    marker = "[entity] "
+                elif dim_obj.is_event_timestamp:
+                    marker = "[ts] "
+            else:
+                if dim_obj.is_entity:
+                    marker = "🔑 "  # Key emoji for entity dimensions
+                elif dim_obj.is_event_timestamp:
+                    marker = "⏱️ "  # Stopwatch for event timestamp dimensions
 
-            lines.append(f"  {marker}{DIM_COLOR}{dim_name} [dim]{RESET}")
+            lines.append(f"  {marker}{c['DIM']}{dim_name} [dim]{c['RESET']}")
 
     all_measures = {**measures, **calc_measures}
     if all_measures:
         for meas_name in all_measures:
             if meas_name in calc_measures:
-                lines.append(f"  {CALC_COLOR}{meas_name} [calc]{RESET}")
+                lines.append(f"  {c['CALC']}{meas_name} [calc]{c['RESET']}")
             else:
-                lines.append(f"  {MEASURE_COLOR}{meas_name} [measure]{RESET}")
+                lines.append(f"  {c['MEASURE']}{meas_name} [measure]{c['RESET']}")
 
     return "\n".join(lines)
 
 
 @fmt.register(SemanticFilterOp)
 def _format_semantic_filter(op: SemanticFilterOp, source=None, **kwargs):
-    OP_COLOR = "\033[1;32m"
-    REF_COLOR = "\033[93m"
-    RESET = "\033[0m"
+    c = _get_colors()
 
     predicate = object.__getattribute__(op, "predicate")
 
@@ -78,27 +128,23 @@ def _format_semantic_filter(op: SemanticFilterOp, source=None, **kwargs):
             pred_repr = f"λ {unwrapped.__name__}"
 
     if source is None:
-        top = f"{OP_COLOR}Filter{RESET}\n"
+        top = f"{c['OP']}Filter{c['RESET']}\n"
     else:
-        top = f"{OP_COLOR}Filter{RESET}[{REF_COLOR}{source}{RESET}]\n"
+        top = f"{c['OP']}Filter{c['RESET']}[{c['REF']}{source}{c['RESET']}]\n"
     return top + render_fields({"predicate": pred_repr}, 1)
 
 
 @fmt.register(SemanticAggregateOp)
 def _format_semantic_aggregate(op: SemanticAggregateOp, source=None, **kwargs):
-    OP_COLOR = "\033[1;32m"
-    REF_COLOR = "\033[93m"
-    DIM_COLOR = "\033[36m"
-    MEASURE_COLOR = "\033[35m"
-    RESET = "\033[0m"
+    c = _get_colors()
 
     aggs = object.__getattribute__(op, "aggs")
     keys = object.__getattribute__(op, "keys")
 
     if source is None:
-        top = f"{OP_COLOR}Aggregate{RESET}\n"
+        top = f"{c['OP']}Aggregate{c['RESET']}\n"
     else:
-        top = f"{OP_COLOR}Aggregate{RESET}[{REF_COLOR}{source}{RESET}]\n"
+        top = f"{c['OP']}Aggregate{c['RESET']}[{c['REF']}{source}{c['RESET']}]\n"
 
     lines = [top.rstrip()]
 
@@ -106,7 +152,7 @@ def _format_semantic_aggregate(op: SemanticAggregateOp, source=None, **kwargs):
         lines.append("  groups:")
         keys_to_show = list(keys[:3])
         for key in keys_to_show:
-            lines.append(f"    {DIM_COLOR}{key}{RESET}")
+            lines.append(f"    {c['DIM']}{key}{c['RESET']}")
         if len(keys) > 3:
             lines.append(f"    ... and {len(keys) - 3} more")
 
@@ -114,7 +160,7 @@ def _format_semantic_aggregate(op: SemanticAggregateOp, source=None, **kwargs):
         lines.append("  metrics:")
         agg_names = list(aggs.keys())[:3]
         for metric in agg_names:
-            lines.append(f"    {MEASURE_COLOR}{metric}{RESET}")
+            lines.append(f"    {c['MEASURE']}{metric}{c['RESET']}")
         if len(aggs) > 3:
             lines.append(f"    ... and {len(aggs) - 3} more")
 
@@ -133,24 +179,21 @@ def _format_semantic_join(op: SemanticJoinOp, left=None, right=None, **kwargs):
 
 @fmt.register(SemanticGroupByOp)
 def _format_semantic_groupby(op: SemanticGroupByOp, source=None, **kwargs):
-    OP_COLOR = "\033[1;32m"
-    REF_COLOR = "\033[93m"
-    DIM_COLOR = "\033[36m"
-    RESET = "\033[0m"
+    c = _get_colors()
 
     keys = object.__getattribute__(op, "keys")
 
     if source is None:
-        top = f"{OP_COLOR}GroupBy{RESET}\n"
+        top = f"{c['OP']}GroupBy{c['RESET']}\n"
     else:
-        top = f"{OP_COLOR}GroupBy{RESET}[{REF_COLOR}{source}{RESET}]\n"
+        top = f"{c['OP']}GroupBy{c['RESET']}[{c['REF']}{source}{c['RESET']}]\n"
 
     lines = [top.rstrip()]
     lines.append("  keys:")
 
     keys_to_show = list(keys[:3])
     for key in keys_to_show:
-        lines.append(f"    {DIM_COLOR}{key}{RESET}")
+        lines.append(f"    {c['DIM']}{key}{c['RESET']}")
     if len(keys) > 3:
         lines.append(f"    ... and {len(keys) - 3} more")
 
@@ -180,15 +223,13 @@ def _format_semantic_limit(op: SemanticLimitOp, source=None, **kwargs):
 
 @fmt.register(SemanticMutateOp)
 def _format_semantic_mutate(op: SemanticMutateOp, source=None, **kwargs):
-    OP_COLOR = "\033[1;32m"
-    REF_COLOR = "\033[93m"
-    RESET = "\033[0m"
+    c = _get_colors()
 
     post = object.__getattribute__(op, "post")
     top = (
-        f"{OP_COLOR}Mutate{RESET}\n"
+        f"{c['OP']}Mutate{c['RESET']}\n"
         if source is None
-        else f"{OP_COLOR}Mutate{RESET}[{REF_COLOR}{source}{RESET}]\n"
+        else f"{c['OP']}Mutate{c['RESET']}[{c['REF']}{source}{c['RESET']}]\n"
     )
 
     exprs_to_show = list(post.keys())[:3]
