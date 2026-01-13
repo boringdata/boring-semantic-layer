@@ -75,8 +75,8 @@ def __getattr__(name):
             return MCPSemanticModel
         except ImportError:
             raise ImportError(
-                "MCPSemanticModel requires the 'fastmcp' optional dependencies. "
-                "Install with: pip install 'boring-semantic-layer[fastmcp]'"
+                "MCPSemanticModel requires the 'mcp' optional dependencies. "
+                "Install with: pip install 'boring-semantic-layer[mcp]'"
             ) from None
     if name == "LangGraphBackend":
         try:
@@ -85,7 +85,7 @@ def __getattr__(name):
             return LangGraphBackend
         except ImportError:
             raise ImportError(
-                "LangGraphBackend requires the 'langgraph' optional dependencies. "
-                "Install with: pip install 'boring-semantic-layer[langgraph]'"
+                "LangGraphBackend requires the 'agent' optional dependencies. "
+                "Install with: pip install 'boring-semantic-layer[agent]'"
             ) from None
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
