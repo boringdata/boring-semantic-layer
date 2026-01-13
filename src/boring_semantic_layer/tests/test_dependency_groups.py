@@ -124,7 +124,7 @@ class TestMCPErrorMessages:
         # Check __getattr__ implementation
         source = inspect.getsource(boring_semantic_layer.__getattr__)
         assert "MCPSemanticModel" in source
-        assert "boring-semantic-layer[fastmcp]" in source or "fastmcp" in source
+        assert "boring-semantic-layer[mcp]" in source or "mcp" in source
 
 
 class TestChartErrorMessages:
@@ -175,7 +175,7 @@ class TestErrorMessageQuality:
 
         # Should mention features and how to install
         assert "MCPSemanticModel" in source
-        assert "fastmcp" in source
+        assert "mcp" in source
 
         # Should have install instructions
         assert "pip install" in source or "Install with" in source

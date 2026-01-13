@@ -54,6 +54,7 @@ __all__ = [
     "from_config",
     "from_yaml",
     "MCPSemanticModel",
+    "LangGraphBackend",
     "options",
     "graph_bfs",
     "graph_invert",
@@ -64,20 +65,27 @@ __all__ = [
     "get_connection",
 ]
 
-# Import MCP functionality from separate module if available
-try:
-    from .agents.backends.mcp import MCPSemanticModel  # noqa: F401
-
-    _MCP_AVAILABLE = True
-except ImportError:
-    _MCP_AVAILABLE = False
-
-
 
 def __getattr__(name):
-    if name == "MCPSemanticModel" and not _MCP_AVAILABLE:
-        raise ImportError(
-            "MCPSemanticModel requires the 'fastmcp' optional dependencies. "
-            "Install with: pip install 'boring-semantic-layer[fastmcp]'"
-        )
+    """Lazy imports for optional dependencies."""
+    if name == "MCPSemanticModel":
+        try:
+            from .agents.backends.mcp import MCPSemanticModel
+
+            return MCPSemanticModel
+        except ImportError:
+            raise ImportError(
+                "MCPSemanticModel requires the 'mcp' optional dependencies. "
+                "Install with: pip install 'boring-semantic-layer[mcp]'"
+            ) from None
+    if name == "LangGraphBackend":
+        try:
+            from .agents.backends.langgraph import LangGraphBackend
+
+            return LangGraphBackend
+        except ImportError:
+            raise ImportError(
+                "LangGraphBackend requires the 'agent' optional dependencies. "
+                "Install with: pip install 'boring-semantic-layer[agent]'"
+            ) from None
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
