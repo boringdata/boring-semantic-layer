@@ -645,7 +645,7 @@ vl-convert-python==1.8.0
     # via boring-semantic-layer
 websockets==15.0.1
     # via fastmcp
-xorq==0.3.4
+xorq==0.3.5
     # via boring-semantic-layer
 xorq-datafusion==0.2.4
     # via xorq
