@@ -14,8 +14,8 @@ from ..utils.prompts import load_prompt
 
 load_dotenv()
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
-PROMPTS_DIR = _PROJECT_ROOT / "docs" / "md" / "prompts" / "query" / "mcp"
+# Use module-relative path for prompts (bundled in package)
+PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 SYSTEM_INSTRUCTIONS = load_prompt(PROMPTS_DIR, "system.md") or "MCP server for semantic models"
 
@@ -100,9 +100,11 @@ class MCPSemanticModel(FastMCP):
             if not time_dim_name:
                 raise ValueError(f"Model {model_name} has no time dimension")
 
-            time_dim = model.get_dimensions()[time_dim_name]
+            # Access column directly from table to avoid Deferred recursion issue
+            # time_dim.expr(tbl) returns a Deferred object that causes infinite
+            # recursion when passed to tbl.aggregate()
             tbl = model.table
-            time_col = time_dim.expr(tbl)
+            time_col = getattr(tbl, time_dim_name)
             result = tbl.aggregate(start=time_col.min(), end=time_col.max()).execute()
 
             return {
