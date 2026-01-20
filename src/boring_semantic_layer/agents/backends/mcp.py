@@ -104,9 +104,10 @@ class MCPSemanticModel(FastMCP):
             # time_dim.expr(tbl) returns a Deferred object that causes infinite
             # recursion when passed to tbl.aggregate()
             tbl = model.table
-            # Use bracket notation to handle joined model dimension names (e.g., 'flights.flight_date')
-            # getattr doesn't work with dotted names
-            time_col = tbl[time_dim_name]
+            # For joined models, dimension names have table prefix (e.g., 'flights.flight_date')
+            # but the actual column name is just the part after the dot ('flight_date')
+            col_name = time_dim_name.split(".")[-1] if "." in time_dim_name else time_dim_name
+            time_col = tbl[col_name]
             result = tbl.aggregate(start=time_col.min(), end=time_col.max()).execute()
 
             return {
