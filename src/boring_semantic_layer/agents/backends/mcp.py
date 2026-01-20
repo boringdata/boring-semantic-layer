@@ -104,7 +104,9 @@ class MCPSemanticModel(FastMCP):
             # time_dim.expr(tbl) returns a Deferred object that causes infinite
             # recursion when passed to tbl.aggregate()
             tbl = model.table
-            time_col = getattr(tbl, time_dim_name)
+            # Use bracket notation to handle joined model dimension names (e.g., 'flights.flight_date')
+            # getattr doesn't work with dotted names
+            time_col = tbl[time_dim_name]
             result = tbl.aggregate(start=time_col.min(), end=time_col.max()).execute()
 
             return {
