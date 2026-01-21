@@ -1,4 +1,5 @@
 import json
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any
@@ -14,8 +15,20 @@ from ..utils.prompts import load_prompt
 
 load_dotenv()
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
-PROMPTS_DIR = _PROJECT_ROOT / "docs" / "md" / "prompts" / "query" / "mcp"
+
+def _get_prompts_dir() -> Path:
+    """Get the MCP prompts directory from shared-data or dev location."""
+    # First try installed location (shared-data from wheel)
+    installed = Path(sys.prefix) / "share" / "bsl" / "prompts" / "query" / "mcp"
+    if installed.exists():
+        return installed
+
+    # Fall back to development location
+    package_dir = Path(__file__).parent.parent.parent.parent.parent
+    return package_dir / "docs" / "md" / "prompts" / "query" / "mcp"
+
+
+PROMPTS_DIR = _get_prompts_dir()
 
 SYSTEM_INSTRUCTIONS = load_prompt(PROMPTS_DIR, "system.md") or "MCP server for semantic models"
 
@@ -100,9 +113,14 @@ class MCPSemanticModel(FastMCP):
             if not time_dim_name:
                 raise ValueError(f"Model {model_name} has no time dimension")
 
-            time_dim = model.get_dimensions()[time_dim_name]
+            # Access column directly from table to avoid Deferred recursion issue
+            # time_dim.expr(tbl) returns a Deferred object that causes infinite
+            # recursion when passed to tbl.aggregate()
             tbl = model.table
-            time_col = time_dim.expr(tbl)
+            # For joined models, dimension names have table prefix (e.g., 'flights.flight_date')
+            # but the actual column name is just the part after the dot ('flight_date')
+            col_name = time_dim_name.split(".")[-1] if "." in time_dim_name else time_dim_name
+            time_col = tbl[col_name]
             result = tbl.aggregate(start=time_col.min(), end=time_col.max()).execute()
 
             return {
