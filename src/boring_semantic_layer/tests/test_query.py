@@ -658,6 +658,98 @@ class TestTimeDimensions:
                 time_range={"start": "2024-01-01", "end": "2024-12-31"},
             )
 
+    def test_time_grain_with_deferred_expression(self, sales_data):
+        """Test time_grain works with Deferred expressions (regression test).
+
+        This tests that using ibis._.column (Deferred) instead of lambda t: t.column
+        works correctly with time_grain. Previously, capturing dim_obj.expr directly
+        and calling orig(t) caused infinite recursion because Deferred.__call__
+        doesn't resolve properly. The fix uses dim(t) which calls Dimension.__call__
+        to properly resolve Deferred expressions.
+        """
+        st = (
+            to_semantic_table(sales_data, "sales")
+            .with_dimensions(
+                order_date={
+                    "expr": ibis._.order_date,  # Deferred expression, not lambda
+                    "is_time_dimension": True,
+                    "smallest_time_grain": "day",
+                },
+            )
+            .with_measures(total_amount=lambda t: t.amount.sum())
+        )
+
+        result = st.query(
+            dimensions=["order_date"],
+            measures=["total_amount"],
+            time_grain="TIME_GRAIN_MONTH",
+        ).execute()
+
+        # Should have 4 months max (Jan-Apr 2024 for 100 days from Jan 1)
+        assert len(result) <= 4
+        assert "order_date" in result.columns
+        assert "total_amount" in result.columns
+
+    def test_time_range_with_deferred_expression(self, sales_data):
+        """Test time_range works with Deferred expressions (regression test).
+
+        This tests that using ibis._.column (Deferred) instead of lambda t: t.column
+        works correctly with time_range filters. Ensures Deferred expressions are
+        compatible with timestamp literal comparisons for time range filtering.
+        """
+        st = (
+            to_semantic_table(sales_data, "sales")
+            .with_dimensions(
+                order_date={
+                    "expr": ibis._.order_date,  # Deferred expression, not lambda
+                    "is_time_dimension": True,
+                    "smallest_time_grain": "day",
+                },
+            )
+            .with_measures(total_amount=lambda t: t.amount.sum())
+        )
+
+        result = st.query(
+            dimensions=["order_date"],
+            measures=["total_amount"],
+            time_range={"start": "2024-01-01", "end": "2024-01-31"},
+        ).execute()
+
+        # Should have at most 31 days in January
+        assert len(result) <= 31
+        assert "order_date" in result.columns
+        assert "total_amount" in result.columns
+
+    def test_time_grain_and_time_range_combined_with_deferred(self, sales_data):
+        """Test both time_grain and time_range together with Deferred expressions.
+
+        This is a comprehensive regression test ensuring time_grain and time_range
+        work correctly when dimensions use Deferred expressions (ibis._) syntax.
+        """
+        st = (
+            to_semantic_table(sales_data, "sales")
+            .with_dimensions(
+                order_date={
+                    "expr": ibis._.order_date,  # Deferred expression
+                    "is_time_dimension": True,
+                    "smallest_time_grain": "day",
+                },
+            )
+            .with_measures(total_amount=lambda t: t.amount.sum())
+        )
+
+        result = st.query(
+            dimensions=["order_date"],
+            measures=["total_amount"],
+            time_grain="TIME_GRAIN_MONTH",
+            time_range={"start": "2024-01-01", "end": "2024-03-31"},
+        ).execute()
+
+        # Should have at most 3 months (Jan, Feb, Mar)
+        assert len(result) <= 3
+        assert "order_date" in result.columns
+        assert "total_amount" in result.columns
+
 
 class TestFilterErrorHandling:
     """Test error handling in filter validation."""

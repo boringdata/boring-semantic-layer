@@ -402,9 +402,23 @@ def query(
                 ".with_dimensions(dim_name={'expr': lambda t: t.column, 'is_time_dimension': True})"
             )
 
-        # Add two filters for the time range: >= start AND <= end
-        filters.append({"field": time_dim_name, "operator": ">=", "value": time_range["start"]})
-        filters.append({"field": time_dim_name, "operator": "<=", "value": time_range["end"]})
+        # Apply time range filters using lambda functions for cross-database compatibility.
+        # This approach uses lambda filters instead of JSON filters to avoid issues with
+        # the ibis._ Deferred mechanism when comparing with timestamp literals.
+        #
+        # Using Python datetime objects instead of ibis.literal() ensures proper type
+        # handling across all backends - ibis automatically converts datetime objects
+        # to the appropriate SQL representation for each backend.
+        #
+        # For joined models, dimension names have table prefix (e.g., 'flights.flight_date')
+        # but the actual column name is just the part after the dot ('flight_date').
+        from datetime import datetime
+
+        col_name = time_dim_name.split(".")[-1] if "." in time_dim_name else time_dim_name
+        start_dt = datetime.fromisoformat(time_range["start"])
+        end_dt = datetime.fromisoformat(time_range["end"])
+        filters.append(lambda t, col=col_name, start=start_dt: getattr(t, col) >= start)
+        filters.append(lambda t, col=col_name, end=end_dt: getattr(t, col) <= end)
 
     # Step 1: Handle time grain transformations
     if time_grain:
@@ -428,12 +442,13 @@ def query(
                     )
 
                     # Create transformed dimension
+                    # NOTE: We capture dim_obj (not dim_obj.expr) and call dim(t) because
+                    # Dimension.__call__ properly resolves Deferred expressions via:
+                    #   self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
+                    # Calling orig_expr(t) directly on a Deferred would cause infinite recursion.
                     truncate_unit = TIME_GRAIN_TRANSFORMATIONS[time_grain]
-                    orig_expr = dim_obj.expr
                     time_dims_to_transform[dim_name] = Dimension(
-                        expr=lambda t, orig=orig_expr, unit=truncate_unit: orig(
-                            t,
-                        ).truncate(unit),
+                        expr=lambda t, dim=dim_obj, unit=truncate_unit: dim(t).truncate(unit),
                         description=dim_obj.description,
                         is_time_dimension=dim_obj.is_time_dimension,
                         smallest_time_grain=dim_obj.smallest_time_grain,
