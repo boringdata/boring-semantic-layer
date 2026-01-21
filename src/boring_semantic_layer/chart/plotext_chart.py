@@ -440,7 +440,7 @@ def display_table(df: Any, limit: int = 10) -> None:
 
     # Header row
     header_cells = []
-    for col, width in zip(columns, widths):
+    for col, width in zip(columns, widths, strict=False):
         padding = width - len(str(col))
         header_cells.append(f" {col}{' ' * padding} ")
     lines.append("│" + "│".join(header_cells) + "│")
@@ -452,7 +452,7 @@ def display_table(df: Any, limit: int = 10) -> None:
     # Data rows
     for _, row in df.head(limit).iterrows():
         row_cells = []
-        for val, width in zip(row, widths):
+        for val, width in zip(row, widths, strict=False):
             val_str = str(val)
             padding = width - len(val_str)
             row_cells.append(f" {val_str}{' ' * padding} ")

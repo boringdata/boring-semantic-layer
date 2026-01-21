@@ -1,1 +1,0 @@
-List of measure names to aggregate (e.g., ['flights.flight_count', 'flights.avg_distance'])

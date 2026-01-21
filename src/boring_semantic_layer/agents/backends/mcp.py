@@ -1,4 +1,5 @@
 import json
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any
@@ -14,8 +15,20 @@ from ..utils.prompts import load_prompt
 
 load_dotenv()
 
-# Use module-relative path for prompts (bundled in package)
-PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+def _get_prompts_dir() -> Path:
+    """Get the MCP prompts directory from shared-data or dev location."""
+    # First try installed location (shared-data from wheel)
+    installed = Path(sys.prefix) / "share" / "bsl" / "prompts" / "query" / "mcp"
+    if installed.exists():
+        return installed
+
+    # Fall back to development location
+    package_dir = Path(__file__).parent.parent.parent.parent.parent
+    return package_dir / "docs" / "md" / "prompts" / "query" / "mcp"
+
+
+PROMPTS_DIR = _get_prompts_dir()
 
 SYSTEM_INSTRUCTIONS = load_prompt(PROMPTS_DIR, "system.md") or "MCP server for semantic models"
 

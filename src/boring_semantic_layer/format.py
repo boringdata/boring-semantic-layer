@@ -37,10 +37,7 @@ def _supports_color() -> bool:
 
     # Check TERM environment variable
     term = os.environ.get("TERM", "")
-    if term in ("dumb", ""):
-        return False
-
-    return True
+    return term not in ("dumb", "")
 
 
 # Determine color support once
