@@ -1,1 +1,0 @@
-Fetch dimensions and measures for a semantic model before querying it.
