@@ -157,7 +157,7 @@ wheels = [
 
 [[package]]
 name = "boring-semantic-layer"
-version = "0.3.5"
+version = "0.3.4"
 source = { editable = "." }
 dependencies = [
     { name = "attrs" },
@@ -1361,7 +1361,7 @@ wheels = [
 
 [[package]]
 name = "jsonschema-path"
-version = "0.3.5"
+version = "0.3.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pathable" },
