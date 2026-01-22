@@ -402,23 +402,17 @@ def query(
                 ".with_dimensions(dim_name={'expr': lambda t: t.column, 'is_time_dimension': True})"
             )
 
-        # Apply time range filters using lambda functions for cross-database compatibility.
-        # This approach uses lambda filters instead of JSON filters to avoid issues with
-        # the ibis._ Deferred mechanism when comparing with timestamp literals.
-        #
-        # Using Python datetime objects instead of ibis.literal() ensures proper type
-        # handling across all backends - ibis automatically converts datetime objects
-        # to the appropriate SQL representation for each backend.
-        #
-        # For joined models, dimension names have table prefix (e.g., 'flights.flight_date')
-        # but the actual column name is just the part after the dot ('flight_date').
+        # Apply time range filters using the Dimension object directly.
+        # This uses dim(t) which calls Dimension.__call__ and properly resolves
+        # Deferred expressions (ibis._) via: self.expr.resolve(table) if _is_deferred(...)
+        # This is the same pattern used for time_grain transformations.
         from datetime import datetime
 
-        col_name = time_dim_name.split(".")[-1] if "." in time_dim_name else time_dim_name
+        dim_obj = result.get_dimensions().get(time_dim_name)
         start_dt = datetime.fromisoformat(time_range["start"])
         end_dt = datetime.fromisoformat(time_range["end"])
-        filters.append(lambda t, col=col_name, start=start_dt: getattr(t, col) >= start)
-        filters.append(lambda t, col=col_name, end=end_dt: getattr(t, col) <= end)
+        filters.append(lambda t, dim=dim_obj, start=start_dt: dim(t) >= start)
+        filters.append(lambda t, dim=dim_obj, end=end_dt: dim(t) <= end)
 
     # Step 1: Handle time grain transformations
     if time_grain:
