@@ -402,9 +402,17 @@ def query(
                 ".with_dimensions(dim_name={'expr': lambda t: t.column, 'is_time_dimension': True})"
             )
 
-        # Add two filters for the time range: >= start AND <= end
-        filters.append({"field": time_dim_name, "operator": ">=", "value": time_range["start"]})
-        filters.append({"field": time_dim_name, "operator": "<=", "value": time_range["end"]})
+        # Apply time range filters using the Dimension object directly.
+        # This uses dim(t) which calls Dimension.__call__ and properly resolves
+        # Deferred expressions (ibis._) via: self.expr.resolve(table) if _is_deferred(...)
+        # This is the same pattern used for time_grain transformations.
+        from datetime import datetime
+
+        dim_obj = result.get_dimensions().get(time_dim_name)
+        start_dt = datetime.fromisoformat(time_range["start"])
+        end_dt = datetime.fromisoformat(time_range["end"])
+        filters.append(lambda t, dim=dim_obj, start=start_dt: dim(t) >= start)
+        filters.append(lambda t, dim=dim_obj, end=end_dt: dim(t) <= end)
 
     # Step 1: Handle time grain transformations
     if time_grain:
@@ -428,12 +436,13 @@ def query(
                     )
 
                     # Create transformed dimension
+                    # NOTE: We capture dim_obj (not dim_obj.expr) and call dim(t) because
+                    # Dimension.__call__ properly resolves Deferred expressions via:
+                    #   self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
+                    # Calling orig_expr(t) directly on a Deferred would cause infinite recursion.
                     truncate_unit = TIME_GRAIN_TRANSFORMATIONS[time_grain]
-                    orig_expr = dim_obj.expr
                     time_dims_to_transform[dim_name] = Dimension(
-                        expr=lambda t, orig=orig_expr, unit=truncate_unit: orig(
-                            t,
-                        ).truncate(unit),
+                        expr=lambda t, dim=dim_obj, unit=truncate_unit: dim(t).truncate(unit),
                         description=dim_obj.description,
                         is_time_dimension=dim_obj.is_time_dimension,
                         smallest_time_grain=dim_obj.smallest_time_grain,
