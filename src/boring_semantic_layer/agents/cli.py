@@ -195,6 +195,74 @@ def setup_logging(verbose: bool = False):
     )
 
 
+def cmd_render(args):
+    """Render a markdown file as a dashboard."""
+    import time
+
+    from boring_semantic_layer.chart.md_parser.dashboard import render_dashboard
+
+    md_path = Path(args.file)
+    if not md_path.exists():
+        print(f"Error: File not found: {md_path}")
+        return
+
+    # Determine output path
+    output_path = Path(args.output) if args.output else md_path.with_suffix(".html")
+
+    # Initial render
+    success = render_dashboard(md_path, output_path)
+
+    if success and args.open:
+        import webbrowser
+
+        webbrowser.open(f"file://{output_path.absolute()}")
+
+    # Watch mode
+    if args.watch:
+        try:
+            from watchdog.events import FileSystemEventHandler
+            from watchdog.observers import Observer
+        except ImportError:
+            print("Error: watchdog package required for --watch mode")
+            print("Install with: uv pip install watchdog")
+            return
+
+        class DashboardChangeHandler(FileSystemEventHandler):
+            def __init__(self, target_path: Path):
+                self.target_path = target_path.resolve()
+                self.last_modified = time.time()
+
+            def on_modified(self, event):
+                if event.is_directory:
+                    return
+                event_path = Path(event.src_path).resolve()
+                if event_path != self.target_path:
+                    return
+                # Debounce
+                current_time = time.time()
+                if current_time - self.last_modified < 0.5:
+                    return
+                self.last_modified = current_time
+                print("\nFile changed, regenerating...")
+                render_dashboard(md_path, output_path)
+
+        print(f"\nWatching {md_path} for changes... (Ctrl+C to stop)")
+        print(f"Output: {output_path}")
+
+        handler = DashboardChangeHandler(md_path)
+        observer = Observer()
+        observer.schedule(handler, str(md_path.parent), recursive=False)
+        observer.start()
+
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\nStopping watch mode...")
+            observer.stop()
+            observer.join()
+
+
 def cmd_chat(args):
     """Start an interactive chat session with the semantic model."""
     import os
@@ -264,6 +332,34 @@ def main():
 
     # Create subparsers for different commands
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
+
+    # Render command
+    render_parser = subparsers.add_parser(
+        "render", help="Render a markdown file as an interactive dashboard"
+    )
+    render_parser.add_argument(
+        "file",
+        type=str,
+        help="Path to markdown file with BSL queries",
+    )
+    render_parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        help="Output HTML file path (default: same name with .html extension)",
+    )
+    render_parser.add_argument(
+        "--open",
+        action="store_true",
+        help="Open the rendered dashboard in browser",
+    )
+    render_parser.add_argument(
+        "-w",
+        "--watch",
+        action="store_true",
+        help="Watch for file changes and auto-regenerate",
+    )
+    render_parser.set_defaults(func=cmd_render)
 
     # Chat command
     chat_parser = subparsers.add_parser("chat", help="Start interactive chat session")

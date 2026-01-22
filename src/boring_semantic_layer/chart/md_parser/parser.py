@@ -2,6 +2,15 @@
 
 import re
 from pathlib import Path
+from typing import NamedTuple
+
+
+class DashboardBlock(NamedTuple):
+    """A parsed dashboard code block with grid info."""
+
+    code: str
+    size: tuple[int, int]  # (cols, rows)
+    row_group: int  # blocks with same row_group are on same row
 
 
 class MarkdownParser:
@@ -24,6 +33,52 @@ class MarkdownParser:
             "sh",
         }
     )
+
+    @classmethod
+    def extract_dashboard_blocks(cls, content: str) -> list[DashboardBlock]:
+        """
+        Extract BSL dashboard blocks with grid sizing from markdown.
+
+        Parses code blocks with format:
+            ```bsl size=[8,6]
+            query_code_here
+            ```
+
+        Row grouping: consecutive blocks (no blank lines) are same row.
+
+        Returns:
+            List of DashboardBlock with code, size, and row_group
+        """
+        # Pattern matches: ```bsl size=[cols,rows] or ```bsl (default size)
+        pattern = r"```bsl(?:\s+size=\[(\d+),\s*(\d+)\])?\n(.*?)\n```"
+
+        blocks = []
+        row_group = 0
+        last_end = 0
+
+        for match in re.finditer(pattern, content, re.DOTALL):
+            # Check if there's a blank line between last block and this one
+            between = content[last_end : match.start()]
+            if last_end > 0 and "\n\n" in between:
+                row_group += 1
+
+            # Extract size or use default
+            cols = int(match.group(1)) if match.group(1) else 8
+            rows = int(match.group(2)) if match.group(2) else 5
+            code = match.group(3).strip()
+
+            blocks.append(DashboardBlock(code=code, size=(cols, rows), row_group=row_group))
+            last_end = match.end()
+
+        return blocks
+
+    @classmethod
+    def parse_size_from_info(cls, info_string: str) -> tuple[int, int] | None:
+        """Parse size=[cols,rows] from code fence info string."""
+        match = re.search(r"size=\[(\d+),\s*(\d+)\]", info_string)
+        if match:
+            return (int(match.group(1)), int(match.group(2)))
+        return None
 
     @classmethod
     def extract_queries(
