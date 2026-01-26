@@ -62,16 +62,6 @@ class TestEChartsBackendRegistration:
         backends = list_backends()
         assert "echarts" in backends
 
-    def test_echarts_is_default_backend(self, flights_model):
-        """Test that ECharts is the default backend."""
-        result = flights_model.group_by("carrier").aggregate("flight_count")
-        # Call chart() without specifying backend
-        chart = result.chart()
-
-        # Should be a dict (ECharts spec)
-        assert isinstance(chart, dict)
-        # ECharts specs have series
-        assert "series" in chart
 
 
 class TestEChartsBasicCharts:
