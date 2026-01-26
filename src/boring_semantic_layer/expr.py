@@ -172,8 +172,9 @@ class SemanticTable(ir.Table):
     def to_untagged(self):
         return self.op().to_untagged()
 
-    def execute(self):
-        return to_untagged(self).execute()
+    def execute(self, **kwargs):
+        # Accept kwargs for ibis compatibility (params, limit, etc)
+        return to_untagged(self).execute(**kwargs)
 
     def compile(self, **kwargs):
         return to_untagged(self).compile(**kwargs)
@@ -1109,7 +1110,7 @@ class SemanticAggregate(SemanticTable):
     def chart(
         self,
         spec: dict[str, Any] | None = None,
-        backend: str = "altair",
+        backend: str = "echarts",
         format: str = "static",
     ):
         return create_chart(self, spec=spec, backend=backend, format=format)
@@ -1164,7 +1165,7 @@ class SemanticOrderBy(SemanticTable):
     def chart(
         self,
         spec: dict[str, Any] | None = None,
-        backend: str = "altair",
+        backend: str = "echarts",
         format: str = "static",
     ):
         """Create a chart from the ordered aggregate."""
@@ -1223,7 +1224,7 @@ class SemanticLimit(SemanticTable):
     def chart(
         self,
         spec: dict[str, Any] | None = None,
-        backend: str = "altair",
+        backend: str = "echarts",
         format: str = "static",
     ):
         """Create a chart from the limited aggregate."""
@@ -1411,7 +1412,7 @@ class SemanticMutate(SemanticTable):
     def chart(
         self,
         spec: dict[str, Any] | None = None,
-        backend: str = "altair",
+        backend: str = "echarts",
         format: str = "static",
     ):
         """Create a chart from the mutated aggregate."""
