@@ -2,6 +2,7 @@
 Chart functionality for semantic API.
 
 Provides multiple backends for visualization:
+- ECharts: Apache ECharts based declarative charts (default)
 - Altair: Vega-Lite based declarative charts
 - Plotly: Interactive web-based charts
 - Plotext: Terminal-based charts
@@ -22,7 +23,7 @@ def register_backend(name: str, backend_class: type[ChartBackend]) -> None:
     Register a chart backend.
 
     Args:
-        name: Backend name (e.g., "altair", "plotly", "plotext")
+        name: Backend name (e.g., "altair", "plotly", "plotext", "echarts")
         backend_class: Backend class implementing ChartBackend interface
     """
     _BACKENDS[name] = backend_class
@@ -33,7 +34,7 @@ def get_backend(name: str) -> ChartBackend:
     Get a chart backend instance by name.
 
     Args:
-        name: Backend name (e.g., "altair", "plotly", "plotext")
+        name: Backend name (e.g., "altair", "plotly", "plotext", "echarts")
 
     Returns:
         Instance of the requested backend
@@ -61,7 +62,7 @@ def list_backends() -> list[str]:
 def chart(
     semantic_aggregate: Any,
     spec: dict[str, Any] | None = None,
-    backend: str = "altair",
+    backend: str = "echarts",
     format: str = "static",
 ) -> Any:
     """
@@ -72,16 +73,21 @@ def chart(
         spec: Optional chart specification dict (backend-specific format).
               If partial spec is provided (e.g., only "mark" or only "encoding"),
               missing parts will be auto-detected and merged.
-        backend: Visualization backend ("altair", "plotly", or "plotext")
+        backend: Visualization backend ("echarts", "altair", "plotly", or "plotext")
+                 Default is "echarts".
         format: Output format (backend-specific, typically "static", "interactive", "json")
 
     Returns:
         Chart object or formatted output (type depends on backend and format)
 
     Examples:
-        # Auto-detect chart type with Altair
+        # Auto-detect chart type with ECharts (default)
         result = flights.group_by("carrier").aggregate("flight_count")
         chart(result)
+
+        # Use Altair backend
+        result = flights.group_by("dep_month").aggregate("flight_count")
+        chart(result, backend="altair")
 
         # Use Plotly backend
         result = flights.group_by("dep_month").aggregate("flight_count")
@@ -140,6 +146,14 @@ def chart(
 # Register built-in backends
 def _register_builtin_backends():
     """Register all built-in chart backends."""
+    # Register ECharts first (default backend)
+    try:
+        from .echarts_adapter import EChartsAdapter
+
+        register_backend("echarts", EChartsAdapter)
+    except ImportError:
+        pass  # ECharts adapter not available
+
     try:
         from .altair_chart import AltairBackend
 

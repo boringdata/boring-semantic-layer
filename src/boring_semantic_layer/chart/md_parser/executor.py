@@ -20,6 +20,11 @@ class QueryExecutor:
         """Initialize executor with output capture settings."""
         self.capture_output = capture_output
         self.context: dict[str, Any] = {}
+        # Set DuckDB as default backend for ibis
+        try:
+            ibis.set_backend("duckdb")
+        except Exception:
+            pass  # Ignore if already set or DuckDB not available
 
     def execute(self, code: str, is_chart_only: bool = False) -> dict[str, Any]:
         """Execute BSL query code and return structured results."""
@@ -197,6 +202,14 @@ class QueryExecutor:
         if hasattr(result, "to_pandas"):
             df = result.to_pandas()
             return {"table": {"columns": list(df.columns), "data": df.values.tolist()}}
+
+        # Pandas DataFrame directly
+        try:
+            import pandas as pd
+            if isinstance(result, pd.DataFrame):
+                return {"table": {"columns": list(result.columns), "data": result.values.tolist()}}
+        except ImportError:
+            pass
 
         # String result
         if isinstance(result, str):
