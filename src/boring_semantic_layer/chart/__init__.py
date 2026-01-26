@@ -2,8 +2,8 @@
 Chart functionality for semantic API.
 
 Provides multiple backends for visualization:
-- ECharts: Apache ECharts based declarative charts (default)
-- Altair: Vega-Lite based declarative charts
+- Altair: Vega-Lite based declarative charts (default)
+- ECharts: Apache ECharts based declarative charts
 - Plotly: Interactive web-based charts
 - Plotext: Terminal-based charts
 
@@ -62,7 +62,7 @@ def list_backends() -> list[str]:
 def chart(
     semantic_aggregate: Any,
     spec: dict[str, Any] | None = None,
-    backend: str = "echarts",
+    backend: str = "altair",
     format: str = "static",
 ) -> Any:
     """
@@ -73,21 +73,21 @@ def chart(
         spec: Optional chart specification dict (backend-specific format).
               If partial spec is provided (e.g., only "mark" or only "encoding"),
               missing parts will be auto-detected and merged.
-        backend: Visualization backend ("echarts", "altair", "plotly", or "plotext")
-                 Default is "echarts".
+        backend: Visualization backend ("altair", "echarts", "plotly", or "plotext")
+                 Default is "altair".
         format: Output format (backend-specific, typically "static", "interactive", "json")
 
     Returns:
         Chart object or formatted output (type depends on backend and format)
 
     Examples:
-        # Auto-detect chart type with ECharts (default)
+        # Auto-detect chart type with Altair (default)
         result = flights.group_by("carrier").aggregate("flight_count")
         chart(result)
 
-        # Use Altair backend
+        # Use ECharts backend
         result = flights.group_by("dep_month").aggregate("flight_count")
-        chart(result, backend="altair")
+        chart(result, backend="echarts")
 
         # Use Plotly backend
         result = flights.group_by("dep_month").aggregate("flight_count")
