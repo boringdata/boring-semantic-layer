@@ -7,13 +7,15 @@ ECharts option specifications from data.
 
 from __future__ import annotations
 
+import re
+from datetime import date, datetime
 from typing import Any
 
 from .interface import EChartsBackendInterface
 from .types import (
+    DEFAULT_COLOR_PALETTE,
     AxisConfig,
     AxisType,
-    DEFAULT_COLOR_PALETTE,
     EChartsChartType,
     EChartsOption,
     GridConfig,
@@ -63,6 +65,77 @@ def _group_by_color(
     return groups
 
 
+# Date-related patterns for column name detection
+_DATE_PATTERNS = re.compile(
+    r"(date|time|timestamp|datetime|day|month|year|week|quarter|period|created|updated|modified)(_at|_on)?$",
+    re.IGNORECASE,
+)
+
+
+def _is_date_column_name(name: str) -> bool:
+    """Check if column name suggests date/time data."""
+    return bool(_DATE_PATTERNS.search(name))
+
+
+def _is_date_value(value: Any) -> bool:
+    """Check if a value looks like a date."""
+    if value is None:
+        return False
+    if isinstance(value, date | datetime):
+        return True
+    if not isinstance(value, str):
+        return False
+    # Try common date patterns
+    date_patterns = [
+        r"^\d{4}-\d{2}-\d{2}",  # ISO date
+        r"^\d{2}/\d{2}/\d{4}",  # US date
+        r"^\d{2}\.\d{2}\.\d{4}",  # EU date
+        r"^\d{4}/\d{2}/\d{2}",  # Alt ISO
+    ]
+    return any(re.match(p, str(value)) for p in date_patterns)
+
+
+def _is_numeric(value: Any) -> bool:
+    """Check if a value is numeric."""
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int | float):
+        return True
+    if isinstance(value, str):
+        try:
+            float(value)
+            return True
+        except ValueError:
+            return False
+    return False
+
+
+def _get_column_info(records: list[dict[str, Any]], field: str) -> dict[str, Any]:
+    """Analyze a column and return info about its type and cardinality."""
+    values = [r.get(field) for r in records if r.get(field) is not None]
+    if not values:
+        return {"is_numeric": False, "is_date": False, "cardinality": 0, "count": 0}
+    
+    unique_values = set(str(v) for v in values)
+    cardinality = len(unique_values)
+    
+    # Check if numeric (sample first few non-null values)
+    sample = values[:min(10, len(values))]
+    is_numeric = all(_is_numeric(v) for v in sample)
+    
+    # Check if date-like
+    is_date = _is_date_column_name(field) or all(_is_date_value(v) for v in sample)
+    
+    return {
+        "is_numeric": is_numeric,
+        "is_date": is_date,
+        "cardinality": cardinality,
+        "count": len(values),
+    }
+
+
 class EChartsBackend(EChartsBackendInterface):
     """
     ECharts specification generator.
@@ -87,7 +160,93 @@ class EChartsBackend(EChartsBackendInterface):
     def supported_chart_types(self) -> list[str]:
         """Return list of supported chart types."""
         base_types = [ct.value for ct in EChartsChartType]
-        return base_types + list(self._VIRTUAL_TYPES.keys())
+        return base_types + list(self._VIRTUAL_TYPES.keys()) + ["auto"]
+
+    def detect_chart_type(
+        self,
+        data: Any,
+        x: str | None,
+        y: str | None,
+        color: str | None = None,
+    ) -> str:
+        """
+        Auto-detect best chart type based on data shape.
+        
+        Rules:
+        - If no x/y specified and data has 2 columns: scatter
+        - If x is categorical (few unique values) and y is numeric: bar
+        - If x looks like dates/time: line
+        - If only one numeric column: pie (use other column for labels)
+        - If color specified with categorical x: grouped bar
+        - Default: bar
+        
+        Args:
+            data: Input data (DataFrame or list of dicts)
+            x: Field name for x-axis (optional)
+            y: Field name for y-axis (optional)
+            color: Field for color grouping (optional)
+        
+        Returns:
+            Detected chart type string (bar, line, pie, scatter)
+        """
+        records = _to_records(data)
+        if not records:
+            return "bar"  # Default for empty data
+        
+        # Get column names
+        columns = list(records[0].keys())
+        row_count = len(records)
+        
+        # If no x/y specified
+        if not x and not y:
+            if len(columns) == 2:
+                # Two columns - check if both numeric for scatter
+                col1_info = _get_column_info(records, columns[0])
+                col2_info = _get_column_info(records, columns[1])
+                if col1_info["is_numeric"] and col2_info["is_numeric"]:
+                    return "scatter"
+            # Default: use first column as x, second as y
+            if len(columns) >= 2:
+                x = columns[0]
+                y = columns[1]
+            else:
+                return "bar"
+        
+        # Analyze x and y columns
+        x_info = _get_column_info(records, x) if x else {"is_numeric": False, "is_date": False, "cardinality": 0}
+        y_info = _get_column_info(records, y) if y else {"is_numeric": False, "is_date": False, "cardinality": 0}
+        
+        # Rule: If x is date-like, use line chart
+        if x_info["is_date"]:
+            return "line"
+        
+        # Rule: If many rows (>50) and x is numeric (continuous), use line
+        if row_count > 50 and x_info["is_numeric"] and x_info["cardinality"] > 20:
+            return "line"
+        
+        # Rule: If both are numeric, scatter for exploring relationships
+        if x_info["is_numeric"] and y_info["is_numeric"]:
+            if row_count <= 500:
+                return "scatter"
+            # Too many points for scatter, use line
+            return "line"
+        
+        # Rule: If x is categorical with very few categories and y is numeric -> pie
+        # Pie is best for showing parts of a whole (<=6 slices is readable)
+        if (
+            not x_info["is_numeric"]
+            and y_info["is_numeric"]
+            and x_info["cardinality"] <= 6
+            and not color  # Don't use pie for grouped data
+        ):
+            return "pie"
+        
+        # Rule: If x is categorical (low cardinality) and y is numeric -> bar
+        if not x_info["is_numeric"] and y_info["is_numeric"] and x_info["cardinality"] < 20:
+            return "bar"
+        
+        # Default: bar chart
+        return "bar"
 
     def generate_spec(
         self,
@@ -100,7 +259,7 @@ class EChartsBackend(EChartsBackendInterface):
         
         Args:
             data: DataFrame or dict with 'data' key containing records
-            chart_type: Chart type (bar, line, pie, scatter, area, etc.)
+            chart_type: Chart type (bar, line, pie, scatter, area, auto, etc.)
             **kwargs: Chart options:
                 - x: Field name for x-axis (categories)
                 - y: Field name for y-axis (values)
@@ -123,6 +282,15 @@ class EChartsBackend(EChartsBackendInterface):
             chart_type_str = chart_type.value
         else:
             chart_type_str = chart_type
+        
+        # Handle auto detection
+        if chart_type_str == "auto":
+            chart_type_str = self.detect_chart_type(
+                data,
+                x=kwargs.get("x"),
+                y=kwargs.get("y"),
+                color=kwargs.get("color"),
+            )
         
         # Handle virtual types (area -> line with areaStyle)
         if chart_type_str == "area":
@@ -327,7 +495,7 @@ class EChartsBackend(EChartsBackendInterface):
             series: list[SeriesConfig] = []
             for name, group_records in groups.items():
                 value_map = {r[x_field]: r[y_field] for r in group_records}
-                values = [value_map.get(cat, None) for cat in categories]
+                values = [value_map.get(cat) for cat in categories]
                 
                 series_config = SeriesConfig(
                     name=name,
