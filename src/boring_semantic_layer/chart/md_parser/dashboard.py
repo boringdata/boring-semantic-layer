@@ -5,16 +5,300 @@ Renders BSL markdown files as interactive dashboards with:
 - Auto-detecting chart types from query results
 - KPI cards for single-value aggregations
 - Tables and charts for multi-row results
+- CSS theming via YAML frontmatter
 """
 
 import json
+import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
+
+import yaml
 
 from .converter import CustomJSONEncoder
 from .executor import QueryExecutor
 from .parser import DashboardBlock, MarkdownParser
+
+logger = logging.getLogger(__name__)
+
+
+class FrontmatterResult(NamedTuple):
+    """Parsed frontmatter data from markdown file."""
+
+    content: str  # Markdown content without frontmatter
+    style_path: str | None  # Path to external CSS file
+    inline_css: str | None  # Inline CSS from css: key
+
+
+def parse_frontmatter(content: str) -> FrontmatterResult:
+    """
+    Parse YAML frontmatter from markdown content.
+
+    Frontmatter format:
+        ---
+        style: ./themes/editorial.css
+        css: |
+          :root { --bg: #fffff8; }
+        ---
+
+    Args:
+        content: Full markdown content
+
+    Returns:
+        FrontmatterResult with parsed data and remaining content
+    """
+    # Match frontmatter between --- markers at start of file
+    pattern = r"^---\s*\n(.*?)\n---\s*\n"
+    match = re.match(pattern, content, re.DOTALL)
+
+    if not match:
+        return FrontmatterResult(content=content, style_path=None, inline_css=None)
+
+    frontmatter_text = match.group(1)
+    remaining_content = content[match.end() :]
+
+    try:
+        data = yaml.safe_load(frontmatter_text) or {}
+    except yaml.YAMLError as e:
+        logger.warning(f"Failed to parse frontmatter YAML: {e}")
+        return FrontmatterResult(content=content, style_path=None, inline_css=None)
+
+    style_path = data.get("style")
+    inline_css = data.get("css")
+
+    return FrontmatterResult(
+        content=remaining_content,
+        style_path=style_path,
+        inline_css=inline_css,
+    )
+
+
+def load_css_file(style_path: str, md_path: Path) -> str | None:
+    """
+    Load CSS file relative to the markdown file location.
+
+    Args:
+        style_path: Relative or absolute path to CSS file
+        md_path: Path to the markdown file (for relative resolution)
+
+    Returns:
+        CSS content as string, or None if file not found
+    """
+    css_path = Path(style_path)
+
+    # Resolve relative paths against markdown file directory
+    if not css_path.is_absolute():
+        css_path = md_path.parent / css_path
+
+    css_path = css_path.resolve()
+
+    if not css_path.exists():
+        logger.warning(f"CSS file not found: {css_path}")
+        return None
+
+    if not css_path.is_file():
+        logger.warning(f"CSS path is not a file: {css_path}")
+        return None
+
+    try:
+        return css_path.read_text()
+    except OSError as e:
+        logger.warning(f"Failed to read CSS file {css_path}: {e}")
+        return None
+
+
+# Base CSS: Grid system, resets, and structural styles only
+BASE_CSS = """
+:root {
+    --grid-cols: 16;
+    --gap: 16px;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    padding: var(--gap);
+    min-height: 100vh;
+}
+
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(var(--grid-cols), 1fr);
+    gap: var(--gap);
+    max-width: 1600px;
+    margin: 0 auto;
+}
+
+.grid-cell {
+    border-radius: 8px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+"""
+
+# Default theme CSS: Colors, typography, component styles
+DEFAULT_THEME_CSS = """
+:root {
+    /* boring-bi design tokens */
+    --bbi-font-heading: 'Palatino', Georgia, serif;
+    --bbi-font-body: 'Source Sans Pro', system-ui, sans-serif;
+    --bbi-color-primary: #4F46E5;
+    --bbi-color-background: #FFFFF8;
+    --bbi-color-surface: #FFFFFF;
+    --bbi-color-border: #E5E7EB;
+    --bbi-color-text: #1F2937;
+    --bbi-color-text-muted: #6B7280;
+
+    /* Legacy variable mappings for backward compatibility */
+    --bg: var(--bbi-color-background);
+    --card-bg: var(--bbi-color-surface);
+    --text: var(--bbi-color-text);
+    --text-muted: var(--bbi-color-text-muted);
+    --border: var(--bbi-color-border);
+    --accent: var(--bbi-color-primary);
+}
+
+body {
+    font-family: var(--bbi-font-body);
+    background: var(--bbi-color-background);
+    color: var(--bbi-color-text);
+}
+
+h1 {
+    font-family: var(--bbi-font-heading);
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: var(--gap);
+    color: var(--bbi-color-text);
+}
+
+.grid-cell {
+    background: var(--bbi-color-surface);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* KPI Component */
+.kpi {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    text-align: center;
+}
+
+.kpi-value {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: var(--bbi-color-text);
+    line-height: 1.2;
+}
+
+.kpi-label {
+    font-size: 0.875rem;
+    color: var(--bbi-color-text-muted);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* KPI Row */
+.kpi-row {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    height: 100%;
+}
+
+.kpi-row-item {
+    text-align: center;
+    padding: 0 16px;
+}
+
+.kpi-row-item .kpi-value {
+    font-size: 1.75rem;
+}
+
+/* Chart */
+.chart-container {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.chart-container > div {
+    width: 100%;
+    height: 100%;
+}
+
+/* Table */
+.table-container {
+    overflow: auto;
+    flex: 1;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+th, td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--bbi-color-border);
+}
+
+th {
+    font-weight: 600;
+    color: var(--bbi-color-text-muted);
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+}
+
+tr:hover {
+    background: var(--bbi-color-background);
+}
+
+/* Error */
+.error {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #dc2626;
+    padding: 16px;
+    border-radius: 6px;
+}
+
+/* Info */
+.info {
+    background: #f0f9ff;
+    border: 1px solid #bae6fd;
+    color: #0369a1;
+    padding: 16px;
+    border-radius: 6px;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bbi-color-background: #0f172a;
+        --bbi-color-surface: #1e293b;
+        --bbi-color-text: #f1f5f9;
+        --bbi-color-text-muted: #94a3b8;
+        --bbi-color-border: #334155;
+    }
+}
+"""
 
 
 def render_dashboard(md_path: Path, output_path: Path) -> bool:
@@ -30,7 +314,18 @@ def render_dashboard(md_path: Path, output_path: Path) -> bool:
     """
     print(f"Rendering dashboard: {md_path}")
 
-    content = md_path.read_text()
+    raw_content = md_path.read_text()
+
+    # Parse frontmatter for CSS theming
+    frontmatter = parse_frontmatter(raw_content)
+    content = frontmatter.content
+
+    # Determine user CSS (inline css takes precedence over style file)
+    user_css = None
+    if frontmatter.inline_css:
+        user_css = frontmatter.inline_css
+    elif frontmatter.style_path:
+        user_css = load_css_file(frontmatter.style_path, md_path)
 
     # Extract title from first H1
     title_match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
@@ -70,7 +365,7 @@ def render_dashboard(md_path: Path, output_path: Path) -> bool:
             components.append(component)
 
     # Generate HTML
-    html = _generate_dashboard_html(title, components)
+    html = _generate_dashboard_html(title, components, user_css=user_css)
     output_path.write_text(html)
 
     if has_errors:
@@ -128,8 +423,22 @@ def _result_to_component(result: dict[str, Any], block: DashboardBlock) -> dict[
     return component
 
 
-def _generate_dashboard_html(title: str, components: list[dict]) -> str:
-    """Generate complete dashboard HTML with 16-column grid."""
+def _generate_dashboard_html(
+    title: str, components: list[dict], user_css: str | None = None
+) -> str:
+    """
+    Generate complete dashboard HTML with 16-column grid.
+
+    CSS injection order:
+    1. BASE_CSS - Grid system and structural styles
+    2. DEFAULT_THEME_CSS - Default theme (colors, typography, components)
+    3. user_css - User-provided CSS (overrides defaults)
+
+    Args:
+        title: Dashboard title
+        components: List of dashboard components
+        user_css: Optional user-provided CSS to inject after defaults
+    """
     # Group components by row
     rows: dict[int, list[dict]] = {}
     for comp in components:
@@ -150,6 +459,13 @@ def _generate_dashboard_html(title: str, components: list[dict]) -> str:
                 f"{comp_html}</div>"
             )
 
+    # Build CSS: base -> default theme -> user overrides
+    css_parts = [BASE_CSS, DEFAULT_THEME_CSS]
+    if user_css:
+        css_parts.append(f"/* User CSS */\n{user_css}")
+
+    combined_css = "\n".join(css_parts)
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -160,170 +476,7 @@ def _generate_dashboard_html(title: str, components: list[dict]) -> str:
     <script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
     <script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
     <style>
-        :root {{
-            --grid-cols: 16;
-            --gap: 16px;
-            --bg: #f8fafc;
-            --card-bg: #ffffff;
-            --text: #1e293b;
-            --text-muted: #64748b;
-            --border: #e2e8f0;
-            --accent: #3b82f6;
-        }}
-
-        * {{
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }}
-
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            padding: var(--gap);
-            min-height: 100vh;
-        }}
-
-        h1 {{
-            font-size: 1.5rem;
-            font-weight: 600;
-            margin-bottom: var(--gap);
-            color: var(--text);
-        }}
-
-        .dashboard-grid {{
-            display: grid;
-            grid-template-columns: repeat(var(--grid-cols), 1fr);
-            gap: var(--gap);
-            max-width: 1600px;
-            margin: 0 auto;
-        }}
-
-        .grid-cell {{
-            background: var(--card-bg);
-            border-radius: 8px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            padding: 16px;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }}
-
-        /* KPI Component */
-        .kpi {{
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            height: 100%;
-            text-align: center;
-        }}
-
-        .kpi-value {{
-            font-size: 2.5rem;
-            font-weight: 700;
-            color: var(--text);
-            line-height: 1.2;
-        }}
-
-        .kpi-label {{
-            font-size: 0.875rem;
-            color: var(--text-muted);
-            margin-top: 4px;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }}
-
-        /* KPI Row */
-        .kpi-row {{
-            display: flex;
-            justify-content: space-around;
-            align-items: center;
-            height: 100%;
-        }}
-
-        .kpi-row-item {{
-            text-align: center;
-            padding: 0 16px;
-        }}
-
-        .kpi-row-item .kpi-value {{
-            font-size: 1.75rem;
-        }}
-
-        /* Chart */
-        .chart-container {{
-            flex: 1;
-            min-height: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }}
-
-        .chart-container > div {{
-            width: 100%;
-            height: 100%;
-        }}
-
-        /* Table */
-        .table-container {{
-            overflow: auto;
-            flex: 1;
-        }}
-
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.875rem;
-        }}
-
-        th, td {{
-            padding: 8px 12px;
-            text-align: left;
-            border-bottom: 1px solid var(--border);
-        }}
-
-        th {{
-            font-weight: 600;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            font-size: 0.75rem;
-            letter-spacing: 0.05em;
-        }}
-
-        tr:hover {{
-            background: var(--bg);
-        }}
-
-        /* Error */
-        .error {{
-            background: #fef2f2;
-            border: 1px solid #fecaca;
-            color: #dc2626;
-            padding: 16px;
-            border-radius: 6px;
-        }}
-
-        /* Info */
-        .info {{
-            background: #f0f9ff;
-            border: 1px solid #bae6fd;
-            color: #0369a1;
-            padding: 16px;
-            border-radius: 6px;
-        }}
-
-        /* Dark mode support */
-        @media (prefers-color-scheme: dark) {{
-            :root {{
-                --bg: #0f172a;
-                --card-bg: #1e293b;
-                --text: #f1f5f9;
-                --text-muted: #94a3b8;
-                --border: #334155;
-            }}
-        }}
+{combined_css}
     </style>
 </head>
 <body>
