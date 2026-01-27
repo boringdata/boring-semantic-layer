@@ -529,6 +529,9 @@ def _render_component(comp: dict) -> str:
 
 def _render_vega_chart(spec: dict) -> str:
     """Render a Vega-Lite chart."""
+    # Unwrap nested spec if present (converter returns {"type": "vega", "spec": {...}})
+    if "spec" in spec and isinstance(spec.get("spec"), dict):
+        spec = spec["spec"]
     chart_id = f"chart_{abs(hash(json.dumps(spec, cls=CustomJSONEncoder))) % 100000}"
     chart_json = json.dumps(spec, cls=CustomJSONEncoder)
 
