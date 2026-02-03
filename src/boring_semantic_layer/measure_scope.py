@@ -64,7 +64,7 @@ class AggregationExpr(_Node):
         if name.startswith("_"):
             raise AttributeError(f"AggregationExpr has no attribute {name!r}")
         return AggregationExpr(
-            column=self.column, operation=self.operation, post_ops=self.post_ops + ((name, (), {}),)
+            column=self.column, operation=self.operation, post_ops=self.post_ops + ((name, (), ()),)
         )
 
     def __call__(self, *args, **kwargs):
@@ -78,7 +78,7 @@ class AggregationExpr(_Node):
         return AggregationExpr(
             column=self.column,
             operation=self.operation,
-            post_ops=tuple(rest) + ((method_name, args, kwargs),),
+            post_ops=tuple(rest) + ((method_name, args, tuple(sorted(kwargs.items()))),),
         )
 
 
