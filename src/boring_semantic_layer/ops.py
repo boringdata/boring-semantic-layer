@@ -1102,6 +1102,133 @@ def _build_aggregation_plan(
     )
 
 
+# ---------------------------------------------------------------------------
+# Pre-aggregation helpers (fan-out / chasm trap prevention)
+# ---------------------------------------------------------------------------
+
+
+@frozen
+class _JoinTreeInfo:
+    """Information collected from the join tree for pre-aggregation decisions."""
+    has_join_many: bool
+    table_cardinalities: dict  # table_name → "one"|"many"|"root"
+    table_join_keys: dict  # table_name → {raw_col_names}
+    table_ops: dict  # table_name → SemanticTableOp
+
+
+def _collect_join_tree_info(join_op: SemanticJoinOp) -> _JoinTreeInfo:
+    """Walk the join tree to collect cardinality and join key information."""
+    table_cardinalities: dict[str, str] = {}
+    table_ops: dict[str, SemanticTableOp] = {}
+
+    def walk(node, is_right_of_many=False):
+        if isinstance(node, SemanticJoinOp):
+            this_is_many = node.cardinality in ("many", "cross")
+            walk(node.left, is_right_of_many=False)
+            walk(node.right, is_right_of_many=this_is_many)
+        elif isinstance(node, SemanticTableOp):
+            name = node.name
+            if name:
+                table_ops[name] = node
+                if is_right_of_many:
+                    table_cardinalities[name] = "many"
+                elif name not in table_cardinalities:
+                    table_cardinalities[name] = "one"
+
+    walk(join_op)
+
+    # The leftmost leaf of the root is the "root" table
+    def find_leftmost(node):
+        if isinstance(node, SemanticJoinOp):
+            return find_leftmost(node.left)
+        return getattr(node, "name", None)
+
+    root_name = find_leftmost(join_op)
+    if root_name:
+        table_cardinalities[root_name] = "root"
+
+    has_join_many = any(c == "many" for c in table_cardinalities.values())
+    table_join_keys = join_op._collect_join_keys_for_leaves()
+
+    return _JoinTreeInfo(
+        has_join_many=has_join_many,
+        table_cardinalities=table_cardinalities,
+        table_join_keys=table_join_keys,
+        table_ops=table_ops,
+    )
+
+
+def _partition_agg_specs_by_source(
+    agg_specs: dict[str, Callable],
+    all_roots: list[SemanticTableOp],
+) -> dict[str | None, dict[str, Callable]]:
+    """Partition aggregation specs by their source table.
+
+    Prefixed measure names like ``"orders.total_amount"`` are mapped to
+    ``table="orders"``.  Measures without a prefix go to ``None``.
+    """
+    root_names = {r.name for r in all_roots if r.name}
+    partitioned: dict[str | None, dict[str, Callable]] = {}
+
+    for measure_name, fn in agg_specs.items():
+        table_name = None
+        if "." in measure_name:
+            prefix = measure_name.split(".", 1)[0]
+            if prefix in root_names:
+                table_name = prefix
+        if table_name not in partitioned:
+            partitioned[table_name] = {}
+        partitioned[table_name][measure_name] = fn
+
+    return partitioned
+
+
+def _compute_preagg_grain(
+    table_name: str,
+    group_by_keys: tuple[str, ...],
+    join_tree_info: _JoinTreeInfo,
+    merged_dimensions: dict,
+    table_op: SemanticTableOp,
+) -> list[str]:
+    """Compute the pre-aggregation grain for a source table.
+
+    The grain consists of:
+    1. Join keys connecting this table to the join tree
+    2. Any group-by dimensions that belong to this table
+    """
+    grain: list[str] = []
+
+    # Add join keys for this table
+    raw_join_keys = join_tree_info.table_join_keys.get(table_name, set())
+    raw_tbl = _to_untagged(table_op)
+    raw_columns = set(raw_tbl.columns)
+    for jk in raw_join_keys:
+        if jk in raw_columns:
+            grain.append(jk)
+
+    # Add group-by dimensions that belong to this table
+    table_dims = _get_field_dict(table_op, "dimensions")
+    for gb_key in group_by_keys:
+        if gb_key in merged_dimensions:
+            # Prefixed dimension like "orders.customer_id"
+            if "." in gb_key:
+                prefix = gb_key.split(".", 1)[0]
+                short_name = gb_key.split(".", 1)[1]
+                if prefix == table_name and short_name in table_dims:
+                    # Use the raw column name for grouping on the raw table
+                    dim_fn = table_dims[short_name]
+                    if callable(dim_fn):
+                        try:
+                            col_expr = dim_fn(raw_tbl)
+                            col_name = col_expr.get_name()
+                            if col_name in raw_columns and col_name not in grain:
+                                grain.append(col_name)
+                        except Exception:
+                            pass
+
+    return grain
+
+
 class SemanticAggregateOp(Relation):
     source: Relation
     keys: tuple[str, ...]
@@ -1259,13 +1386,6 @@ class SemanticAggregateOp(Relation):
                 # SemanticTableOp always has _source_join attribute
                 join_op = grouped_source._source_join
 
-        # Only use the join optimization if there are no filters after the join
-        # Otherwise we'd skip the filter operations
-        if join_op is not None and not has_filter_after_join(self.source):
-            tbl = join_op.to_untagged(parent_requirements=self.required_columns)
-        else:
-            tbl = _to_untagged(self.source)
-
         def has_prior_aggregate(node):
             """Recursively check if there's a SemanticAggregateOp before any mutate."""
             if isinstance(node, SemanticAggregateOp):
@@ -1281,6 +1401,26 @@ class SemanticAggregateOp(Relation):
             return False
 
         is_post_agg = has_prior_aggregate(self.source)
+
+        # Pre-aggregation path: when join_many is present, aggregate each
+        # source table's measures at its own grain before joining.
+        if (
+            join_op is not None
+            and not has_filter_after_join(self.source)
+            and not is_post_agg
+        ):
+            join_tree_info = _collect_join_tree_info(join_op)
+            if join_tree_info.has_join_many:
+                return self._to_untagged_with_preagg(
+                    all_roots, join_op, join_tree_info,
+                )
+
+        # Only use the join optimization if there are no filters after the join
+        # Otherwise we'd skip the filter operations
+        if join_op is not None and not has_filter_after_join(self.source):
+            tbl = join_op.to_untagged(parent_requirements=self.required_columns)
+        else:
+            tbl = _to_untagged(self.source)
 
         merged_dimensions = _get_merged_fields(all_roots, "dimensions")
         merged_base_measures = _get_merged_fields(all_roots, "measures")
@@ -1318,6 +1458,252 @@ class SemanticAggregateOp(Relation):
             )
         else:
             return tbl.aggregate({name: fn(tbl) for name, fn in plan.agg_specs.items()})
+
+    def _to_untagged_with_preagg(
+        self,
+        all_roots: list,
+        join_op: SemanticJoinOp,
+        join_tree_info: _JoinTreeInfo,
+    ):
+        """Pre-aggregate each source table's measures at its own grain, then join.
+
+        This prevents fan-out inflation when ``join_many`` is used.
+        """
+        from .compile_all import _join_tables
+
+        merged_dimensions = _get_merged_fields(all_roots, "dimensions")
+        merged_base_measures = _get_merged_fields(all_roots, "measures")
+        merged_calc_measures = _get_merged_fields(all_roots, "calc_measures")
+        group_by_cols = list(self.keys)
+
+        # --- 1. Try to build the full joined table (for scope / dim bridge) ---
+        try:
+            tbl = join_op.to_untagged(parent_requirements=self.required_columns)
+            dim_mutations = {
+                k: merged_dimensions[k](tbl)
+                for k in self.keys
+                if k in merged_dimensions
+            }
+            tbl = tbl.mutate(**dim_mutations) if dim_mutations else tbl
+        except Exception:
+            tbl = None  # chasm / column collision – work without full join
+
+        # --- 2. Build aggregation plan ---
+        if tbl is not None:
+            scope = MeasureScope(
+                _tbl=tbl,
+                _known=list(merged_base_measures.keys())
+                + list(merged_calc_measures.keys()),
+            )
+            plan = _build_aggregation_plan(
+                aggs=self.aggs, keys=self.keys, scope=scope,
+                is_post_agg=False,
+                merged_base_measures=merged_base_measures,
+                merged_calc_measures=merged_calc_measures, tbl=tbl,
+            )
+        else:
+            # Derive plan directly from metadata (chasm fallback)
+            agg_specs = {}
+            for name, fn_wrapped in self.aggs.items():
+                if name in merged_base_measures:
+                    agg_specs[name] = _make_agg_callable(merged_base_measures[name])
+            plan = _AggregationPlan(
+                agg_specs=FrozenDict(agg_specs),
+                calc_specs=FrozenDict({}),
+                requested_measures=tuple(self.aggs.keys()),
+                group_by_cols=tuple(self.keys),
+            )
+
+        # --- 3. Partition agg_specs by source table ---
+        partitioned = _partition_agg_specs_by_source(dict(plan.agg_specs), all_roots)
+
+        # --- 4. Pre-aggregate each source table on its raw table ---
+        preagg_results: list = []
+
+        for table_name, measures in partitioned.items():
+            if table_name is None:
+                # Unprefixed – aggregate on the full join if available
+                if tbl is not None:
+                    agg_exprs = {n: f(tbl) for n, f in measures.items()}
+                    if group_by_cols:
+                        r = tbl.group_by([tbl[c] for c in group_by_cols]).aggregate(**agg_exprs)
+                    else:
+                        r = tbl.aggregate(**agg_exprs)
+                    preagg_results.append(r)
+                continue
+
+            table_op = join_tree_info.table_ops.get(table_name)
+            if table_op is None:
+                continue
+
+            raw_tbl = _to_untagged(table_op)
+            table_measures = _get_field_dict(table_op, "measures")
+            table_dims = _get_field_dict(table_op, "dimensions")
+            raw_columns = set(raw_tbl.columns)
+
+            # Build agg expressions on the raw table
+            agg_exprs: dict = {}
+            for mname, _mfn in measures.items():
+                short = mname.split(".", 1)[1] if "." in mname else mname
+                if short in table_measures:
+                    agg_exprs[mname] = table_measures[short](raw_tbl)
+
+            if not agg_exprs:
+                continue
+
+            # --- Compute grain ---
+            if not group_by_cols:
+                # No group-by → scalar aggregate
+                preagg_results.append(raw_tbl.aggregate(**agg_exprs))
+                continue
+
+            # a) group-by dims that live on this table
+            grain: list[str] = []
+            for gb_key in group_by_cols:
+                if "." in gb_key:
+                    prefix, short = gb_key.split(".", 1)
+                    if prefix == table_name and short in table_dims:
+                        dim_fn = table_dims[short]
+                        if callable(dim_fn):
+                            try:
+                                col_name = dim_fn(raw_tbl).get_name()
+                                if col_name in raw_columns and col_name not in grain:
+                                    grain.append(col_name)
+                            except Exception:
+                                pass
+
+            # b) if none found, use join keys (connects to ancestor tables)
+            if not grain:
+                join_keys = join_tree_info.table_join_keys.get(table_name, set())
+                for jk in sorted(join_keys):
+                    if jk in raw_columns:
+                        grain.append(jk)
+
+            if grain:
+                preagg_results.append(
+                    raw_tbl.group_by([raw_tbl[c] for c in grain]).aggregate(**agg_exprs)
+                )
+            else:
+                preagg_results.append(raw_tbl.aggregate(**agg_exprs))
+
+        if not preagg_results:
+            if tbl is not None:
+                return tbl.aggregate({n: f(tbl) for n, f in plan.agg_specs.items()})
+            raise ValueError("No aggregation results and full join unavailable")
+
+        # --- 5. Combine pre-agg results ---
+        if not group_by_cols:
+            # Cross-join all scalar results
+            result = preagg_results[0]
+            for pt in preagg_results[1:]:
+                result = result.cross_join(pt)
+        elif tbl is not None:
+            result = self._join_preagg_with_dim_bridge(
+                preagg_results, plan, tbl, group_by_cols,
+            )
+        else:
+            # Chasm fallback with group-by: best-effort cross-join
+            result = preagg_results[0]
+            for pt in preagg_results[1:]:
+                result = result.cross_join(pt)
+
+        # --- 6. Apply calc_specs ---
+        if plan.calc_specs:
+            result = self._apply_calc_specs(result, plan, tbl)
+
+        # --- 7. Select requested columns ---
+        select_cols = list(dict.fromkeys(
+            list(plan.group_by_cols) + list(plan.requested_measures)
+            + list(plan.calc_specs.keys()),
+        ))
+        available = set(result.columns)
+        select_cols = [c for c in select_cols if c in available]
+        if select_cols:
+            result = result.select([result[c] for c in select_cols])
+
+        return result
+
+    # -- helpers for _to_untagged_with_preagg --------------------------------
+
+    @staticmethod
+    def _join_preagg_with_dim_bridge(preagg_results, plan, tbl, group_by_cols):
+        """Join pre-aggregated tables using per-table dimension bridges."""
+        from .compile_all import _join_tables
+
+        measure_names = set(plan.agg_specs.keys()) | set(plan.calc_specs.keys())
+
+        rejoined: list = []
+        for pt in preagg_results:
+            pt_grain = [c for c in pt.columns if c not in measure_names]
+            pt_meas = [c for c in pt.columns if c in measure_names]
+
+            if set(group_by_cols).issubset(set(pt_grain)):
+                # Already has group-by columns — re-aggregate if over-grouped
+                if set(pt_grain) != set(group_by_cols):
+                    re_aggs = {m: pt[m].sum() for m in pt_meas}
+                    pt = pt.group_by([pt[c] for c in group_by_cols]).aggregate(**re_aggs)
+                rejoined.append(pt)
+            elif pt_grain:
+                # Build a per-table dim bridge with ONLY this table's grain cols
+                bridge_cols = list(group_by_cols) + [
+                    c for c in pt_grain if c not in group_by_cols
+                ]
+                bridge_cols = [c for c in bridge_cols if c in tbl.columns]
+                if bridge_cols:
+                    dim_bridge = tbl.select([tbl[c] for c in bridge_cols]).distinct()
+                    common = [c for c in pt_grain if c in dim_bridge.columns]
+                    if common:
+                        preds = [pt[c] == dim_bridge[c] for c in common]
+                        bridge_only = [c for c in dim_bridge.columns if c not in common]
+                        joined_pt = pt.left_join(dim_bridge, preds).select(
+                            [pt] + [dim_bridge[c] for c in bridge_only]
+                        )
+                        gb_avail = [c for c in group_by_cols if c in joined_pt.columns]
+                        if gb_avail:
+                            re_aggs = {
+                                m: joined_pt[m].sum()
+                                for m in pt_meas
+                                if m in joined_pt.columns
+                            }
+                            if re_aggs:
+                                joined_pt = joined_pt.group_by(
+                                    [joined_pt[c] for c in gb_avail]
+                                ).aggregate(**re_aggs)
+                        rejoined.append(joined_pt)
+                    else:
+                        rejoined.append(pt)
+                else:
+                    rejoined.append(pt)
+            else:
+                rejoined.append(pt)
+
+        return _join_tables(group_by_cols, rejoined)
+
+    @staticmethod
+    def _apply_calc_specs(result, plan, tbl):
+        """Apply calculated measure specs (ratios, percent-of-total, etc.)."""
+        from .compile_all import _compile_formula, _collect_all_refs
+
+        needed_totals: set[str] = set()
+        for ast in plan.calc_specs.values():
+            _collect_all_refs(ast, needed_totals)
+
+        if needed_totals:
+            totals_aggs = {
+                ref: result[ref].sum()
+                for ref in needed_totals
+                if ref in result.columns
+            }
+            all_tbl = result.aggregate(**totals_aggs) if totals_aggs else None
+        else:
+            all_tbl = None
+
+        out = result.cross_join(all_tbl) if all_tbl is not None else result
+        calc_cols = {
+            name: _compile_formula(ast, out, all_tbl, tbl if tbl is not None else out)
+            for name, ast in plan.calc_specs.items()
+        }
+        return out.mutate(**calc_cols)
 
 
 class SemanticMutateOp(Relation):
@@ -1477,6 +1863,7 @@ class SemanticJoinOp(Relation):
     on: (
         Callable[[Any, Any], Any] | None
     )  # Returns BooleanValue from either ibis or xorq.vendor.ibis
+    cardinality: str  # "one", "many", or "cross"
 
     def __init__(
         self,
@@ -1484,12 +1871,14 @@ class SemanticJoinOp(Relation):
         right: Relation,
         how: str = "inner",
         on: Callable[[Any, Any], Any] | None = None,
+        cardinality: str = "one",
     ) -> None:
         super().__init__(
             left=Relation.__coerce__(left),
             right=Relation.__coerce__(right),
             how=how,
             on=on,
+            cardinality=cardinality,
         )
 
     def __repr__(self) -> str:
@@ -1677,6 +2066,7 @@ class SemanticJoinOp(Relation):
             right=other.op(),
             on=on,
             how=how,
+            cardinality="one",
         )
 
     def join_many(
@@ -1693,6 +2083,7 @@ class SemanticJoinOp(Relation):
             right=other.op(),
             on=on,
             how=how,
+            cardinality="many",
         )
 
     def join_cross(self, other: SemanticTable):
@@ -1704,6 +2095,7 @@ class SemanticJoinOp(Relation):
             right=other.op(),
             on=None,
             how="cross",
+            cardinality="cross",
         )
 
     def join(self, *args, **kwargs):

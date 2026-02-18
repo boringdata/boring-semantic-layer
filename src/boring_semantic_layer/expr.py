@@ -390,7 +390,7 @@ class SemanticModel(SemanticTable):
             >>> orders.join_one(customers, on=lambda o, c: o.customer_id == c.customer_id)
         """
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how)
+        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how, cardinality="one")
 
     def join_many(
         self,
@@ -416,7 +416,7 @@ class SemanticModel(SemanticTable):
             >>> customer.join_many(orders, on=lambda c, o: c.customer_id == o.customer_id)
         """
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how)
+        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how, cardinality="many")
 
     def join_cross(self, other: SemanticModel) -> SemanticJoin:
         """Cross join (Cartesian product) with another semantic model.
@@ -431,7 +431,7 @@ class SemanticModel(SemanticTable):
             >>> table_a.join_cross(table_b)  # Cartesian product of all rows
         """
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(left=self.op(), right=other_op, on=None, how="cross")
+        return SemanticJoin(left=self.op(), right=other_op, on=None, how="cross", cardinality="cross")
 
     def join(self, *args, **kwargs):
         """Deprecated: Use join_one() or join_many() instead.
@@ -536,9 +536,10 @@ class SemanticJoin(SemanticTable):
         | Sequence[str | Deferred]
         | None = None,
         how: str = "inner",
+        cardinality: str = "one",
     ) -> None:
         on = _normalize_join_predicate(on)
-        op = SemanticJoinOp(left=left, right=right, on=on, how=how)
+        op = SemanticJoinOp(left=left, right=right, on=on, how=how, cardinality=cardinality)
         super().__init__(op)
 
     @property
@@ -734,6 +735,7 @@ class SemanticJoin(SemanticTable):
             right=other.op() if isinstance(other, SemanticModel) else other,
             on=on,
             how=how,
+            cardinality="one",
         )
 
     def join_many(
@@ -748,6 +750,7 @@ class SemanticJoin(SemanticTable):
             right=other.op() if isinstance(other, SemanticModel) else other,
             on=on,
             how=how,
+            cardinality="many",
         )
 
     def join_cross(self, other: SemanticModel) -> SemanticJoin:
@@ -757,6 +760,7 @@ class SemanticJoin(SemanticTable):
             right=other.op() if isinstance(other, SemanticModel) else other,
             on=None,
             how="cross",
+            cardinality="cross",
         )
 
     def join(self, *args, **kwargs):
@@ -1052,6 +1056,7 @@ class SemanticAggregate(SemanticTable):
             right=other.op(),
             on=on,
             how=how,
+            cardinality="one",
         )
 
     def join_many(
@@ -1066,6 +1071,7 @@ class SemanticAggregate(SemanticTable):
             right=other.op(),
             on=on,
             how=how,
+            cardinality="many",
         )
 
     def join_cross(self, other: SemanticModel) -> SemanticJoin:
@@ -1075,6 +1081,7 @@ class SemanticAggregate(SemanticTable):
             right=other.op() if isinstance(other, SemanticModel) else other,
             on=None,
             how="cross",
+            cardinality="cross",
         )
 
     def join(self, *args, **kwargs):

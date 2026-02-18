@@ -1102,3 +1102,420 @@ class TestSnowflakeSchema:
             .execute()
         )
         assert df.sale_count.sum() == 6
+
+
+# ---------------------------------------------------------------------------
+# Deeply nested joins with multi-level measures — order_by, mutate, ambiguity
+# ---------------------------------------------------------------------------
+
+
+class TestDeeplyNestedJoins:
+    """Test short-name resolution, order_by, mutate, and ambiguity detection
+    on deeply nested (3+ level) join trees with measures at every level.
+
+    Schema:
+        continents  (level 3)
+          |-- join_many --> countries  (level 2)
+          |                   |-- join_many --> cities  (level 1)
+          |                   |                  |-- join_many --> shops (fact, level 0)
+          |                   |-- measures: country_count, total_area
+          |-- measures: continent_count
+
+        shops has measures: shop_count, total_revenue, avg_revenue
+        cities has measures: city_count, total_population
+        countries has measures: country_count, total_area
+        continents has measures: continent_count
+    """
+
+    @pytest.fixture()
+    def deep_model(self):
+        con = ibis.duckdb.connect(":memory:")
+
+        continents = con.create_table(
+            "continents",
+            pd.DataFrame(
+                {
+                    "continent_id": [1, 2],
+                    "continent_name": ["Europe", "Asia"],
+                }
+            ),
+        )
+        countries = con.create_table(
+            "countries",
+            pd.DataFrame(
+                {
+                    "country_id": [10, 20, 30],
+                    "country_name": ["France", "Germany", "Japan"],
+                    "continent_id": [1, 1, 2],
+                    "area": [643_801, 357_022, 377_975],
+                }
+            ),
+        )
+        cities = con.create_table(
+            "cities",
+            pd.DataFrame(
+                {
+                    "city_id": [100, 200, 300, 400],
+                    "city_name": ["Paris", "Berlin", "Tokyo", "Osaka"],
+                    "country_id": [10, 20, 30, 30],
+                    "population": [2_161_000, 3_645_000, 13_960_000, 2_753_000],
+                }
+            ),
+        )
+        shops = con.create_table(
+            "shops",
+            pd.DataFrame(
+                {
+                    "shop_id": [1, 2, 3, 4, 5, 6],
+                    "city_id": [100, 100, 200, 300, 300, 400],
+                    "revenue": [500, 300, 700, 1200, 800, 600],
+                }
+            ),
+        )
+
+        continents_st = (
+            to_semantic_table(continents, "continents")
+            .with_dimensions(
+                continent_id=lambda t: t.continent_id,
+                continent_name=lambda t: t.continent_name,
+            )
+            .with_measures(continent_count=_.count())
+        )
+        countries_st = (
+            to_semantic_table(countries, "countries")
+            .with_dimensions(
+                country_id=lambda t: t.country_id,
+                country_name=lambda t: t.country_name,
+                continent_id=lambda t: t.continent_id,
+            )
+            .with_measures(
+                country_count=_.count(),
+                total_area=_.area.sum(),
+            )
+        )
+        cities_st = (
+            to_semantic_table(cities, "cities")
+            .with_dimensions(
+                city_id=lambda t: t.city_id,
+                city_name=lambda t: t.city_name,
+                country_id=lambda t: t.country_id,
+            )
+            .with_measures(
+                city_count=_.count(),
+                total_population=_.population.sum(),
+            )
+        )
+        shops_st = (
+            to_semantic_table(shops, "shops")
+            .with_dimensions(
+                shop_id=lambda t: t.shop_id,
+                city_id=lambda t: t.city_id,
+            )
+            .with_measures(
+                shop_count=_.count(),
+                total_revenue=_.revenue.sum(),
+                avg_revenue=_.revenue.mean(),
+            )
+        )
+
+        return {
+            "continents": continents_st,
+            "countries": countries_st,
+            "cities": cities_st,
+            "shops": shops_st,
+        }
+
+    def _build_full_chain(self, m):
+        """Build 4-level join: continents -> countries -> cities -> shops."""
+        return (
+            m["continents"]
+            .join_many(m["countries"], on="continent_id")
+            .join_many(m["cities"], on="country_id")
+            .join_many(m["shops"], on="city_id")
+        )
+
+    # -- basic multi-level aggregation --
+
+    def test_measures_from_all_four_levels(self, deep_model):
+        """Aggregate measures from every level of the join tree."""
+        joined = self._build_full_chain(deep_model)
+        df = (
+            joined.group_by("continents.continent_name")
+            .aggregate(
+                "continents.continent_count",
+                "countries.country_count",
+                "cities.city_count",
+                "shops.shop_count",
+                "shops.total_revenue",
+            )
+            .execute()
+        )
+        assert set(df["continents.continent_name"]) == {"Europe", "Asia"}
+        assert df["shops.total_revenue"].sum() == 4100  # 500+300+700+1200+800+600
+        assert df["shops.shop_count"].sum() == 6
+
+    def test_measures_from_intermediate_levels(self, deep_model):
+        """Aggregate measures from level-2 (countries) and level-1 (cities).
+
+        Per-source pre-aggregation ensures intermediate measures are computed
+        on their own raw tables before joining, preventing fan-out inflation.
+        """
+        joined = self._build_full_chain(deep_model)
+        df = (
+            joined.group_by("continents.continent_name")
+            .aggregate(
+                "countries.total_area",
+                "cities.total_population",
+            )
+            .execute()
+        )
+        europe = df[df["continents.continent_name"] == "Europe"]
+        asia = df[df["continents.continent_name"] == "Asia"]
+        # Europe: France(643801) + Germany(357022) = 1000823
+        assert europe["countries.total_area"].iloc[0] == 1_000_823
+        # Asia: Japan(377975)
+        assert asia["countries.total_area"].iloc[0] == 377_975
+        # Europe population: Paris(2161000) + Berlin(3645000) = 5806000
+        assert europe["cities.total_population"].iloc[0] == 5_806_000
+
+    # -- order_by with short names on deeply nested joins --
+
+    def test_order_by_short_name_lambda(self, deep_model):
+        """order_by(lambda t: t.total_revenue.desc()) resolves short name."""
+        joined = self._build_full_chain(deep_model)
+        df = (
+            joined.group_by("continents.continent_name")
+            .aggregate("shops.total_revenue")
+            .order_by(lambda t: t.total_revenue.desc())
+            .execute()
+        )
+        # Asia has higher revenue (1200+800+600=2600) vs Europe (500+300+700=1500)
+        assert df["continents.continent_name"].iloc[0] == "Asia"
+
+    def test_order_by_short_name_deferred(self, deep_model):
+        """order_by(_.total_revenue.desc()) resolves short name."""
+        joined = self._build_full_chain(deep_model)
+        df = (
+            joined.group_by("continents.continent_name")
+            .aggregate("shops.total_revenue")
+            .order_by(_.total_revenue.desc())
+            .execute()
+        )
+        assert df["continents.continent_name"].iloc[0] == "Asia"
+
+    def test_order_by_full_prefixed_name(self, deep_model):
+        """order_by with full dot-prefixed column name."""
+        joined = self._build_full_chain(deep_model)
+        df = (
+            joined.group_by("continents.continent_name")
+            .aggregate("shops.total_revenue")
+            .order_by(lambda t: t["shops.total_revenue"].desc())
+            .execute()
+        )
+        assert df["continents.continent_name"].iloc[0] == "Asia"
+
+    def test_order_by_intermediate_measure(self, deep_model):
+        """order_by using a measure from an intermediate level (countries)."""
+        joined = self._build_full_chain(deep_model)
+        df = (
+            joined.group_by("continents.continent_name")
+            .aggregate("countries.total_area", "shops.total_revenue")
+            .order_by(lambda t: t.total_area.desc())
+            .execute()
+        )
+        # Europe total_area (1644624) > Asia (1133925) due to fan-out
+        assert df["continents.continent_name"].iloc[0] == "Europe"
+
+    # -- mutate with short names on deeply nested joins --
+
+    def test_mutate_short_name_lambda(self, deep_model):
+        """mutate(lambda t: ...) resolves short names from all levels."""
+        joined = self._build_full_chain(deep_model)
+        df = (
+            joined.group_by("continents.continent_name")
+            .aggregate("shops.total_revenue", "shops.shop_count")
+            .mutate(revenue_per_shop=lambda t: t.total_revenue / t.shop_count)
+            .execute()
+        )
+        assert "revenue_per_shop" in df.columns
+        # Europe: 1500/3 = 500, Asia: 2600/3 ≈ 866.67
+        europe = df[df["continents.continent_name"] == "Europe"]
+        assert pytest.approx(europe["revenue_per_shop"].iloc[0]) == 500.0
+
+    def test_mutate_short_name_deferred(self, deep_model):
+        """mutate(col=_.total_revenue / _.shop_count) resolves short names."""
+        joined = self._build_full_chain(deep_model)
+        df = (
+            joined.group_by("continents.continent_name")
+            .aggregate("shops.total_revenue", "shops.shop_count")
+            .mutate(revenue_per_shop=_.total_revenue / _.shop_count)
+            .execute()
+        )
+        assert "revenue_per_shop" in df.columns
+        asia = df[df["continents.continent_name"] == "Asia"]
+        assert pytest.approx(asia["revenue_per_shop"].iloc[0], rel=0.01) == 866.67
+
+    def test_mutate_cross_level_measures(self, deep_model):
+        """mutate combining measures from different levels of the join tree."""
+        joined = self._build_full_chain(deep_model)
+        df = (
+            joined.group_by("continents.continent_name")
+            .aggregate(
+                "shops.total_revenue",
+                "cities.total_population",
+            )
+            .mutate(
+                revenue_per_capita=lambda t: t.total_revenue / t.total_population,
+            )
+            .execute()
+        )
+        assert "revenue_per_capita" in df.columns
+        assert all(df["revenue_per_capita"] > 0)
+
+    # -- pipeline: aggregate -> mutate -> order_by --
+
+    def test_full_pipeline_deeply_nested(self, deep_model):
+        """Full pipeline: aggregate measures from 4 levels -> mutate -> order_by.
+
+        With pre-aggregation, city_count is correct (Europe=2, Asia=2).
+        Asia: 2600/2 = 1300, Europe: 1500/2 = 750.
+        """
+        joined = self._build_full_chain(deep_model)
+        df = (
+            joined.group_by("continents.continent_name")
+            .aggregate(
+                "shops.total_revenue",
+                "cities.city_count",
+                "countries.country_count",
+            )
+            .mutate(
+                revenue_per_city=lambda t: t.total_revenue / t.city_count,
+            )
+            .order_by(lambda t: t.revenue_per_city.desc())
+            .execute()
+        )
+        # Asia: 2600/2 = 1300, Europe: 1500/2 = 750
+        assert df["continents.continent_name"].iloc[0] == "Asia"
+        assert pytest.approx(df["revenue_per_city"].iloc[0], rel=0.01) == 1300.0
+
+    # -- ambiguity detection --
+
+    def test_ambiguous_short_name_order_by_raises(self, deep_model):
+        """Short name matching columns from multiple tables raises error."""
+        con = ibis.duckdb.connect(":memory:")
+        left = con.create_table(
+            "left_t",
+            pd.DataFrame({"key": [1, 2], "left_val": [10, 20]}),
+        )
+        right = con.create_table(
+            "right_t",
+            pd.DataFrame({"key": [1, 2], "right_val": [30, 40]}),
+        )
+        left_st = (
+            to_semantic_table(left, "left")
+            .with_dimensions(key=lambda t: t.key)
+            .with_measures(total=_.left_val.sum())
+        )
+        right_st = (
+            to_semantic_table(right, "right")
+            .with_dimensions(key=lambda t: t.key)
+            .with_measures(total=_.right_val.sum())
+        )
+
+        joined = left_st.join_one(right_st, on="key")
+        agg = joined.aggregate("left.total", "right.total")
+
+        with pytest.raises(AttributeError, match="Ambiguous column 'total'"):
+            agg.order_by(lambda t: t.total.desc()).execute()
+
+    def test_ambiguous_short_name_mutate_raises(self, deep_model):
+        """Short name matching columns from multiple tables raises in mutate."""
+        con = ibis.duckdb.connect(":memory:")
+        left = con.create_table(
+            "left_t2",
+            pd.DataFrame({"key": [1, 2], "left_val": [10, 20]}),
+        )
+        right = con.create_table(
+            "right_t2",
+            pd.DataFrame({"key": [1, 2], "right_val": [30, 40]}),
+        )
+        left_st = (
+            to_semantic_table(left, "left")
+            .with_dimensions(key=lambda t: t.key)
+            .with_measures(total=_.left_val.sum())
+        )
+        right_st = (
+            to_semantic_table(right, "right")
+            .with_dimensions(key=lambda t: t.key)
+            .with_measures(total=_.right_val.sum())
+        )
+
+        joined = left_st.join_one(right_st, on="key")
+        agg = joined.aggregate("left.total", "right.total")
+
+        with pytest.raises(AttributeError, match="Ambiguous column 'total'"):
+            agg.mutate(doubled=lambda t: t.total * 2).execute()
+
+    def test_ambiguous_resolved_with_full_prefix(self, deep_model):
+        """Full dot-prefixed names work even when short names are ambiguous."""
+        con = ibis.duckdb.connect(":memory:")
+        # Use distinct raw column names to avoid ibis column collision in join
+        left = con.create_table(
+            "left_t3",
+            pd.DataFrame({"key": [1, 2], "left_val": [10, 20]}),
+        )
+        right = con.create_table(
+            "right_t3",
+            pd.DataFrame({"key": [1, 2], "right_val": [30, 40]}),
+        )
+        left_st = (
+            to_semantic_table(left, "left")
+            .with_dimensions(key=lambda t: t.key)
+            .with_measures(total=_.left_val.sum())
+        )
+        right_st = (
+            to_semantic_table(right, "right")
+            .with_dimensions(key=lambda t: t.key)
+            .with_measures(total=_.right_val.sum())
+        )
+
+        joined = left_st.join_one(right_st, on="key")
+        df = (
+            joined.aggregate("left.total", "right.total")
+            .mutate(combined=lambda t: t["left.total"] + t["right.total"])
+            .order_by(lambda t: t["left.total"].desc())
+            .execute()
+        )
+        assert "combined" in df.columns
+        # left.total = 10+20 = 30, right.total = 30+40 = 70, combined = 100
+        assert df["combined"].sum() == 100
+
+    # -- group_by at different levels --
+
+    def test_group_by_level2_aggregate_level0(self, deep_model):
+        """Group by level-2 dim, aggregate level-0 measure."""
+        joined = self._build_full_chain(deep_model)
+        df = (
+            joined.group_by("countries.country_name")
+            .aggregate("shops.total_revenue", "shops.shop_count")
+            .order_by(lambda t: t.total_revenue.desc())
+            .execute()
+        )
+        # Japan: Tokyo(1200+800) + Osaka(600) = 2600
+        # France: Paris(500+300) = 800
+        # Germany: Berlin(700) = 700
+        assert df["countries.country_name"].iloc[0] == "Japan"
+        assert df["shops.total_revenue"].iloc[0] == 2600
+
+    def test_group_by_level1_aggregate_level0(self, deep_model):
+        """Group by level-1 dim, aggregate level-0 measure."""
+        joined = self._build_full_chain(deep_model)
+        df = (
+            joined.group_by("cities.city_name")
+            .aggregate("shops.total_revenue")
+            .order_by(lambda t: t.total_revenue.desc())
+            .execute()
+        )
+        # Tokyo: 1200+800 = 2000
+        assert df["cities.city_name"].iloc[0] == "Tokyo"
+        assert df["shops.total_revenue"].iloc[0] == 2000
