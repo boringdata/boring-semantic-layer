@@ -47,7 +47,8 @@ from .nested_access import NestedAccessMarker
 
 
 def _is_deferred(expr) -> bool:
-    return isinstance(expr, Deferred)
+    # Duck-type check: works for both ibis and xorq Deferred objects
+    return hasattr(expr, "_resolver") and hasattr(expr, "resolve")
 
 
 def _normalize_to_name(arg: str | Deferred) -> str:
@@ -70,23 +71,29 @@ def _normalize_to_name(arg: str | Deferred) -> str:
             f"got {type(arg).__name__}"
         )
 
-    name_wrapper = getattr(resolver, "name", None)
     obj = getattr(resolver, "obj", None)
+
+    # Try attribute access first (_.name -> Attr resolver with .name)
+    name_wrapper = getattr(resolver, "name", None)
+
+    # Fall back to getitem access (_["name"] -> Item resolver with .indexer)
+    if name_wrapper is None:
+        name_wrapper = getattr(resolver, "indexer", None)
 
     if name_wrapper is None or obj is None:
         raise TypeError(
-            f"Only simple Deferred expressions like _.name are supported "
+            f"Only simple Deferred expressions like _.name or _['name'] are supported "
             f"as positional arguments, got: {arg!r}"
         )
 
     # Reject chained access like _.a.b (obj would itself have an .obj attr)
     if getattr(obj, "obj", None) is not None:
         raise TypeError(
-            f"Only simple Deferred expressions like _.name are supported "
+            f"Only simple Deferred expressions like _.name or _['name'] are supported "
             f"as positional arguments, got: {arg!r}"
         )
 
-    # Attr.name is a Just wrapper; unwrap via .value
+    # Attr.name / Item.indexer is a Just wrapper; unwrap via .value
     raw_name = getattr(name_wrapper, "value", name_wrapper)
     if not isinstance(raw_name, str):
         raise TypeError(

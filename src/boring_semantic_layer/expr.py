@@ -775,8 +775,9 @@ class SemanticJoin(SemanticTable):
             "  table.join_cross(other)"
         )
 
-    def group_by(self, *keys: str):
-        return self.op().group_by(*keys)
+    def group_by(self, *keys: str | Deferred):
+        normalized = tuple(_normalize_to_name(k) for k in keys)
+        return self.op().group_by(*normalized)
 
     def filter(self, predicate: Callable):
         return self.op().filter(predicate)
