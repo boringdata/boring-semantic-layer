@@ -96,6 +96,51 @@ def _normalize_to_name(arg: str | Deferred) -> str:
     return raw_name
 
 
+def _normalize_join_predicate(on):
+    """Normalize a join predicate to a two-argument callable.
+
+    Accepts:
+    - ``str`` – equi-join on a column present in both sides
+    - ``Deferred`` (``_.col``) – same, after extracting the name
+    - ``list[str | Deferred]`` – compound equi-join on multiple columns
+    - ``callable`` (non-Deferred) – returned as-is (existing lambda API)
+    - ``None`` – returned as-is (for cross joins)
+    """
+    if on is None:
+        return on
+
+    if isinstance(on, str):
+        name = on
+        return lambda left, right: getattr(left, name) == getattr(right, name)
+
+    if _is_deferred(on):
+        name = _normalize_to_name(on)
+        return lambda left, right: getattr(left, name) == getattr(right, name)
+
+    if isinstance(on, (list, tuple)):
+        names = [_normalize_to_name(item) for item in on]
+        if len(names) == 1:
+            name = names[0]
+            return lambda left, right: getattr(left, name) == getattr(right, name)
+
+        def _compound_predicate(left, right):
+            from functools import reduce
+            from operator import and_
+
+            preds = [getattr(left, n) == getattr(right, n) for n in names]
+            return reduce(and_, preds)
+
+        return _compound_predicate
+
+    if callable(on):
+        return on
+
+    raise TypeError(
+        f"join `on` must be a string, Deferred (_.col), list of strings/Deferred, "
+        f"or a callable, got {type(on).__name__}"
+    )
+
+
 if TYPE_CHECKING:
     from .expr import (
         SemanticFilter,
@@ -2019,6 +2064,74 @@ class SemanticJoinOp(Relation):
         )
 
 
+class _OrderByProxy:
+    """Proxy that resolves short column names to dot-prefixed columns.
+
+    After aggregating a joined model the ibis table has columns like
+    ``flights.flight_count``.  This proxy lets ``t.flight_count`` resolve
+    to ``tbl["flights.flight_count"]`` so that ``order_by`` lambdas and
+    Deferred expressions work without requiring the full prefix.
+
+    Raises ``AttributeError`` / ``KeyError`` when a short name is ambiguous
+    (matches multiple prefixed columns), following Malloy's convention that
+    ambiguous names must be fully qualified.
+    """
+
+    __slots__ = ("_tbl", "_short_to_full", "_ambiguous")
+
+    def __init__(self, tbl: ir.Table) -> None:
+        object.__setattr__(self, "_tbl", tbl)
+        mapping: dict[str, str] = {}
+        ambiguous: set[str] = set()
+        for col in tbl.columns:
+            if "." in col:
+                short = col.rsplit(".", 1)[1]
+                if short in ambiguous:
+                    continue
+                if short in mapping:
+                    # Second table has the same short name — mark ambiguous
+                    del mapping[short]
+                    ambiguous.add(short)
+                else:
+                    mapping[short] = col
+        object.__setattr__(self, "_short_to_full", mapping)
+        object.__setattr__(self, "_ambiguous", frozenset(ambiguous))
+
+    def _check_ambiguous(self, name: str) -> None:
+        ambiguous = object.__getattribute__(self, "_ambiguous")
+        if name in ambiguous:
+            tbl = object.__getattribute__(self, "_tbl")
+            matches = [c for c in tbl.columns if c.endswith(f".{name}")]
+            raise AttributeError(
+                f"Ambiguous column '{name}' matches multiple prefixed columns: "
+                f"{matches}. Use the full prefixed name to disambiguate."
+            )
+
+    def __getattr__(self, name: str) -> ir.Value:
+        tbl = object.__getattribute__(self, "_tbl")
+        # Direct column match
+        if name in tbl.columns:
+            return tbl[name]
+        # Check ambiguity before short-name resolution
+        self._check_ambiguous(name)
+        # Short-name resolution
+        short_to_full = object.__getattribute__(self, "_short_to_full")
+        if name in short_to_full:
+            return tbl[short_to_full[name]]
+        # Fallback to raw table attribute (e.g. ibis methods)
+        return getattr(tbl, name)
+
+    def __getitem__(self, name: str) -> ir.Value:
+        tbl = object.__getattribute__(self, "_tbl")
+        if name in tbl.columns:
+            return tbl[name]
+        self._check_ambiguous(name)
+        short_to_full = object.__getattribute__(self, "_short_to_full")
+        if name in short_to_full:
+            return tbl[short_to_full[name]]
+        return tbl[name]
+
+
 class SemanticOrderByOp(Relation):
     source: Relation
     keys: tuple[
@@ -2048,14 +2161,15 @@ class SemanticOrderByOp(Relation):
 
     def to_untagged(self):
         tbl = _to_untagged(self.source)
+        proxy = _OrderByProxy(tbl)
 
         def resolve_order_key(key):
             if isinstance(key, str):
                 # First try column access, then fallback to attribute (for computed columns)
-                return tbl[key] if key in tbl.columns else getattr(tbl, key, key)
+                return tbl[key] if key in tbl.columns else getattr(proxy, key, key)
             elif isinstance(key, _CallableWrapper):
                 unwrapped = _unwrap(key)
-                return _resolve_expr(unwrapped, tbl)
+                return _resolve_expr(unwrapped, proxy)
             return key
 
         return tbl.order_by([resolve_order_key(key) for key in self.keys])

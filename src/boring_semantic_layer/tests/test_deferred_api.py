@@ -539,3 +539,566 @@ class TestNormalizeToName:
 
         with pytest.raises(TypeError):
             _normalize_to_name(42)
+
+
+# ---------------------------------------------------------------------------
+# Tests for _normalize_join_predicate and string/Deferred join shorthands
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeJoinPredicate:
+    """Unit tests for the _normalize_join_predicate helper."""
+
+    def test_string_produces_callable(self):
+        from boring_semantic_layer.ops import _normalize_join_predicate
+
+        pred = _normalize_join_predicate("customer_id")
+        assert callable(pred)
+
+    def test_deferred_produces_callable(self):
+        from boring_semantic_layer.ops import _normalize_join_predicate
+
+        pred = _normalize_join_predicate(_.customer_id)
+        assert callable(pred)
+
+    def test_list_of_strings_produces_callable(self):
+        from boring_semantic_layer.ops import _normalize_join_predicate
+
+        pred = _normalize_join_predicate(["customer_id", "region"])
+        assert callable(pred)
+
+    def test_list_of_deferred_produces_callable(self):
+        from boring_semantic_layer.ops import _normalize_join_predicate
+
+        pred = _normalize_join_predicate([_.customer_id, _.region])
+        assert callable(pred)
+
+    def test_mixed_list_produces_callable(self):
+        from boring_semantic_layer.ops import _normalize_join_predicate
+
+        pred = _normalize_join_predicate([_.customer_id, "region"])
+        assert callable(pred)
+
+    def test_callable_passthrough(self):
+        from boring_semantic_layer.ops import _normalize_join_predicate
+
+        fn = lambda l, r: l.x == r.x
+        assert _normalize_join_predicate(fn) is fn
+
+    def test_none_passthrough(self):
+        from boring_semantic_layer.ops import _normalize_join_predicate
+
+        assert _normalize_join_predicate(None) is None
+
+    def test_invalid_type_raises(self):
+        from boring_semantic_layer.ops import _normalize_join_predicate
+
+        with pytest.raises(TypeError, match="join `on`"):
+            _normalize_join_predicate(42)
+
+    def test_complex_deferred_raises(self):
+        from boring_semantic_layer.ops import _normalize_join_predicate
+
+        with pytest.raises(TypeError, match="simple Deferred"):
+            _normalize_join_predicate(_.distance.sum())
+
+
+class TestJoinStringShorthand:
+    """Integration tests for string/Deferred/list join predicates."""
+
+    @pytest.fixture()
+    def models(self):
+        con = ibis.duckdb.connect(":memory:")
+        orders = pd.DataFrame(
+            {
+                "order_id": [1, 2, 3],
+                "customer_id": [10, 20, 10],
+                "amount": [100, 200, 300],
+            }
+        )
+        customers = pd.DataFrame(
+            {
+                "customer_id": [10, 20],
+                "name": ["Alice", "Bob"],
+            }
+        )
+        orders_tbl = con.create_table("orders", orders)
+        customers_tbl = con.create_table("customers", customers)
+
+        orders_st = (
+            to_semantic_table(orders_tbl, "orders")
+            .with_dimensions(
+                order_id=lambda t: t.order_id,
+                customer_id=lambda t: t.customer_id,
+            )
+            .with_measures(
+                total_amount=_.amount.sum(),
+                order_count=_.count(),
+            )
+        )
+        customers_st = (
+            to_semantic_table(customers_tbl, "customers")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                name=lambda t: t.name,
+            )
+            .with_measures(
+                customer_count=_.count(),
+            )
+        )
+        return orders_st, customers_st
+
+    def test_join_one_string(self, models):
+        orders_st, customers_st = models
+        joined = orders_st.join_one(customers_st, on="customer_id")
+        df = joined.group_by("customers.name").aggregate("total_amount").execute()
+        assert len(df) == 2
+        assert df.total_amount.sum() == 600
+
+    def test_join_one_deferred(self, models):
+        orders_st, customers_st = models
+        joined = orders_st.join_one(customers_st, on=_.customer_id)
+        df = joined.group_by("customers.name").aggregate("total_amount").execute()
+        assert len(df) == 2
+        assert df.total_amount.sum() == 600
+
+    def test_join_one_lambda_still_works(self, models):
+        orders_st, customers_st = models
+        joined = orders_st.join_one(
+            customers_st, on=lambda o, c: o.customer_id == c.customer_id
+        )
+        df = joined.group_by("customers.name").aggregate("total_amount").execute()
+        assert len(df) == 2
+        assert df.total_amount.sum() == 600
+
+    def test_join_many_string(self, models):
+        orders_st, customers_st = models
+        joined = customers_st.join_many(orders_st, on="customer_id")
+        df = joined.group_by("customers.name").aggregate("total_amount").execute()
+        assert len(df) == 2
+        assert df.total_amount.sum() == 600
+
+    def test_join_many_deferred(self, models):
+        orders_st, customers_st = models
+        joined = customers_st.join_many(orders_st, on=_.customer_id)
+        df = joined.group_by("customers.name").aggregate("total_amount").execute()
+        assert len(df) == 2
+        assert df.total_amount.sum() == 600
+
+    def test_join_one_list_of_strings(self):
+        """Test compound equi-join with list of strings."""
+        con = ibis.duckdb.connect(":memory:")
+        left = pd.DataFrame(
+            {"customer_id": [1, 2, 1], "region": ["US", "EU", "US"], "amount": [10, 20, 30]}
+        )
+        right = pd.DataFrame(
+            {"customer_id": [1, 2], "region": ["US", "EU"], "label": ["a", "b"]}
+        )
+        left_tbl = con.create_table("left_t", left)
+        right_tbl = con.create_table("right_t", right)
+
+        left_st = (
+            to_semantic_table(left_tbl, "left")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                region=lambda t: t.region,
+            )
+            .with_measures(total=_.amount.sum())
+        )
+        right_st = (
+            to_semantic_table(right_tbl, "right")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                region=lambda t: t.region,
+                label=lambda t: t.label,
+            )
+        )
+
+        joined = left_st.join_one(right_st, on=["customer_id", "region"])
+        df = joined.group_by("right.label").aggregate("total").execute()
+        assert len(df) == 2
+        assert df.total.sum() == 60
+
+    def test_join_one_list_of_deferred(self):
+        """Test compound equi-join with list of Deferred."""
+        con = ibis.duckdb.connect(":memory:")
+        left = pd.DataFrame(
+            {"customer_id": [1, 2, 1], "region": ["US", "EU", "US"], "amount": [10, 20, 30]}
+        )
+        right = pd.DataFrame(
+            {"customer_id": [1, 2], "region": ["US", "EU"], "label": ["a", "b"]}
+        )
+        left_tbl = con.create_table("left_t", left)
+        right_tbl = con.create_table("right_t", right)
+
+        left_st = (
+            to_semantic_table(left_tbl, "left")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                region=lambda t: t.region,
+            )
+            .with_measures(total=_.amount.sum())
+        )
+        right_st = (
+            to_semantic_table(right_tbl, "right")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                region=lambda t: t.region,
+                label=lambda t: t.label,
+            )
+        )
+
+        joined = left_st.join_one(right_st, on=[_.customer_id, _.region])
+        df = joined.group_by("right.label").aggregate("total").execute()
+        assert len(df) == 2
+        assert df.total.sum() == 60
+
+    def test_join_one_mixed_list(self):
+        """Test compound equi-join with mixed list of string and Deferred."""
+        con = ibis.duckdb.connect(":memory:")
+        left = pd.DataFrame(
+            {"customer_id": [1, 2, 1], "region": ["US", "EU", "US"], "amount": [10, 20, 30]}
+        )
+        right = pd.DataFrame(
+            {"customer_id": [1, 2], "region": ["US", "EU"], "label": ["a", "b"]}
+        )
+        left_tbl = con.create_table("left_t", left)
+        right_tbl = con.create_table("right_t", right)
+
+        left_st = (
+            to_semantic_table(left_tbl, "left")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                region=lambda t: t.region,
+            )
+            .with_measures(total=_.amount.sum())
+        )
+        right_st = (
+            to_semantic_table(right_tbl, "right")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                region=lambda t: t.region,
+                label=lambda t: t.label,
+            )
+        )
+
+        joined = left_st.join_one(right_st, on=[_.customer_id, "region"])
+        df = joined.group_by("right.label").aggregate("total").execute()
+        assert len(df) == 2
+        assert df.total.sum() == 60
+
+
+# ---------------------------------------------------------------------------
+# Snowflake / snow-star schema tests with string & Deferred join shorthands
+# ---------------------------------------------------------------------------
+
+
+class TestSnowflakeSchema:
+    """Multi-tier snowflake schema joins using string/Deferred shorthands.
+
+    Schema modeled:
+
+        sales (fact)
+          |-- join_one --> customers (dim)
+          |                  |-- join_one --> regions (dim)
+          |-- join_one --> products (dim)
+          |                  |-- join_one --> categories (dim)
+          |-- join_one --> stores (dim)
+    """
+
+    @pytest.fixture()
+    def snowflake(self):
+        con = ibis.duckdb.connect(":memory:")
+
+        # -- fact table --
+        sales = con.create_table(
+            "sales",
+            pd.DataFrame(
+                {
+                    "sale_id": [1, 2, 3, 4, 5, 6],
+                    "customer_id": [1, 2, 1, 3, 2, 3],
+                    "product_id": [10, 10, 20, 20, 30, 30],
+                    "store_id": [100, 100, 200, 200, 100, 200],
+                    "amount": [50, 80, 120, 90, 60, 110],
+                }
+            ),
+        )
+
+        # -- first-level dims --
+        customers = con.create_table(
+            "customers",
+            pd.DataFrame(
+                {
+                    "customer_id": [1, 2, 3],
+                    "customer_name": ["Alice", "Bob", "Carol"],
+                    "region_id": [1, 1, 2],
+                }
+            ),
+        )
+        products = con.create_table(
+            "products",
+            pd.DataFrame(
+                {
+                    "product_id": [10, 20, 30],
+                    "product_name": ["Widget", "Gadget", "Gizmo"],
+                    "category_id": [1, 1, 2],
+                }
+            ),
+        )
+        stores = con.create_table(
+            "stores",
+            pd.DataFrame(
+                {
+                    "store_id": [100, 200],
+                    "store_name": ["Downtown", "Mall"],
+                }
+            ),
+        )
+
+        # -- second-level dims (snowflake arms) --
+        regions = con.create_table(
+            "regions",
+            pd.DataFrame(
+                {
+                    "region_id": [1, 2],
+                    "region_name": ["North", "South"],
+                }
+            ),
+        )
+        categories = con.create_table(
+            "categories",
+            pd.DataFrame(
+                {
+                    "category_id": [1, 2],
+                    "category_name": ["Electronics", "Accessories"],
+                }
+            ),
+        )
+
+        # -- semantic models --
+        sales_st = (
+            to_semantic_table(sales, "sales")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                product_id=lambda t: t.product_id,
+                store_id=lambda t: t.store_id,
+            )
+            .with_measures(
+                total_sales=_.amount.sum(),
+                sale_count=_.count(),
+            )
+        )
+        customers_st = to_semantic_table(customers, "customers").with_dimensions(
+            customer_id=lambda t: t.customer_id,
+            customer_name=lambda t: t.customer_name,
+            region_id=lambda t: t.region_id,
+        )
+        products_st = to_semantic_table(products, "products").with_dimensions(
+            product_id=lambda t: t.product_id,
+            product_name=lambda t: t.product_name,
+            category_id=lambda t: t.category_id,
+        )
+        stores_st = to_semantic_table(stores, "stores").with_dimensions(
+            store_id=lambda t: t.store_id,
+            store_name=lambda t: t.store_name,
+        )
+        regions_st = to_semantic_table(regions, "regions").with_dimensions(
+            region_id=lambda t: t.region_id,
+            region_name=lambda t: t.region_name,
+        )
+        categories_st = to_semantic_table(categories, "categories").with_dimensions(
+            category_id=lambda t: t.category_id,
+            category_name=lambda t: t.category_name,
+        )
+
+        return {
+            "sales": sales_st,
+            "customers": customers_st,
+            "products": products_st,
+            "stores": stores_st,
+            "regions": regions_st,
+            "categories": categories_st,
+        }
+
+    # -- star layer: fact + first-level dims --
+
+    def test_three_arm_star_string(self, snowflake):
+        """Fact joined to three dimension tables using string shorthand."""
+        joined = (
+            snowflake["sales"]
+            .join_one(snowflake["customers"], on="customer_id")
+            .join_one(snowflake["products"], on="product_id")
+            .join_one(snowflake["stores"], on="store_id")
+        )
+
+        df = (
+            joined
+            .group_by("customers.customer_name")
+            .aggregate("total_sales")
+            .execute()
+        )
+        assert set(df["customers.customer_name"]) == {"Alice", "Bob", "Carol"}
+        assert df.total_sales.sum() == 510  # 50+80+120+90+60+110
+
+    def test_three_arm_star_deferred(self, snowflake):
+        """Same star join using Deferred shorthand."""
+        joined = (
+            snowflake["sales"]
+            .join_one(snowflake["customers"], on=_.customer_id)
+            .join_one(snowflake["products"], on=_.product_id)
+            .join_one(snowflake["stores"], on=_.store_id)
+        )
+
+        df = (
+            joined
+            .group_by("stores.store_name")
+            .aggregate("total_sales", "sale_count")
+            .execute()
+        )
+        assert set(df["stores.store_name"]) == {"Downtown", "Mall"}
+        assert df.sale_count.sum() == 6
+
+    def test_star_group_by_two_dims(self, snowflake):
+        """Group by dimensions from two different arms of the star."""
+        joined = (
+            snowflake["sales"]
+            .join_one(snowflake["customers"], on="customer_id")
+            .join_one(snowflake["products"], on="product_id")
+        )
+
+        df = (
+            joined
+            .group_by("customers.customer_name", "products.product_name")
+            .aggregate("total_sales")
+            .execute()
+        )
+        # Alice bought Widget(50) and Gadget(120)
+        alice_widget = df[
+            (df["customers.customer_name"] == "Alice")
+            & (df["products.product_name"] == "Widget")
+        ]
+        assert alice_widget.total_sales.iloc[0] == 50
+
+    # -- snowflake layer: chain through second-level dims --
+
+    def test_snowflake_customer_region_chain(self, snowflake):
+        """sales -> customers -> regions (two-hop snowflake arm)."""
+        joined = (
+            snowflake["sales"]
+            .join_one(snowflake["customers"], on="customer_id")
+            .join_one(snowflake["regions"], on="region_id")
+        )
+
+        df = (
+            joined
+            .group_by("regions.region_name")
+            .aggregate("total_sales")
+            .execute()
+        )
+        # North: Alice(1,2) + Bob(1,2) = customers 1,2 → sales 50+80+120+60 = 310
+        # South: Carol(3) → sales 90+110 = 200
+        assert set(df["regions.region_name"]) == {"North", "South"}
+        north = df[df["regions.region_name"] == "North"].total_sales.iloc[0]
+        south = df[df["regions.region_name"] == "South"].total_sales.iloc[0]
+        assert north == 310
+        assert south == 200
+
+    def test_snowflake_product_category_chain(self, snowflake):
+        """sales -> products -> categories (two-hop snowflake arm)."""
+        joined = (
+            snowflake["sales"]
+            .join_one(snowflake["products"], on=_.product_id)
+            .join_one(snowflake["categories"], on=_.category_id)
+        )
+
+        df = (
+            joined
+            .group_by("categories.category_name")
+            .aggregate("total_sales")
+            .execute()
+        )
+        # Electronics (Widget 10, Gadget 20): sales 50+80+120+90 = 340
+        # Accessories (Gizmo 30): sales 60+110 = 170
+        assert set(df["categories.category_name"]) == {"Electronics", "Accessories"}
+        electronics = df[df["categories.category_name"] == "Electronics"].total_sales.iloc[0]
+        accessories = df[df["categories.category_name"] == "Accessories"].total_sales.iloc[0]
+        assert electronics == 340
+        assert accessories == 170
+
+    def test_full_snowflake_five_tables(self, snowflake):
+        """Full snowflake: fact + 2 dim arms each extended one level deeper.
+
+        sales -> customers -> regions
+              -> products  -> categories
+        """
+        joined = (
+            snowflake["sales"]
+            .join_one(snowflake["customers"], on="customer_id")
+            .join_one(snowflake["regions"], on="region_id")
+            .join_one(snowflake["products"], on="product_id")
+            .join_one(snowflake["categories"], on="category_id")
+        )
+
+        df = (
+            joined
+            .group_by("regions.region_name", "categories.category_name")
+            .aggregate("total_sales", "sale_count")
+            .execute()
+        )
+        # 4 combos: North/Electronics, North/Accessories, South/Electronics, South/Accessories
+        assert len(df) == 4
+        assert df.total_sales.sum() == 510
+        assert df.sale_count.sum() == 6
+
+    def test_full_snowflake_six_tables(self, snowflake):
+        """All six tables: fact + 3 first-level dims + 2 second-level dims."""
+        joined = (
+            snowflake["sales"]
+            .join_one(snowflake["customers"], on=_.customer_id)
+            .join_one(snowflake["regions"], on=_.region_id)
+            .join_one(snowflake["products"], on=_.product_id)
+            .join_one(snowflake["categories"], on=_.category_id)
+            .join_one(snowflake["stores"], on=_.store_id)
+        )
+
+        df = (
+            joined
+            .group_by("stores.store_name", "regions.region_name")
+            .aggregate("total_sales")
+            .execute()
+        )
+        # Not all store/region combos have sales (Downtown/South has none)
+        assert len(df) == 3
+        assert df.total_sales.sum() == 510
+
+    def test_snowflake_with_filter(self, snowflake):
+        """Snowflake join with filter on a second-level dimension."""
+        joined = (
+            snowflake["sales"]
+            .join_one(snowflake["products"], on="product_id")
+            .join_one(snowflake["categories"], on="category_id")
+            .filter(lambda t: t.categories.category_name == "Electronics")
+        )
+
+        df = joined.group_by("products.product_name").aggregate("total_sales").execute()
+        # Only Widget and Gadget are Electronics
+        assert set(df["products.product_name"]) == {"Widget", "Gadget"}
+        assert df.total_sales.sum() == 340
+
+    def test_snowflake_mixed_shorthand_styles(self, snowflake):
+        """Mix string, Deferred, and lambda across a single chain."""
+        joined = (
+            snowflake["sales"]
+            .join_one(snowflake["customers"], on="customer_id")            # string
+            .join_one(snowflake["regions"], on=_.region_id)                # Deferred
+            .join_one(snowflake["products"],                               # lambda
+                      on=lambda l, r: l.product_id == r.product_id)
+        )
+
+        df = (
+            joined
+            .group_by("regions.region_name", "products.product_name")
+            .aggregate("sale_count")
+            .execute()
+        )
+        assert df.sale_count.sum() == 6

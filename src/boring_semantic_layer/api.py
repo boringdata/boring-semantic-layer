@@ -6,7 +6,7 @@ semantic tables. All functions are thin wrappers around SemanticModel methods.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -47,7 +47,7 @@ def to_semantic_table(
 def join_one(
     left: SemanticModel,
     other: SemanticModel,
-    on: Callable[[Any, Any], ir.BooleanValue],
+    on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
     how: str = "inner",
 ) -> SemanticModel:
     """Join two semantic tables with a one-to-one relationship.
@@ -55,16 +55,18 @@ def join_one(
     Args:
         left: Left semantic table
         other: Right semantic table
-        on: Lambda function taking (left, right) tables and returning a boolean condition
+        on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
+            name string, a Deferred ``_.col``, or a list of strings/Deferred for
+            compound equi-joins.
         how: Join type - "inner", "left", "right", or "outer" (default: "inner")
 
     Returns:
         Joined SemanticModel
 
     Examples:
-        >>> join_one(orders, customers, lambda o, c: o.customer_id == c.customer_id)
-        >>> join_one(orders, customers, lambda o, c: o.customer_id == c.customer_id, how="left")
-        >>> join_one(orders, customers, lambda o, c: o.customer_id == c.customer_id, how="outer")
+        >>> join_one(orders, customers, on="customer_id")
+        >>> join_one(orders, customers, on=_.customer_id)
+        >>> join_one(orders, customers, on=lambda o, c: o.customer_id == c.customer_id)
     """
     return left.join_one(other, on, how)
 
@@ -72,7 +74,7 @@ def join_one(
 def join_many(
     left: SemanticModel,
     other: SemanticModel,
-    on: Callable[[Any, Any], ir.BooleanValue],
+    on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
     how: str = "left",
 ) -> SemanticModel:
     """Join two semantic tables with a one-to-many relationship.
@@ -80,16 +82,18 @@ def join_many(
     Args:
         left: Left semantic table
         other: Right semantic table
-        on: Lambda function taking (left, right) tables and returning a boolean condition
+        on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
+            name string, a Deferred ``_.col``, or a list of strings/Deferred for
+            compound equi-joins.
         how: Join type - "inner", "left", "right", or "outer" (default: "left")
 
     Returns:
         Joined SemanticModel
 
     Examples:
-        >>> join_many(customer, orders, lambda c, o: c.customer_id == o.customer_id)
-        >>> join_many(customer, orders, lambda c, o: c.customer_id == o.customer_id, how="inner")
-        >>> join_many(customer, orders, lambda c, o: c.customer_id == o.customer_id, how="right")
+        >>> join_many(customer, orders, on="customer_id")
+        >>> join_many(customer, orders, on=_.customer_id)
+        >>> join_many(customer, orders, on=lambda c, o: c.customer_id == o.customer_id)
     """
     return left.join_many(other, on, how)
 

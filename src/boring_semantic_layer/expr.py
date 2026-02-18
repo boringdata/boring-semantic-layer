@@ -36,6 +36,7 @@ from .ops import (
     _find_all_root_models,
     _get_merged_fields,
     _is_deferred,
+    _normalize_join_predicate,
     _normalize_to_name,
 )
 from .query import query as build_query
@@ -368,30 +369,25 @@ class SemanticModel(SemanticTable):
     def join_one(
         self,
         other: SemanticModel,
-        on: Callable[[Any, Any], ir.BooleanValue],
+        on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
         how: str = "inner",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics.
 
         Args:
             other: The semantic model to join with
-            on: Lambda function taking (left, right) tables and returning a boolean condition.
-                Can reference both semantic dimensions and raw table columns.
+            on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
+                name string, a Deferred ``_.col``, or a list of strings/Deferred for
+                compound equi-joins.
             how: Join type - "inner", "left", "right", or "outer" (default: "inner")
 
         Returns:
             SemanticJoin: The joined semantic model
 
         Examples:
-            Join on semantic dimensions:
-            >>> orders.join_one(customers, lambda o, c: o.customer_id == c.customer_id)
-
-            Join on raw columns (not defined as dimensions):
-            >>> orders.join_one(customers, lambda o, c: o.raw_id == c.raw_id)
-
-            Different join types:
-            >>> orders.join_one(customers, lambda o, c: o.customer_id == c.customer_id, how="left")
-            >>> orders.join_one(customers, lambda o, c: o.customer_id == c.customer_id, how="outer")
+            >>> orders.join_one(customers, on="customer_id")
+            >>> orders.join_one(customers, on=_.customer_id)
+            >>> orders.join_one(customers, on=lambda o, c: o.customer_id == c.customer_id)
         """
         other_op = other.op() if isinstance(other, SemanticModel) else other
         return SemanticJoin(left=self.op(), right=other_op, on=on, how=how)
@@ -399,30 +395,25 @@ class SemanticModel(SemanticTable):
     def join_many(
         self,
         other: SemanticModel,
-        on: Callable[[Any, Any], ir.BooleanValue],
+        on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
         how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-many relationship semantics.
 
         Args:
             other: The semantic model to join with
-            on: Lambda function taking (left, right) tables and returning a boolean condition.
-                Can reference both semantic dimensions and raw table columns.
+            on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
+                name string, a Deferred ``_.col``, or a list of strings/Deferred for
+                compound equi-joins.
             how: Join type - "inner", "left", "right", or "outer" (default: "left")
 
         Returns:
             SemanticJoin: The joined semantic model
 
         Examples:
-            Join on semantic dimensions:
-            >>> customer.join_many(orders, lambda c, o: c.customer_id == o.customer_id)
-
-            Join on raw columns:
-            >>> customer.join_many(orders, lambda c, o: c.external_id == o.account_ref)
-
-            Different join types:
-            >>> customer.join_many(orders, lambda c, o: c.customer_id == o.customer_id, how="inner")
-            >>> customer.join_many(orders, lambda c, o: c.customer_id == o.customer_id, how="right")
+            >>> customer.join_many(orders, on="customer_id")
+            >>> customer.join_many(orders, on=_.customer_id)
+            >>> customer.join_many(orders, on=lambda c, o: c.customer_id == o.customer_id)
         """
         other_op = other.op() if isinstance(other, SemanticModel) else other
         return SemanticJoin(left=self.op(), right=other_op, on=on, how=how)
@@ -539,9 +530,14 @@ class SemanticJoin(SemanticTable):
         self,
         left: SemanticTableOp,
         right: SemanticTableOp,
-        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
+        on: Callable[[Any, Any], ir.BooleanValue]
+        | str
+        | Deferred
+        | Sequence[str | Deferred]
+        | None = None,
         how: str = "inner",
     ) -> None:
+        on = _normalize_join_predicate(on)
         op = SemanticJoinOp(left=left, right=right, on=on, how=how)
         super().__init__(op)
 
@@ -729,19 +725,10 @@ class SemanticJoin(SemanticTable):
     def join_one(
         self,
         other: SemanticModel,
-        on: Callable[[Any, Any], ir.BooleanValue],
+        on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
         how: str = "inner",
     ) -> SemanticJoin:
-        """Join with one-to-one relationship semantics.
-
-        Args:
-            other: The semantic model to join with
-            on: Lambda function taking (left, right) tables and returning a boolean condition
-            how: Join type - "inner", "left", "right", or "full" (default: "inner")
-
-        Returns:
-            SemanticJoin: The joined semantic model
-        """
+        """Join with one-to-one relationship semantics."""
         return SemanticJoin(
             left=self.op(),
             right=other.op() if isinstance(other, SemanticModel) else other,
@@ -752,19 +739,10 @@ class SemanticJoin(SemanticTable):
     def join_many(
         self,
         other: SemanticModel,
-        on: Callable[[Any, Any], ir.BooleanValue],
+        on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
         how: str = "left",
     ) -> SemanticJoin:
-        """Join with one-to-many relationship semantics.
-
-        Args:
-            other: The semantic model to join with
-            on: Lambda function taking (left, right) tables and returning a boolean condition
-            how: Join type - "inner", "left", "right", or "full" (default: "left")
-
-        Returns:
-            SemanticJoin: The joined semantic model
-        """
+        """Join with one-to-many relationship semantics."""
         return SemanticJoin(
             left=self.op(),
             right=other.op() if isinstance(other, SemanticModel) else other,
@@ -1065,7 +1043,7 @@ class SemanticAggregate(SemanticTable):
     def join_one(
         self,
         other: SemanticModel,
-        on: Callable[[Any, Any], ir.BooleanValue],
+        on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
         how: str = "inner",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
@@ -1079,7 +1057,7 @@ class SemanticAggregate(SemanticTable):
     def join_many(
         self,
         other: SemanticModel,
-        on: Callable[[Any, Any], ir.BooleanValue],
+        on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
         how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-many relationship semantics."""
