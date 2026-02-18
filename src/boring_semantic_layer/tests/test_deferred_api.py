@@ -386,3 +386,156 @@ def test_aggregation_expr_method_chaining():
     assert df[df.session_id == 1]["duration_seconds"].values[0] == 600
     # Session 2: 0 seconds (single event)
     assert df[df.session_id == 2]["duration_seconds"].values[0] == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests for Deferred support in group_by() and aggregate() positional args
+# ---------------------------------------------------------------------------
+
+
+class TestDeferredGroupBy:
+    """Test using _.dimension in group_by() instead of string names."""
+
+    def test_group_by_single_deferred(self):
+        con = ibis.duckdb.connect(":memory:")
+        flights = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+        f_tbl = con.create_table("flights", flights)
+
+        flights_st = to_semantic_table(f_tbl, "flights").with_measures(
+            flight_count=_.count(),
+        )
+        df = flights_st.group_by(_.carrier).aggregate("flight_count").execute()
+        assert df.flight_count.sum() == 3
+        assert set(df.carrier) == {"AA", "UA"}
+
+    def test_group_by_multiple_deferred(self):
+        con = ibis.duckdb.connect(":memory:")
+        flights = pd.DataFrame(
+            {"carrier": ["AA", "AA", "UA"], "origin": ["JFK", "LAX", "JFK"], "distance": [100, 200, 300]}
+        )
+        f_tbl = con.create_table("flights", flights)
+
+        flights_st = to_semantic_table(f_tbl, "flights").with_measures(
+            flight_count=_.count(),
+        )
+        df = flights_st.group_by(_.carrier, _.origin).aggregate("flight_count").execute()
+        assert df.flight_count.sum() == 3
+        assert len(df) == 3
+
+    def test_group_by_mixed_str_and_deferred(self):
+        con = ibis.duckdb.connect(":memory:")
+        flights = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "origin": ["JFK", "LAX", "JFK"]})
+        f_tbl = con.create_table("flights", flights)
+
+        flights_st = to_semantic_table(f_tbl, "flights").with_measures(
+            flight_count=_.count(),
+        )
+        df = flights_st.group_by("carrier", _.origin).aggregate("flight_count").execute()
+        assert len(df) == 3
+
+    def test_group_by_rejects_complex_deferred(self):
+        con = ibis.duckdb.connect(":memory:")
+        flights = pd.DataFrame({"carrier": ["AA"], "distance": [100]})
+        f_tbl = con.create_table("flights", flights)
+
+        flights_st = to_semantic_table(f_tbl, "flights")
+        with pytest.raises(TypeError, match="simple Deferred"):
+            flights_st.group_by(_.distance.sum())
+
+
+class TestDeferredAggregate:
+    """Test using _.measure_name in aggregate() positional args."""
+
+    def test_aggregate_single_deferred_measure(self):
+        con = ibis.duckdb.connect(":memory:")
+        flights = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+        f_tbl = con.create_table("flights", flights)
+
+        flights_st = to_semantic_table(f_tbl, "flights").with_measures(
+            flight_count=_.count(),
+        )
+        df = flights_st.group_by("carrier").aggregate(_.flight_count).execute()
+        assert df.flight_count.sum() == 3
+
+    def test_aggregate_multiple_deferred_measures(self):
+        con = ibis.duckdb.connect(":memory:")
+        flights = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+        f_tbl = con.create_table("flights", flights)
+
+        flights_st = to_semantic_table(f_tbl, "flights").with_measures(
+            flight_count=_.count(),
+            total_distance=_.distance.sum(),
+        )
+        df = flights_st.group_by("carrier").aggregate(_.flight_count, _.total_distance).execute()
+        assert df.flight_count.sum() == 3
+        assert df.total_distance.sum() == 600
+
+    def test_aggregate_mixed_str_and_deferred(self):
+        con = ibis.duckdb.connect(":memory:")
+        flights = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+        f_tbl = con.create_table("flights", flights)
+
+        flights_st = to_semantic_table(f_tbl, "flights").with_measures(
+            flight_count=_.count(),
+            total_distance=_.distance.sum(),
+        )
+        df = flights_st.group_by("carrier").aggregate("flight_count", _.total_distance).execute()
+        assert df.flight_count.sum() == 3
+        assert df.total_distance.sum() == 600
+
+    def test_aggregate_without_group_by_with_deferred(self):
+        con = ibis.duckdb.connect(":memory:")
+        flights = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+        f_tbl = con.create_table("flights", flights)
+
+        flights_st = to_semantic_table(f_tbl, "flights").with_measures(
+            flight_count=_.count(),
+        )
+        df = flights_st.aggregate(_.flight_count).execute()
+        assert df.flight_count.iloc[0] == 3
+
+
+class TestDeferredEndToEnd:
+    """End-to-end tests using Deferred in both group_by and aggregate."""
+
+    def test_full_deferred_workflow(self):
+        """The target API: group_by(_.dim).aggregate(_.measure)."""
+        con = ibis.duckdb.connect(":memory:")
+        flights = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+        f_tbl = con.create_table("flights", flights)
+
+        flights_st = to_semantic_table(f_tbl, "flights").with_measures(
+            flight_count=_.count(),
+            total_distance=_.distance.sum(),
+        )
+        df = flights_st.group_by(_.carrier).aggregate(_.flight_count, _.total_distance).execute()
+        assert df.flight_count.sum() == 3
+        assert df.total_distance.sum() == 600
+        assert set(df.carrier) == {"AA", "UA"}
+
+
+class TestNormalizeToName:
+    """Unit tests for the _normalize_to_name helper."""
+
+    def test_string_passthrough(self):
+        from boring_semantic_layer.ops import _normalize_to_name
+
+        assert _normalize_to_name("origin") == "origin"
+
+    def test_simple_deferred(self):
+        from boring_semantic_layer.ops import _normalize_to_name
+
+        assert _normalize_to_name(_.origin) == "origin"
+        assert _normalize_to_name(_.flight_count) == "flight_count"
+
+    def test_complex_deferred_raises(self):
+        from boring_semantic_layer.ops import _normalize_to_name
+
+        with pytest.raises(TypeError):
+            _normalize_to_name(_.distance.sum())
+
+    def test_invalid_type_raises(self):
+        from boring_semantic_layer.ops import _normalize_to_name
+
+        with pytest.raises(TypeError):
+            _normalize_to_name(42)

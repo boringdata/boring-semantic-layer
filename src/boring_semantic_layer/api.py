@@ -10,6 +10,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from ibis.common.deferred import Deferred
     from ibis.expr import types as ir
 
 from .expr import SemanticModel
@@ -125,7 +126,7 @@ def filter_(
     return table.filter(predicate)
 
 
-def group_by_(table: SemanticModel, *dims: str) -> SemanticModel:
+def group_by_(table: SemanticModel, *dims: str | Deferred) -> SemanticModel:
     """Group a semantic table by dimensions.
 
     Args:
@@ -140,8 +141,8 @@ def group_by_(table: SemanticModel, *dims: str) -> SemanticModel:
 
 def aggregate_(
     table: SemanticModel,
-    *measure_names: str,
-    **aliased: str,
+    *measure_names: str | Callable | Deferred,
+    **aliased,
 ) -> SemanticModel:
     """Aggregate measures in a semantic table.
 

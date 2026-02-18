@@ -7,6 +7,7 @@ from typing import Any
 
 import ibis
 from ibis.common.collections import FrozenDict
+from ibis.common.deferred import Deferred
 from ibis.expr import types as ir
 from ibis.expr.types.groupby import GroupedTable as IbisGroupedTable
 from ibis.expr.types.relations import Table as IbisTable
@@ -34,6 +35,8 @@ from .ops import (
     _classify_measure,
     _find_all_root_models,
     _get_merged_fields,
+    _is_deferred,
+    _normalize_to_name,
 )
 from .query import query as build_query
 
@@ -120,8 +123,9 @@ class SemanticTable(ir.Table):
     def filter(self, predicate: Callable) -> SemanticFilter:
         return SemanticFilter(source=self.op(), predicate=predicate)
 
-    def group_by(self, *keys: str):
-        return SemanticGroupBy(source=self.op(), keys=keys)
+    def group_by(self, *keys: str | Deferred):
+        normalized = tuple(_normalize_to_name(k) for k in keys)
+        return SemanticGroupBy(source=self.op(), keys=normalized)
 
     def aggregate(self, *measure_names, nest: dict[str, Callable] | None = None, **aliased):
         """Aggregate measures without grouping (produces a single row result).
@@ -904,19 +908,27 @@ class SemanticGroupBy(SemanticTable):
 
     def aggregate(
         self,
-        *measure_names,
+        *measure_names: str | Callable | Deferred,
         nest: dict[str, Callable] | None = None,
         **aliased,
     ):
         aggs = {}
         for item in measure_names:
-            if isinstance(item, str):
+            if _is_deferred(item):
+                try:
+                    name = _normalize_to_name(item)
+                    aggs[name] = lambda t, n=name: t[n]
+                except TypeError:
+                    # Complex Deferred (e.g. _.distance.sum()) — treat as callable
+                    aggs[f"_measure_{id(item)}"] = item
+            elif isinstance(item, str):
                 aggs[item] = lambda t, n=item: t[n]
             elif callable(item):
                 aggs[f"_measure_{id(item)}"] = item
             else:
                 raise TypeError(
-                    f"measure_names must be strings or callables, got {type(item)}",
+                    f"measure_names must be strings, callables, or Deferred expressions, "
+                    f"got {type(item)}",
                 )
 
         def wrap_aggregation_expr(expr):
@@ -1400,14 +1412,15 @@ class SemanticMutate(SemanticTable):
             calc_measures=new_calc_meas,
         )
 
-    def group_by(self, *keys: str) -> SemanticGroupBy:
+    def group_by(self, *keys: str | Deferred) -> SemanticGroupBy:
+        normalized = tuple(_normalize_to_name(k) for k in keys)
         source_with_unnests = reduce(
             lambda src, col: SemanticUnnestOp(source=src, column=col),
             self.nested_columns,
             self.op(),
         )
 
-        return SemanticGroupBy(source=source_with_unnests, keys=keys)
+        return SemanticGroupBy(source=source_with_unnests, keys=normalized)
 
     def chart(
         self,
