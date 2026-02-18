@@ -1165,6 +1165,92 @@ def _collect_join_tree_info(join_op: SemanticJoinOp) -> _JoinTreeInfo:
     )
 
 
+def _left_join_bridge(left, bridge, common_keys):
+    """Left-join *bridge* onto *left*, selecting only new columns from bridge."""
+    preds = [left[c] == bridge[c] for c in common_keys]
+    bridge_only = tuple(c for c in bridge.columns if c not in frozenset(common_keys))
+    return left.left_join(bridge, preds).select(
+        [left] + [bridge[c] for c in bridge_only]
+    )
+
+
+def _find_chain_bridge(pt, gb_col, prefix, raw, measure_names, join_tree_info):
+    """Find an intermediate table that chains *pt* grain to *raw* (dim table).
+
+    Returns the bridged table, or *pt* unchanged if no chain is found.
+    """
+    current_grain = frozenset(
+        c for c in pt.columns if c not in measure_names
+    )
+    dim_keys = join_tree_info.table_join_keys.get(prefix, frozenset())
+    raw_columns = frozenset(raw.columns)
+
+    for tname, tkeys in join_tree_info.table_join_keys.items():
+        overlap_dim = tkeys & dim_keys & raw_columns
+        overlap_grain = tkeys & current_grain
+        if not (overlap_dim and overlap_grain):
+            continue
+
+        inter_op = join_tree_info.table_ops.get(tname)
+        if inter_op is None:
+            continue
+
+        inter_raw = _to_untagged(inter_op)
+        inter_cols = sorted(overlap_grain | overlap_dim)
+        inter_bridge = inter_raw.select(
+            [inter_raw[c] for c in inter_cols if c in inter_raw.columns]
+        ).distinct()
+
+        # Join dim table onto intermediate
+        dim_bridge_cols = sorted({gb_col} | overlap_dim)
+        dim_bridge = raw.select(
+            [raw[c] for c in dim_bridge_cols if c in raw.columns]
+        ).distinct()
+        chained = _left_join_bridge(inter_bridge, dim_bridge, sorted(overlap_dim))
+
+        # Join chained bridge onto pt
+        return _left_join_bridge(pt, chained, sorted(overlap_grain))
+
+    return pt
+
+
+def _attach_dim_column(pt, gb_col, measure_names, join_tree_info,
+                       merged_dimensions):
+    """Attach a single group-by dimension column to a pre-agg result.
+
+    Looks up the raw table for the dimension's prefix, mutates the dim
+    column onto it, and bridges it to *pt* via shared join keys — either
+    directly or through an intermediate table.
+    """
+    if "." not in gb_col:
+        return pt
+
+    prefix, _short = gb_col.split(".", 1)
+    dim_table_op = join_tree_info.table_ops.get(prefix)
+    dim_fn = merged_dimensions.get(gb_col)
+    if dim_table_op is None or dim_fn is None:
+        return pt
+
+    raw = _to_untagged(dim_table_op).mutate(**{gb_col: dim_fn(_to_untagged(dim_table_op))})
+    raw_columns = frozenset(raw.columns)
+    current_grain = tuple(
+        c for c in pt.columns if c not in measure_names
+    )
+    common_keys = tuple(c for c in current_grain if c in raw_columns)
+
+    match common_keys:
+        case ():
+            # No direct overlap — chain through an intermediate table.
+            return _find_chain_bridge(
+                pt, gb_col, prefix, raw, measure_names, join_tree_info,
+            )
+        case _:
+            bridge = raw.select(
+                [raw[c] for c in (gb_col, *common_keys)]
+            ).distinct()
+            return _left_join_bridge(pt, bridge, common_keys)
+
+
 def _partition_agg_specs_by_source(
     agg_specs: dict[str, Callable],
     all_roots: list[SemanticTableOp],
@@ -1225,13 +1311,9 @@ def _compute_preagg_grain(
                     # Use the raw column name for grouping on the raw table
                     dim_fn = table_dims[short_name]
                     if callable(dim_fn):
-                        try:
-                            col_expr = dim_fn(raw_tbl)
-                            col_name = col_expr.get_name()
-                            if col_name in raw_columns and col_name not in grain:
-                                grain.append(col_name)
-                        except Exception:
-                            pass
+                        col_name = dim_fn(raw_tbl).get_name()
+                        if col_name in raw_columns and col_name not in grain:
+                            grain.append(col_name)
 
     return grain
 
@@ -1572,12 +1654,9 @@ class SemanticAggregateOp(Relation):
                     if prefix == table_name and short in table_dims:
                         dim_fn = table_dims[short]
                         if callable(dim_fn):
-                            try:
-                                col_name = dim_fn(raw_tbl).get_name()
-                                if col_name in raw_columns and col_name not in grain:
-                                    grain.append(col_name)
-                            except Exception:
-                                pass
+                            col_name = dim_fn(raw_tbl).get_name()
+                            if col_name in raw_columns and col_name not in grain:
+                                grain.append(col_name)
 
             # b) if none found, use join keys (connects to ancestor tables)
             if not grain:
@@ -1609,10 +1688,11 @@ class SemanticAggregateOp(Relation):
                 preagg_results, plan, tbl, group_by_cols,
             )
         else:
-            # Chasm fallback with group-by: best-effort cross-join
-            result = preagg_results[0]
-            for pt in preagg_results[1:]:
-                result = result.cross_join(pt)
+            # Chasm fallback with group-by: build minimal dim bridge from raw tables
+            result = self._build_minimal_dim_bridge(
+                preagg_results, plan, group_by_cols,
+                join_tree_info, merged_dimensions,
+            )
 
         # --- 6. Apply calc_specs ---
         if plan.calc_specs:
@@ -1685,6 +1765,63 @@ class SemanticAggregateOp(Relation):
                 rejoined.append(pt)
 
         return _join_tables(group_by_cols, rejoined)
+
+    @staticmethod
+    def _build_minimal_dim_bridge(preagg_results, plan, group_by_cols,
+                                   join_tree_info, merged_dimensions):
+        """Build dim bridges from raw tables when full join is unavailable.
+
+        When the full ibis join fails (e.g. column collisions with 3+
+        ``join_many`` arms sharing the same key), we build per-table dimension
+        bridges using only the raw single-table data already captured in
+        *join_tree_info*.  This avoids the ibis collision entirely because we
+        never join more than two tables at once.
+        """
+        from .compile_all import _join_tables
+
+        measure_names = frozenset(plan.agg_specs.keys()) | frozenset(plan.calc_specs.keys())
+        gb_set = frozenset(group_by_cols)
+
+        def _bridge_one_preagg(pt):
+            pt_cols = frozenset(pt.columns)
+            pt_grain = tuple(c for c in pt.columns if c not in measure_names)
+            pt_meas = tuple(c for c in pt.columns if c in measure_names)
+
+            # (a) Pre-agg already carries all group-by cols — re-aggregate.
+            if gb_set <= frozenset(pt_grain):
+                if frozenset(pt_grain) != gb_set:
+                    re_aggs = {m: pt[m].sum() for m in pt_meas}
+                    return pt.group_by([pt[c] for c in group_by_cols]).aggregate(**re_aggs)
+                return pt
+
+            # (b) Scalar pre-agg — nothing to bridge.
+            if not pt_grain:
+                return pt
+
+            # (c) Bridge missing group-by dims from raw tables.
+            bridged = pt
+            for gb_col in group_by_cols:
+                if gb_col in bridged.columns:
+                    continue
+                bridged = _attach_dim_column(
+                    bridged, gb_col, measure_names,
+                    join_tree_info, merged_dimensions,
+                )
+
+            # Re-aggregate onto the requested group-by granularity.
+            gb_avail = tuple(c for c in group_by_cols if c in bridged.columns)
+            re_aggs = {m: bridged[m].sum() for m in pt_meas
+                       if m in bridged.columns}
+            match (gb_avail, bool(re_aggs)):
+                case ((), _) | (_, False):
+                    return bridged
+                case _:
+                    return bridged.group_by(
+                        [bridged[c] for c in gb_avail]
+                    ).aggregate(**re_aggs)
+
+        rejoined = tuple(_bridge_one_preagg(pt) for pt in preagg_results)
+        return _join_tables(group_by_cols, list(rejoined))
 
     @staticmethod
     def _apply_calc_specs(result, plan, tbl):
