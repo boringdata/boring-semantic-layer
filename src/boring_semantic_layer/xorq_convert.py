@@ -6,7 +6,7 @@ from typing import Any
 from attrs import frozen
 from returns.result import Failure, Result, safe
 
-from .utils import expr_to_ibis_string, ibis_string_to_expr
+from .utils import expr_to_ibis_string, expr_to_structured, ibis_string_to_expr, structured_to_expr
 
 
 @frozen
@@ -30,6 +30,7 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
         dim_metadata = {}
         for name, dim in dimensions.items():
             expr_str = expr_to_ibis_string(dim.expr).value_or(None)
+            expr_struct = expr_to_structured(dim.expr).value_or(None)
 
             dim_metadata[name] = {
                 "description": dim.description,
@@ -38,6 +39,7 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
                 "is_time_dimension": dim.is_time_dimension,
                 "smallest_time_grain": dim.smallest_time_grain,
                 "expr": expr_str,
+                "expr_struct": expr_struct,
             }
         return dim_metadata
 
@@ -50,15 +52,63 @@ def serialize_measures(measures: Mapping[str, Any]) -> Result[dict, Exception]:
         meas_metadata = {}
         for name, meas in measures.items():
             expr_str = expr_to_ibis_string(meas.expr).value_or(None)
+            expr_struct = expr_to_structured(meas.expr).value_or(None)
 
             meas_metadata[name] = {
                 "description": meas.description,
                 "requires_unnest": list(meas.requires_unnest),
                 "expr": expr_str,
+                "expr_struct": expr_struct,
             }
         return meas_metadata
 
     return do_serialize()
+
+
+def serialize_calc_measures(calc_measures: Mapping[str, Any]) -> Result[dict, Exception]:
+    @safe
+    def do_serialize():
+        from .measure_scope import AllOf, BinOp, MeasureRef
+
+        def _serialize_calc_expr(expr):
+            if isinstance(expr, MeasureRef):
+                return ("measure_ref", expr.name)
+            if isinstance(expr, AllOf):
+                return ("all_of", _serialize_calc_expr(expr.ref))
+            if isinstance(expr, BinOp):
+                return ("calc_binop", expr.op, _serialize_calc_expr(expr.left), _serialize_calc_expr(expr.right))
+            if isinstance(expr, int | float):
+                return ("num", expr)
+            return None
+
+        result = {}
+        for name, expr in calc_measures.items():
+            serialized = _serialize_calc_expr(expr)
+            if serialized is not None:
+                result[name] = serialized
+        return result
+
+    return do_serialize()
+
+
+def deserialize_calc_measures(calc_data: Mapping[str, Any]) -> dict[str, Any]:
+    from .measure_scope import AllOf, BinOp, MeasureRef
+
+    def _deserialize_calc_expr(data):
+        if isinstance(data, int | float):
+            return data
+        tag = data[0]
+        if tag == "measure_ref":
+            return MeasureRef(data[1])
+        if tag == "all_of":
+            return AllOf(_deserialize_calc_expr(data[1]))
+        if tag == "calc_binop":
+            return BinOp(data[1], _deserialize_calc_expr(data[2]), _deserialize_calc_expr(data[3]))
+        if tag == "num":
+            return data[1]
+        raise ValueError(f"Unknown calc measure tag: {tag}")
+
+    return {name: _deserialize_calc_expr(expr) for name, expr in calc_data.items()}
 
 
 def serialize_predicate(predicate: Callable) -> Result[str, Exception]:
@@ -68,6 +118,15 @@ def serialize_predicate(predicate: Callable) -> Result[str, Exception]:
         predicate = predicate._fn
 
     return expr_to_ibis_string(predicate)
+
+
+def serialize_predicate_structured(predicate: Callable) -> Result[tuple, Exception]:
+    from . import ops
+
+    if isinstance(predicate, ops._CallableWrapper):
+        predicate = predicate._fn
+
+    return expr_to_structured(predicate)
 
 
 def to_tagged(semantic_expr, aggregate_cache_storage=None):
@@ -197,10 +256,14 @@ def _register_extractor(op_type: type):
 def _extract_semantic_table(op) -> dict[str, Any]:
     dims_result = serialize_dimensions(op.get_dimensions())
     meas_result = serialize_measures(op.get_measures())
+    calc_result = serialize_calc_measures(op.get_calculated_measures())
     metadata = {
         "dimensions": dims_result.value_or({}),
         "measures": meas_result.value_or({}),
     }
+    calc_data = calc_result.value_or({})
+    if calc_data:
+        metadata["calc_measures"] = calc_data
     if op.name:
         metadata["name"] = op.name
     return metadata
@@ -209,7 +272,11 @@ def _extract_semantic_table(op) -> dict[str, Any]:
 @_register_extractor("SemanticFilterOp")
 def _extract_filter(op) -> dict[str, Any]:
     pred_result = serialize_predicate(op.predicate)
-    return {"predicate": pred_result.value_or("")}
+    pred_struct = serialize_predicate_structured(op.predicate)
+    return {
+        "predicate": pred_result.value_or(""),
+        "predicate_struct": pred_struct.value_or(None),
+    }
 
 
 @_register_extractor("SemanticGroupByOp")
@@ -226,12 +293,18 @@ def _extract_aggregate(op) -> dict[str, Any]:
         metadata["by"] = list(op.keys)
     if op.aggs:
         agg_metadata = {}
+        agg_struct_metadata = {}
         for name, fn in op.aggs.items():
             unwrapped = _unwrap(fn) if hasattr(fn, "_fn") else fn
             expr_str = expr_to_ibis_string(unwrapped).value_or(None)
+            expr_struct = expr_to_structured(unwrapped).value_or(None)
             if expr_str:
                 agg_metadata[name] = expr_str
+            if expr_struct:
+                agg_struct_metadata[name] = expr_struct
         metadata["aggs"] = agg_metadata
+        if agg_struct_metadata:
+            metadata["aggs_struct"] = agg_struct_metadata
     return metadata
 
 
@@ -240,11 +313,20 @@ def _extract_mutate(op) -> dict[str, Any]:
     if not op.post:
         return {}
     post_metadata = {}
+    post_struct_metadata = {}
     for name, fn in op.post.items():
         expr_str = expr_to_ibis_string(fn).value_or(None)
+        expr_struct = expr_to_structured(fn).value_or(None)
         if expr_str:
             post_metadata[name] = expr_str
-    return {"post": post_metadata} if post_metadata else {}
+        if expr_struct:
+            post_struct_metadata[name] = expr_struct
+    result = {}
+    if post_metadata:
+        result["post"] = post_metadata
+    if post_struct_metadata:
+        result["post_struct"] = post_struct_metadata
+    return result
 
 
 @_register_extractor("SemanticProjectOp")
@@ -268,8 +350,14 @@ def _extract_order_by(op) -> dict[str, Any]:
         else:
             unwrapped = _unwrap(key) if hasattr(key, "_fn") else key
             expr_str = expr_to_ibis_string(unwrapped).value_or(None)
+            expr_struct = expr_to_structured(unwrapped).value_or(None)
+            entry = {"type": "callable"}
             if expr_str:
-                order_keys.append({"type": "callable", "value": expr_str})
+                entry["value"] = expr_str
+            if expr_struct:
+                entry["value_struct"] = expr_struct
+            if expr_str or expr_struct:
+                order_keys.append(entry)
     return {"order_keys": order_keys}
 
 
@@ -355,19 +443,37 @@ def _parse_field(metadata: dict, field: str) -> dict | list:
     return _tuple_to_mutable(value)
 
 
-def _deserialize_expr(expr_str: str | None, fallback_name: str | None = None) -> Callable:
-    if not expr_str:
-        return lambda t, n=fallback_name: t[n] if n else t  # noqa: E731
-    result = ibis_string_to_expr(expr_str)
+def _list_to_tuple(obj):
+    """Recursively convert lists back to tuples (reverses _tuple_to_mutable)."""
+    if isinstance(obj, list):
+        return tuple(_list_to_tuple(item) for item in obj)
+    return obj
 
+
+def _deserialize_expr(expr_data=None, fallback_name: str | None = None, expr_struct=None) -> Callable:
     from returns.result import Success
-    if isinstance(result, Success):
-        return result.unwrap()
 
+    # Prefer structured format
+    if expr_struct is not None:
+        struct_data = _list_to_tuple(expr_struct) if isinstance(expr_struct, list) else expr_struct
+        result = structured_to_expr(struct_data)
+        if isinstance(result, Success):
+            return result.unwrap()
+
+    # Fall back to string format
+    if expr_data and isinstance(expr_data, str):
+        result = ibis_string_to_expr(expr_data)
+        if isinstance(result, Success):
+            return result.unwrap()
+
+    # Fall back to column access
     if fallback_name:
         return lambda t, n=fallback_name: t[n]  # noqa: E731
 
-    raise ValueError(f"Failed to deserialize expression: {expr_str}. Error: {result.failure()}")
+    if not expr_data and not expr_struct:
+        return lambda t, n=fallback_name: t[n] if n else t  # noqa: E731
+
+    raise ValueError(f"Failed to deserialize expression: {expr_data}")
 
 
 _RECONSTRUCTORS = {}
@@ -415,7 +521,11 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
 
     def _create_dimension(name: str, dim_data: dict) -> ops.Dimension:
         return ops.Dimension(
-            expr=_deserialize_expr(dim_data.get("expr"), fallback_name=name),
+            expr=_deserialize_expr(
+                expr_data=dim_data.get("expr"),
+                fallback_name=name,
+                expr_struct=dim_data.get("expr_struct"),
+            ),
             description=dim_data.get("description"),
             is_entity=dim_data.get("is_entity", False),
             is_event_timestamp=dim_data.get("is_event_timestamp", False),
@@ -425,7 +535,11 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
 
     def _create_measure(name: str, meas_data: dict) -> ops.Measure:
         return ops.Measure(
-            expr=_deserialize_expr(meas_data.get("expr"), fallback_name=None),
+            expr=_deserialize_expr(
+                expr_data=meas_data.get("expr"),
+                fallback_name=None,
+                expr_struct=meas_data.get("expr_struct"),
+            ),
             description=meas_data.get("description"),
             requires_unnest=tuple(meas_data.get("requires_unnest", [])),
         )
@@ -468,6 +582,7 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
 
     def _reconstruct_table():
         from xorq.common.utils.graph_utils import walk_nodes
+        from xorq.common.utils.ibis_utils import from_ibis
         from xorq.expr.relations import Read
         from xorq.vendor import ibis
         from xorq.vendor.ibis.expr.operations import relations as xorq_rel
@@ -479,6 +594,13 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
         in_memory_tables = list(walk_nodes((xorq_rel.InMemoryTable,), unwrapped_expr))
         db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), unwrapped_expr))
 
+        # For joins (multiple underlying tables), use the full unwrapped
+        # expression directly — it already contains the computed join result.
+        total_leaf_tables = len(read_ops) + len(in_memory_tables) + len(db_tables)
+        if total_leaf_tables > 1:
+            expr = unwrapped_expr.to_expr() if hasattr(unwrapped_expr, "to_expr") else unwrapped_expr
+            return from_ibis(expr) if not hasattr(expr.op(), "source") else expr
+
         if read_ops:
             read_op = read_ops[0]
             read_kwargs = read_op.args[4] if len(read_op.args) > 4 else None
@@ -487,18 +609,18 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
                 if path:
                     import pandas as pd
 
-                    return ibis.memtable(pd.read_parquet(path))
+                    return from_ibis(ibis.memtable(pd.read_parquet(path)))
 
         if in_memory_tables:
             proxy = in_memory_tables[0].args[2]
-            return ibis.memtable(proxy.to_frame())
+            return from_ibis(ibis.memtable(proxy.to_frame()))
 
         if db_tables:
             db_table = db_tables[0]
             table_name, xorq_backend = db_table.args[0], db_table.args[2]
             backend_class = getattr(ibis, xorq_backend.name)
             backend = backend_class.from_connection(xorq_backend.con)
-            return backend.table(table_name)
+            return from_ibis(backend.table(table_name))
 
         # If none of the above, just return the xorq expression as a table
         # (it's already in xorq's vendored ibis land)
@@ -506,14 +628,17 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
 
     dim_meta = _parse_field(metadata, "dimensions")
     meas_meta = _parse_field(metadata, "measures")
+    calc_meta = _parse_field(metadata, "calc_measures")
 
     dimensions = {name: _create_dimension(name, data) for name, data in dim_meta.items()}
     measures = {name: _create_measure(name, data) for name, data in meas_meta.items()}
+    calc_measures = deserialize_calc_measures(calc_meta) if calc_meta else {}
 
     return bsl_expr.SemanticModel(
         table=_reconstruct_table(),
         dimensions=dimensions,
         measures=measures,
+        calc_measures=calc_measures,
         name=metadata.get("name"),
     )
 
@@ -522,7 +647,11 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
 def _reconstruct_filter(metadata: dict, xorq_expr, source):
     if source is None:
         raise ValueError("SemanticFilterOp requires source")
-    predicate = _deserialize_expr(metadata.get("predicate"), fallback_name=None)
+    predicate = _deserialize_expr(
+        expr_data=metadata.get("predicate"),
+        fallback_name=None,
+        expr_struct=metadata.get("predicate_struct"),
+    )
     return source.filter(predicate)
 
 
@@ -547,11 +676,17 @@ def _reconstruct_mutate(metadata: dict, xorq_expr, source):
     if source is None:
         raise ValueError("SemanticMutateOp requires source")
     post_meta = _parse_field(metadata, "post")
-    if not post_meta:
+    post_struct_meta = _parse_field(metadata, "post_struct")
+    if not post_meta and not post_struct_meta:
         return source
+    all_names = set(post_meta.keys()) | set(post_struct_meta.keys())
     post_callables = {
-        name: _deserialize_expr(expr_str, fallback_name=name)
-        for name, expr_str in post_meta.items()
+        name: _deserialize_expr(
+            expr_data=post_meta.get(name),
+            fallback_name=name,
+            expr_struct=post_struct_meta.get(name),
+        )
+        for name in all_names
     }
     return source.mutate(**post_callables)
 
@@ -570,10 +705,11 @@ def _reconstruct_order_by(metadata: dict, xorq_expr, source):
         raise ValueError("SemanticOrderByOp requires source")
 
     def _deserialize_key(key_meta: dict):
-        return (
-            key_meta["value"]
-            if key_meta["type"] == "string"
-            else _deserialize_expr(key_meta["value"])
+        if key_meta["type"] == "string":
+            return key_meta["value"]
+        return _deserialize_expr(
+            expr_data=key_meta.get("value"),
+            expr_struct=key_meta.get("value_struct"),
         )
 
     order_keys_meta = _parse_field(metadata, "order_keys")
