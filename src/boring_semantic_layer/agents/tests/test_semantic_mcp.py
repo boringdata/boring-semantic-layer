@@ -550,7 +550,7 @@ class TestJoinedModels:
                 {
                     "model_name": "flights",
                     "dimensions": ["carriers.name"],
-                    "measures": ["flight_count"],
+                    "measures": ["flights.flight_count"],
                 },
             )
 
@@ -559,7 +559,7 @@ class TestJoinedModels:
             records = data["records"]
             assert len(records) > 0
             assert "carriers.name" in records[0]
-            assert "flight_count" in records[0]
+            assert "flights.flight_count" in records[0]
 
     @pytest.mark.asyncio
     async def test_query_joined_with_time_grain(self, joined_models):
@@ -571,8 +571,8 @@ class TestJoinedModels:
                 "query_model",
                 {
                     "model_name": "flights",
-                    "dimensions": ["flight_date", "carriers.name"],
-                    "measures": ["flight_count"],
+                    "dimensions": ["flights.flight_date", "carriers.name"],
+                    "measures": ["flights.flight_count"],
                     "time_grain": "TIME_GRAIN_MONTH",
                 },
             )
@@ -581,9 +581,9 @@ class TestJoinedModels:
             assert "records" in data
             records = data["records"]
             assert len(records) > 0
-            assert "flight_date" in records[0]
+            assert "flights.flight_date" in records[0]
             assert "carriers.name" in records[0]
-            assert "flight_count" in records[0]
+            assert "flights.flight_count" in records[0]
 
     @pytest.mark.asyncio
     async def test_get_time_range_joined(self, joined_models):
