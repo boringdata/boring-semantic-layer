@@ -1280,7 +1280,7 @@ class TestDeeplyNestedJoins:
 
     # -- order_by with short names on deeply nested joins --
 
-    def test_order_by_short_name_lambda(self, deep_model):
+    def test_order_by_fqdn_lambda(self, deep_model):
         """order_by(lambda t: t["shops.total_revenue"].desc()) uses FQDN."""
         joined = self._build_full_chain(deep_model)
         df = (
@@ -1292,24 +1292,13 @@ class TestDeeplyNestedJoins:
         # Asia has higher revenue (1200+800+600=2600) vs Europe (500+300+700=1500)
         assert df["continents.continent_name"].iloc[0] == "Asia"
 
-    def test_order_by_fqdn_lambda(self, deep_model):
-        """order_by with FQDN bracket notation."""
+    def test_order_by_fqdn_deferred(self, deep_model):
+        """order_by(_["shops.total_revenue"].desc()) uses FQDN."""
         joined = self._build_full_chain(deep_model)
         df = (
             joined.group_by("continents.continent_name")
             .aggregate("shops.total_revenue")
-            .order_by(lambda t: t["shops.total_revenue"].desc())
-            .execute()
-        )
-        assert df["continents.continent_name"].iloc[0] == "Asia"
-
-    def test_order_by_full_prefixed_name(self, deep_model):
-        """order_by with full dot-prefixed column name."""
-        joined = self._build_full_chain(deep_model)
-        df = (
-            joined.group_by("continents.continent_name")
-            .aggregate("shops.total_revenue")
-            .order_by(lambda t: t["shops.total_revenue"].desc())
+            .order_by(_["shops.total_revenue"].desc())
             .execute()
         )
         assert df["continents.continent_name"].iloc[0] == "Asia"
@@ -1326,7 +1315,7 @@ class TestDeeplyNestedJoins:
         # Europe total_area (1644624) > Asia (1133925) due to fan-out
         assert df["continents.continent_name"].iloc[0] == "Europe"
 
-    # -- mutate with short names on deeply nested joins --
+    # -- mutate with FQDN on deeply nested joins --
 
     def test_mutate_fqdn_lambda(self, deep_model):
         """mutate(lambda t: ...) uses FQDN bracket notation."""
@@ -1341,19 +1330,6 @@ class TestDeeplyNestedJoins:
         # Europe: 1500/3 = 500, Asia: 2600/3 ≈ 866.67
         europe = df[df["continents.continent_name"] == "Europe"]
         assert pytest.approx(europe["revenue_per_shop"].iloc[0]) == 500.0
-
-    def test_mutate_fqdn_bracket(self, deep_model):
-        """mutate with FQDN bracket notation lambda."""
-        joined = self._build_full_chain(deep_model)
-        df = (
-            joined.group_by("continents.continent_name")
-            .aggregate("shops.total_revenue", "shops.shop_count")
-            .mutate(
-                revenue_per_shop=lambda t: t["shops.total_revenue"] / t["shops.shop_count"]
-            )
-            .execute()
-        )
-        assert "revenue_per_shop" in df.columns
         asia = df[df["continents.continent_name"] == "Asia"]
         assert pytest.approx(asia["revenue_per_shop"].iloc[0], rel=0.01) == 866.67
 
