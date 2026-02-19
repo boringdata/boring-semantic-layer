@@ -413,97 +413,87 @@ def deserialize_resolver(data: tuple):
         Variable,
     )
 
-    tag = data[0]
+    match data:
+        case ("var", name):
+            return Variable(name)
 
-    if tag == "var":
-        return Variable(data[1])
+        case ("just", value):
+            return Just(value)
 
-    if tag == "just":
-        return Just(data[1])
+        case ("fn", module_name, qualname):
+            mod = importlib.import_module(module_name)
+            func = _resolve_qualname(mod, qualname)
+            return Just(func)
 
-    if tag == "fn":
-        _, module_name, qualname = data
-        mod = importlib.import_module(module_name)
-        func = _resolve_qualname(mod, qualname)
-        return Just(func)
+        case ("ibis_literal", py_value, dtype_str):
+            from xorq.vendor import ibis
+            lit_expr = ibis.literal(py_value, type=ibis.dtype(dtype_str))
+            return Just(lit_expr.op())
 
-    if tag == "ibis_literal":
-        _, py_value, dtype_str = data
-        from xorq.vendor import ibis
-        lit_expr = ibis.literal(py_value, type=ibis.dtype(dtype_str))
-        # Return the Literal node (not the expression) since that's what goes into Just
-        return Just(lit_expr.op())
+        case ("attr", obj_data, name_data):
+            obj_resolver = deserialize_resolver(obj_data)
+            name_resolver = deserialize_resolver(name_data)
+            attr = object.__new__(Attr)
+            object.__setattr__(attr, "obj", obj_resolver)
+            object.__setattr__(attr, "name", name_resolver)
+            return attr
 
-    if tag == "attr":
-        _, obj_data, name_data = data
-        obj_resolver = deserialize_resolver(obj_data)
-        name_resolver = deserialize_resolver(name_data)
-        # Attr stores obj and name as resolvers already, so construct directly
-        attr = object.__new__(Attr)
-        object.__setattr__(attr, "obj", obj_resolver)
-        object.__setattr__(attr, "name", name_resolver)
-        return attr
+        case ("call", func_data, args_data, kwargs_data):
+            func_resolver = deserialize_resolver(func_data)
+            args_resolvers = tuple(deserialize_resolver(a) for a in args_data)
+            from xorq.vendor.ibis.common.collections import FrozenDict
+            kwargs_resolvers = FrozenDict(
+                {k: deserialize_resolver(v) for k, v in kwargs_data}
+            )
+            call = object.__new__(Call)
+            object.__setattr__(call, "func", func_resolver)
+            object.__setattr__(call, "args", args_resolvers)
+            object.__setattr__(call, "kwargs", kwargs_resolvers)
+            return call
 
-    if tag == "call":
-        _, func_data, args_data, kwargs_data = data
-        func_resolver = deserialize_resolver(func_data)
-        args_resolvers = tuple(deserialize_resolver(a) for a in args_data)
-        from xorq.vendor.ibis.common.collections import FrozenDict
-        kwargs_resolvers = FrozenDict(
-            {k: deserialize_resolver(v) for k, v in kwargs_data}
-        )
-        call = object.__new__(Call)
-        object.__setattr__(call, "func", func_resolver)
-        object.__setattr__(call, "args", args_resolvers)
-        object.__setattr__(call, "kwargs", kwargs_resolvers)
-        return call
+        case ("binop", op_name, left_data, right_data):
+            func = _OPERATOR_MAP.get(op_name)
+            if func is None:
+                raise ValueError(f"Unknown binary operator: {op_name!r}")
+            left = deserialize_resolver(left_data)
+            right = deserialize_resolver(right_data)
+            binop = object.__new__(BinaryOperator)
+            object.__setattr__(binop, "func", func)
+            object.__setattr__(binop, "left", left)
+            object.__setattr__(binop, "right", right)
+            return binop
 
-    if tag == "binop":
-        _, op_name, left_data, right_data = data
-        func = _OPERATOR_MAP.get(op_name)
-        if func is None:
-            raise ValueError(f"Unknown binary operator: {op_name!r}")
-        left = deserialize_resolver(left_data)
-        right = deserialize_resolver(right_data)
-        binop = object.__new__(BinaryOperator)
-        object.__setattr__(binop, "func", func)
-        object.__setattr__(binop, "left", left)
-        object.__setattr__(binop, "right", right)
-        return binop
+        case ("unop", op_name, arg_data):
+            func = _OPERATOR_MAP.get(op_name)
+            if func is None:
+                raise ValueError(f"Unknown unary operator: {op_name!r}")
+            arg = deserialize_resolver(arg_data)
+            unop = object.__new__(UnaryOperator)
+            object.__setattr__(unop, "func", func)
+            object.__setattr__(unop, "arg", arg)
+            return unop
 
-    if tag == "unop":
-        _, op_name, arg_data = data
-        func = _OPERATOR_MAP.get(op_name)
-        if func is None:
-            raise ValueError(f"Unknown unary operator: {op_name!r}")
-        arg = deserialize_resolver(arg_data)
-        unop = object.__new__(UnaryOperator)
-        object.__setattr__(unop, "func", func)
-        object.__setattr__(unop, "arg", arg)
-        return unop
+        case ("seq", type_name, items_data):
+            typ = {"tuple": tuple, "list": list}[type_name]
+            values = tuple(deserialize_resolver(v) for v in items_data)
+            seq = object.__new__(Sequence)
+            object.__setattr__(seq, "typ", typ)
+            object.__setattr__(seq, "values", values)
+            return seq
 
-    if tag == "seq":
-        _, type_name, items_data = data
-        typ = {"tuple": tuple, "list": list}[type_name]
-        values = tuple(deserialize_resolver(v) for v in items_data)
-        seq = object.__new__(Sequence)
-        object.__setattr__(seq, "typ", typ)
-        object.__setattr__(seq, "values", values)
-        return seq
+        case ("map", type_name, items_data):
+            typ = {"dict": dict}[type_name]
+            from xorq.vendor.ibis.common.collections import FrozenDict
+            values = FrozenDict(
+                {k: deserialize_resolver(v) for k, v in items_data}
+            )
+            mapping = object.__new__(MappingResolver)
+            object.__setattr__(mapping, "typ", typ)
+            object.__setattr__(mapping, "values", values)
+            return mapping
 
-    if tag == "map":
-        _, type_name, items_data = data
-        typ = {"dict": dict}[type_name]
-        from xorq.vendor.ibis.common.collections import FrozenDict
-        values = FrozenDict(
-            {k: deserialize_resolver(v) for k, v in items_data}
-        )
-        mapping = object.__new__(MappingResolver)
-        object.__setattr__(mapping, "typ", typ)
-        object.__setattr__(mapping, "values", values)
-        return mapping
-
-    raise ValueError(f"Unknown resolver tag: {tag}")
+        case _:
+            raise ValueError(f"Unknown resolver tag: {data[0]}")
 
 
 def _is_deferred(obj) -> bool:
