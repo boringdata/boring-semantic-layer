@@ -41,6 +41,20 @@ from .ops import (
 )
 from .query import query as build_query
 
+_BLOCKED_IBIS_METHODS = [
+    'alias', 'anti_join', 'any_inner_join', 'any_left_join',
+    'as_scalar', 'asof_join', 'bind', 'cache', 'cast',
+    'count', 'cross_join', 'describe', 'difference', 'distinct',
+    'drop', 'drop_null', 'dropna', 'equals', 'fill_null', 'fillna',
+    'get_backend', 'head', 'info', 'inner_join', 'intersect',
+    'left_join', 'nunique', 'outer_join', 'pivot_longer', 'pivot_wider',
+    'preview', 'projection', 'relocate', 'rename', 'right_join',
+    'rowid', 'sample', 'semi_join',
+    'to_array', 'to_delta', 'to_torch',
+    'topk', 'try_cast', 'unbind', 'union', 'unpack', 'value_counts',
+    'view', 'visualize', 'window_by',
+]
+
 
 def to_untagged(expr):
     if isinstance(expr, SemanticTable):
@@ -149,6 +163,8 @@ class SemanticTable(ir.Table):
         """
         return self.group_by().aggregate(*measure_names, nest=nest, **aliased)
 
+    agg = aggregate
+
     def mutate(self, **post) -> SemanticMutate:
         return SemanticMutate(source=self.op(), post=post)
 
@@ -197,6 +213,54 @@ class SemanticTable(ir.Table):
 
     def sql(self, **kwargs):
         return ibis.to_sql(to_untagged(self), **kwargs)
+
+    def to_pandas(self, **kwargs):
+        return self.to_untagged().to_pandas(**kwargs)
+
+    def to_pyarrow(self, **kwargs):
+        return self.to_untagged().to_pyarrow(**kwargs)
+
+    def to_pyarrow_batches(self, **kwargs):
+        return self.to_untagged().to_pyarrow_batches(**kwargs)
+
+    def to_polars(self, **kwargs):
+        return self.to_untagged().to_polars(**kwargs)
+
+    def to_csv(self, path, **kwargs):
+        return self.to_untagged().to_csv(path, **kwargs)
+
+    def to_parquet(self, path, **kwargs):
+        return self.to_untagged().to_parquet(path, **kwargs)
+
+    def to_parquet_dir(self, path, **kwargs):
+        return self.to_untagged().to_parquet_dir(path, **kwargs)
+
+    def to_json(self, path, **kwargs):
+        return self.to_untagged().to_json(path, **kwargs)
+
+    def to_xlsx(self, path, **kwargs):
+        return self.to_untagged().to_xlsx(path, **kwargs)
+
+    def to_pandas_batches(self, **kwargs):
+        return self.to_untagged().to_pandas_batches(**kwargs)
+
+    def to_sql(self, **kwargs):
+        return self.to_untagged().to_sql(**kwargs)
+
+
+def _make_blocked_method(name):
+    def method(self, *args, **kwargs):
+        raise AttributeError(
+            f"'{type(self).__name__}' does not support '{name}()'. "
+            f"Call .to_untagged().{name}() to use ibis operations directly."
+        )
+    method.__name__ = name
+    method.__qualname__ = f"SemanticTable.{name}"
+    return method
+
+
+for _name in _BLOCKED_IBIS_METHODS:
+    setattr(SemanticTable, _name, _make_blocked_method(_name))
 
 
 def _create_dimension(expr: Dimension | Callable | dict) -> Dimension:
@@ -993,6 +1057,8 @@ class SemanticGroupBy(SemanticTable):
             aggs=aggs,
             nested_columns=nested_columns,
         )
+
+    agg = aggregate
 
 
 class SemanticAggregate(SemanticTable):
