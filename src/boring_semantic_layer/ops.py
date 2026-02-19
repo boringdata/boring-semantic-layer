@@ -2688,70 +2688,30 @@ class SemanticJoinOp(Relation):
 
 
 class _OrderByProxy:
-    """Proxy that resolves short column names to dot-prefixed columns.
+    """Proxy for column access in order_by/mutate lambdas.
 
     After aggregating a joined model the ibis table has columns like
-    ``flights.flight_count``.  This proxy lets ``t.flight_count`` resolve
-    to ``tbl["flights.flight_count"]`` so that ``order_by`` lambdas and
-    Deferred expressions work without requiring the full prefix.
+    ``flights.flight_count``.  Use bracket notation for dot-prefixed
+    columns: ``t["flights.flight_count"]``.
 
-    Raises ``AttributeError`` / ``KeyError`` when a short name is ambiguous
-    (matches multiple prefixed columns), following Malloy's convention that
-    ambiguous names must be fully qualified.
+    Attribute access (``t.name``) works for direct columns and ibis
+    methods (e.g. ``.desc()``).
     """
 
-    __slots__ = ("_tbl", "_short_to_full", "_ambiguous")
+    __slots__ = ("_tbl",)
 
     def __init__(self, tbl: ir.Table) -> None:
         object.__setattr__(self, "_tbl", tbl)
-        mapping: dict[str, str] = {}
-        ambiguous: set[str] = set()
-        for col in tbl.columns:
-            if "." in col:
-                short = col.rsplit(".", 1)[1]
-                if short in ambiguous:
-                    continue
-                if short in mapping:
-                    # Second table has the same short name — mark ambiguous
-                    del mapping[short]
-                    ambiguous.add(short)
-                else:
-                    mapping[short] = col
-        object.__setattr__(self, "_short_to_full", mapping)
-        object.__setattr__(self, "_ambiguous", frozenset(ambiguous))
-
-    def _check_ambiguous(self, name: str) -> None:
-        ambiguous = object.__getattribute__(self, "_ambiguous")
-        if name in ambiguous:
-            tbl = object.__getattribute__(self, "_tbl")
-            matches = [c for c in tbl.columns if c.endswith(f".{name}")]
-            raise AttributeError(
-                f"Ambiguous column '{name}' matches multiple prefixed columns: "
-                f"{matches}. Use the full prefixed name to disambiguate."
-            )
 
     def __getattr__(self, name: str) -> ir.Value:
         tbl = object.__getattribute__(self, "_tbl")
-        # Direct column match
         if name in tbl.columns:
             return tbl[name]
-        # Check ambiguity before short-name resolution
-        self._check_ambiguous(name)
-        # Short-name resolution
-        short_to_full = object.__getattribute__(self, "_short_to_full")
-        if name in short_to_full:
-            return tbl[short_to_full[name]]
-        # Fallback to raw table attribute (e.g. ibis methods)
+        # Fallback to raw table attribute (e.g. ibis methods like .desc())
         return getattr(tbl, name)
 
     def __getitem__(self, name: str) -> ir.Value:
         tbl = object.__getattribute__(self, "_tbl")
-        if name in tbl.columns:
-            return tbl[name]
-        self._check_ambiguous(name)
-        short_to_full = object.__getattribute__(self, "_short_to_full")
-        if name in short_to_full:
-            return tbl[short_to_full[name]]
         return tbl[name]
 
 
