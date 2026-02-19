@@ -2687,32 +2687,6 @@ class SemanticJoinOp(Relation):
         )
 
 
-class _OrderByProxy:
-    """Proxy for column access in order_by/mutate lambdas.
-
-    After aggregating a joined model the ibis table has columns like
-    ``flights.flight_count``.  Use bracket notation for dot-prefixed
-    columns: ``t["flights.flight_count"]``.
-
-    Attribute access (``t.name``) works for direct columns and ibis
-    methods (e.g. ``.desc()``).
-    """
-
-    __slots__ = ("_tbl",)
-
-    def __init__(self, tbl: ir.Table) -> None:
-        object.__setattr__(self, "_tbl", tbl)
-
-    def __getattr__(self, name: str) -> ir.Value:
-        tbl = object.__getattribute__(self, "_tbl")
-        if name in tbl.columns:
-            return tbl[name]
-        # Fallback to raw table attribute (e.g. ibis methods like .desc())
-        return getattr(tbl, name)
-
-    def __getitem__(self, name: str) -> ir.Value:
-        tbl = object.__getattribute__(self, "_tbl")
-        return tbl[name]
 
 
 class SemanticOrderByOp(Relation):
@@ -2744,15 +2718,13 @@ class SemanticOrderByOp(Relation):
 
     def to_untagged(self):
         tbl = _to_untagged(self.source)
-        proxy = _OrderByProxy(tbl)
 
         def resolve_order_key(key):
             if isinstance(key, str):
-                # First try column access, then fallback to attribute (for computed columns)
-                return tbl[key] if key in tbl.columns else getattr(proxy, key, key)
+                return tbl[key] if key in tbl.columns else getattr(tbl, key, key)
             elif isinstance(key, _CallableWrapper):
                 unwrapped = _unwrap(key)
-                return _resolve_expr(unwrapped, proxy)
+                return _resolve_expr(unwrapped, tbl)
             return key
 
         return tbl.order_by([resolve_order_key(key) for key in self.keys])
