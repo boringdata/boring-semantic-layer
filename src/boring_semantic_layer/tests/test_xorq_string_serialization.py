@@ -99,6 +99,36 @@ def test_to_tagged_with_string_metadata(flights_data):
     assert total_distance_meas["expr"] == "_.distance.sum()"
 
 
+def test_to_tagged_instance_method(flights_data):
+    """SemanticTable.to_tagged() instance method works the same as the module-level function."""
+    from boring_semantic_layer.xorq_convert import from_tagged
+
+    flights = (
+        to_semantic_table(flights_data, name="flights")
+        .with_dimensions(origin=lambda t: t.origin)
+        .with_measures(avg_distance=lambda t: t.distance.mean())
+    )
+
+    tagged_expr = flights.to_tagged()
+
+    op = tagged_expr.op()
+    metadata = dict(op.metadata)
+    dims = dict(metadata["dimensions"])
+    origin_dim = dict(dims["origin"])
+    assert origin_dim["expr"] == "_.origin"
+
+    meas = dict(metadata["measures"])
+    avg_distance_meas = dict(meas["avg_distance"])
+    assert avg_distance_meas["expr"] == "_.distance.mean()"
+
+    # Verify round-trip works
+    reconstructed = from_tagged(tagged_expr)
+    result = reconstructed.group_by("origin").aggregate("avg_distance").execute()
+    assert len(result) > 0
+    assert "origin" in result.columns
+    assert "avg_distance" in result.columns
+
+
 def test_from_tagged_deserialization(flights_data):
     from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
 

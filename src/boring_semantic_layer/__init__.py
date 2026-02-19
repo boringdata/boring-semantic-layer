@@ -20,6 +20,7 @@ from .config import (
 from .expr import (
     SemanticModel,
     SemanticTable,
+    to_tagged,
     to_untagged,
 )
 from .graph_utils import (
@@ -44,6 +45,7 @@ from .yaml import (
 
 __all__ = [
     "to_semantic_table",
+    "to_tagged",
     "to_untagged",
     "entity_dimension",
     "time_dimension",
