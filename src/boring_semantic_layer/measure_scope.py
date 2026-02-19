@@ -36,6 +36,19 @@ class _Node:
     def __rtruediv__(self, o: Any):
         return BinOp("div", o, self)
 
+    # Method-style arithmetic parity with ibis value expressions, e.g. t.x.add(1)
+    def add(self, other: Any) -> BinOp:
+        return self + other
+
+    def sub(self, other: Any) -> BinOp:
+        return self - other
+
+    def mul(self, other: Any) -> BinOp:
+        return self * other
+
+    def div(self, other: Any) -> BinOp:
+        return self / other
+
 
 @frozen
 class MeasureRef(_Node):
