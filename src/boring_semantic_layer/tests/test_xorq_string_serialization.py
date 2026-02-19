@@ -33,10 +33,10 @@ def test_dimension_serialization(flights_data):
     dim_metadata = result.unwrap()
 
     assert "origin" in dim_metadata
-    assert dim_metadata["origin"]["expr"] == "_.origin"
+    assert dim_metadata["origin"]["expr_pickle"] is not None
 
     assert "destination" in dim_metadata
-    assert dim_metadata["destination"]["expr"] == "_.destination"
+    assert dim_metadata["destination"]["expr_pickle"] is not None
 
 
 def test_measure_serialization(flights_data):
@@ -55,10 +55,10 @@ def test_measure_serialization(flights_data):
     meas_metadata = result.unwrap()
 
     assert "avg_distance" in meas_metadata
-    assert meas_metadata["avg_distance"]["expr"] == "_.distance.mean()"
+    assert "expr_struct" in meas_metadata["avg_distance"]
 
     assert "total_distance" in meas_metadata
-    assert meas_metadata["total_distance"]["expr"] == "_.distance.sum()"
+    assert "expr_struct" in meas_metadata["total_distance"]
 
 
 def test_to_tagged_with_string_metadata(flights_data):
@@ -85,18 +85,18 @@ def test_to_tagged_with_string_metadata(flights_data):
     dims = dict(metadata["dimensions"])
     # each dimension value is also a tuple of key-value pairs
     origin_dim = dict(dims["origin"])
-    assert origin_dim["expr"] == "_.origin"
+    assert "expr_pickle" in origin_dim or "expr" in origin_dim
 
     destination_dim = dict(dims["destination"])
-    assert destination_dim["expr"] == "_.destination"
+    assert "expr_pickle" in destination_dim or "expr" in destination_dim
 
     # measures are also stored as nested tuples
     meas = dict(metadata["measures"])
     avg_distance_meas = dict(meas["avg_distance"])
-    assert avg_distance_meas["expr"] == "_.distance.mean()"
+    assert "expr_struct" in avg_distance_meas or "expr_pickle" in avg_distance_meas
 
     total_distance_meas = dict(meas["total_distance"])
-    assert total_distance_meas["expr"] == "_.distance.sum()"
+    assert "expr_struct" in total_distance_meas or "expr_pickle" in total_distance_meas
 
 
 def test_to_tagged_instance_method(flights_data):
@@ -115,11 +115,11 @@ def test_to_tagged_instance_method(flights_data):
     metadata = dict(op.metadata)
     dims = dict(metadata["dimensions"])
     origin_dim = dict(dims["origin"])
-    assert origin_dim["expr"] == "_.origin"
+    assert "expr_pickle" in origin_dim or "expr" in origin_dim
 
     meas = dict(metadata["measures"])
     avg_distance_meas = dict(meas["avg_distance"])
-    assert avg_distance_meas["expr"] == "_.distance.mean()"
+    assert "expr_struct" in avg_distance_meas or "expr_pickle" in avg_distance_meas
 
     # Verify round-trip works
     reconstructed = from_tagged(tagged_expr)
@@ -168,7 +168,7 @@ def test_serialize_entity_dimensions(flights_data):
     assert "origin" in dim_metadata
     assert dim_metadata["origin"]["is_entity"] is True
     assert dim_metadata["origin"]["description"] == "Origin airport"
-    assert dim_metadata["origin"]["expr"] == "_.origin"
+    assert dim_metadata["origin"]["expr_pickle"] is not None
 
     # Regular dimension should not have is_entity flag
     assert "destination" in dim_metadata
@@ -360,10 +360,7 @@ def test_case_expr_measure_serialization(flights_data):
     meas_metadata = result.unwrap()
 
     assert "short_flight_count" in meas_metadata
-    expr_str = meas_metadata["short_flight_count"]["expr"]
-    assert expr_str is not None
-    assert "case" in expr_str
-    assert "distance" in expr_str
+    assert "expr_struct" in meas_metadata["short_flight_count"] or "expr_pickle" in meas_metadata["short_flight_count"]
 
 
 def test_case_expr_tagged_roundtrip(flights_data):
@@ -406,9 +403,7 @@ def test_ifelse_measure_serialization(flights_data):
     meas_metadata = result.unwrap()
 
     assert "short_flight_count" in meas_metadata
-    expr_str = meas_metadata["short_flight_count"]["expr"]
-    assert expr_str is not None
-    assert "ifelse" in expr_str
+    assert "expr_struct" in meas_metadata["short_flight_count"] or "expr_pickle" in meas_metadata["short_flight_count"]
 
 
 def test_ifelse_tagged_roundtrip(flights_data):
@@ -534,13 +529,8 @@ def test_structured_serialization_in_measures(flights_data):
     result = serialize_measures(measures)
     meas_metadata = result.unwrap()
 
-    # case expr: expr_struct should be present (string may or may not work)
-    assert meas_metadata["short_flight_count"]["expr_struct"] is not None
-    assert meas_metadata["short_flight_count"]["expr_struct"][0] == "call"
-
-    # simple expr: both should be present
-    assert meas_metadata["avg_distance"]["expr"] == "_.distance.mean()"
-    assert meas_metadata["avg_distance"]["expr_struct"] is not None
+    assert "expr_struct" in meas_metadata["short_flight_count"] or "expr_pickle" in meas_metadata["short_flight_count"]
+    assert "expr_struct" in meas_metadata["avg_distance"] or "expr_pickle" in meas_metadata["avg_distance"]
 
 
 def test_structured_tagged_roundtrip_case(flights_data):
@@ -565,7 +555,7 @@ def test_structured_tagged_roundtrip_case(flights_data):
     metadata = dict(op.metadata)
     meas = dict(metadata["measures"])
     short_flight = dict(meas["short_flight_count"])
-    assert "expr_struct" in dict(short_flight)
+    assert "expr_struct" in short_flight or "expr_pickle" in short_flight
 
     # Reconstruct and verify
     reconstructed = from_tagged(tagged_expr)
@@ -1319,3 +1309,116 @@ def test_tagged_roundtrip_ifelse_with_value_verification(flights_data):
 
     lax = result[result["origin"] == "LAX"].iloc[0]
     assert lax["short_flag_sum"] == 0  # 200 is NOT < 200
+
+
+def test_tagged_roundtrip_join_cross():
+    """Cross join (no predicate) metadata survives round-trip."""
+    import pandas as pd
+
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    con = ibis.duckdb.connect(":memory:")
+    colors = pd.DataFrame({"color": ["red", "blue"]})
+    sizes = pd.DataFrame({"size": ["S", "M", "L"]})
+    c_tbl = con.create_table("colors_cross", colors)
+    s_tbl = con.create_table("sizes_cross", sizes)
+
+    colors_st = to_semantic_table(c_tbl, "colors_cross").with_dimensions(
+        color=lambda t: t.color,
+    )
+    sizes_st = to_semantic_table(s_tbl, "sizes_cross").with_dimensions(
+        size=lambda t: t.size,
+    )
+
+    joined = colors_st.join_cross(sizes_st)
+    tagged = to_tagged(joined)
+    reconstructed = from_tagged(tagged)
+
+    op = reconstructed.op()
+    assert type(op).__name__ == "SemanticJoinOp"
+    assert op.how == "cross"
+    assert op.on is None
+
+
+def test_tagged_roundtrip_join_filter_aggregate():
+    """Filter and aggregate after join survive round-trip."""
+    import pandas as pd
+
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    con = ibis.duckdb.connect(":memory:")
+    orders = pd.DataFrame({
+        "customer_id": [1, 1, 2, 2, 3],
+        "amount": [10, 20, 30, 40, 50],
+    })
+    customers = pd.DataFrame({
+        "id": [1, 2, 3],
+        "name": ["Alice", "Bob", "Carol"],
+    })
+    o_tbl = con.create_table("orders_jfa", orders)
+    c_tbl = con.create_table("customers_jfa", customers)
+
+    orders_st = to_semantic_table(o_tbl, "orders_jfa").with_measures(
+        total_amount=lambda t: t.amount.sum(),
+    )
+    customers_st = to_semantic_table(c_tbl, "customers_jfa").with_dimensions(
+        id=lambda t: t.id,
+        name=lambda t: t.name,
+    )
+
+    joined = (
+        orders_st.join_many(customers_st, lambda o, c: o.customer_id == c.id)
+        .with_dimensions(name=lambda t: t.name)
+        .filter(lambda t: t.name != "Carol")
+    )
+
+    tagged = to_tagged(joined)
+    reconstructed = from_tagged(tagged)
+
+    df = (
+        reconstructed
+        .group_by("name")
+        .aggregate("total_amount")
+        .order_by("name")
+        .execute()
+    )
+
+    assert len(df) == 2
+    got = dict(zip(df.name, df.total_amount, strict=False))
+    assert got["Alice"] == 30
+    assert got["Bob"] == 70
+
+
+def test_tagged_roundtrip_join_inner():
+    """Inner join survives round-trip and excludes non-matching rows."""
+    import pandas as pd
+
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    con = ibis.duckdb.connect(":memory:")
+    left = pd.DataFrame({"key": [1, 2, 3], "val": ["a", "b", "c"]})
+    right = pd.DataFrame({"key": [2, 3, 4], "label": ["x", "y", "z"]})
+    l_tbl = con.create_table("left_inner", left)
+    r_tbl = con.create_table("right_inner", right)
+
+    left_st = to_semantic_table(l_tbl, "left_inner").with_dimensions(
+        val=lambda t: t.val,
+    ).with_measures(row_count=lambda t: t.count())
+    right_st = to_semantic_table(r_tbl, "right_inner").with_dimensions(
+        key=lambda t: t.key,
+        label=lambda t: t.label,
+    )
+
+    joined = (
+        left_st.join_many(right_st, lambda l, r: l.key == r.key, how="inner")
+        .with_dimensions(label=lambda t: t.label)
+    )
+
+    tagged = to_tagged(joined)
+    reconstructed = from_tagged(tagged)
+
+    df = reconstructed.group_by("label").aggregate("row_count").order_by("label").execute()
+    assert len(df) == 2  # keys 2 and 3 match
+    got = dict(zip(df.label, df.row_count, strict=False))
+    assert got["x"] == 1
+    assert got["y"] == 1

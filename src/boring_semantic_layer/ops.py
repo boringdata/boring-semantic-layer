@@ -440,6 +440,8 @@ def _make_base_measure(
 
         return result
 
+    raw_expr = expr._fn if isinstance(expr, _CallableWrapper) else expr
+
     if isinstance(expr, AggregationExpr):
 
         def wrapped_expr(t):
@@ -450,6 +452,7 @@ def _make_base_measure(
             expr=wrapped_expr,
             description=description,
             requires_unnest=requires_unnest,
+            original_expr=raw_expr,
         )
 
     if callable(expr):
@@ -467,12 +470,14 @@ def _make_base_measure(
             expr=wrapped_expr,
             description=description,
             requires_unnest=requires_unnest,
+            original_expr=raw_expr,
         )
     else:
         return Measure(
             expr=lambda t, fn=expr: evaluate_expr(fn, ColumnScope(_tbl=t)),
             description=description,
             requires_unnest=requires_unnest,
+            original_expr=raw_expr,
         )
 
 
@@ -600,6 +605,7 @@ class Measure:
     expr: Callable[[ir.Table], ir.Value] | Deferred
     description: str | None = None
     requires_unnest: tuple[str, ...] = ()  # Internal: Arrays that must be unnested
+    original_expr: Any = field(default=None, eq=False, hash=False)
 
     def __call__(self, table: ir.Table) -> ir.Value:
         return self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
