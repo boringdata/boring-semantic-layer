@@ -172,6 +172,53 @@ def _make_known_measures(
     return (known_tuple, frozenset(known_tuple))
 
 
+def _resolve_column_short_name(tbl, name):
+    """Resolve a short column name against a table that may have dot-prefixed columns.
+
+    Tries direct column access first; on failure, searches for a unique
+    ``prefix.name`` match among the table's columns.  Raises
+    ``AttributeError`` when the short name is ambiguous (matches multiple
+    prefixed columns).
+    """
+    if hasattr(tbl, "columns") and name in tbl.columns:
+        return tbl[name]
+
+    if hasattr(tbl, "columns"):
+        suffix = f".{name}"
+        matches = [c for c in tbl.columns if c.endswith(suffix)]
+        if len(matches) == 1:
+            return tbl[matches[0]]
+        if len(matches) > 1:
+            raise AttributeError(
+                f"Ambiguous column '{name}' matches multiple prefixed columns: "
+                f"{matches}. Use the full prefixed name to disambiguate."
+            )
+
+    return getattr(tbl, name)
+
+
+def _resolve_column_item(tbl, name):
+    """Resolve a column name via bracket access, falling back to short-name matching.
+
+    Raises ``KeyError`` when the short name is ambiguous.
+    """
+    if hasattr(tbl, "columns") and name in tbl.columns:
+        return tbl[name]
+
+    if hasattr(tbl, "columns"):
+        suffix = f".{name}"
+        matches = [c for c in tbl.columns if c.endswith(suffix)]
+        if len(matches) == 1:
+            return tbl[matches[0]]
+        if len(matches) > 1:
+            raise KeyError(
+                f"Ambiguous column '{name}' matches multiple prefixed columns: "
+                f"{matches}. Use the full prefixed name to disambiguate."
+            )
+
+    return tbl[name]
+
+
 @frozen(kw_only=True, slots=True)
 class MeasureScope:
     tbl: Any = field(alias="_tbl")
@@ -189,7 +236,7 @@ class MeasureScope:
             )
 
         if self.post_agg:
-            return getattr(self.tbl, name)
+            return _resolve_column_short_name(self.tbl, name)
 
         maybe_measure = _resolve_measure_name(name, self.known, self.known_set).map(MeasureRef)
         if isinstance(maybe_measure, Some):
@@ -198,16 +245,16 @@ class MeasureScope:
         if hasattr(self.tbl, "columns") and name in self.tbl.columns:
             return DeferredColumn(name, self.tbl)
 
-        return getattr(self.tbl, name)
+        return _resolve_column_short_name(self.tbl, name)
 
     def __getitem__(self, name: str):
         if self.post_agg:
-            return self.tbl[name]
+            return _resolve_column_item(self.tbl, name)
 
         maybe_measure = _resolve_measure_name(name, self.known, self.known_set).map(MeasureRef)
         if isinstance(maybe_measure, Some):
             return maybe_measure.unwrap()
-        return self.tbl[name]
+        return _resolve_column_item(self.tbl, name)
 
     def all(self, ref):
         import ibis as ibis_mod

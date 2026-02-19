@@ -99,12 +99,11 @@ class TestBasicPrefixing:
 
         assert "orders.record_count" in result.columns
         assert "items.record_count" in result.columns
-        # After join, counts are per joined rows, not original table counts
-        # Alice (101) has 2 orders with 3 total items, so after join we get 3 rows
+        # With pre-aggregation, each table's count is computed at its own grain
+        # Alice (101) has 2 orders and 3 order items
         alice_row = result[result["orders.customer_id"] == 101].iloc[0]
-        # Both counts will be 3 because the join creates 3 rows for Alice
-        assert alice_row["orders.record_count"] == 3
-        assert alice_row["items.record_count"] == 3
+        assert alice_row["orders.record_count"] == 2  # 2 orders
+        assert alice_row["items.record_count"] == 3  # 3 items
 
     def test_short_name_resolves_to_first_match(self, ecommerce_tables):
         """Test that short names resolve to the first prefixed match."""
@@ -171,8 +170,10 @@ class TestBasicPrefixing:
 
         assert "orders.item_count" in result.columns
         assert "customers.item_count" in result.columns
-        # After join, counts are the same (count of joined rows)
-        assert all(result["orders.item_count"] == result["customers.item_count"])
+        # With pre-aggregation, counts reflect each table's own grain
+        # orders: {101: 2, 102: 1, 103: 1}, customers: {101: 1, 102: 1, 103: 1}
+        assert result.set_index("orders.customer_id").loc[101, "orders.item_count"] == 2
+        assert result.set_index("orders.customer_id").loc[101, "customers.item_count"] == 1
 
 
 class TestDotAndBracketNotation:

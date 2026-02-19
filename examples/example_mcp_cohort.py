@@ -164,7 +164,7 @@ orders_model = (
             "description": "Average products per order",
         },
     )
-    .join_one(customers_model, lambda o, c: o.customer_id == c.customer_id)
+    .join_one(customers_model, on="customer_id")
 )
 
 # Define the cohort semantic table

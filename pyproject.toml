@@ -107,3 +107,8 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["boring_semantic_layer"]
+
+[dependency-groups]
+dev = [
+    "ipython>=8.38.0",
+]

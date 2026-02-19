@@ -73,7 +73,7 @@ ifeq ($(IBIS_VERSION),all)
 			[ "$$(basename $$file)" = "run_all_examples.py" ] && continue; \
 			echo "$$(basename $$file)" | grep -qE "example_(mcp|openai)" && continue; \
 			echo "Running $$file..."; \
-			uv run "$$file" || exit 1; \
+			uv run --with . "$$file" || exit 1; \
 		done || { echo "❌ Examples failed with ibis-framework=$$version"; exit 1; }; \
 		echo "✓ Examples passed with ibis-framework=$$version"; \
 	done; \
@@ -90,7 +90,7 @@ else ifneq ($(IBIS_VERSION),)
 		[ "$$(basename $$file)" = "run_all_examples.py" ] && continue; \
 		echo "$$(basename $$file)" | grep -qE "example_(mcp|openai)" && continue; \
 		echo "Running $$file..."; \
-		uv run "$$file" || exit 1; \
+		uv run --with . "$$file" || exit 1; \
 	done
 	@echo "✓ All examples passed!"
 else
@@ -100,7 +100,7 @@ else
 		[ "$$(basename $$file)" = "run_all_examples.py" ] && continue; \
 		echo "$$(basename $$file)" | grep -qE "example_(mcp|openai)" && continue; \
 		echo "Running $$file..."; \
-		uv run "$$file" || exit 1; \
+		uv run --with . "$$file" || exit 1; \
 	done
 	@echo "✓ All examples passed!"
 endif

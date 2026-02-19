@@ -91,7 +91,7 @@ def main():
 
     cross_team = marketing_st.join_one(
         support_st,
-        lambda m, s: m.customer_id == s.customer_id,
+        on="customer_id",
     ).with_measures(cases_per_spend=lambda t: t.case_count / t.avg_spend)
     df3 = cross_team.group_by("segment").aggregate("cases_per_spend").execute()
     print("\nCases per spend by segment:\n", df3)

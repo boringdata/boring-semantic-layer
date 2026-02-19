@@ -7,6 +7,7 @@ from typing import Any
 
 import ibis
 from ibis.common.collections import FrozenDict
+from ibis.common.deferred import Deferred
 from ibis.expr import types as ir
 from ibis.expr.types.groupby import GroupedTable as IbisGroupedTable
 from ibis.expr.types.relations import Table as IbisTable
@@ -34,6 +35,9 @@ from .ops import (
     _classify_measure,
     _find_all_root_models,
     _get_merged_fields,
+    _is_deferred,
+    _normalize_join_predicate,
+    _normalize_to_name,
 )
 from .query import query as build_query
 
@@ -120,8 +124,9 @@ class SemanticTable(ir.Table):
     def filter(self, predicate: Callable) -> SemanticFilter:
         return SemanticFilter(source=self.op(), predicate=predicate)
 
-    def group_by(self, *keys: str):
-        return SemanticGroupBy(source=self.op(), keys=keys)
+    def group_by(self, *keys: str | Deferred):
+        normalized = tuple(_normalize_to_name(k) for k in keys)
+        return SemanticGroupBy(source=self.op(), keys=normalized)
 
     def aggregate(self, *measure_names, nest: dict[str, Callable] | None = None, **aliased):
         """Aggregate measures without grouping (produces a single row result).
@@ -364,64 +369,54 @@ class SemanticModel(SemanticTable):
     def join_one(
         self,
         other: SemanticModel,
-        on: Callable[[Any, Any], ir.BooleanValue],
+        on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
         how: str = "inner",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics.
 
         Args:
             other: The semantic model to join with
-            on: Lambda function taking (left, right) tables and returning a boolean condition.
-                Can reference both semantic dimensions and raw table columns.
+            on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
+                name string, a Deferred ``_.col``, or a list of strings/Deferred for
+                compound equi-joins.
             how: Join type - "inner", "left", "right", or "outer" (default: "inner")
 
         Returns:
             SemanticJoin: The joined semantic model
 
         Examples:
-            Join on semantic dimensions:
-            >>> orders.join_one(customers, lambda o, c: o.customer_id == c.customer_id)
-
-            Join on raw columns (not defined as dimensions):
-            >>> orders.join_one(customers, lambda o, c: o.raw_id == c.raw_id)
-
-            Different join types:
-            >>> orders.join_one(customers, lambda o, c: o.customer_id == c.customer_id, how="left")
-            >>> orders.join_one(customers, lambda o, c: o.customer_id == c.customer_id, how="outer")
+            >>> orders.join_one(customers, on="customer_id")
+            >>> orders.join_one(customers, on=_.customer_id)
+            >>> orders.join_one(customers, on=lambda o, c: o.customer_id == c.customer_id)
         """
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how)
+        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how, cardinality="one")
 
     def join_many(
         self,
         other: SemanticModel,
-        on: Callable[[Any, Any], ir.BooleanValue],
+        on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
         how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-many relationship semantics.
 
         Args:
             other: The semantic model to join with
-            on: Lambda function taking (left, right) tables and returning a boolean condition.
-                Can reference both semantic dimensions and raw table columns.
+            on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
+                name string, a Deferred ``_.col``, or a list of strings/Deferred for
+                compound equi-joins.
             how: Join type - "inner", "left", "right", or "outer" (default: "left")
 
         Returns:
             SemanticJoin: The joined semantic model
 
         Examples:
-            Join on semantic dimensions:
-            >>> customer.join_many(orders, lambda c, o: c.customer_id == o.customer_id)
-
-            Join on raw columns:
-            >>> customer.join_many(orders, lambda c, o: c.external_id == o.account_ref)
-
-            Different join types:
-            >>> customer.join_many(orders, lambda c, o: c.customer_id == o.customer_id, how="inner")
-            >>> customer.join_many(orders, lambda c, o: c.customer_id == o.customer_id, how="right")
+            >>> customer.join_many(orders, on="customer_id")
+            >>> customer.join_many(orders, on=_.customer_id)
+            >>> customer.join_many(orders, on=lambda c, o: c.customer_id == o.customer_id)
         """
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how)
+        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how, cardinality="many")
 
     def join_cross(self, other: SemanticModel) -> SemanticJoin:
         """Cross join (Cartesian product) with another semantic model.
@@ -436,7 +431,7 @@ class SemanticModel(SemanticTable):
             >>> table_a.join_cross(table_b)  # Cartesian product of all rows
         """
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(left=self.op(), right=other_op, on=None, how="cross")
+        return SemanticJoin(left=self.op(), right=other_op, on=None, how="cross", cardinality="cross")
 
     def join(self, *args, **kwargs):
         """Deprecated: Use join_one() or join_many() instead.
@@ -535,10 +530,16 @@ class SemanticJoin(SemanticTable):
         self,
         left: SemanticTableOp,
         right: SemanticTableOp,
-        on: Callable[[Any, Any], ir.BooleanValue] | None = None,
+        on: Callable[[Any, Any], ir.BooleanValue]
+        | str
+        | Deferred
+        | Sequence[str | Deferred]
+        | None = None,
         how: str = "inner",
+        cardinality: str = "one",
     ) -> None:
-        op = SemanticJoinOp(left=left, right=right, on=on, how=how)
+        on = _normalize_join_predicate(on)
+        op = SemanticJoinOp(left=left, right=right, on=on, how=how, cardinality=cardinality)
         super().__init__(op)
 
     @property
@@ -725,47 +726,31 @@ class SemanticJoin(SemanticTable):
     def join_one(
         self,
         other: SemanticModel,
-        on: Callable[[Any, Any], ir.BooleanValue],
+        on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
         how: str = "inner",
     ) -> SemanticJoin:
-        """Join with one-to-one relationship semantics.
-
-        Args:
-            other: The semantic model to join with
-            on: Lambda function taking (left, right) tables and returning a boolean condition
-            how: Join type - "inner", "left", "right", or "full" (default: "inner")
-
-        Returns:
-            SemanticJoin: The joined semantic model
-        """
+        """Join with one-to-one relationship semantics."""
         return SemanticJoin(
             left=self.op(),
             right=other.op() if isinstance(other, SemanticModel) else other,
             on=on,
             how=how,
+            cardinality="one",
         )
 
     def join_many(
         self,
         other: SemanticModel,
-        on: Callable[[Any, Any], ir.BooleanValue],
+        on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
         how: str = "left",
     ) -> SemanticJoin:
-        """Join with one-to-many relationship semantics.
-
-        Args:
-            other: The semantic model to join with
-            on: Lambda function taking (left, right) tables and returning a boolean condition
-            how: Join type - "inner", "left", "right", or "full" (default: "left")
-
-        Returns:
-            SemanticJoin: The joined semantic model
-        """
+        """Join with one-to-many relationship semantics."""
         return SemanticJoin(
             left=self.op(),
             right=other.op() if isinstance(other, SemanticModel) else other,
             on=on,
             how=how,
+            cardinality="many",
         )
 
     def join_cross(self, other: SemanticModel) -> SemanticJoin:
@@ -775,6 +760,7 @@ class SemanticJoin(SemanticTable):
             right=other.op() if isinstance(other, SemanticModel) else other,
             on=None,
             how="cross",
+            cardinality="cross",
         )
 
     def join(self, *args, **kwargs):
@@ -789,8 +775,9 @@ class SemanticJoin(SemanticTable):
             "  table.join_cross(other)"
         )
 
-    def group_by(self, *keys: str):
-        return self.op().group_by(*keys)
+    def group_by(self, *keys: str | Deferred):
+        normalized = tuple(_normalize_to_name(k) for k in keys)
+        return self.op().group_by(*normalized)
 
     def filter(self, predicate: Callable):
         return self.op().filter(predicate)
@@ -904,19 +891,27 @@ class SemanticGroupBy(SemanticTable):
 
     def aggregate(
         self,
-        *measure_names,
+        *measure_names: str | Callable | Deferred,
         nest: dict[str, Callable] | None = None,
         **aliased,
     ):
         aggs = {}
         for item in measure_names:
-            if isinstance(item, str):
+            if _is_deferred(item):
+                try:
+                    name = _normalize_to_name(item)
+                    aggs[name] = lambda t, n=name: t[n]
+                except TypeError:
+                    # Complex Deferred (e.g. _.distance.sum()) — treat as callable
+                    aggs[f"_measure_{id(item)}"] = item
+            elif isinstance(item, str):
                 aggs[item] = lambda t, n=item: t[n]
             elif callable(item):
                 aggs[f"_measure_{id(item)}"] = item
             else:
                 raise TypeError(
-                    f"measure_names must be strings or callables, got {type(item)}",
+                    f"measure_names must be strings, callables, or Deferred expressions, "
+                    f"got {type(item)}",
                 )
 
         def wrap_aggregation_expr(expr):
@@ -1053,7 +1048,7 @@ class SemanticAggregate(SemanticTable):
     def join_one(
         self,
         other: SemanticModel,
-        on: Callable[[Any, Any], ir.BooleanValue],
+        on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
         how: str = "inner",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
@@ -1062,12 +1057,13 @@ class SemanticAggregate(SemanticTable):
             right=other.op(),
             on=on,
             how=how,
+            cardinality="one",
         )
 
     def join_many(
         self,
         other: SemanticModel,
-        on: Callable[[Any, Any], ir.BooleanValue],
+        on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
         how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-many relationship semantics."""
@@ -1076,6 +1072,7 @@ class SemanticAggregate(SemanticTable):
             right=other.op(),
             on=on,
             how=how,
+            cardinality="many",
         )
 
     def join_cross(self, other: SemanticModel) -> SemanticJoin:
@@ -1085,6 +1082,7 @@ class SemanticAggregate(SemanticTable):
             right=other.op() if isinstance(other, SemanticModel) else other,
             on=None,
             how="cross",
+            cardinality="cross",
         )
 
     def join(self, *args, **kwargs):
@@ -1400,14 +1398,15 @@ class SemanticMutate(SemanticTable):
             calc_measures=new_calc_meas,
         )
 
-    def group_by(self, *keys: str) -> SemanticGroupBy:
+    def group_by(self, *keys: str | Deferred) -> SemanticGroupBy:
+        normalized = tuple(_normalize_to_name(k) for k in keys)
         source_with_unnests = reduce(
             lambda src, col: SemanticUnnestOp(source=src, column=col),
             self.nested_columns,
             self.op(),
         )
 
-        return SemanticGroupBy(source=source_with_unnests, keys=keys)
+        return SemanticGroupBy(source=source_with_unnests, keys=normalized)
 
     def chart(
         self,
