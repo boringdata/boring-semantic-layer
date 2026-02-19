@@ -1280,25 +1280,25 @@ class TestDeeplyNestedJoins:
 
     # -- order_by with short names on deeply nested joins --
 
-    def test_order_by_short_name_lambda(self, deep_model):
-        """order_by(lambda t: t.total_revenue.desc()) resolves short name."""
+    def test_order_by_fqdn_lambda(self, deep_model):
+        """order_by(lambda t: t["shops.total_revenue"].desc()) uses FQDN."""
         joined = self._build_full_chain(deep_model)
         df = (
             joined.group_by("continents.continent_name")
             .aggregate("shops.total_revenue")
-            .order_by(lambda t: t.total_revenue.desc())
+            .order_by(lambda t: t["shops.total_revenue"].desc())
             .execute()
         )
         # Asia has higher revenue (1200+800+600=2600) vs Europe (500+300+700=1500)
         assert df["continents.continent_name"].iloc[0] == "Asia"
 
-    def test_order_by_short_name_deferred(self, deep_model):
-        """order_by(_.total_revenue.desc()) resolves short name."""
+    def test_order_by_fqdn_deferred(self, deep_model):
+        """order_by(_["shops.total_revenue"].desc()) uses FQDN."""
         joined = self._build_full_chain(deep_model)
         df = (
             joined.group_by("continents.continent_name")
             .aggregate("shops.total_revenue")
-            .order_by(_.total_revenue.desc())
+            .order_by(_["shops.total_revenue"].desc())
             .execute()
         )
         assert df["continents.continent_name"].iloc[0] == "Asia"
@@ -1320,7 +1320,7 @@ class TestDeeplyNestedJoins:
         df = (
             joined.group_by("continents.continent_name")
             .aggregate("countries.total_area", "shops.total_revenue")
-            .order_by(lambda t: t.total_area.desc())
+            .order_by(lambda t: t["countries.total_area"].desc())
             .execute()
         )
         # Europe total_area (1644624) > Asia (1133925) due to fan-out
@@ -1400,8 +1400,8 @@ class TestDeeplyNestedJoins:
 
     # -- ambiguity detection --
 
-    def test_ambiguous_short_name_order_by_raises(self, deep_model):
-        """Short name matching columns from multiple tables raises error."""
+    def test_short_name_order_by_raises(self, deep_model):
+        """Short name in order_by raises after join — use FQDN bracket notation."""
         con = ibis.duckdb.connect(":memory:")
         left = con.create_table(
             "left_t",
@@ -1425,7 +1425,7 @@ class TestDeeplyNestedJoins:
         joined = left_st.join_one(right_st, on="key")
         agg = joined.aggregate("left.total", "right.total")
 
-        with pytest.raises(AttributeError, match="Ambiguous column 'total'"):
+        with pytest.raises(AttributeError, match="no attribute 'total'"):
             agg.order_by(lambda t: t.total.desc()).execute()
 
     def test_ambiguous_short_name_mutate_raises(self, deep_model):
@@ -1498,7 +1498,7 @@ class TestDeeplyNestedJoins:
         df = (
             joined.group_by("countries.country_name")
             .aggregate("shops.total_revenue", "shops.shop_count")
-            .order_by(lambda t: t.total_revenue.desc())
+            .order_by(lambda t: t["shops.total_revenue"].desc())
             .execute()
         )
         # Japan: Tokyo(1200+800) + Osaka(600) = 2600
@@ -1513,7 +1513,7 @@ class TestDeeplyNestedJoins:
         df = (
             joined.group_by("cities.city_name")
             .aggregate("shops.total_revenue")
-            .order_by(lambda t: t.total_revenue.desc())
+            .order_by(lambda t: t["shops.total_revenue"].desc())
             .execute()
         )
         # Tokyo: 1200+800 = 2000
