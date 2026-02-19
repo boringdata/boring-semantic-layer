@@ -607,7 +607,7 @@ def test_ibis_available_in_context():
     )
 
     # Test query with ibis.desc()
-    query_str = 'flights.group_by("carrier").aggregate("flight_count").order_by(ibis.desc("flight_count")).limit(5)'
+    query_str = 'flights.group_by("carrier").aggregate("flights.flight_count").order_by(ibis.desc("flights.flight_count")).limit(5)'
 
     result = safe_eval(query_str, context={**models, "ibis": ibis})
 
@@ -622,7 +622,7 @@ def test_ibis_available_in_context():
     df = result.execute()
     assert len(df) == 5
     # Should be sorted descending by flight_count
-    assert df["flight_count"].iloc[0] >= df["flight_count"].iloc[1]
+    assert df["flights.flight_count"].iloc[0] >= df["flights.flight_count"].iloc[1]
 
 
 class TestRecordsDisplayedLimit:
@@ -849,7 +849,7 @@ class TestChartTypeOverride:
         query = (
             flights.with_dimensions(month=lambda t: t.dep_time.month())
             .group_by("month")
-            .aggregate("flight_count")
+            .aggregate("flights.flight_count")
             .order_by("month")
         )
 

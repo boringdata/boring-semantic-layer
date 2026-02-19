@@ -259,7 +259,7 @@ class TestEChartsFieldSanitization:
 
         # Query with the joined field
         result = joined.group_by("carriers.name").aggregate(
-            "flight_count", "total_distance"
+            "flights.flight_count", "flights.total_distance"
         )
 
         # Create chart - this should sanitize the dotted field name
