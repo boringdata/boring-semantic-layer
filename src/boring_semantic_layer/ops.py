@@ -1282,48 +1282,6 @@ def _partition_agg_specs_by_source(
     return partitioned
 
 
-def _compute_preagg_grain(
-    table_name: str,
-    group_by_keys: tuple[str, ...],
-    join_tree_info: _JoinTreeInfo,
-    merged_dimensions: dict,
-    table_op: SemanticTableOp,
-) -> list[str]:
-    """Compute the pre-aggregation grain for a source table.
-
-    The grain consists of:
-    1. Join keys connecting this table to the join tree
-    2. Any group-by dimensions that belong to this table
-    """
-    grain: list[str] = []
-
-    # Add join keys for this table
-    raw_join_keys = join_tree_info.table_join_keys.get(table_name, set())
-    raw_tbl = _to_untagged(table_op)
-    raw_columns = set(raw_tbl.columns)
-    for jk in raw_join_keys:
-        if jk in raw_columns:
-            grain.append(jk)
-
-    # Add group-by dimensions that belong to this table
-    table_dims = _get_field_dict(table_op, "dimensions")
-    for gb_key in group_by_keys:
-        if gb_key in merged_dimensions:
-            # Prefixed dimension like "orders.customer_id"
-            if "." in gb_key:
-                prefix = gb_key.split(".", 1)[0]
-                short_name = gb_key.split(".", 1)[1]
-                if prefix == table_name and short_name in table_dims:
-                    # Use the raw column name for grouping on the raw table
-                    dim_fn = table_dims[short_name]
-                    if callable(dim_fn):
-                        col_name = dim_fn(raw_tbl).get_name()
-                        if col_name in raw_columns and col_name not in grain:
-                            grain.append(col_name)
-
-    return grain
-
-
 class SemanticAggregateOp(Relation):
     source: Relation
     keys: tuple[str, ...]
@@ -1564,8 +1522,6 @@ class SemanticAggregateOp(Relation):
 
         This prevents fan-out inflation when ``join_many`` is used.
         """
-        from .compile_all import _join_tables
-
         merged_dimensions = _get_merged_fields(all_roots, "dimensions")
         merged_base_measures = _get_merged_fields(all_roots, "measures")
         merged_calc_measures = _get_merged_fields(all_roots, "calc_measures")

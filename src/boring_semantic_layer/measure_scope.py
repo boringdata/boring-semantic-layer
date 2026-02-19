@@ -172,28 +172,42 @@ def _make_known_measures(
     return (known_tuple, frozenset(known_tuple))
 
 
+def _resolve_prefixed_column(tbl, name):
+    """Find a unique ``prefix.name`` match among dot-prefixed table columns.
+
+    Returns the matched full column name, or ``None`` if no match is found.
+    Raises ``LookupError`` when the short name is ambiguous (matches multiple
+    prefixed columns).
+    """
+    if not hasattr(tbl, "columns"):
+        return None
+    suffix = f".{name}"
+    matches = [c for c in tbl.columns if c.endswith(suffix)]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise LookupError(
+            f"Ambiguous column '{name}' matches multiple prefixed columns: "
+            f"{matches}. Use the full prefixed name to disambiguate."
+        )
+    return None
+
+
 def _resolve_column_short_name(tbl, name):
     """Resolve a short column name against a table that may have dot-prefixed columns.
 
     Tries direct column access first; on failure, searches for a unique
     ``prefix.name`` match among the table's columns.  Raises
-    ``AttributeError`` when the short name is ambiguous (matches multiple
-    prefixed columns).
+    ``AttributeError`` when the short name is ambiguous.
     """
     if hasattr(tbl, "columns") and name in tbl.columns:
         return tbl[name]
-
-    if hasattr(tbl, "columns"):
-        suffix = f".{name}"
-        matches = [c for c in tbl.columns if c.endswith(suffix)]
-        if len(matches) == 1:
-            return tbl[matches[0]]
-        if len(matches) > 1:
-            raise AttributeError(
-                f"Ambiguous column '{name}' matches multiple prefixed columns: "
-                f"{matches}. Use the full prefixed name to disambiguate."
-            )
-
+    try:
+        full = _resolve_prefixed_column(tbl, name)
+    except LookupError as exc:
+        raise AttributeError(str(exc)) from None
+    if full is not None:
+        return tbl[full]
     return getattr(tbl, name)
 
 
@@ -204,18 +218,12 @@ def _resolve_column_item(tbl, name):
     """
     if hasattr(tbl, "columns") and name in tbl.columns:
         return tbl[name]
-
-    if hasattr(tbl, "columns"):
-        suffix = f".{name}"
-        matches = [c for c in tbl.columns if c.endswith(suffix)]
-        if len(matches) == 1:
-            return tbl[matches[0]]
-        if len(matches) > 1:
-            raise KeyError(
-                f"Ambiguous column '{name}' matches multiple prefixed columns: "
-                f"{matches}. Use the full prefixed name to disambiguate."
-            )
-
+    try:
+        full = _resolve_prefixed_column(tbl, name)
+    except LookupError as exc:
+        raise KeyError(str(exc)) from None
+    if full is not None:
+        return tbl[full]
     return tbl[name]
 
 

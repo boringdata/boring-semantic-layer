@@ -460,7 +460,9 @@ def deserialize_resolver(data: tuple):
 
     if tag == "binop":
         _, op_name, left_data, right_data = data
-        func = _OPERATOR_MAP[op_name]
+        func = _OPERATOR_MAP.get(op_name)
+        if func is None:
+            raise ValueError(f"Unknown binary operator: {op_name!r}")
         left = deserialize_resolver(left_data)
         right = deserialize_resolver(right_data)
         binop = object.__new__(BinaryOperator)
@@ -471,7 +473,9 @@ def deserialize_resolver(data: tuple):
 
     if tag == "unop":
         _, op_name, arg_data = data
-        func = _OPERATOR_MAP[op_name]
+        func = _OPERATOR_MAP.get(op_name)
+        if func is None:
+            raise ValueError(f"Unknown unary operator: {op_name!r}")
         arg = deserialize_resolver(arg_data)
         unop = object.__new__(UnaryOperator)
         object.__setattr__(unop, "func", func)
