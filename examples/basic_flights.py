@@ -21,14 +21,14 @@ def main():
 
     flights = models["flights"]
 
-    result = flights.group_by("origin").aggregate("flight_count").limit(10).execute()
+    result = flights.group_by("flights.origin").aggregate("flights.flight_count").limit(10).execute()
     print("\nFlight counts by origin:")
     print(result)
 
     result = (
-        flights.group_by("origin", "carrier")
-        .aggregate("flight_count", "avg_distance")
-        .order_by(_.flight_count.desc())
+        flights.group_by("flights.origin", "flights.carrier")
+        .aggregate("flights.flight_count", "flights.avg_distance")
+        .order_by(lambda t: t["flights.flight_count"].desc())
         .limit(10)
         .execute()
     )
@@ -41,9 +41,9 @@ def main():
     )
 
     result = (
-        flights_enhanced.group_by("carrier")
-        .aggregate("flight_count", "total_distance", "distance_per_flight")
-        .order_by(_.distance_per_flight.desc())
+        flights_enhanced.group_by("flights.carrier")
+        .aggregate("flights.flight_count", "flights.total_distance", "distance_per_flight")
+        .order_by(lambda t: t.distance_per_flight.desc())
         .limit(10)
         .execute()
     )
@@ -52,8 +52,8 @@ def main():
 
     long_haul_flights = flights_enhanced.filter(lambda t: t.distance > 1000)
     result = (
-        long_haul_flights.group_by("carrier")
-        .aggregate("flight_count", "avg_distance")
+        long_haul_flights.group_by("flights.carrier")
+        .aggregate("flights.flight_count", "flights.avg_distance")
         .limit(10)
         .execute()
     )

@@ -223,13 +223,13 @@ flights:
 
         # Test query with joined dimension (use dot notation)
         result = (
-            flights.group_by("flights.origin", "carriers.name").aggregate("flight_count").execute()
+            flights.group_by("flights.origin", "carriers.name").aggregate("flights.flight_count").execute()
         )
 
         # Verify the join worked
         assert "flights.origin" in result.columns
         assert "carriers.name" in result.columns
-        assert "flight_count" in result.columns
+        assert "flights.flight_count" in result.columns
         assert len(result) > 0
 
     finally:
@@ -916,7 +916,7 @@ def test_from_config_with_joins(sample_tables):
     flights = models["flights"]
 
     # Test query with joined dimension
-    result = flights.group_by("flights.origin", "carriers.name").aggregate("flight_count").execute()
+    result = flights.group_by("flights.origin", "carriers.name").aggregate("flights.flight_count").execute()
 
     assert "flights.origin" in result.columns
     assert "carriers.name" in result.columns

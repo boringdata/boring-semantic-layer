@@ -220,7 +220,7 @@ class TestChartFieldNameSanitization:
         joined = flights_sm.join_many(carriers_sm, lambda f, c: f.carrier == c.code)
 
         # Query with the joined field
-        result = joined.group_by("carriers.name").aggregate("flight_count", "total_distance")
+        result = joined.group_by("carriers.name").aggregate("flights.flight_count", "flights.total_distance")
 
         # Create chart - this should sanitize the dotted field name
         chart = result.chart(backend="altair")

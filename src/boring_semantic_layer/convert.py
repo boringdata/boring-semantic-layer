@@ -102,11 +102,6 @@ class _Resolver:
         if has_prefixed_dims:
             return _PrefixProxy(resolver=self, prefix=name)
 
-        # Try suffix match (e.g., "state" matches "airports.state")
-        for dim_name, dim_func in self._dims.items():
-            if dim_name.endswith(f".{name}"):
-                return dim_func(self._t).name(dim_name)
-
         # Fallback to raw table column
         return getattr(self._t, name)
 
@@ -127,29 +122,11 @@ class _AggResolver:
     _meas: dict[str, Callable]
 
     def __getattr__(self, key: str):
-        return (
-            self._dims[key](self._t)
-            if key in self._dims
-            else self._meas[key](self._t)
-            if key in self._meas
-            else next(
-                (
-                    dim_func(self._t)
-                    for dim_name, dim_func in self._dims.items()
-                    if dim_name.endswith(f".{key}")
-                ),
-                None,
-            )
-            or next(
-                (
-                    meas_func(self._t)
-                    for meas_name, meas_func in self._meas.items()
-                    if meas_name.endswith(f".{key}")
-                ),
-                None,
-            )
-            or getattr(self._t, key)
-        )
+        if key in self._dims:
+            return self._dims[key](self._t)
+        if key in self._meas:
+            return self._meas[key](self._t)
+        return getattr(self._t, key)
 
     def __getitem__(self, key: str):
         return getattr(self._t, key)
