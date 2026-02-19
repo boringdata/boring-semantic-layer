@@ -23,6 +23,7 @@ from .expr import (
     to_tagged,
     to_untagged,
 )
+from .xorq_convert import from_tagged
 from .graph_utils import (
     graph_bfs,
     graph_invert,
@@ -47,6 +48,7 @@ __all__ = [
     "to_semantic_table",
     "to_tagged",
     "to_untagged",
+    "from_tagged",
     "entity_dimension",
     "time_dimension",
     "SemanticModel",

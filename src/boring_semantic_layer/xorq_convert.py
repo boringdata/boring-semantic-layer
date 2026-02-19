@@ -6,7 +6,7 @@ from typing import Any
 from attrs import frozen
 from returns.result import Failure, Result, safe
 
-from .utils import expr_to_ibis_string, expr_to_structured, ibis_string_to_expr, structured_to_expr
+from .utils import expr_to_ibis_string, expr_to_structured, ibis_string_to_expr, lambda_to_string, safe_eval, structured_to_expr
 
 
 @frozen
@@ -361,6 +361,19 @@ def _extract_order_by(op) -> dict[str, Any]:
     return {"order_keys": order_keys}
 
 
+@_register_extractor("SemanticJoinOp")
+def _extract_join(op) -> dict[str, Any]:
+    metadata = {"how": op.how}
+    if op.on is not None:
+        from .ops import _CallableWrapper
+
+        on_fn = op.on._fn if isinstance(op.on, _CallableWrapper) else op.on
+        on_str = lambda_to_string(on_fn).value_or(None)
+        if on_str:
+            metadata["on"] = on_str
+    return metadata
+
+
 def _extract_op_metadata(op) -> dict[str, Any]:
     op_type = type(op).__name__
     metadata = {
@@ -376,8 +389,22 @@ def _extract_op_metadata(op) -> dict[str, Any]:
     def extract_source():
         return _extract_op_metadata(op.source)
 
+    @safe
+    def extract_left():
+        return _extract_op_metadata(op.left)
+
+    @safe
+    def extract_right():
+        return _extract_op_metadata(op.right)
+
     if source_metadata := extract_source().value_or(None):
         metadata["source"] = source_metadata
+
+    if left_metadata := extract_left().value_or(None):
+        metadata["left"] = left_metadata
+
+    if right_metadata := extract_right().value_or(None):
+        metadata["right"] = right_metadata
 
     return metadata
 
@@ -724,6 +751,57 @@ def _reconstruct_limit(metadata: dict, xorq_expr, source):
     if source is None:
         raise ValueError("SemanticLimitOp requires source")
     return source.limit(n=int(metadata.get("n", 0)), offset=int(metadata.get("offset", 0)))
+
+
+def _deserialize_join_predicate(on_str: str) -> Callable:
+    """Deserialize a two-arg lambda string back to a callable.
+
+    The join predicate is a two-arg lambda like ``lambda f, c: f.carrier == c.code``.
+    We use ``safe_eval`` with ``allowed_names=None`` (skip name validation) because
+    the parameter names are arbitrary.
+    """
+    import ibis
+
+    try:
+        from xorq import api as xo
+        from xorq.vendor import ibis as xorq_ibis
+
+        eval_context = {"ibis": ibis, "xo": xo, "xorq_ibis": xorq_ibis}
+    except ImportError:
+        eval_context = {"ibis": ibis}
+
+    result = safe_eval(on_str, context=eval_context, allowed_names=None)
+    if isinstance(result, Failure):
+        raise result.failure()
+    return result.unwrap()
+
+
+@_register_reconstructor("SemanticJoinOp")
+def _reconstruct_join(metadata: dict, xorq_expr, source):
+    from . import expr as bsl_expr
+
+    left_metadata = _parse_field(metadata, "left")
+    right_metadata = _parse_field(metadata, "right")
+
+    if not left_metadata or not right_metadata:
+        raise ValueError("SemanticJoinOp requires both 'left' and 'right' metadata")
+
+    left_model = _reconstruct_bsl_operation(left_metadata, xorq_expr)
+    right_model = _reconstruct_bsl_operation(right_metadata, xorq_expr)
+
+    how = metadata.get("how", "inner")
+    on_str = metadata.get("on")
+
+    if on_str is None:
+        return bsl_expr.SemanticJoin(
+            left=left_model.op() if hasattr(left_model, "op") else left_model,
+            right=right_model.op() if hasattr(right_model, "op") else right_model,
+            on=None,
+            how=how,
+        )
+
+    predicate = _deserialize_join_predicate(on_str)
+    return left_model.join_many(right_model, on=predicate, how=how)
 
 
 def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
