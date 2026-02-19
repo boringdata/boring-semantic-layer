@@ -73,6 +73,38 @@ class TestBasicQuery:
         assert len(result) == 1
         assert "total_passengers" in result.columns
 
+    def test_query_with_model_prefixed_fields_on_standalone_model(self, flights_data):
+        """Test query() resolves model-prefixed fields for standalone models."""
+        st = (
+            to_semantic_table(flights_data, "flights")
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(total_passengers=lambda t: t.passengers.sum())
+        )
+
+        result = st.query(
+            dimensions=["flights.carrier"],
+            measures=["flights.total_passengers"],
+            order_by=[("flights.total_passengers", "desc")],
+        ).execute()
+
+        assert len(result) == 3
+        assert "carrier" in result.columns
+        assert "total_passengers" in result.columns
+
+    def test_query_does_not_strip_non_matching_prefix(self, flights_data):
+        """Test query() keeps unknown prefixes and surfaces a field error."""
+        st = (
+            to_semantic_table(flights_data, "flights")
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(total_passengers=lambda t: t.passengers.sum())
+        )
+
+        with pytest.raises(Exception, match="wrong.carrier"):
+            st.query(
+                dimensions=["wrong.carrier"],
+                measures=["flights.total_passengers"],
+            ).execute()
+
     def test_query_with_order_by(self, flights_data):
         """Test query with ordering."""
         st = (

@@ -223,6 +223,30 @@ class TestQueryModel:
             assert "flight_count" in result.content[0].text
 
     @pytest.mark.asyncio
+    async def test_query_with_prefixed_fields_on_standalone_model(self, sample_models):
+        """Test that model-prefixed fields resolve for standalone models."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "query_model",
+                {
+                    "model_name": "flights",
+                    "dimensions": ["flights.carrier"],
+                    "measures": ["flights.flight_count"],
+                    "order_by": [["flights.flight_count", "desc"]],
+                    "get_chart": False,
+                },
+            )
+
+            data = json.loads(result.content[0].text)
+            assert "records" in data
+            assert len(data["records"]) > 0
+            first_row = data["records"][0]
+            assert "carrier" in first_row
+            assert "flight_count" in first_row
+
+    @pytest.mark.asyncio
     async def test_query_with_filter(self, sample_models):
         """Test query with filter."""
         mcp = MCPSemanticModel(models=sample_models)

@@ -328,6 +328,48 @@ def _make_order_key(field: str, direction: str):
     return ibis.desc(field) if direction.lower() == "desc" else field
 
 
+def _normalize_field_name(
+    field_name: str,
+    known_fields: set[str],
+    expected_prefix: str | None = None,
+) -> str:
+    """Resolve model-prefixed field names for standalone models."""
+    if field_name in known_fields or "." not in field_name:
+        return field_name
+
+    prefix, unprefixed = field_name.split(".", 1)
+    if expected_prefix is None or prefix != expected_prefix:
+        return field_name
+
+    return unprefixed if unprefixed in known_fields else field_name
+
+
+def _normalize_fields(
+    fields: Sequence[str] | None,
+    known_fields: set[str],
+    expected_prefix: str | None = None,
+) -> list[str]:
+    """Normalize a list of field names against known semantic fields."""
+    if not fields:
+        return []
+    return [_normalize_field_name(field, known_fields, expected_prefix) for field in fields]
+
+
+def _normalize_order_by(
+    order_by: Sequence[tuple[str, str]] | None,
+    known_fields: set[str],
+    expected_prefix: str | None = None,
+) -> list[tuple[str, str]] | None:
+    """Normalize order_by fields using the same fallback as dimensions/measures."""
+    if not order_by:
+        return order_by
+
+    return [
+        (_normalize_field_name(field, known_fields, expected_prefix), direction)
+        for field, direction in order_by
+    ]
+
+
 def query(
     semantic_table: Any,  # SemanticModel, but avoiding circular import
     dimensions: Sequence[str] | None = None,
@@ -385,7 +427,18 @@ def query(
     from .ops import Dimension
 
     result = semantic_table
-    dimensions = dimensions or []
+    model_name = getattr(result, "name", None)
+    known_dimensions = set(result.get_dimensions())
+    known_measures = set(result.get_measures()) | set(result.get_calculated_measures())
+    known_order_fields = known_dimensions | known_measures
+
+    dimensions = _normalize_fields(dimensions, known_dimensions, expected_prefix=model_name)
+    measures = (
+        _normalize_fields(measures, known_measures, expected_prefix=model_name)
+        if measures is not None
+        else None
+    )
+    order_by = _normalize_order_by(order_by, known_order_fields, expected_prefix=model_name)
     filters = list(filters or [])  # Copy to avoid mutating input
 
     # Step 0: Add time_range as a filter if specified
