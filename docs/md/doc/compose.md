@@ -144,7 +144,7 @@ Now you can query across all joined tables:
 result = (
     full_model
     .group_by( "aircraft.model")
-    .aggregate("flight_count", "total_passengers", "total_capacity")
+    .aggregate("flights.flight_count", "flights.total_passengers", "aircraft.total_capacity")
 )
 ```
 
