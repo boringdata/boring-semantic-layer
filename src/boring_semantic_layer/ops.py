@@ -237,6 +237,62 @@ def _collect_measure_refs(expr, refs_out: set):
         _collect_measure_refs(expr.right, refs_out)
 
 
+def _extract_missing_column_name(exc: Exception) -> str | None:
+    """Extract a missing column/attribute name from common resolution errors."""
+    message = str(exc)
+    patterns = (
+        r"has no attribute ['\"]([^'\"]+)['\"]",
+        r"non-existent column ['\"]([^'\"]+)['\"]",
+        r"Column ['\"]([^'\"]+)['\"] is not found",
+        r"KeyError: ['\"]([^'\"]+)['\"]",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, message)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _mutate_dimensions_with_dependencies(
+    tbl: ir.Table,
+    dimension_names: Iterable[str],
+    merged_dimensions: Mapping[str, Any],
+) -> ir.Table:
+    """Mutate requested dimensions, recursively materializing derived deps first."""
+    resolving: list[str] = []
+
+    def resolve_one(dim_name: str, current_tbl: ir.Table) -> ir.Table:
+        if dim_name not in merged_dimensions:
+            return current_tbl
+        if dim_name in resolving:
+            cycle = " -> ".join([*resolving, dim_name])
+            raise ValueError(f"Circular dimension dependency detected: {cycle}")
+
+        resolving.append(dim_name)
+        try:
+            while True:
+                try:
+                    dim_expr = merged_dimensions[dim_name](current_tbl)
+                    return current_tbl.mutate(**{dim_name: dim_expr})
+                except Exception as exc:
+                    missing = _extract_missing_column_name(exc)
+                    if (
+                        missing
+                        and missing in merged_dimensions
+                        and missing != dim_name
+                        and missing not in resolving
+                    ):
+                        current_tbl = resolve_one(missing, current_tbl)
+                        continue
+                    raise
+        finally:
+            resolving.pop()
+
+    for dim_name in dimension_names:
+        tbl = resolve_one(dim_name, tbl)
+    return tbl
+
+
 def _classify_dependencies(
     fields: list,
     dimensions: dict,
@@ -1070,6 +1126,77 @@ def _collect_all_measure_refs(calc_exprs) -> frozenset[str]:
     return frozenset(all_refs)
 
 
+def _expand_calc_measure_refs(
+    expr: Any,
+    merged_base_measures: dict,
+    merged_calc_measures: dict,
+    tbl: ir.Table,
+    cache: dict[str, Any] | None = None,
+    path: tuple[str, ...] = (),
+) -> Any:
+    """Inline calc-measure references transitively for multi-layer formulas."""
+    cache = {} if cache is None else cache
+
+    def _lift_to_allof(value: Any) -> Any:
+        """Lift an expanded expression into totals-space via AllOf on refs."""
+        if isinstance(value, MeasureRef):
+            return AllOf(value)
+        if isinstance(value, BinOp):
+            return BinOp(
+                op=value.op,
+                left=_lift_to_allof(value.left),
+                right=_lift_to_allof(value.right),
+            )
+        return value
+
+    if isinstance(expr, MeasureRef):
+        ref_name = expr.name
+        if ref_name not in merged_calc_measures:
+            return expr
+        if ref_name in cache:
+            return cache[ref_name]
+        if ref_name in path:
+            cycle = " -> ".join((*path, ref_name))
+            raise ValueError(f"Circular calculated measure dependency detected: {cycle}")
+
+        resolved = _resolve_aggregation_exprs(
+            merged_calc_measures[ref_name], merged_base_measures, merged_calc_measures, tbl
+        )
+        expanded = _expand_calc_measure_refs(
+            resolved,
+            merged_base_measures,
+            merged_calc_measures,
+            tbl,
+            cache,
+            (*path, ref_name),
+        )
+        cache[ref_name] = expanded
+        return expanded
+
+    if isinstance(expr, BinOp):
+        return BinOp(
+            op=expr.op,
+            left=_expand_calc_measure_refs(
+                expr.left, merged_base_measures, merged_calc_measures, tbl, cache, path
+            ),
+            right=_expand_calc_measure_refs(
+                expr.right, merged_base_measures, merged_calc_measures, tbl, cache, path
+            ),
+        )
+
+    if isinstance(expr, AllOf):
+        if isinstance(expr.ref, MeasureRef):
+            expanded_ref = _expand_calc_measure_refs(
+                expr.ref, merged_base_measures, merged_calc_measures, tbl, cache, path
+            )
+            if isinstance(expanded_ref, MeasureRef):
+                return AllOf(expanded_ref)
+            return _lift_to_allof(expanded_ref)
+        return expr
+
+    return expr
+
+
 def _build_aggregation_plan(
     aggs: dict,
     keys: tuple,
@@ -1092,7 +1219,22 @@ def _build_aggregation_plan(
     agg_specs = FrozenDict({s.name: _make_agg_callable(s.value) for s in agg_specs_list})
     calc_specs = FrozenDict({s.name: s.value for s in calc_specs_list})
 
-    referenced = _collect_all_measure_refs(calc_specs.values())
+    calc_cache: dict[str, Any] = {}
+    expanded_calc_specs = FrozenDict(
+        {
+            name: _expand_calc_measure_refs(
+                expr,
+                merged_base_measures,
+                merged_calc_measures,
+                tbl,
+                cache=calc_cache,
+                path=(name,),
+            )
+            for name, expr in calc_specs.items()
+        }
+    )
+
+    referenced = _collect_all_measure_refs(expanded_calc_specs.values())
     additional_aggs = {
         ref: _make_agg_callable(merged_base_measures[ref])
         for ref in referenced
@@ -1103,7 +1245,7 @@ def _build_aggregation_plan(
 
     return _AggregationPlan(
         agg_specs=final_agg_specs,
-        calc_specs=calc_specs,
+        calc_specs=expanded_calc_specs,
         requested_measures=tuple(aggs.keys()),
         group_by_cols=tuple(keys),
     )
@@ -1231,7 +1373,11 @@ def _attach_dim_column(pt, gb_col, measure_names, join_tree_info,
     if dim_table_op is None or dim_fn is None:
         return pt
 
-    raw = _to_untagged(dim_table_op).mutate(**{gb_col: dim_fn(_to_untagged(dim_table_op))})
+    raw = _mutate_dimensions_with_dependencies(
+        _to_untagged(dim_table_op),
+        [gb_col],
+        merged_dimensions,
+    )
     raw_columns = frozenset(raw.columns)
     current_grain = tuple(
         c for c in pt.columns if c not in measure_names
@@ -1515,8 +1661,11 @@ class SemanticAggregateOp(Relation):
         merged_base_measures = _get_merged_fields(all_roots, "measures")
         merged_calc_measures = _get_merged_fields(all_roots, "calc_measures")
 
-        dim_mutations = {k: merged_dimensions[k](tbl) for k in self.keys if k in merged_dimensions}
-        tbl = tbl.mutate(**dim_mutations) if dim_mutations else tbl
+        tbl = _mutate_dimensions_with_dependencies(
+            tbl,
+            [k for k in self.keys if k in merged_dimensions],
+            merged_dimensions,
+        )
 
         scope = (
             ColumnScope(_tbl=tbl)
@@ -1568,12 +1717,11 @@ class SemanticAggregateOp(Relation):
         # --- 1. Try to build the full joined table (for scope / dim bridge) ---
         try:
             tbl = join_op.to_untagged(parent_requirements=self.required_columns)
-            dim_mutations = {
-                k: merged_dimensions[k](tbl)
-                for k in self.keys
-                if k in merged_dimensions
-            }
-            tbl = tbl.mutate(**dim_mutations) if dim_mutations else tbl
+            tbl = _mutate_dimensions_with_dependencies(
+                tbl,
+                [k for k in self.keys if k in merged_dimensions],
+                merged_dimensions,
+            )
         except Exception:
             tbl = None  # chasm / column collision – work without full join
 

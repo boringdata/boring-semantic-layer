@@ -230,3 +230,34 @@ def test_inline_measure_with_different_reference_styles():
     assert pytest.approx(df.pct_bracket.sum()) == 1.0
     assert all(pytest.approx(p1) == p2 for p1, p2 in zip(df.pct_attr, df.pct_string, strict=False))
     assert all(pytest.approx(p1) == p2 for p1, p2 in zip(df.pct_attr, df.pct_bracket, strict=False))
+
+
+def test_all_of_multilayer_calc_measure():
+    """t.all() should work when pointing at a calculated measure chain."""
+    con = ibis.duckdb.connect(":memory:")
+    flights = pd.DataFrame(
+        {
+            "carrier": ["AA", "AA", "UA", "UA"],
+            "distance": [100, 200, 300, 400],
+        }
+    )
+    f_tbl = con.create_table("flights", flights)
+
+    flights_st = (
+        to_semantic_table(f_tbl, "flights")
+        .with_measures(
+            total_distance=lambda t: t.distance.sum(),
+            total_flights=lambda t: t.count(),
+            avg_distance=lambda t: t.total_distance / t.total_flights,
+            avg_distance_plus_one=lambda t: t.avg_distance + 1,
+        )
+        .with_measures(
+            pct_of_total=lambda t: t.avg_distance_plus_one / t.all(t.avg_distance_plus_one),
+        )
+    )
+
+    df = flights_st.group_by("carrier").aggregate("pct_of_total").execute()
+
+    assert len(df) == 2
+    assert "pct_of_total" in df.columns
+    assert pytest.approx(sorted(df.pct_of_total.tolist())) == sorted([151 / 251, 351 / 251])
