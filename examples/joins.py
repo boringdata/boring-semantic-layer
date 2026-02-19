@@ -31,12 +31,12 @@ def main():
     print("Example 1: Multi-level joins (flights -> aircraft -> models)")
     print("=" * 70)
 
-    flights_by_origin = flights.group_by("origin").aggregate("flight_count").limit(10).execute()
+    flights_by_origin = flights.group_by("flights.origin").aggregate("flights.flight_count").limit(10).execute()
     print("\nFlights by origin:")
     print(flights_by_origin)
 
     aircraft_by_type = (
-        aircraft.group_by("aircraft_type_id").aggregate("aircraft_count").limit(10).execute()
+        aircraft.group_by("aircraft.aircraft_type_id").aggregate("aircraft.aircraft_count").limit(10).execute()
     )
     print("\nAircraft by type:")
     print(aircraft_by_type)
@@ -51,9 +51,9 @@ def main():
     # Flights model has joins to carriers and airports defined in YAML
     # We can access their dimensions through the join relationship
     result = (
-        flights.group_by("origin", "carrier")
-        .aggregate("flight_count", "total_distance")
-        .order_by(ibis._.flight_count.desc())
+        flights.group_by("flights.origin", "flights.carrier")
+        .aggregate("flights.flight_count", "flights.total_distance")
+        .order_by(lambda t: t["flights.flight_count"].desc())
         .limit(10)
         .execute()
     )

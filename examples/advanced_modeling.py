@@ -150,7 +150,7 @@ def main():
             "flights.total_distance",
             "carriers.carrier_count",  # 3 levels deep!
         )
-        .order_by(lambda t: t.flight_count.desc())
+        .order_by(lambda t: t["flights.flight_count"].desc())
         .limit(10)
         .execute()
     )
@@ -176,7 +176,7 @@ def main():
     result = (
         flights_full.group_by("carriers.nickname", "models.manufacturer")
         .aggregate("flights.flight_count")
-        .order_by(lambda t: t.flight_count.desc())
+        .order_by(lambda t: t["flights.flight_count"].desc())
         .limit(15)
         .execute()
     )
@@ -206,7 +206,7 @@ def main():
     result = (
         texas_flights.group_by("airports.city")
         .aggregate("flights.flight_count", "flights.total_distance")
-        .order_by(lambda t: t.flight_count.desc())
+        .order_by(lambda t: t["flights.flight_count"].desc())
         .limit(10)
         .execute()
     )
@@ -240,8 +240,8 @@ def main():
             "flights.total_distance",
         )
         .mutate(
-            flights_per_airport=lambda t: t.flight_count / t.airport_count,
-            avg_distance_per_flight=lambda t: t.total_distance / t.flight_count,
+            flights_per_airport=lambda t: t["flights.flight_count"] / t["airports.airport_count"],
+            avg_distance_per_flight=lambda t: t["flights.total_distance"] / t["flights.flight_count"],
         )
         .order_by(lambda t: t.flights_per_airport.desc())
         .limit(10)
@@ -264,7 +264,7 @@ def main():
         .aggregate("flights.flight_count")
         .mutate(
             pct_of_flights=lambda t: (
-                t.flight_count / t.flight_count.sum() * 100
+                t["flights.flight_count"] / t["flights.flight_count"].sum() * 100
             ),
         )
         .order_by(lambda t: t.pct_of_flights.desc())

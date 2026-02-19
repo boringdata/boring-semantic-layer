@@ -193,7 +193,7 @@ def test_prefixed_measures_with_string():
             # Reference prefixed measure with bracket notation (dots not allowed in Python identifiers)
             pct_full=lambda t: t["flights.flight_count"] / t.all("flights.flight_count"),
             # Reference with short name (should resolve to flights.flight_count)
-            pct_short=lambda t: t.flight_count / t.all("flight_count"),
+            pct_short=lambda t: t["flights.flight_count"] / t.all("flights.flight_count"),
         )
     )
 
