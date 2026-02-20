@@ -81,7 +81,7 @@ def main():
     df = (
         joined
         .group_by(_["customers.region"])
-        .aggregate(_.total_revenue, _.order_count)
+        .aggregate(_["orders.total_revenue"], _["orders.order_count"])
         .execute()
     )
     print(df, "\n")
@@ -92,7 +92,7 @@ def main():
     df = (
         big_orders
         .group_by(_["customers.region"])
-        .aggregate(_.total_revenue)
+        .aggregate(_["orders.total_revenue"])
         .execute()
     )
     print(df, "\n")
@@ -102,9 +102,9 @@ def main():
     df = (
         joined
         .group_by(_["customers.region"])
-        .aggregate(_.total_revenue, _.order_count)
-        .mutate(avg_order_value=_.total_revenue / _.order_count)
-        .order_by(_.avg_order_value.desc())
+        .aggregate(_["orders.total_revenue"], _["orders.order_count"])
+        .mutate(avg_order_value=lambda t: t["orders.total_revenue"] / t["orders.order_count"])
+        .order_by(lambda t: t.avg_order_value.desc())
         .execute()
     )
     print(df, "\n")
@@ -114,8 +114,8 @@ def main():
     df = (
         joined
         .group_by(_["customers.name"], _["customers.region"])
-        .aggregate("total_revenue", _.total_qty)
-        .order_by(_.total_revenue.desc())
+        .aggregate("orders.total_revenue", _["orders.total_qty"])
+        .order_by(lambda t: t["orders.total_revenue"].desc())
         .execute()
     )
     print(df)

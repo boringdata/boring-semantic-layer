@@ -253,7 +253,7 @@ class TestEndToEndNotationConsistency:
             .with_measures(flight_count=lambda t: t.count())
             .join_many(carriers_st_dot, lambda f, c: f.carrier == c.code)
             .with_dimensions(nickname=lambda t: t.nickname)
-            .with_measures(pct=lambda t: t.flight_count / t.all(t.flight_count))
+            .with_measures(pct=lambda t: t["flights.flight_count"] / t.all(t["flights.flight_count"]))
         )
 
         result_dot = (
@@ -274,7 +274,7 @@ class TestEndToEndNotationConsistency:
             .with_measures(flight_count=lambda t: t.count())
             .join_many(carriers_st_bracket, lambda f, c: f["carrier"] == c["code"])
             .with_dimensions(nickname=lambda t: t["nickname"])
-            .with_measures(pct=lambda t: t["flight_count"] / t.all(t["flight_count"]))
+            .with_measures(pct=lambda t: t["flights.flight_count"] / t.all(t["flights.flight_count"]))
         )
 
         result_bracket = (

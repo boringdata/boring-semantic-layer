@@ -63,7 +63,7 @@ def main():
     )
 
     joined = customers.join_one(orders, on="customer_id")
-    query = joined.group_by("customers.customer_id", "customers.name").aggregate("total_amount")
+    query = joined.group_by("customers.customer_id", "customers.name").aggregate("orders.total_amount")
 
     print("=" * 80)
     print("PROJECTION PUSHDOWN OPTIMIZATION (ALWAYS ENABLED)")

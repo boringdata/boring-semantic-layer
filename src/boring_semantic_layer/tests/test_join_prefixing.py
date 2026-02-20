@@ -105,8 +105,8 @@ class TestBasicPrefixing:
         assert alice_row["orders.record_count"] == 2  # 2 orders
         assert alice_row["items.record_count"] == 3  # 3 items
 
-    def test_short_name_resolves_to_first_match(self, ecommerce_tables):
-        """Test that short names resolve to the first prefixed match."""
+    def test_short_name_requires_fqdn_after_join(self, ecommerce_tables):
+        """Test that short names fail after join and FQDN is required."""
         orders_tbl = ecommerce_tables["orders"]
         customers_tbl = ecommerce_tables["customers"]
 
@@ -127,16 +127,18 @@ class TestBasicPrefixing:
             lambda o, c: o.customer_id == c.customer_id,
         )
 
-        # Short name should resolve to orders.total (first match)
+        # Short name should fail — FQDN is required after join
+        with pytest.raises(Exception):
+            joined.group_by("orders.customer_id").aggregate("total").execute()
+
+        # FQDN should work
         result = (
             joined.group_by("orders.customer_id")
-            .aggregate("total")  # Should be orders.total
+            .aggregate("orders.total")
             .execute()
         )
-
-        assert "total" in result.columns
-        # Alice's total should be sum of order amounts (100 + 150 = 250), not count
-        alice_total = result[result["orders.customer_id"] == 101]["total"].iloc[0]
+        assert "orders.total" in result.columns
+        alice_total = result[result["orders.customer_id"] == 101]["orders.total"].iloc[0]
         assert alice_total == 250.0
 
     def test_explicit_prefix_overrides_short_name(self, ecommerce_tables):

@@ -132,7 +132,7 @@ def test_filter_before_aggregation_on_joined_table():
     filtered = joined.filter(lambda t: t.country == "US")
     aggregated = aggregate_(
         group_by_(filtered, "customers.name"),
-        lambda t: t["total_amount"],
+        lambda t: t["orders.total_amount"],
     )
 
     result = aggregated.execute()

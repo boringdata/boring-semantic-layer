@@ -379,7 +379,7 @@ class TestFiltersWithJoins:
         result = (
             joined_model.query(
                 dimensions=["customers.name"],
-                measures=["total_amount"],
+                measures=["orders.total_amount"],
                 filters=[{"field": "customers.country", "operator": "=", "value": "US"}],
             )
             .execute()
@@ -395,7 +395,7 @@ class TestFiltersWithJoins:
         result = (
             joined_model.query(
                 dimensions=["customers.name"],
-                measures=["total_amount"],
+                measures=["orders.total_amount"],
                 filters=[
                     {"field": "customers.country", "operator": "=", "value": "US"},
                     {"field": "customers.tier", "operator": "=", "value": "gold"},
@@ -413,7 +413,7 @@ class TestFiltersWithJoins:
         result = (
             joined_model.filter(lambda t: t.country == "US")
             .group_by("customers.name")
-            .aggregate("total_amount")
+            .aggregate("orders.total_amount")
             .execute()
             .reset_index(drop=True)
         )
@@ -427,7 +427,7 @@ class TestFiltersWithJoins:
         result = (
             joined_model.filter(lambda t: t.customers.country == "US")
             .group_by("customers.name")
-            .aggregate("total_amount")
+            .aggregate("orders.total_amount")
             .execute()
             .reset_index(drop=True)
         )
@@ -441,7 +441,7 @@ class TestFiltersWithJoins:
         result = (
             joined_model.filter(lambda t: t.customers.tier.isin(["gold"]))
             .group_by("customers.name")
-            .aggregate("total_amount")
+            .aggregate("orders.total_amount")
             .execute()
             .reset_index(drop=True)
         )
@@ -546,7 +546,7 @@ class TestJoinedModelChainedAccess:
         result = (
             triple_joined_model.filter(lambda t: t.regions.region_name == "North")
             .group_by("customers.name")
-            .aggregate("total_amount")
+            .aggregate("orders.total_amount")
             .execute()
             .reset_index(drop=True)
         )
@@ -560,7 +560,7 @@ class TestJoinedModelChainedAccess:
         result = (
             triple_joined_model.filter(lambda t: t.regions.country.isin(["US"]))
             .group_by("regions.region_name")
-            .aggregate("order_count")
+            .aggregate("orders.order_count")
             .execute()
             .reset_index(drop=True)
         )
@@ -577,7 +577,7 @@ class TestJoinedModelChainedAccess:
                 )
             )
             .group_by("customers.name")
-            .aggregate("total_amount")
+            .aggregate("orders.total_amount")
             .execute()
             .reset_index(drop=True)
         )

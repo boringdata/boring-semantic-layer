@@ -651,39 +651,39 @@ class TestJoinStringShorthand:
     def test_join_one_string(self, models):
         orders_st, customers_st = models
         joined = orders_st.join_one(customers_st, on="customer_id")
-        df = joined.group_by("customers.name").aggregate("total_amount").execute()
+        df = joined.group_by("customers.name").aggregate("orders.total_amount").execute()
         assert len(df) == 2
-        assert df.total_amount.sum() == 600
+        assert df["orders.total_amount"].sum() == 600
 
     def test_join_one_deferred(self, models):
         orders_st, customers_st = models
         joined = orders_st.join_one(customers_st, on=_.customer_id)
-        df = joined.group_by("customers.name").aggregate("total_amount").execute()
+        df = joined.group_by("customers.name").aggregate("orders.total_amount").execute()
         assert len(df) == 2
-        assert df.total_amount.sum() == 600
+        assert df["orders.total_amount"].sum() == 600
 
     def test_join_one_lambda_still_works(self, models):
         orders_st, customers_st = models
         joined = orders_st.join_one(
             customers_st, on=lambda o, c: o.customer_id == c.customer_id
         )
-        df = joined.group_by("customers.name").aggregate("total_amount").execute()
+        df = joined.group_by("customers.name").aggregate("orders.total_amount").execute()
         assert len(df) == 2
-        assert df.total_amount.sum() == 600
+        assert df["orders.total_amount"].sum() == 600
 
     def test_join_many_string(self, models):
         orders_st, customers_st = models
         joined = customers_st.join_many(orders_st, on="customer_id")
-        df = joined.group_by("customers.name").aggregate("total_amount").execute()
+        df = joined.group_by("customers.name").aggregate("orders.total_amount").execute()
         assert len(df) == 2
-        assert df.total_amount.sum() == 600
+        assert df["orders.total_amount"].sum() == 600
 
     def test_join_many_deferred(self, models):
         orders_st, customers_st = models
         joined = customers_st.join_many(orders_st, on=_.customer_id)
-        df = joined.group_by("customers.name").aggregate("total_amount").execute()
+        df = joined.group_by("customers.name").aggregate("orders.total_amount").execute()
         assert len(df) == 2
-        assert df.total_amount.sum() == 600
+        assert df["orders.total_amount"].sum() == 600
 
     def test_join_one_list_of_strings(self):
         """Test compound equi-join with list of strings."""
@@ -715,9 +715,9 @@ class TestJoinStringShorthand:
         )
 
         joined = left_st.join_one(right_st, on=["customer_id", "region"])
-        df = joined.group_by("right.label").aggregate("total").execute()
+        df = joined.group_by("right.label").aggregate("left.total").execute()
         assert len(df) == 2
-        assert df.total.sum() == 60
+        assert df["left.total"].sum() == 60
 
     def test_join_one_list_of_deferred(self):
         """Test compound equi-join with list of Deferred."""
@@ -749,9 +749,9 @@ class TestJoinStringShorthand:
         )
 
         joined = left_st.join_one(right_st, on=[_.customer_id, _.region])
-        df = joined.group_by("right.label").aggregate("total").execute()
+        df = joined.group_by("right.label").aggregate("left.total").execute()
         assert len(df) == 2
-        assert df.total.sum() == 60
+        assert df["left.total"].sum() == 60
 
     def test_join_one_mixed_list(self):
         """Test compound equi-join with mixed list of string and Deferred."""
@@ -783,9 +783,9 @@ class TestJoinStringShorthand:
         )
 
         joined = left_st.join_one(right_st, on=[_.customer_id, "region"])
-        df = joined.group_by("right.label").aggregate("total").execute()
+        df = joined.group_by("right.label").aggregate("left.total").execute()
         assert len(df) == 2
-        assert df.total.sum() == 60
+        assert df["left.total"].sum() == 60
 
 
 # ---------------------------------------------------------------------------
@@ -934,11 +934,11 @@ class TestSnowflakeSchema:
         df = (
             joined
             .group_by("customers.customer_name")
-            .aggregate("total_sales")
+            .aggregate("sales.total_sales")
             .execute()
         )
         assert set(df["customers.customer_name"]) == {"Alice", "Bob", "Carol"}
-        assert df.total_sales.sum() == 510  # 50+80+120+90+60+110
+        assert df["sales.total_sales"].sum() == 510  # 50+80+120+90+60+110
 
     def test_three_arm_star_deferred(self, snowflake):
         """Same star join using Deferred shorthand."""
@@ -952,11 +952,11 @@ class TestSnowflakeSchema:
         df = (
             joined
             .group_by("stores.store_name")
-            .aggregate("total_sales", "sale_count")
+            .aggregate("sales.total_sales", "sales.sale_count")
             .execute()
         )
         assert set(df["stores.store_name"]) == {"Downtown", "Mall"}
-        assert df.sale_count.sum() == 6
+        assert df["sales.sale_count"].sum() == 6
 
     def test_star_group_by_two_dims(self, snowflake):
         """Group by dimensions from two different arms of the star."""
@@ -969,7 +969,7 @@ class TestSnowflakeSchema:
         df = (
             joined
             .group_by("customers.customer_name", "products.product_name")
-            .aggregate("total_sales")
+            .aggregate("sales.total_sales")
             .execute()
         )
         # Alice bought Widget(50) and Gadget(120)
@@ -977,7 +977,7 @@ class TestSnowflakeSchema:
             (df["customers.customer_name"] == "Alice")
             & (df["products.product_name"] == "Widget")
         ]
-        assert alice_widget.total_sales.iloc[0] == 50
+        assert alice_widget["sales.total_sales"].iloc[0] == 50
 
     # -- snowflake layer: chain through second-level dims --
 
@@ -992,14 +992,14 @@ class TestSnowflakeSchema:
         df = (
             joined
             .group_by("regions.region_name")
-            .aggregate("total_sales")
+            .aggregate("sales.total_sales")
             .execute()
         )
         # North: Alice(1,2) + Bob(1,2) = customers 1,2 → sales 50+80+120+60 = 310
         # South: Carol(3) → sales 90+110 = 200
         assert set(df["regions.region_name"]) == {"North", "South"}
-        north = df[df["regions.region_name"] == "North"].total_sales.iloc[0]
-        south = df[df["regions.region_name"] == "South"].total_sales.iloc[0]
+        north = df[df["regions.region_name"] == "North"]["sales.total_sales"].iloc[0]
+        south = df[df["regions.region_name"] == "South"]["sales.total_sales"].iloc[0]
         assert north == 310
         assert south == 200
 
@@ -1014,14 +1014,14 @@ class TestSnowflakeSchema:
         df = (
             joined
             .group_by("categories.category_name")
-            .aggregate("total_sales")
+            .aggregate("sales.total_sales")
             .execute()
         )
         # Electronics (Widget 10, Gadget 20): sales 50+80+120+90 = 340
         # Accessories (Gizmo 30): sales 60+110 = 170
         assert set(df["categories.category_name"]) == {"Electronics", "Accessories"}
-        electronics = df[df["categories.category_name"] == "Electronics"].total_sales.iloc[0]
-        accessories = df[df["categories.category_name"] == "Accessories"].total_sales.iloc[0]
+        electronics = df[df["categories.category_name"] == "Electronics"]["sales.total_sales"].iloc[0]
+        accessories = df[df["categories.category_name"] == "Accessories"]["sales.total_sales"].iloc[0]
         assert electronics == 340
         assert accessories == 170
 
@@ -1042,13 +1042,13 @@ class TestSnowflakeSchema:
         df = (
             joined
             .group_by("regions.region_name", "categories.category_name")
-            .aggregate("total_sales", "sale_count")
+            .aggregate("sales.total_sales", "sales.sale_count")
             .execute()
         )
         # 4 combos: North/Electronics, North/Accessories, South/Electronics, South/Accessories
         assert len(df) == 4
-        assert df.total_sales.sum() == 510
-        assert df.sale_count.sum() == 6
+        assert df["sales.total_sales"].sum() == 510
+        assert df["sales.sale_count"].sum() == 6
 
     def test_full_snowflake_six_tables(self, snowflake):
         """All six tables: fact + 3 first-level dims + 2 second-level dims."""
@@ -1064,12 +1064,12 @@ class TestSnowflakeSchema:
         df = (
             joined
             .group_by("stores.store_name", "regions.region_name")
-            .aggregate("total_sales")
+            .aggregate("sales.total_sales")
             .execute()
         )
         # Not all store/region combos have sales (Downtown/South has none)
         assert len(df) == 3
-        assert df.total_sales.sum() == 510
+        assert df["sales.total_sales"].sum() == 510
 
     def test_snowflake_with_filter(self, snowflake):
         """Snowflake join with filter on a second-level dimension."""
@@ -1080,10 +1080,10 @@ class TestSnowflakeSchema:
             .filter(lambda t: t.categories.category_name == "Electronics")
         )
 
-        df = joined.group_by("products.product_name").aggregate("total_sales").execute()
+        df = joined.group_by("products.product_name").aggregate("sales.total_sales").execute()
         # Only Widget and Gadget are Electronics
         assert set(df["products.product_name"]) == {"Widget", "Gadget"}
-        assert df.total_sales.sum() == 340
+        assert df["sales.total_sales"].sum() == 340
 
     def test_snowflake_mixed_shorthand_styles(self, snowflake):
         """Mix string, Deferred, and lambda across a single chain."""
@@ -1098,10 +1098,10 @@ class TestSnowflakeSchema:
         df = (
             joined
             .group_by("regions.region_name", "products.product_name")
-            .aggregate("sale_count")
+            .aggregate("sales.sale_count")
             .execute()
         )
-        assert df.sale_count.sum() == 6
+        assert df["sales.sale_count"].sum() == 6
 
 
 # ---------------------------------------------------------------------------
@@ -1280,25 +1280,25 @@ class TestDeeplyNestedJoins:
 
     # -- order_by with short names on deeply nested joins --
 
-    def test_order_by_short_name_lambda(self, deep_model):
-        """order_by(lambda t: t.total_revenue.desc()) resolves short name."""
+    def test_order_by_fqdn_lambda(self, deep_model):
+        """order_by(lambda t: t["shops.total_revenue"].desc()) uses FQDN."""
         joined = self._build_full_chain(deep_model)
         df = (
             joined.group_by("continents.continent_name")
             .aggregate("shops.total_revenue")
-            .order_by(lambda t: t.total_revenue.desc())
+            .order_by(lambda t: t["shops.total_revenue"].desc())
             .execute()
         )
         # Asia has higher revenue (1200+800+600=2600) vs Europe (500+300+700=1500)
         assert df["continents.continent_name"].iloc[0] == "Asia"
 
-    def test_order_by_short_name_deferred(self, deep_model):
-        """order_by(_.total_revenue.desc()) resolves short name."""
+    def test_order_by_fqdn_deferred(self, deep_model):
+        """order_by(_["shops.total_revenue"].desc()) uses FQDN."""
         joined = self._build_full_chain(deep_model)
         df = (
             joined.group_by("continents.continent_name")
             .aggregate("shops.total_revenue")
-            .order_by(_.total_revenue.desc())
+            .order_by(_["shops.total_revenue"].desc())
             .execute()
         )
         assert df["continents.continent_name"].iloc[0] == "Asia"
@@ -1315,48 +1315,37 @@ class TestDeeplyNestedJoins:
         assert df["continents.continent_name"].iloc[0] == "Asia"
 
     def test_order_by_intermediate_measure(self, deep_model):
-        """order_by using a measure from an intermediate level (countries)."""
+        """order_by using a measure from an intermediate level (countries) with FQDN."""
         joined = self._build_full_chain(deep_model)
         df = (
             joined.group_by("continents.continent_name")
             .aggregate("countries.total_area", "shops.total_revenue")
-            .order_by(lambda t: t.total_area.desc())
+            .order_by(lambda t: t["countries.total_area"].desc())
             .execute()
         )
         # Europe total_area (1644624) > Asia (1133925) due to fan-out
         assert df["continents.continent_name"].iloc[0] == "Europe"
 
-    # -- mutate with short names on deeply nested joins --
+    # -- mutate with FQDN on deeply nested joins --
 
-    def test_mutate_short_name_lambda(self, deep_model):
-        """mutate(lambda t: ...) resolves short names from all levels."""
+    def test_mutate_fqdn_lambda(self, deep_model):
+        """mutate(lambda t: ...) uses FQDN bracket notation."""
         joined = self._build_full_chain(deep_model)
         df = (
             joined.group_by("continents.continent_name")
             .aggregate("shops.total_revenue", "shops.shop_count")
-            .mutate(revenue_per_shop=lambda t: t.total_revenue / t.shop_count)
+            .mutate(revenue_per_shop=lambda t: t["shops.total_revenue"] / t["shops.shop_count"])
             .execute()
         )
         assert "revenue_per_shop" in df.columns
         # Europe: 1500/3 = 500, Asia: 2600/3 ≈ 866.67
         europe = df[df["continents.continent_name"] == "Europe"]
         assert pytest.approx(europe["revenue_per_shop"].iloc[0]) == 500.0
-
-    def test_mutate_short_name_deferred(self, deep_model):
-        """mutate(col=_.total_revenue / _.shop_count) resolves short names."""
-        joined = self._build_full_chain(deep_model)
-        df = (
-            joined.group_by("continents.continent_name")
-            .aggregate("shops.total_revenue", "shops.shop_count")
-            .mutate(revenue_per_shop=_.total_revenue / _.shop_count)
-            .execute()
-        )
-        assert "revenue_per_shop" in df.columns
         asia = df[df["continents.continent_name"] == "Asia"]
         assert pytest.approx(asia["revenue_per_shop"].iloc[0], rel=0.01) == 866.67
 
     def test_mutate_cross_level_measures(self, deep_model):
-        """mutate combining measures from different levels of the join tree."""
+        """mutate combining measures from different levels with FQDN."""
         joined = self._build_full_chain(deep_model)
         df = (
             joined.group_by("continents.continent_name")
@@ -1365,7 +1354,7 @@ class TestDeeplyNestedJoins:
                 "cities.total_population",
             )
             .mutate(
-                revenue_per_capita=lambda t: t.total_revenue / t.total_population,
+                revenue_per_capita=lambda t: t["shops.total_revenue"] / t["cities.total_population"],
             )
             .execute()
         )
@@ -1375,7 +1364,7 @@ class TestDeeplyNestedJoins:
     # -- pipeline: aggregate -> mutate -> order_by --
 
     def test_full_pipeline_deeply_nested(self, deep_model):
-        """Full pipeline: aggregate measures from 4 levels -> mutate -> order_by.
+        """Full pipeline: aggregate measures from 4 levels -> mutate -> order_by with FQDN.
 
         With pre-aggregation, city_count is correct (Europe=2, Asia=2).
         Asia: 2600/2 = 1300, Europe: 1500/2 = 750.
@@ -1389,7 +1378,7 @@ class TestDeeplyNestedJoins:
                 "countries.country_count",
             )
             .mutate(
-                revenue_per_city=lambda t: t.total_revenue / t.city_count,
+                revenue_per_city=lambda t: t["shops.total_revenue"] / t["cities.city_count"],
             )
             .order_by(lambda t: t.revenue_per_city.desc())
             .execute()
@@ -1400,8 +1389,8 @@ class TestDeeplyNestedJoins:
 
     # -- ambiguity detection --
 
-    def test_ambiguous_short_name_order_by_raises(self, deep_model):
-        """Short name matching columns from multiple tables raises error."""
+    def test_short_name_order_by_raises(self, deep_model):
+        """Short name in order_by raises after join — use FQDN bracket notation."""
         con = ibis.duckdb.connect(":memory:")
         left = con.create_table(
             "left_t",
@@ -1425,11 +1414,11 @@ class TestDeeplyNestedJoins:
         joined = left_st.join_one(right_st, on="key")
         agg = joined.aggregate("left.total", "right.total")
 
-        with pytest.raises(AttributeError, match="Ambiguous column 'total'"):
+        with pytest.raises(AttributeError, match="no attribute 'total'"):
             agg.order_by(lambda t: t.total.desc()).execute()
 
-    def test_ambiguous_short_name_mutate_raises(self, deep_model):
-        """Short name matching columns from multiple tables raises in mutate."""
+    def test_short_name_mutate_raises(self, deep_model):
+        """Short names always fail after join in mutate — FQDN required."""
         con = ibis.duckdb.connect(":memory:")
         left = con.create_table(
             "left_t2",
@@ -1453,7 +1442,7 @@ class TestDeeplyNestedJoins:
         joined = left_st.join_one(right_st, on="key")
         agg = joined.aggregate("left.total", "right.total")
 
-        with pytest.raises(AttributeError, match="Ambiguous column 'total'"):
+        with pytest.raises(Exception):
             agg.mutate(doubled=lambda t: t.total * 2).execute()
 
     def test_ambiguous_resolved_with_full_prefix(self, deep_model):
@@ -1493,12 +1482,12 @@ class TestDeeplyNestedJoins:
     # -- group_by at different levels --
 
     def test_group_by_level2_aggregate_level0(self, deep_model):
-        """Group by level-2 dim, aggregate level-0 measure."""
+        """Group by level-2 dim, aggregate level-0 measure with FQDN."""
         joined = self._build_full_chain(deep_model)
         df = (
             joined.group_by("countries.country_name")
             .aggregate("shops.total_revenue", "shops.shop_count")
-            .order_by(lambda t: t.total_revenue.desc())
+            .order_by(lambda t: t["shops.total_revenue"].desc())
             .execute()
         )
         # Japan: Tokyo(1200+800) + Osaka(600) = 2600
@@ -1508,12 +1497,12 @@ class TestDeeplyNestedJoins:
         assert df["shops.total_revenue"].iloc[0] == 2600
 
     def test_group_by_level1_aggregate_level0(self, deep_model):
-        """Group by level-1 dim, aggregate level-0 measure."""
+        """Group by level-1 dim, aggregate level-0 measure with FQDN."""
         joined = self._build_full_chain(deep_model)
         df = (
             joined.group_by("cities.city_name")
             .aggregate("shops.total_revenue")
-            .order_by(lambda t: t.total_revenue.desc())
+            .order_by(lambda t: t["shops.total_revenue"].desc())
             .execute()
         )
         # Tokyo: 1200+800 = 2000

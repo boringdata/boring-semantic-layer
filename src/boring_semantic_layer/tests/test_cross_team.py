@@ -43,7 +43,7 @@ def test_cross_team_aggregated_measure_refs():
     cross_team = marketing_st.join_one(
         support_st,
         lambda m, s: m.customer_id == s.customer_id,
-    ).with_measures(avg_case_value=lambda t: t.avg_monthly_spend / t.case_count)
+    ).with_measures(avg_case_value=lambda t: t["marketing.avg_monthly_spend"] / t["support.case_count"])
 
     # Sane query: pick the calculated measure at the requested grain
     # Note: After join, dimensions are prefixed with table names

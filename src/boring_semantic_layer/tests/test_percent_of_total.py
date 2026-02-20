@@ -26,7 +26,7 @@ def test_percent_of_total_grand_total():
         flights_st.join_many(carriers_st, lambda f, c: f.carrier == c.code)
         .with_dimensions(nickname=lambda t: t.nickname)
         .with_measures(
-            percent_of_total=lambda t: t.flight_count / t.all(t.flight_count),
+            percent_of_total=lambda t: t["flights.flight_count"] / t.all(t["flights.flight_count"]),
         )
     )
 

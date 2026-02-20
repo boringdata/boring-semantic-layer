@@ -36,11 +36,11 @@ def main():
 
     # Create sessions with nested flight legs
     sessions = (
-        filtered_flights.group_by("flight_date", "carrier", "tail_num")
+        filtered_flights.group_by("flight_date", "flights.carrier", "flights.tail_num")
         .aggregate(
-            "flight_count",
-            "max_delay",
-            "total_distance",
+            "flights.flight_count",
+            "flights.max_delay",
+            "flights.total_distance",
             nest={
                 "flight_legs": lambda t: t.group_by([
                     "tail_num",
@@ -70,11 +70,11 @@ def main():
     struct_col = unnested.flight_legs
     normalized = unnested.select(
         "flight_date",
-        "carrier",
-        "tail_num",
-        "flight_count",
-        "max_delay",
-        "total_distance",
+        "flights.carrier",
+        "flights.tail_num",
+        "flights.flight_count",
+        "flights.max_delay",
+        "flights.total_distance",
         "session_id",
         leg_tail_num=struct_col.tail_num,
         dep_time=struct_col.dep_time,

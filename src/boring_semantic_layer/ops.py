@@ -172,13 +172,138 @@ def _unwrap(wrapped: Any) -> Any:
     return wrapped.unwrap if isinstance(wrapped, _CallableWrapper) else wrapped
 
 
-def _semantic_repr(op: Relation) -> str:
-    from ibis.expr.format import pretty
+def _collect_chain(op: Relation) -> list[Relation]:
+    """Walk op.source (or op.left for joins) back to root, return list from root to current."""
+    chain = [op]
+    current = op
+    while True:
+        if hasattr(current, "source") and current.source is not None:
+            chain.append(current.source)
+            current = current.source
+        elif hasattr(current, "left") and current.left is not None:
+            chain.append(current.left)
+            current = current.left
+        else:
+            break
+    chain.reverse()
+    return chain
+
+
+def _format_op_summary(op: Relation) -> str:
+    """Return a one-line summary string for a non-root semantic op."""
+    # Import here to avoid circular imports at module level
+    cls = type(op).__name__
+
+    if isinstance(op, SemanticFilterOp):
+        predicate = object.__getattribute__(op, "predicate")
+        pred_name = "<predicate>"
+        if hasattr(predicate, "__name__"):
+            pred_name = predicate.__name__
+        elif hasattr(predicate, "unwrap"):
+            unwrapped = predicate.unwrap
+            if hasattr(unwrapped, "__name__"):
+                pred_name = unwrapped.__name__
+        return f"Filter(\u03bb {pred_name})"
+
+    if isinstance(op, SemanticMutateOp):
+        post = object.__getattribute__(op, "post")
+        cols = list(post.keys())
+        return f"Mutate({', '.join(cols)})"
+
+    if isinstance(op, SemanticGroupByOp):
+        keys = object.__getattribute__(op, "keys")
+        return f"GroupBy({', '.join(keys)})"
+
+    if isinstance(op, SemanticAggregateOp):
+        aggs = object.__getattribute__(op, "aggs")
+        agg_names = list(aggs.keys())
+        return f"Aggregate({', '.join(agg_names)})"
+
+    if isinstance(op, SemanticOrderByOp):
+        keys = object.__getattribute__(op, "keys")
+        key_strs = [k if isinstance(k, str) else repr(k) for k in keys]
+        return f"OrderBy({', '.join(key_strs)})"
+
+    if isinstance(op, SemanticLimitOp):
+        return f"Limit({op.n})"
+
+    if isinstance(op, SemanticProjectOp):
+        fields = object.__getattribute__(op, "fields")
+        return f"Project({', '.join(fields)})"
+
+    if isinstance(op, SemanticUnnestOp):
+        column = object.__getattribute__(op, "column")
+        return f"Unnest({column})"
+
+    if isinstance(op, SemanticJoinOp):
+        how = object.__getattribute__(op, "how")
+        right = object.__getattribute__(op, "right")
+        right_name = ""
+        if isinstance(right, SemanticTableOp):
+            right_name = object.__getattribute__(right, "name") or ""
+        if not right_name:
+            # Try to find a root name from right side
+            roots = _find_all_root_models(right)
+            if roots:
+                right_name = object.__getattribute__(roots[0], "name") or ""
+        if right_name:
+            return f"Join({how}, right={right_name})"
+        return f"Join({how})"
+
+    if isinstance(op, SemanticIndexOp):
+        parts = []
+        selector = object.__getattribute__(op, "selector")
+        by = object.__getattribute__(op, "by")
+        sample = object.__getattribute__(op, "sample")
+        if selector is not None:
+            if isinstance(selector, tuple):
+                parts.append(", ".join(selector))
+            else:
+                parts.append(str(selector))
+        if by is not None:
+            parts.append(f"by={by}")
+        if sample is not None:
+            parts.append(f"sample={sample}")
+        return f"Index({', '.join(parts)})"
+
+    # Fallback for unknown op types
+    return cls.replace("Semantic", "").replace("Op", "")
+
+
+def _format_root(root_op: SemanticTableOp) -> str:
+    """Format a SemanticTableOp root using the fmt registry from format.py."""
+    from boring_semantic_layer.format import fmt
 
     try:
-        return pretty(op)
+        return fmt(root_op)
     except Exception:
-        return object.__repr__(op)
+        # Fallback if format module isn't available
+        name = object.__getattribute__(root_op, "name")
+        return f"SemanticTable: {name}" if name else "SemanticTable"
+
+
+def _semantic_repr(op: Relation) -> str:
+    chain = _collect_chain(op)
+
+    # Find the root (first element should be a SemanticTableOp)
+    root = chain[0]
+    if isinstance(root, SemanticTableOp):
+        lines = [_format_root(root)]
+    else:
+        # Fallback: no SemanticTableOp root found
+        from ibis.expr.format import pretty
+
+        try:
+            return pretty(op)
+        except Exception:
+            return object.__repr__(op)
+
+    # Append pipeline steps
+    for step in chain[1:]:
+        if not isinstance(step, SemanticTableOp):
+            lines.append(f"-> {_format_op_summary(step)}")
+
+    return "\n".join(lines)
 
 
 def _make_schema(fields_dict: dict[str, str]):
@@ -2562,72 +2687,6 @@ class SemanticJoinOp(Relation):
         )
 
 
-class _OrderByProxy:
-    """Proxy that resolves short column names to dot-prefixed columns.
-
-    After aggregating a joined model the ibis table has columns like
-    ``flights.flight_count``.  This proxy lets ``t.flight_count`` resolve
-    to ``tbl["flights.flight_count"]`` so that ``order_by`` lambdas and
-    Deferred expressions work without requiring the full prefix.
-
-    Raises ``AttributeError`` / ``KeyError`` when a short name is ambiguous
-    (matches multiple prefixed columns), following Malloy's convention that
-    ambiguous names must be fully qualified.
-    """
-
-    __slots__ = ("_tbl", "_short_to_full", "_ambiguous")
-
-    def __init__(self, tbl: ir.Table) -> None:
-        object.__setattr__(self, "_tbl", tbl)
-        mapping: dict[str, str] = {}
-        ambiguous: set[str] = set()
-        for col in tbl.columns:
-            if "." in col:
-                short = col.rsplit(".", 1)[1]
-                if short in ambiguous:
-                    continue
-                if short in mapping:
-                    # Second table has the same short name — mark ambiguous
-                    del mapping[short]
-                    ambiguous.add(short)
-                else:
-                    mapping[short] = col
-        object.__setattr__(self, "_short_to_full", mapping)
-        object.__setattr__(self, "_ambiguous", frozenset(ambiguous))
-
-    def _check_ambiguous(self, name: str) -> None:
-        ambiguous = object.__getattribute__(self, "_ambiguous")
-        if name in ambiguous:
-            tbl = object.__getattribute__(self, "_tbl")
-            matches = [c for c in tbl.columns if c.endswith(f".{name}")]
-            raise AttributeError(
-                f"Ambiguous column '{name}' matches multiple prefixed columns: "
-                f"{matches}. Use the full prefixed name to disambiguate."
-            )
-
-    def __getattr__(self, name: str) -> ir.Value:
-        tbl = object.__getattribute__(self, "_tbl")
-        # Direct column match
-        if name in tbl.columns:
-            return tbl[name]
-        # Check ambiguity before short-name resolution
-        self._check_ambiguous(name)
-        # Short-name resolution
-        short_to_full = object.__getattribute__(self, "_short_to_full")
-        if name in short_to_full:
-            return tbl[short_to_full[name]]
-        # Fallback to raw table attribute (e.g. ibis methods)
-        return getattr(tbl, name)
-
-    def __getitem__(self, name: str) -> ir.Value:
-        tbl = object.__getattribute__(self, "_tbl")
-        if name in tbl.columns:
-            return tbl[name]
-        self._check_ambiguous(name)
-        short_to_full = object.__getattribute__(self, "_short_to_full")
-        if name in short_to_full:
-            return tbl[short_to_full[name]]
-        return tbl[name]
 
 
 class SemanticOrderByOp(Relation):
@@ -2659,15 +2718,13 @@ class SemanticOrderByOp(Relation):
 
     def to_untagged(self):
         tbl = _to_untagged(self.source)
-        proxy = _OrderByProxy(tbl)
 
         def resolve_order_key(key):
             if isinstance(key, str):
-                # First try column access, then fallback to attribute (for computed columns)
-                return tbl[key] if key in tbl.columns else getattr(proxy, key, key)
+                return tbl[key] if key in tbl.columns else getattr(tbl, key, key)
             elif isinstance(key, _CallableWrapper):
                 unwrapped = _unwrap(key)
-                return _resolve_expr(unwrapped, proxy)
+                return _resolve_expr(unwrapped, tbl)
             return key
 
         return tbl.order_by([resolve_order_key(key) for key in self.keys])

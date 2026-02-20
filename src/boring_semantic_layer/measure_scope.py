@@ -161,8 +161,7 @@ def _resolve_measure_name(
 ) -> Maybe[str]:
     if name in known_set:
         return Some(name)
-    result = next((k for k in known if k.endswith(f".{name}")), None)
-    return Maybe.from_optional(result)
+    return Maybe.from_optional(None)
 
 
 def _make_known_measures(
@@ -172,58 +171,30 @@ def _make_known_measures(
     return (known_tuple, frozenset(known_tuple))
 
 
-def _resolve_prefixed_column(tbl, name):
-    """Find a unique ``prefix.name`` match among dot-prefixed table columns.
-
-    Returns the matched full column name, or ``None`` if no match is found.
-    Raises ``LookupError`` when the short name is ambiguous (matches multiple
-    prefixed columns).
-    """
-    if not hasattr(tbl, "columns"):
-        return None
-    suffix = f".{name}"
-    matches = [c for c in tbl.columns if c.endswith(suffix)]
-    if len(matches) == 1:
-        return matches[0]
-    if len(matches) > 1:
-        raise LookupError(
-            f"Ambiguous column '{name}' matches multiple prefixed columns: "
-            f"{matches}. Use the full prefixed name to disambiguate."
-        )
-    return None
-
-
 def _resolve_column_short_name(tbl, name):
-    """Resolve a short column name against a table that may have dot-prefixed columns.
+    """Resolve a column name against a table, requiring fully qualified names after joins.
 
-    Tries direct column access first; on failure, searches for a unique
-    ``prefix.name`` match among the table's columns.  Raises
-    ``AttributeError`` when the short name is ambiguous.
+    Tries direct column access first; falls back to ``getattr(tbl, name)``
+    for ibis methods.  Raises ``AttributeError`` with a helpful message
+    suggesting FQDN when the short name matches prefixed columns.
     """
     if hasattr(tbl, "columns") and name in tbl.columns:
         return tbl[name]
-    try:
-        full = _resolve_prefixed_column(tbl, name)
-    except LookupError as exc:
-        raise AttributeError(str(exc)) from None
-    if full is not None:
-        return tbl[full]
+
+    if hasattr(tbl, "columns"):
+        suffix = f".{name}"
+        matches = [c for c in tbl.columns if c.endswith(suffix)]
+        if matches:
+            raise AttributeError(
+                f"Column '{name}' not found. Did you mean one of the fully qualified names: "
+                f"{matches}? Use bracket notation, e.g. t[\"{matches[0]}\"]."
+            )
+
     return getattr(tbl, name)
 
 
 def _resolve_column_item(tbl, name):
-    """Resolve a column name via bracket access, falling back to short-name matching.
-
-    Raises ``KeyError`` when the short name is ambiguous.
-    """
-    if hasattr(tbl, "columns") and name in tbl.columns:
-        return tbl[name]
-    try:
-        full = _resolve_prefixed_column(tbl, name)
-    except LookupError as exc:
-        raise KeyError(str(exc)) from None
-    if full is not None:
-        return tbl[full]
+    """Resolve a column name via bracket access, requiring fully qualified names after joins."""
     return tbl[name]
 
 
