@@ -53,6 +53,12 @@ def to_untagged(expr):
     raise TypeError(f"Cannot convert {type(expr)} to Ibis expression")
 
 
+def to_tagged(expr, aggregate_cache_storage=None):
+    from .xorq_convert import to_tagged as _to_tagged
+
+    return _to_tagged(expr, aggregate_cache_storage=aggregate_cache_storage)
+
+
 class SemanticTable(ir.Table):
     def get_graph(self):
         """Get the dependency graph for this semantic table.
@@ -176,6 +182,11 @@ class SemanticTable(ir.Table):
 
     def to_untagged(self):
         return self.op().to_untagged()
+
+    def to_tagged(self, aggregate_cache_storage=None):
+        from .xorq_convert import to_tagged
+
+        return to_tagged(self, aggregate_cache_storage=aggregate_cache_storage)
 
     def execute(self, **kwargs):
         # Accept kwargs for ibis compatibility (params, limit, etc)

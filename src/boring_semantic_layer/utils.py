@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
+import operator
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -174,11 +176,21 @@ def _check_closure_vars(fn: Callable) -> Maybe[str]:
 
 @safe
 def _try_ibis_introspection(fn: Callable) -> Maybe[str]:
+    from returns.result import Success
+
     from xorq.vendor.ibis import _
     from xorq.vendor.ibis.common.deferred import Deferred
 
     result = fn(_)
-    return Some(str(result)) if isinstance(result, Deferred) else Nothing
+    if not isinstance(result, Deferred):
+        return Nothing
+    expr_str = str(result)
+    # Validate by attempting deserialization — if the string can't round-trip,
+    # it's useless (catches invalid syntax, internal function names like
+    # _finish_searched_case/ifelse that aren't in the eval context, etc.)
+    if not isinstance(ibis_string_to_expr(expr_str), Success):
+        return Nothing
+    return Some(expr_str)
 
 
 def _extract_ibis_from_lambda_str(lambda_str: str) -> Maybe[str]:
@@ -242,14 +254,16 @@ def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
         from ibis import _
 
         try:
+            from xorq import api as xo
             from xorq.vendor import ibis as xorq_ibis
 
             eval_context = {
                 "ibis": ibis,
                 "_": _,
                 "xorq_ibis": xorq_ibis,
+                "xo": xo,
             }
-            allowed_names = {"ibis", "_", "xorq_ibis", "t"}
+            allowed_names = {"ibis", "_", "xorq_ibis", "xo", "t"}
         except ImportError:
             eval_context = {
                 "ibis": ibis,
@@ -264,6 +278,262 @@ def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
             raise result.failure()
         else:
             raise ValueError(f"Unexpected result type: {type(result)}")
+
+    return do_convert()
+
+
+def _is_ibis_literal_node(value) -> bool:
+    try:
+        from xorq.vendor.ibis.expr.operations.generic import Literal
+        return isinstance(value, Literal)
+    except ImportError:
+        return False
+
+
+def serialize_resolver(resolver) -> tuple:
+    """Walk a Resolver tree and produce a hashable nested-tuple representation."""
+    from xorq.vendor.ibis.common.deferred import (
+        Attr,
+        BinaryOperator,
+        Call,
+        Just,
+        JustUnhashable,
+        Mapping as MappingResolver,
+        Sequence,
+        UnaryOperator,
+        Variable,
+    )
+
+    if isinstance(resolver, Variable):
+        return ("var", resolver.name)
+
+    if isinstance(resolver, Just):
+        value = resolver.value
+        # ibis Literal node (e.g., from case().when(..., 1))
+        if _is_ibis_literal_node(value):
+            py_value = value.args[0]
+            dtype_str = str(value.args[1])
+            return ("ibis_literal", py_value, dtype_str)
+        # callable (operator functions, deferrable functions like ifelse, _finish_searched_case)
+        if callable(value):
+            module = getattr(value, "__module__", None)
+            qualname = getattr(value, "__qualname__", None)
+            if module and qualname:
+                return ("fn", module, qualname)
+            raise ValueError(f"Cannot serialize callable without __module__/__qualname__: {value!r}")
+        # primitive value (int, float, str, bool, None)
+        return ("just", value)
+
+    if isinstance(resolver, JustUnhashable):
+        value = resolver.value.obj
+        if _is_ibis_literal_node(value):
+            py_value = value.args[0]
+            dtype_str = str(value.args[1])
+            return ("ibis_literal", py_value, dtype_str)
+        raise ValueError(f"Cannot serialize unhashable value: {value!r}")
+
+    if isinstance(resolver, Attr):
+        return ("attr", serialize_resolver(resolver.obj), serialize_resolver(resolver.name))
+
+    if isinstance(resolver, Call):
+        func_tuple = serialize_resolver(resolver.func)
+        args_tuple = tuple(serialize_resolver(a) for a in resolver.args)
+        kwargs_tuple = tuple(
+            (k, serialize_resolver(v)) for k, v in resolver.kwargs.items()
+        )
+        return ("call", func_tuple, args_tuple, kwargs_tuple)
+
+    if isinstance(resolver, BinaryOperator):
+        op_name = resolver.func.__name__
+        return ("binop", op_name, serialize_resolver(resolver.left), serialize_resolver(resolver.right))
+
+    if isinstance(resolver, UnaryOperator):
+        op_name = resolver.func.__name__
+        return ("unop", op_name, serialize_resolver(resolver.arg))
+
+    if isinstance(resolver, Sequence):
+        type_name = resolver.typ.__name__
+        items = tuple(serialize_resolver(v) for v in resolver.values)
+        return ("seq", type_name, items)
+
+    if isinstance(resolver, MappingResolver):
+        type_name = resolver.typ.__name__
+        items = tuple((k, serialize_resolver(v)) for k, v in resolver.values.items())
+        return ("map", type_name, items)
+
+    raise ValueError(f"Unknown resolver type: {type(resolver).__name__}")
+
+
+_OPERATOR_MAP = {
+    "add": operator.add,
+    "sub": operator.sub,
+    "mul": operator.mul,
+    "truediv": operator.truediv,
+    "floordiv": operator.floordiv,
+    "pow": operator.pow,
+    "mod": operator.mod,
+    "eq": operator.eq,
+    "ne": operator.ne,
+    "lt": operator.lt,
+    "le": operator.le,
+    "gt": operator.gt,
+    "ge": operator.ge,
+    "and_": operator.and_,
+    "or_": operator.or_,
+    "xor": operator.xor,
+    "rshift": operator.rshift,
+    "lshift": operator.lshift,
+    "inv": operator.inv,
+    "neg": operator.neg,
+    "invert": operator.invert,
+}
+
+
+def _resolve_qualname(module_obj, qualname: str):
+    """Resolve a dotted qualname like 'ClassName.method' on a module."""
+    parts = qualname.split(".")
+    obj = module_obj
+    for part in parts:
+        if part == "<lambda>":
+            raise ValueError(f"Cannot resolve lambda qualname: {qualname}")
+        obj = getattr(obj, part)
+    return obj
+
+
+def deserialize_resolver(data: tuple):
+    """Reconstruct a Resolver tree from a nested-tuple representation."""
+    from xorq.vendor.ibis.common.deferred import (
+        Attr,
+        BinaryOperator,
+        Call,
+        Just,
+        Mapping as MappingResolver,
+        Sequence,
+        UnaryOperator,
+        Variable,
+    )
+
+    match data:
+        case ("var", name):
+            return Variable(name)
+
+        case ("just", value):
+            return Just(value)
+
+        case ("fn", module_name, qualname):
+            mod = importlib.import_module(module_name)
+            func = _resolve_qualname(mod, qualname)
+            return Just(func)
+
+        case ("ibis_literal", py_value, dtype_str):
+            from xorq.vendor import ibis
+            lit_expr = ibis.literal(py_value, type=ibis.dtype(dtype_str))
+            return Just(lit_expr.op())
+
+        case ("attr", obj_data, name_data):
+            obj_resolver = deserialize_resolver(obj_data)
+            name_resolver = deserialize_resolver(name_data)
+            attr = object.__new__(Attr)
+            object.__setattr__(attr, "obj", obj_resolver)
+            object.__setattr__(attr, "name", name_resolver)
+            return attr
+
+        case ("call", func_data, args_data, kwargs_data):
+            func_resolver = deserialize_resolver(func_data)
+            args_resolvers = tuple(deserialize_resolver(a) for a in args_data)
+            from xorq.vendor.ibis.common.collections import FrozenDict
+            kwargs_resolvers = FrozenDict(
+                {k: deserialize_resolver(v) for k, v in kwargs_data}
+            )
+            call = object.__new__(Call)
+            object.__setattr__(call, "func", func_resolver)
+            object.__setattr__(call, "args", args_resolvers)
+            object.__setattr__(call, "kwargs", kwargs_resolvers)
+            return call
+
+        case ("binop", op_name, left_data, right_data):
+            func = _OPERATOR_MAP.get(op_name)
+            if func is None:
+                raise ValueError(f"Unknown binary operator: {op_name!r}")
+            left = deserialize_resolver(left_data)
+            right = deserialize_resolver(right_data)
+            binop = object.__new__(BinaryOperator)
+            object.__setattr__(binop, "func", func)
+            object.__setattr__(binop, "left", left)
+            object.__setattr__(binop, "right", right)
+            return binop
+
+        case ("unop", op_name, arg_data):
+            func = _OPERATOR_MAP.get(op_name)
+            if func is None:
+                raise ValueError(f"Unknown unary operator: {op_name!r}")
+            arg = deserialize_resolver(arg_data)
+            unop = object.__new__(UnaryOperator)
+            object.__setattr__(unop, "func", func)
+            object.__setattr__(unop, "arg", arg)
+            return unop
+
+        case ("seq", type_name, items_data):
+            typ = {"tuple": tuple, "list": list}[type_name]
+            values = tuple(deserialize_resolver(v) for v in items_data)
+            seq = object.__new__(Sequence)
+            object.__setattr__(seq, "typ", typ)
+            object.__setattr__(seq, "values", values)
+            return seq
+
+        case ("map", type_name, items_data):
+            typ = {"dict": dict}[type_name]
+            from xorq.vendor.ibis.common.collections import FrozenDict
+            values = FrozenDict(
+                {k: deserialize_resolver(v) for k, v in items_data}
+            )
+            mapping = object.__new__(MappingResolver)
+            object.__setattr__(mapping, "typ", typ)
+            object.__setattr__(mapping, "values", values)
+            return mapping
+
+        case _:
+            raise ValueError(f"Unknown resolver tag: {data[0]}")
+
+
+def _is_deferred(obj) -> bool:
+    """Duck-type check for Deferred (works for both ibis and xorq vendor)."""
+    return hasattr(obj, "_resolver") and hasattr(obj, "resolve")
+
+
+def expr_to_structured(fn: Callable) -> Result[tuple, Exception]:
+    """Convert a callable/Deferred expression to a structured tuple representation."""
+    from xorq.vendor.ibis.common.deferred import Deferred as XorqDeferred
+
+    @safe
+    def do_convert():
+        from xorq.vendor.ibis import _
+
+        if isinstance(fn, XorqDeferred):
+            return serialize_resolver(fn._resolver)
+        # For ibis Deferred (not xorq vendor), resolve through xorq _ to get xorq types
+        if _is_deferred(fn):
+            result = fn.resolve(_)
+            if _is_deferred(result):
+                return serialize_resolver(result._resolver)
+        if callable(fn):
+            result = fn(_)
+            if _is_deferred(result):
+                return serialize_resolver(result._resolver)
+            raise ValueError(f"Callable did not produce a Deferred, got {type(result)}")
+        raise ValueError(f"Expected callable or Deferred, got {type(fn)}")
+
+    return do_convert()
+
+
+def structured_to_expr(data: tuple) -> Result:
+    """Reconstruct a Deferred from a structured tuple representation."""
+    from xorq.vendor.ibis.common.deferred import Deferred
+
+    @safe
+    def do_convert():
+        resolver = deserialize_resolver(data)
+        return Deferred(resolver)
 
     return do_convert()
 
@@ -340,5 +610,9 @@ __all__ = [
     "SafeEvalError",
     "expr_to_ibis_string",
     "ibis_string_to_expr",
+    "expr_to_structured",
+    "structured_to_expr",
+    "serialize_resolver",
+    "deserialize_resolver",
     "read_yaml_file",
 ]

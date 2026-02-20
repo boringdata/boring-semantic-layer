@@ -103,14 +103,14 @@ def test_serialize_dimensions_with_metadata():
     assert "dim1" in data
     assert data["dim1"]["description"] == "First dimension"
     assert data["dim1"]["is_time_dimension"] is False
-    assert "expr" in data["dim1"]
-    assert isinstance(data["dim1"]["expr"], str)
+    assert "expr_pickle" in data["dim1"]
+    assert isinstance(data["dim1"]["expr_pickle"], str)
 
     assert "dim2" in data
     assert data["dim2"]["description"] == "Second dimension"
     assert data["dim2"]["is_time_dimension"] is True
     assert data["dim2"]["smallest_time_grain"] == "day"
-    assert "expr" in data["dim2"]
+    assert "expr_pickle" in data["dim2"]
 
 
 def test_serialize_empty_measures():
@@ -142,13 +142,13 @@ def test_serialize_measures_with_metadata():
     assert "total" in data
     assert data["total"]["description"] == "Total amount"
     assert data["total"]["requires_unnest"] == []
-    assert "expr" in data["total"]
-    assert isinstance(data["total"]["expr"], str)
+    assert "expr_pickle" in data["total"]
+    assert isinstance(data["total"]["expr_pickle"], str)
 
     assert "count" in data
     assert data["count"]["description"] == "Count of records"
     assert data["count"]["requires_unnest"] == ["tags"]
-    assert "expr" in data["count"]
+    assert "expr_pickle" in data["count"]
 
 
 @pytest.mark.skipif(not xorq, reason="xorq not available")

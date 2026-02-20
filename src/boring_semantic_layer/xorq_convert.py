@@ -5,8 +5,21 @@ from typing import Any
 
 from attrs import frozen
 from returns.result import Failure, Result, safe
+from xorq.ibis_yaml.common import deserialize_callable, serialize_callable
 
-from .utils import expr_to_ibis_string, ibis_string_to_expr
+
+def _pickle_callable(fn) -> str:
+    """Serialize a callable via xorq's cloudpickle-based serializer."""
+    from .ops import _CallableWrapper
+
+    if isinstance(fn, _CallableWrapper):
+        fn = fn._fn
+    return serialize_callable(fn)
+
+
+def _unpickle_callable(data: str) -> Callable:
+    """Deserialize a callable via xorq's cloudpickle-based deserializer."""
+    return deserialize_callable(data)
 
 
 @frozen
@@ -24,21 +37,58 @@ def try_import_xorq() -> Result[XorqModule, ImportError]:
     return do_import()
 
 
+# ---------------------------------------------------------------------------
+# Serialization helpers
+# ---------------------------------------------------------------------------
+
+
+def _extract_simple_column_name(expr) -> str | None:
+    """Extract column name from a simple Deferred like ``_.col_name``.
+
+    Returns the column name string if the expression is a simple column access,
+    or None if it requires pickle.
+    """
+    from .ops import _CallableWrapper, _is_deferred
+
+    if isinstance(expr, _CallableWrapper):
+        expr = expr._fn
+
+    if not _is_deferred(expr):
+        return None
+
+    resolver = expr._resolver
+    if type(resolver).__name__ != "Attr":
+        return None
+
+    if type(resolver.obj).__name__ != "Variable":
+        return None
+
+    name_resolver = resolver.name
+    if type(name_resolver).__name__ != "Just":
+        return None
+
+    value = name_resolver.value
+    return value if isinstance(value, str) else None
+
+
 def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exception]:
     @safe
     def do_serialize():
         dim_metadata = {}
         for name, dim in dimensions.items():
-            expr_str = expr_to_ibis_string(dim.expr).value_or(None)
-
-            dim_metadata[name] = {
+            entry = {
                 "description": dim.description,
                 "is_entity": dim.is_entity,
                 "is_event_timestamp": dim.is_event_timestamp,
                 "is_time_dimension": dim.is_time_dimension,
                 "smallest_time_grain": dim.smallest_time_grain,
-                "expr": expr_str,
             }
+            col_name = _extract_simple_column_name(dim.expr)
+            if col_name is not None:
+                entry["expr"] = col_name
+            else:
+                entry["expr_pickle"] = _pickle_callable(dim.expr)
+            dim_metadata[name] = entry
         return dim_metadata
 
     return do_serialize()
@@ -47,27 +97,77 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
 def serialize_measures(measures: Mapping[str, Any]) -> Result[dict, Exception]:
     @safe
     def do_serialize():
+        from returns.result import Success
+
+        from .utils import expr_to_structured
+
         meas_metadata = {}
         for name, meas in measures.items():
-            expr_str = expr_to_ibis_string(meas.expr).value_or(None)
-
-            meas_metadata[name] = {
+            entry = {
                 "description": meas.description,
                 "requires_unnest": list(meas.requires_unnest),
-                "expr": expr_str,
             }
+            original = getattr(meas, "original_expr", None)
+            struct_result = expr_to_structured(original) if original is not None else None
+            if struct_result is not None and isinstance(struct_result, Success):
+                entry["expr_struct"] = struct_result.unwrap()
+            else:
+                entry["expr_pickle"] = _pickle_callable(meas.expr)
+            meas_metadata[name] = entry
         return meas_metadata
 
     return do_serialize()
 
 
-def serialize_predicate(predicate: Callable) -> Result[str, Exception]:
-    from . import ops
+def serialize_calc_measures(calc_measures: Mapping[str, Any]) -> Result[dict, Exception]:
+    @safe
+    def do_serialize():
+        from .measure_scope import AllOf, BinOp, MeasureRef
 
-    if isinstance(predicate, ops._CallableWrapper):
-        predicate = predicate._fn
+        def _serialize_calc_expr(expr):
+            if isinstance(expr, MeasureRef):
+                return ("measure_ref", expr.name)
+            if isinstance(expr, AllOf):
+                return ("all_of", _serialize_calc_expr(expr.ref))
+            if isinstance(expr, BinOp):
+                return ("calc_binop", expr.op, _serialize_calc_expr(expr.left), _serialize_calc_expr(expr.right))
+            if isinstance(expr, int | float):
+                return ("num", expr)
+            return None
 
-    return expr_to_ibis_string(predicate)
+        result = {}
+        for name, expr in calc_measures.items():
+            serialized = _serialize_calc_expr(expr)
+            if serialized is not None:
+                result[name] = serialized
+        return result
+
+    return do_serialize()
+
+
+def deserialize_calc_measures(calc_data: Mapping[str, Any]) -> dict[str, Any]:
+    from .measure_scope import AllOf, BinOp, MeasureRef
+
+    def _deserialize_calc_expr(data):
+        if isinstance(data, int | float):
+            return data
+        tag = data[0]
+        if tag == "measure_ref":
+            return MeasureRef(data[1])
+        if tag == "all_of":
+            return AllOf(_deserialize_calc_expr(data[1]))
+        if tag == "calc_binop":
+            return BinOp(data[1], _deserialize_calc_expr(data[2]), _deserialize_calc_expr(data[3]))
+        if tag == "num":
+            return data[1]
+        raise ValueError(f"Unknown calc measure tag: {tag}")
+
+    return {name: _deserialize_calc_expr(expr) for name, expr in calc_data.items()}
+
+
+# ---------------------------------------------------------------------------
+# to_tagged
+# ---------------------------------------------------------------------------
 
 
 def to_tagged(semantic_expr, aggregate_cache_storage=None):
@@ -76,9 +176,6 @@ def to_tagged(semantic_expr, aggregate_cache_storage=None):
     Takes a BSL semantic expression and tags it with serialized metadata
     (dimensions, measures, etc.) in xorq format. The tagged expression can
     later be reconstructed using from_tagged().
-
-    Note: The input can already be a xorq expression - this function tags it
-    with BSL metadata, it doesn't convert formats.
 
     Args:
         semantic_expr: BSL SemanticTable or expression
@@ -92,14 +189,7 @@ def to_tagged(semantic_expr, aggregate_cache_storage=None):
     Example:
         >>> from boring_semantic_layer import SemanticModel
         >>> model = SemanticModel(...)
-        >>> # Tag with metadata:
         >>> tagged_expr = to_tagged(model)
-
-        >>> # With auto cube caching:
-        >>> from xorq.caching import ParquetStorage
-        >>> import xorq.api as xo
-        >>> storage = ParquetStorage(source=xo.connect())
-        >>> tagged_expr = to_tagged(model, aggregate_cache_storage=storage)
     """
     from . import expr as bsl_expr
     from .ops import SemanticAggregateOp
@@ -130,12 +220,10 @@ def to_tagged(semantic_expr, aggregate_cache_storage=None):
             @safe
             def extract_path_from_view(table_name):
                 backend = node.source
-                # this is bad.
                 query = "SELECT sql FROM duckdb_views() WHERE view_name = ?"
                 views_df = backend.con.execute(query, [table_name]).fetchdf()
                 if views_df.empty:
                     return None
-                # this is bad.
                 sql = views_df.iloc[0]["sql"]
                 match = re.search(r"list_value\(['\"](.*?)['\"]\)", sql)
                 return match.group(1) if match else None
@@ -182,6 +270,10 @@ def to_tagged(semantic_expr, aggregate_cache_storage=None):
     return result.value_or(None)
 
 
+# ---------------------------------------------------------------------------
+# Extractors  (op → metadata dict)
+# ---------------------------------------------------------------------------
+
 _EXTRACTORS = {}
 
 
@@ -197,10 +289,14 @@ def _register_extractor(op_type: type):
 def _extract_semantic_table(op) -> dict[str, Any]:
     dims_result = serialize_dimensions(op.get_dimensions())
     meas_result = serialize_measures(op.get_measures())
+    calc_result = serialize_calc_measures(op.get_calculated_measures())
     metadata = {
         "dimensions": dims_result.value_or({}),
         "measures": meas_result.value_or({}),
     }
+    calc_data = calc_result.value_or({})
+    if calc_data:
+        metadata["calc_measures"] = calc_data
     if op.name:
         metadata["name"] = op.name
     return metadata
@@ -208,8 +304,7 @@ def _extract_semantic_table(op) -> dict[str, Any]:
 
 @_register_extractor("SemanticFilterOp")
 def _extract_filter(op) -> dict[str, Any]:
-    pred_result = serialize_predicate(op.predicate)
-    return {"predicate": pred_result.value_or("")}
+    return {"predicate_pickle": _pickle_callable(op.predicate)}
 
 
 @_register_extractor("SemanticGroupByOp")
@@ -219,19 +314,11 @@ def _extract_group_by(op) -> dict[str, Any]:
 
 @_register_extractor("SemanticAggregateOp")
 def _extract_aggregate(op) -> dict[str, Any]:
-    from .ops import _unwrap
-
     metadata = {}
     if op.keys:
         metadata["by"] = list(op.keys)
     if op.aggs:
-        agg_metadata = {}
-        for name, fn in op.aggs.items():
-            unwrapped = _unwrap(fn) if hasattr(fn, "_fn") else fn
-            expr_str = expr_to_ibis_string(unwrapped).value_or(None)
-            if expr_str:
-                agg_metadata[name] = expr_str
-        metadata["aggs"] = agg_metadata
+        metadata["aggs_pickle"] = {name: _pickle_callable(fn) for name, fn in op.aggs.items()}
     return metadata
 
 
@@ -239,12 +326,7 @@ def _extract_aggregate(op) -> dict[str, Any]:
 def _extract_mutate(op) -> dict[str, Any]:
     if not op.post:
         return {}
-    post_metadata = {}
-    for name, fn in op.post.items():
-        expr_str = expr_to_ibis_string(fn).value_or(None)
-        if expr_str:
-            post_metadata[name] = expr_str
-    return {"post": post_metadata} if post_metadata else {}
+    return {"post_pickle": {name: _pickle_callable(fn) for name, fn in op.post.items()}}
 
 
 @_register_extractor("SemanticProjectOp")
@@ -259,18 +341,21 @@ def _extract_limit(op) -> dict[str, Any]:
 
 @_register_extractor("SemanticOrderByOp")
 def _extract_order_by(op) -> dict[str, Any]:
-    from .ops import _unwrap
-
     order_keys = []
     for key in op.keys:
         if isinstance(key, str):
             order_keys.append({"type": "string", "value": key})
         else:
-            unwrapped = _unwrap(key) if hasattr(key, "_fn") else key
-            expr_str = expr_to_ibis_string(unwrapped).value_or(None)
-            if expr_str:
-                order_keys.append({"type": "callable", "value": expr_str})
+            order_keys.append({"type": "callable", "value_pickle": _pickle_callable(key)})
     return {"order_keys": order_keys}
+
+
+@_register_extractor("SemanticJoinOp")
+def _extract_join(op) -> dict[str, Any]:
+    metadata = {"how": op.how}
+    if op.on is not None:
+        metadata["on_pickle"] = _pickle_callable(op.on)
+    return metadata
 
 
 def _extract_op_metadata(op) -> dict[str, Any]:
@@ -288,10 +373,29 @@ def _extract_op_metadata(op) -> dict[str, Any]:
     def extract_source():
         return _extract_op_metadata(op.source)
 
+    @safe
+    def extract_left():
+        return _extract_op_metadata(op.left)
+
+    @safe
+    def extract_right():
+        return _extract_op_metadata(op.right)
+
     if source_metadata := extract_source().value_or(None):
         metadata["source"] = source_metadata
 
+    if left_metadata := extract_left().value_or(None):
+        metadata["left"] = left_metadata
+
+    if right_metadata := extract_right().value_or(None):
+        metadata["right"] = right_metadata
+
     return metadata
+
+
+# ---------------------------------------------------------------------------
+# from_tagged
+# ---------------------------------------------------------------------------
 
 
 def from_tagged(tagged_expr):
@@ -313,7 +417,6 @@ def from_tagged(tagged_expr):
     Example:
         >>> tagged_expr = to_tagged(model)
         >>> bsl_expr = from_tagged(tagged_expr)
-        >>> # Use bsl_expr normally
     """
 
     @safe
@@ -333,7 +436,17 @@ def from_tagged(tagged_expr):
     return result.value_or(None)
 
 
+# ---------------------------------------------------------------------------
+# Tag metadata parsing helpers
+# ---------------------------------------------------------------------------
+
+
 def _parse_field(metadata: dict, field: str) -> dict | list:
+    """Extract a field from tag metadata, converting frozen tuples back to mutable types.
+
+    xorq's FrozenOrderedDict stores dicts as tuples-of-pairs and lists as tuples.
+    This function reverses that transformation so reconstructors see plain dicts/lists.
+    """
     value = metadata.get(field)
     if not value:
         return {} if field != "order_keys" else []
@@ -355,30 +468,18 @@ def _parse_field(metadata: dict, field: str) -> dict | list:
     return _tuple_to_mutable(value)
 
 
-def _deserialize_expr(expr_str: str | None, fallback_name: str | None = None) -> Callable:
-    if not expr_str:
-        return lambda t, n=fallback_name: t[n] if n else t  # noqa: E731
-    result = ibis_string_to_expr(expr_str)
-
-    from returns.result import Success
-    if isinstance(result, Success):
-        return result.unwrap()
-
-    if fallback_name:
-        return lambda t, n=fallback_name: t[n]  # noqa: E731
-
-    raise ValueError(f"Failed to deserialize expression: {expr_str}. Error: {result.failure()}")
+def _list_to_tuple(obj):
+    """Recursively convert lists back to tuples (reverses _tuple_to_mutable for expr_struct)."""
+    if isinstance(obj, list):
+        return tuple(_list_to_tuple(item) for item in obj)
+    if isinstance(obj, dict):
+        return tuple((k, _list_to_tuple(v)) for k, v in obj.items())
+    return obj
 
 
-_RECONSTRUCTORS = {}
-
-
-def _register_reconstructor(op_type: str):
-    def decorator(func):
-        _RECONSTRUCTORS[op_type] = func
-        return func
-
-    return decorator
+# ---------------------------------------------------------------------------
+# Metadata extraction from xorq expressions
+# ---------------------------------------------------------------------------
 
 
 def _extract_xorq_metadata(xorq_expr) -> dict[str, Any] | None:
@@ -393,7 +494,6 @@ def _extract_xorq_metadata(xorq_expr) -> dict[str, Any] | None:
         return op.parent.to_expr()
 
     def is_bsl_tag(op) -> bool:
-        """Check if this is a BSL-tagged expression."""
         return isinstance(op, Tag) and "bsl_op_type" in op.metadata
 
     maybe_op = get_op(xorq_expr).map(lambda op: op if is_bsl_tag(op) else None)
@@ -408,14 +508,37 @@ def _extract_xorq_metadata(xorq_expr) -> dict[str, Any] | None:
     return _extract_xorq_metadata(parent_expr)
 
 
+# ---------------------------------------------------------------------------
+# Reconstructors  (metadata dict → BSL expression)
+# ---------------------------------------------------------------------------
+
+_RECONSTRUCTORS = {}
+
+
+def _register_reconstructor(op_type: str):
+    def decorator(func):
+        _RECONSTRUCTORS[op_type] = func
+        return func
+
+    return decorator
+
+
 @_register_reconstructor("SemanticTableOp")
 def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
     from . import expr as bsl_expr
     from . import ops
 
     def _create_dimension(name: str, dim_data: dict) -> ops.Dimension:
+        expr_col = dim_data.get("expr")
+        expr_pickle = dim_data.get("expr_pickle")
+        if expr_col is not None:
+            expr = lambda t, c=expr_col: t[c]  # noqa: E731
+        elif expr_pickle:
+            expr = _unpickle_callable(expr_pickle)
+        else:
+            expr = lambda t, n=name: t[n]  # noqa: E731
         return ops.Dimension(
-            expr=_deserialize_expr(dim_data.get("expr"), fallback_name=name),
+            expr=expr,
             description=dim_data.get("description"),
             is_entity=dim_data.get("is_entity", False),
             is_event_timestamp=dim_data.get("is_event_timestamp", False),
@@ -424,8 +547,21 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
         )
 
     def _create_measure(name: str, meas_data: dict) -> ops.Measure:
+        from .utils import structured_to_expr
+
+        expr_struct = meas_data.get("expr_struct")
+        expr_pickle = meas_data.get("expr_pickle")
+        if expr_struct is not None:
+            result = structured_to_expr(_list_to_tuple(expr_struct))
+            expr = result.value_or(None)
+            if expr is None:
+                raise ValueError(f"Measure '{name}': failed to deserialize expr_struct")
+        elif expr_pickle:
+            expr = _unpickle_callable(expr_pickle)
+        else:
+            raise ValueError(f"Measure '{name}' has no expr_struct or expr_pickle")
         return ops.Measure(
-            expr=_deserialize_expr(meas_data.get("expr"), fallback_name=None),
+            expr=expr,
             description=meas_data.get("description"),
             requires_unnest=tuple(meas_data.get("requires_unnest", [])),
         )
@@ -435,49 +571,41 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
 
         When aggregate_cache_storage is used, the expression is wrapped as:
         Tag(parent=CachedNode(parent=RemoteTable(args[3]=actual_computation)))
-
-        This function unwraps these layers to extract the actual computation
-        which contains the original backend references (not the xorq "let" backend).
-
-        Args:
-            expr: Expression that may contain CachedNode wrappers
-
-        Returns:
-            Unwrapped expression with original backend references
         """
         from xorq.expr.relations import CachedNode, RemoteTable, Tag
 
         op = expr.op()
 
-        # Unwrap Tag layer
         if isinstance(op, Tag):
             expr = op.parent.to_expr() if hasattr(op.parent, "to_expr") else op.parent
             op = expr.op()
 
-        # Unwrap CachedNode layer
         if isinstance(op, CachedNode):
             expr = op.parent
             op = expr.op()
 
-        # Unwrap RemoteTable layer - args[3] contains the actual computation
         if isinstance(op, RemoteTable):
-            # RemoteTable.args[3] is the actual Ibis expression with correct backend
             expr = op.args[3]
 
         return expr
 
     def _reconstruct_table():
         from xorq.common.utils.graph_utils import walk_nodes
+        from xorq.common.utils.ibis_utils import from_ibis
         from xorq.expr.relations import Read
         from xorq.vendor import ibis
         from xorq.vendor.ibis.expr.operations import relations as xorq_rel
 
-        # Unwrap any cached nodes before walking
         unwrapped_expr = _unwrap_cached_nodes(xorq_expr)
 
         read_ops = list(walk_nodes((Read,), unwrapped_expr))
         in_memory_tables = list(walk_nodes((xorq_rel.InMemoryTable,), unwrapped_expr))
         db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), unwrapped_expr))
+
+        total_leaf_tables = len(read_ops) + len(in_memory_tables) + len(db_tables)
+        if total_leaf_tables > 1:
+            expr = unwrapped_expr.to_expr() if hasattr(unwrapped_expr, "to_expr") else unwrapped_expr
+            return from_ibis(expr) if not hasattr(expr.op(), "source") else expr
 
         if read_ops:
             read_op = read_ops[0]
@@ -487,33 +615,34 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
                 if path:
                     import pandas as pd
 
-                    return ibis.memtable(pd.read_parquet(path))
+                    return from_ibis(ibis.memtable(pd.read_parquet(path)))
 
         if in_memory_tables:
             proxy = in_memory_tables[0].args[2]
-            return ibis.memtable(proxy.to_frame())
+            return from_ibis(ibis.memtable(proxy.to_frame()))
 
         if db_tables:
             db_table = db_tables[0]
             table_name, xorq_backend = db_table.args[0], db_table.args[2]
             backend_class = getattr(ibis, xorq_backend.name)
             backend = backend_class.from_connection(xorq_backend.con)
-            return backend.table(table_name)
+            return from_ibis(backend.table(table_name))
 
-        # If none of the above, just return the xorq expression as a table
-        # (it's already in xorq's vendored ibis land)
         return xorq_expr.to_expr()
 
     dim_meta = _parse_field(metadata, "dimensions")
     meas_meta = _parse_field(metadata, "measures")
+    calc_meta = _parse_field(metadata, "calc_measures")
 
     dimensions = {name: _create_dimension(name, data) for name, data in dim_meta.items()}
     measures = {name: _create_measure(name, data) for name, data in meas_meta.items()}
+    calc_measures = deserialize_calc_measures(calc_meta) if calc_meta else {}
 
     return bsl_expr.SemanticModel(
         table=_reconstruct_table(),
         dimensions=dimensions,
         measures=measures,
+        calc_measures=calc_measures,
         name=metadata.get("name"),
     )
 
@@ -522,8 +651,10 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
 def _reconstruct_filter(metadata: dict, xorq_expr, source):
     if source is None:
         raise ValueError("SemanticFilterOp requires source")
-    predicate = _deserialize_expr(metadata.get("predicate"), fallback_name=None)
-    return source.filter(predicate)
+    pickle_data = metadata.get("predicate_pickle")
+    if not pickle_data:
+        raise ValueError("SemanticFilterOp has no predicate_pickle")
+    return source.filter(_unpickle_callable(pickle_data))
 
 
 @_register_reconstructor("SemanticGroupByOp")
@@ -538,22 +669,20 @@ def _reconstruct_group_by(metadata: dict, xorq_expr, source):
 def _reconstruct_aggregate(metadata: dict, xorq_expr, source):
     if source is None:
         raise ValueError("SemanticAggregateOp requires source")
-    aggs_meta = _parse_field(metadata, "aggs")
-    return source.aggregate(*aggs_meta.keys()) if aggs_meta else source
+    aggs_pickle = _parse_field(metadata, "aggs_pickle")
+    if not aggs_pickle:
+        raise ValueError("SemanticAggregateOp has no aggs_pickle")
+    return source.aggregate(*aggs_pickle.keys())
 
 
 @_register_reconstructor("SemanticMutateOp")
 def _reconstruct_mutate(metadata: dict, xorq_expr, source):
     if source is None:
         raise ValueError("SemanticMutateOp requires source")
-    post_meta = _parse_field(metadata, "post")
-    if not post_meta:
+    post_pickle = _parse_field(metadata, "post_pickle")
+    if not post_pickle:
         return source
-    post_callables = {
-        name: _deserialize_expr(expr_str, fallback_name=name)
-        for name, expr_str in post_meta.items()
-    }
-    return source.mutate(**post_callables)
+    return source.mutate(**{name: _unpickle_callable(data) for name, data in post_pickle.items()})
 
 
 @_register_reconstructor("SemanticProjectOp")
@@ -570,11 +699,12 @@ def _reconstruct_order_by(metadata: dict, xorq_expr, source):
         raise ValueError("SemanticOrderByOp requires source")
 
     def _deserialize_key(key_meta: dict):
-        return (
-            key_meta["value"]
-            if key_meta["type"] == "string"
-            else _deserialize_expr(key_meta["value"])
-        )
+        if key_meta["type"] == "string":
+            return key_meta["value"]
+        pickle_data = key_meta.get("value_pickle")
+        if not pickle_data:
+            raise ValueError("Order-by callable key has no value_pickle")
+        return _unpickle_callable(pickle_data)
 
     order_keys_meta = _parse_field(metadata, "order_keys")
     if not order_keys_meta:
@@ -588,6 +718,39 @@ def _reconstruct_limit(metadata: dict, xorq_expr, source):
     if source is None:
         raise ValueError("SemanticLimitOp requires source")
     return source.limit(n=int(metadata.get("n", 0)), offset=int(metadata.get("offset", 0)))
+
+
+@_register_reconstructor("SemanticJoinOp")
+def _reconstruct_join(metadata: dict, xorq_expr, source):
+    from . import expr as bsl_expr
+
+    left_metadata = _parse_field(metadata, "left")
+    right_metadata = _parse_field(metadata, "right")
+
+    if not left_metadata or not right_metadata:
+        raise ValueError("SemanticJoinOp requires both 'left' and 'right' metadata")
+
+    left_model = _reconstruct_bsl_operation(left_metadata, xorq_expr)
+    right_model = _reconstruct_bsl_operation(right_metadata, xorq_expr)
+
+    how = metadata.get("how", "inner")
+    on_pickle = metadata.get("on_pickle")
+
+    if on_pickle is None:
+        return bsl_expr.SemanticJoin(
+            left=left_model.op() if hasattr(left_model, "op") else left_model,
+            right=right_model.op() if hasattr(right_model, "op") else right_model,
+            on=None,
+            how=how,
+        )
+
+    predicate = _unpickle_callable(on_pickle)
+    return left_model.join_many(right_model, on=predicate, how=how)
+
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
 
 
 def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
