@@ -513,8 +513,9 @@ def query(
     # Step 3: Group by and aggregate
     if dimensions:
         result = result.group_by(*dimensions)
-        if measures:
-            result = result.aggregate(*measures)
+        # Materialize grouped dimensions even when no measures are requested.
+        # This avoids returning a bare group-by object that compiles to SELECT *.
+        result = result.aggregate(*measures) if measures else result.aggregate()
     elif measures:
         # No dimensions = grand total aggregation
         result = result.group_by().aggregate(*measures)

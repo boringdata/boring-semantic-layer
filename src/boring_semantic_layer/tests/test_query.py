@@ -172,6 +172,100 @@ class TestBasicQuery:
         assert result["flight_count"].iloc[0] == 30  # 6 carriers * 5 repetitions
 
 
+class TestMultiLayerDerivedFields:
+    """Regression tests for multi-layer derived dimensions/measures in query()."""
+
+    def test_query_multilayer_dimension_without_measures(self):
+        df = pd.DataFrame(
+            {
+                "year": [2020, 2020, 2021, 2021],
+                "distance": [100, 120, 200, 220],
+            }
+        )
+        tbl = ibis.memtable(df)
+
+        st = to_semantic_table(tbl, "flights").with_dimensions(
+            year=lambda t: t.year,
+            year_plus_one=lambda t: t.year + 1,
+            year_plus_two=lambda t: t.year_plus_one + 1,
+        )
+
+        sql = st.query(dimensions=["year_plus_two"]).sql()
+
+        assert "year_plus_two" in sql
+        assert "SELECT *" not in sql
+
+    def test_query_multilayer_dimension_with_measure(self):
+        df = pd.DataFrame(
+            {
+                "year": [2020, 2020, 2021, 2021],
+                "distance": [100, 120, 200, 220],
+            }
+        )
+        tbl = ibis.memtable(df)
+
+        st = to_semantic_table(tbl, "flights").with_dimensions(
+            year=lambda t: t.year,
+            year_plus_one=lambda t: t.year + 1,
+            year_plus_two=lambda t: t.year_plus_one + 1,
+        )
+        st = st.with_measures(total_flights=lambda t: t.count())
+
+        sql = st.query(
+            dimensions=["year_plus_two"],
+            measures=["total_flights"],
+        ).sql()
+
+        assert "year_plus_two" in sql
+        assert "total_flights" in sql
+
+    def test_query_multilayer_calculated_measure(self):
+        df = pd.DataFrame(
+            {
+                "distance": [100, 200, 300, 150, 250, 350] * 5,
+            }
+        )
+        tbl = ibis.memtable(df)
+
+        st = to_semantic_table(tbl, "flights").with_measures(
+            total_flights=lambda t: t.count(),
+            total_distance=lambda t: t.distance.sum(),
+            avg_distance_per_flight=lambda t: t.total_distance / t.total_flights + 1,
+            avg_dist_plus_one=lambda t: t.avg_distance_per_flight + 1,
+        )
+
+        sql = st.query(measures=["avg_dist_plus_one"]).sql()
+
+        assert "avg_dist_plus_one" in sql
+        assert "total_distance" in sql
+        assert "total_flights" in sql
+
+    def test_query_multilayer_calculated_measure_method_chain(self):
+        """Method-style calc chains (e.g. .add(1)) should resolve transitively."""
+        df = pd.DataFrame(
+            {
+                "distance": [100, 200, 300, 150, 250, 350] * 5,
+            }
+        )
+        tbl = ibis.memtable(df)
+
+        st = to_semantic_table(tbl, "flights").with_measures(
+            total_flights=lambda t: t.count(),
+            total_distance=lambda t: t.distance.sum(),
+            avg_distance_per_flight=lambda t: t.total_distance / t.total_flights,
+            avg_dist_plus_one=lambda t: t.avg_distance_per_flight.add(1),
+            avg_dist_plus_two=lambda t: t.avg_dist_plus_one.add(1),
+        )
+
+        sql_one = st.query(measures=["avg_dist_plus_one"]).sql()
+        sql_two = st.query(measures=["avg_dist_plus_two"]).sql()
+
+        assert "avg_dist_plus_one" in sql_one
+        assert "avg_dist_plus_two" in sql_two
+        assert "total_distance" in sql_two
+        assert "total_flights" in sql_two
+
+
 class TestFilters:
     """Test filter functionality."""
 
