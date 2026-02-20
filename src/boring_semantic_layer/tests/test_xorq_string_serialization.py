@@ -1158,7 +1158,7 @@ def test_tagged_roundtrip_percent_of_total():
         flights_st.join_many(carriers_st, lambda f, c: f.carrier == c.code)
         .with_dimensions(nickname=lambda t: t.nickname)
         .with_measures(
-            percent_of_total=lambda t: t.flight_count / t.all(t.flight_count),
+            percent_of_total=lambda t: t["flights_pct.flight_count"] / t.all(t["flights_pct.flight_count"]),
         )
     )
 
@@ -1217,18 +1217,18 @@ def test_tagged_roundtrip_join_with_multiple_measures():
     df = (
         reconstructed
         .group_by("nickname")
-        .aggregate("flight_count", "total_distance")
+        .aggregate("flights_join.flight_count", "flights_join.total_distance")
         .order_by("nickname")
         .execute()
     )
 
     assert len(df) == 3
-    got = dict(zip(df.nickname, df.flight_count, strict=False))
+    got = dict(zip(df.nickname, df["flights_join.flight_count"], strict=False))
     assert got["American"] == 2
     assert got["United"] == 1
     assert got["Delta"] == 3
 
-    got_dist = dict(zip(df.nickname, df.total_distance, strict=False))
+    got_dist = dict(zip(df.nickname, df["flights_join.total_distance"], strict=False))
     assert got_dist["American"] == 300  # 100+200
     assert got_dist["United"] == 300
     assert got_dist["Delta"] == 1500  # 400+500+600
@@ -1378,13 +1378,13 @@ def test_tagged_roundtrip_join_filter_aggregate():
     df = (
         reconstructed
         .group_by("name")
-        .aggregate("total_amount")
+        .aggregate("orders_jfa.total_amount")
         .order_by("name")
         .execute()
     )
 
     assert len(df) == 2
-    got = dict(zip(df.name, df.total_amount, strict=False))
+    got = dict(zip(df.name, df["orders_jfa.total_amount"], strict=False))
     assert got["Alice"] == 30
     assert got["Bob"] == 70
 
@@ -1417,8 +1417,8 @@ def test_tagged_roundtrip_join_inner():
     tagged = to_tagged(joined)
     reconstructed = from_tagged(tagged)
 
-    df = reconstructed.group_by("label").aggregate("row_count").order_by("label").execute()
+    df = reconstructed.group_by("label").aggregate("left_inner.row_count").order_by("label").execute()
     assert len(df) == 2  # keys 2 and 3 match
-    got = dict(zip(df.label, df.row_count, strict=False))
+    got = dict(zip(df.label, df["left_inner.row_count"], strict=False))
     assert got["x"] == 1
     assert got["y"] == 1
