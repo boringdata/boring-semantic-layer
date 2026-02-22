@@ -359,3 +359,144 @@ def test_calc_measure_downstream_chaining():
     df = result.execute()
     assert len(df) == 2
     assert "avg_distance" in df.columns
+
+
+# --- Tests for MethodCall AST node (e.g. .round(), .cast(), chaining) ---
+
+
+def test_method_call_round_on_calc_measure():
+    """Calling .round() on a calculated measure expression should work."""
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+    tbl = con.create_table("flights", data)
+
+    st = to_semantic_table(tbl, "flights").with_measures(
+        total_distance=lambda t: t.distance.sum(),
+        flight_count=lambda t: t.count(),
+        avg_distance=lambda t: (t.total_distance / t.flight_count).round(1),
+    )
+
+    df = st.group_by("carrier").aggregate("avg_distance").execute()
+    assert len(df) == 2
+    assert "avg_distance" in df.columns
+    # AA: (100+200)/2 = 150.0, UA: 300/1 = 300.0
+    vals = sorted(df.avg_distance.tolist())
+    assert vals == [150.0, 300.0]
+
+
+def test_method_call_cast_on_calc_measure():
+    """Calling .cast() on a calculated measure expression should work."""
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+    tbl = con.create_table("flights", data)
+
+    st = to_semantic_table(tbl, "flights").with_measures(
+        total_distance=lambda t: t.distance.sum(),
+        flight_count=lambda t: t.count(),
+        avg_distance=lambda t: (t.total_distance / t.flight_count).cast("float32"),
+    )
+
+    df = st.group_by("carrier").aggregate("avg_distance").execute()
+    assert len(df) == 2
+    assert "avg_distance" in df.columns
+
+
+def test_method_call_chained_round_cast():
+    """Chaining .round().cast() on a calc measure should work."""
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+    tbl = con.create_table("flights", data)
+
+    st = to_semantic_table(tbl, "flights").with_measures(
+        total_distance=lambda t: t.distance.sum(),
+        flight_count=lambda t: t.count(),
+        avg_distance=lambda t: (t.total_distance / t.flight_count).round(2).cast("float32"),
+    )
+
+    df = st.group_by("carrier").aggregate("avg_distance").execute()
+    assert len(df) == 2
+    assert "avg_distance" in df.columns
+
+
+def test_method_call_round_on_measure_ref():
+    """Calling .round() on a MeasureRef directly should work."""
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+    tbl = con.create_table("flights", data)
+
+    st = to_semantic_table(tbl, "flights").with_measures(
+        total_distance=lambda t: t.distance.sum(),
+        flight_count=lambda t: t.count(),
+        avg_distance=lambda t: t.total_distance / t.flight_count,
+        avg_distance_rounded=lambda t: t.avg_distance.round(1),
+    )
+
+    df = st.group_by("carrier").aggregate("avg_distance_rounded").execute()
+    assert len(df) == 2
+    assert "avg_distance_rounded" in df.columns
+    vals = sorted(df.avg_distance_rounded.tolist())
+    assert vals == [150.0, 300.0]
+
+
+def test_method_call_arithmetic_after():
+    """Arithmetic after a method call: t.x.round(2) * 100."""
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+    tbl = con.create_table("flights", data)
+
+    st = to_semantic_table(tbl, "flights").with_measures(
+        total_distance=lambda t: t.distance.sum(),
+        flight_count=lambda t: t.count(),
+        pct=lambda t: (t.total_distance / t.flight_count).round(0) * 100,
+    )
+
+    df = st.group_by("carrier").aggregate("pct").execute()
+    assert len(df) == 2
+    vals = sorted(df.pct.tolist())
+    # AA: 150*100=15000, UA: 300*100=30000
+    assert vals == [15000.0, 30000.0]
+
+
+def test_method_call_fillna_on_calc_measure():
+    """Calling .fillna() on a calc measure expression should work."""
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+    tbl = con.create_table("flights", data)
+
+    st = to_semantic_table(tbl, "flights").with_measures(
+        total_distance=lambda t: t.distance.sum(),
+        flight_count=lambda t: t.count(),
+        avg_distance=lambda t: (t.total_distance / t.flight_count).fillna(0),
+    )
+
+    df = st.group_by("carrier").aggregate("avg_distance").execute()
+    assert len(df) == 2
+    assert "avg_distance" in df.columns
+
+
+def test_method_call_serialization_roundtrip():
+    """MethodCall should survive serialize/deserialize roundtrip."""
+    from boring_semantic_layer.measure_scope import BinOp, MeasureRef, MethodCall
+    from boring_semantic_layer.xorq_convert import (
+        deserialize_calc_measures,
+        serialize_calc_measures,
+    )
+
+    # Build: (total_distance / flight_count).round(2)
+    expr = MethodCall(
+        receiver=BinOp("div", MeasureRef("total_distance"), MeasureRef("flight_count")),
+        method="round",
+        args=(2,),
+        kwargs=(),
+    )
+
+    calc_measures = {"avg_distance": expr}
+    serialized = serialize_calc_measures(calc_measures).unwrap()
+    deserialized = deserialize_calc_measures(serialized)
+
+    result = deserialized["avg_distance"]
+    assert isinstance(result, MethodCall)
+    assert result.method == "round"
+    assert result.args == (2,)
+    assert isinstance(result.receiver, BinOp)
+    assert result.receiver.op == "div"
