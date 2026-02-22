@@ -505,7 +505,15 @@ def _extract_measure_metadata(fn_or_expr: Any) -> tuple[Any, str | None, tuple]:
         return (fn_or_expr, None, ())
 
 
+_AGG_METHODS = frozenset({"sum", "mean", "avg", "count", "min", "max"})
+
+
 def _is_calculated_measure(val: Any) -> bool:
+    # A MethodCall with an aggregation method on a MeasureRef is a base measure:
+    # the column name matched a known measure name in MeasureScope, but the user
+    # is really defining a column aggregation (e.g. lambda t: t.flight_count.sum()).
+    if isinstance(val, MethodCall) and val.method in _AGG_METHODS and isinstance(val.receiver, MeasureRef):
+        return False
     return isinstance(val, MeasureRef | AllOf | BinOp | MethodCall | int | float)
 
 
