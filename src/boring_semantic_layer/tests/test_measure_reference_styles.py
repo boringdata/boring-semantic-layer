@@ -261,3 +261,101 @@ def test_all_of_multilayer_calc_measure():
     assert len(df) == 2
     assert "pct_of_total" in df.columns
     assert pytest.approx(sorted(df.pct_of_total.tolist())) == sorted([151 / 251, 351 / 251])
+
+
+# --- Tests for .values / .schema / .columns with calc measures ---
+
+
+def test_calc_measure_values_schema_columns_single_block():
+    """Composed measures defined in a single with_measures block should not
+    break .values, .schema, or .columns on the aggregate op."""
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+    tbl = con.create_table("flights", data)
+
+    st = to_semantic_table(tbl, "flights").with_measures(
+        total_distance=lambda t: t.distance.sum(),
+        flight_count=lambda t: t.count(),
+        avg_distance=lambda t: t.total_distance / t.flight_count,
+    )
+
+    agg = st.group_by("carrier").aggregate("avg_distance")
+    op = agg.op()
+
+    # These all previously raised IbisTypeError for calc measures
+    assert "avg_distance" in op.values
+    assert "carrier" in op.values
+    assert "avg_distance" in op.schema
+    assert "avg_distance" in agg.columns
+
+
+def test_calc_measure_values_chained_with_measures():
+    """Calc measures defined across chained with_measures calls should work
+    with .values, .schema, and .columns."""
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+    tbl = con.create_table("flights", data)
+
+    st = (
+        to_semantic_table(tbl, "flights")
+        .with_measures(
+            total_distance=lambda t: t.distance.sum(),
+            flight_count=lambda t: t.count(),
+        )
+        .with_measures(
+            avg_distance=lambda t: t.total_distance / t.flight_count,
+        )
+    )
+
+    agg = st.group_by("carrier").aggregate("avg_distance")
+    op = agg.op()
+
+    assert "avg_distance" in op.values
+    assert "avg_distance" in op.schema
+    assert "avg_distance" in agg.columns
+
+
+def test_base_measures_only_values():
+    """Regression guard: .values should still work for base-measures-only aggregations."""
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+    tbl = con.create_table("flights", data)
+
+    st = to_semantic_table(tbl, "flights").with_measures(
+        flight_count=lambda t: t.count(),
+    )
+
+    agg = st.group_by("carrier").aggregate("flight_count")
+    op = agg.op()
+
+    assert "flight_count" in op.values
+    assert "carrier" in op.values
+    assert "flight_count" in op.schema
+    assert set(agg.columns) == {"carrier", "flight_count"}
+
+
+def test_calc_measure_downstream_chaining():
+    """Downstream operations (order_by, limit) should work after aggregating
+    calc measures, confirming .schema/.columns propagate correctly."""
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame(
+        {"carrier": ["AA", "AA", "UA", "DL"], "distance": [100, 200, 300, 400]}
+    )
+    tbl = con.create_table("flights", data)
+
+    st = to_semantic_table(tbl, "flights").with_measures(
+        total_distance=lambda t: t.distance.sum(),
+        flight_count=lambda t: t.count(),
+        avg_distance=lambda t: t.total_distance / t.flight_count,
+    )
+
+    result = (
+        st.group_by("carrier")
+        .aggregate("avg_distance")
+        .order_by("avg_distance")
+        .limit(2)
+    )
+
+    df = result.execute()
+    assert len(df) == 2
+    assert "avg_distance" in df.columns

@@ -1616,24 +1616,10 @@ class SemanticAggregateOp(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        all_roots = _find_all_root_models(self.source)
+        from xorq.common.utils.ibis_utils import from_ibis
 
-        merged_dimensions = _merge_fields_with_prefixing(
-            all_roots,
-            lambda root: root.get_dimensions(),
-        )
-
-        base_tbl = self.source.to_expr()
-
-        vals: dict[str, Any] = {}
-        for k in self.keys:
-            if k in merged_dimensions:
-                vals[k] = merged_dimensions[k](base_tbl).op()
-            else:
-                vals[k] = base_tbl[k].op()
-        for name, fn in self.aggs.items():
-            vals[name] = fn(base_tbl).op()
-        return FrozenOrderedDict(vals)
+        tbl = from_ibis(self.to_untagged())
+        return FrozenOrderedDict({col: tbl[col].op() for col in tbl.columns})
 
     @property
     def schema(self) -> Schema:
