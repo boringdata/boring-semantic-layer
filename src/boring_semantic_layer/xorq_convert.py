@@ -122,13 +122,21 @@ def serialize_measures(measures: Mapping[str, Any]) -> Result[dict, Exception]:
 def serialize_calc_measures(calc_measures: Mapping[str, Any]) -> Result[dict, Exception]:
     @safe
     def do_serialize():
-        from .measure_scope import AllOf, BinOp, MeasureRef
+        from .measure_scope import AllOf, BinOp, MeasureRef, MethodCall
 
         def _serialize_calc_expr(expr):
             if isinstance(expr, MeasureRef):
                 return ("measure_ref", expr.name)
             if isinstance(expr, AllOf):
                 return ("all_of", _serialize_calc_expr(expr.ref))
+            if isinstance(expr, MethodCall):
+                return (
+                    "method_call",
+                    _serialize_calc_expr(expr.receiver),
+                    expr.method,
+                    tuple(expr.args),
+                    tuple(expr.kwargs),
+                )
             if isinstance(expr, BinOp):
                 return ("calc_binop", expr.op, _serialize_calc_expr(expr.left), _serialize_calc_expr(expr.right))
             if isinstance(expr, int | float):
@@ -146,7 +154,7 @@ def serialize_calc_measures(calc_measures: Mapping[str, Any]) -> Result[dict, Ex
 
 
 def deserialize_calc_measures(calc_data: Mapping[str, Any]) -> dict[str, Any]:
-    from .measure_scope import AllOf, BinOp, MeasureRef
+    from .measure_scope import AllOf, BinOp, MeasureRef, MethodCall
 
     def _deserialize_calc_expr(data):
         if isinstance(data, int | float):
@@ -156,6 +164,13 @@ def deserialize_calc_measures(calc_data: Mapping[str, Any]) -> dict[str, Any]:
             return MeasureRef(data[1])
         if tag == "all_of":
             return AllOf(_deserialize_calc_expr(data[1]))
+        if tag == "method_call":
+            return MethodCall(
+                receiver=_deserialize_calc_expr(data[1]),
+                method=data[2],
+                args=tuple(data[3]) if data[3] else (),
+                kwargs=tuple(data[4]) if data[4] else (),
+            )
         if tag == "calc_binop":
             return BinOp(data[1], _deserialize_calc_expr(data[2]), _deserialize_calc_expr(data[3]))
         if tag == "num":
