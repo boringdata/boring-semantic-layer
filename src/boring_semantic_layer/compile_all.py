@@ -52,20 +52,12 @@ def _collect_all_refs(expr: MeasureExpr, out: set[str]) -> None:
         _collect_all_refs(expr.right, out)
 
 
-def _collect_aggregation_exprs(expr: MeasureExpr, out: list) -> None:
+def _collect_aggregation_exprs(expr: MeasureExpr, out: set) -> None:
     """Collect all AggregationExpr from a calc_spec expression."""
     from .measure_scope import AggregationExpr
 
     if isinstance(expr, AggregationExpr):
-        # Check if we already have this exact expression
-        for existing in out:
-            if (
-                existing.column == expr.column
-                and existing.operation == expr.operation
-                and existing.post_ops == expr.post_ops
-            ):
-                return  # Already collected
-        out.append(expr)
+        out.add(expr)
     elif isinstance(expr, BinOp):
         _collect_aggregation_exprs(expr.left, out)
         _collect_aggregation_exprs(expr.right, out)
@@ -75,10 +67,17 @@ def _collect_aggregation_exprs(expr: MeasureExpr, out: list) -> None:
 
 def _make_agg_name(agg_expr) -> str:
     """Generate a unique name for an AggregationExpr."""
-    post_ops_str = "_".join(op[0] for op in agg_expr.post_ops) if agg_expr.post_ops else ""
-    if post_ops_str:
-        return f"__agg_{agg_expr.column}_{agg_expr.operation}_{post_ops_str}"
-    return f"__agg_{agg_expr.column}_{agg_expr.operation}"
+    try:
+        from dask.base import tokenize
+
+        token = tokenize(agg_expr)
+    except Exception:
+        # Fallback when dask isn't available in the runtime environment.
+        import hashlib
+
+        token = hashlib.sha1(repr(agg_expr).encode()).hexdigest()
+
+    return f"__agg_{agg_expr.column}_{agg_expr.operation}_{token[:12]}"
 
 
 def _replace_aggregation_exprs(expr: MeasureExpr, agg_name_map: dict) -> MeasureExpr:
@@ -86,15 +85,8 @@ def _replace_aggregation_exprs(expr: MeasureExpr, agg_name_map: dict) -> Measure
     from .measure_scope import AggregationExpr
 
     if isinstance(expr, AggregationExpr):
-        # Find the name for this AggregationExpr
-        for agg_expr, name in agg_name_map.items():
-            if (
-                agg_expr.column == expr.column
-                and agg_expr.operation == expr.operation
-                and agg_expr.post_ops == expr.post_ops
-            ):
-                return MeasureRef(name)
-        return expr  # Not found, keep as is
+        name = agg_name_map.get(expr)
+        return MeasureRef(name) if name is not None else expr
     elif isinstance(expr, BinOp):
         new_left = _replace_aggregation_exprs(expr.left, agg_name_map)
         new_right = _replace_aggregation_exprs(expr.right, agg_name_map)
@@ -460,14 +452,14 @@ def compile_grouped_with_all(
 ):
     # Step 0: Extract AggregationExpr from calc_specs and add them as regular measures
     # This ensures they are computed in the grouped context instead of as scalar subqueries
-    all_agg_exprs = []
+    all_agg_exprs = set()
     for calc_expr in calc_specs.values():
         _collect_aggregation_exprs(calc_expr, all_agg_exprs)
 
     # Create a mapping from AggregationExpr to generated measure name
     agg_name_map = {}
     extended_agg_specs = dict(agg_specs)
-    for agg_expr in all_agg_exprs:
+    for agg_expr in sorted(all_agg_exprs, key=repr):
         name = _make_agg_name(agg_expr)
         # Avoid name collisions
         while name in extended_agg_specs:
