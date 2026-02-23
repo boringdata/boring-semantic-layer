@@ -616,8 +616,8 @@ def _make_base_measure(
         else:
             result = apply_aggregation(agg_expr.operation, t[agg_expr.column])
 
-        for method_name, args, kwargs in agg_expr.post_ops:
-            result = getattr(result, method_name)(*args, **kwargs)
+        for method_name, args, kwargs_tuple in agg_expr.post_ops:
+            result = getattr(result, method_name)(*args, **dict(kwargs_tuple))
 
         return result
 

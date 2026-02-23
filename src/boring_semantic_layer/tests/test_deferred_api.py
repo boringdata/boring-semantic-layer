@@ -1508,3 +1508,24 @@ class TestDeeplyNestedJoins:
         # Tokyo: 1200+800 = 2000
         assert df["cities.city_name"].iloc[0] == "Tokyo"
         assert df["shops.total_revenue"].iloc[0] == 2000
+
+def test_all_with_aggregation_expr_post_ops():
+    """Test t.all() with inline AggregationExpr that includes post-ops."""
+    con = ibis.duckdb.connect(":memory:")
+    events = pd.DataFrame(
+        {
+            "grp": ["a", "a", "b", "b"],
+            "value": [1, None, None, None],
+        },
+    )
+    events_tbl = con.create_table("events", events)
+
+    events_st = to_semantic_table(events_tbl, "events").with_measures(
+        pct_of_total_value=lambda t: t.value.sum().coalesce(0) / t.all(t.value.sum().coalesce(0)),
+    )
+
+    df = events_st.group_by("grp").aggregate("pct_of_total_value").order_by("grp").execute()
+    got = dict(zip(df.grp, df.pct_of_total_value, strict=False))
+
+    assert pytest.approx(got["a"]) == 1.0
+    assert pytest.approx(got["b"]) == 0.0

@@ -453,6 +453,74 @@ flights:
         os.unlink(yaml_path)
 
 
+def test_yaml_base_measure_with_post_ops(duckdb_conn):
+    """Test YAML base measures with post-aggregation method chaining."""
+    nullable_tbl = duckdb_conn.create_table(
+        "nullable_values_yaml",
+        {
+            "grp": ["a", "a", "b", "b"],
+            "value": [1, None, None, None],
+        },
+    )
+
+    yaml_content = """
+events:
+  table: nullable_values_tbl
+  dimensions:
+    grp: _.grp
+  measures:
+    total_value_safe: _.value.sum().coalesce(0)
+"""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = f.name
+
+    try:
+        models = from_yaml(yaml_path, tables={"nullable_values_tbl": nullable_tbl})
+        result = models["events"].group_by("grp").aggregate("total_value_safe").order_by("grp").execute()
+
+        got = dict(zip(result["grp"], result["total_value_safe"], strict=False))
+        assert pytest.approx(got["a"]) == 1.0
+        assert pytest.approx(got["b"]) == 0.0
+    finally:
+        os.unlink(yaml_path)
+
+
+def test_yaml_calc_measure_with_inline_aggregation_post_ops(duckdb_conn):
+    """Test YAML calc measures with inline AggregationExpr post-ops."""
+    nullable_tbl = duckdb_conn.create_table(
+        "nullable_values_yaml_calc",
+        {
+            "grp": ["a", "a", "b", "b"],
+            "value": [1, None, None, None],
+        },
+    )
+
+    yaml_content = """
+events:
+  table: nullable_values_tbl
+  dimensions:
+    grp: _.grp
+  measures:
+    safe_avg_value: _.value.sum().coalesce(0) / 2
+"""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = f.name
+
+    try:
+        models = from_yaml(yaml_path, tables={"nullable_values_tbl": nullable_tbl})
+        result = models["events"].group_by("grp").aggregate("safe_avg_value").order_by("grp").execute()
+
+        got = dict(zip(result["grp"], result["safe_avg_value"], strict=False))
+        assert pytest.approx(got["a"]) == 0.5
+        assert pytest.approx(got["b"]) == 0.0
+    finally:
+        os.unlink(yaml_path)
+
+
 def test_file_not_found():
     """Test handling of non-existent YAML file."""
     with pytest.raises(FileNotFoundError):

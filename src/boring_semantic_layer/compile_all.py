@@ -52,6 +52,77 @@ def _collect_all_refs(expr: MeasureExpr, out: set[str]) -> None:
         _collect_all_refs(expr.right, out)
 
 
+def _collect_aggregation_exprs(expr: MeasureExpr, out: set) -> None:
+    """Collect all AggregationExpr from a calc_spec expression."""
+    from .measure_scope import AggregationExpr
+
+    if isinstance(expr, AggregationExpr):
+        out.add(expr)
+    elif isinstance(expr, BinOp):
+        _collect_aggregation_exprs(expr.left, out)
+        _collect_aggregation_exprs(expr.right, out)
+    elif isinstance(expr, AllOf):
+        _collect_aggregation_exprs(expr.ref, out)
+
+
+def _make_agg_name(agg_expr) -> str:
+    """Generate a unique name for an AggregationExpr."""
+    try:
+        from dask.base import tokenize
+
+        token = tokenize(agg_expr)
+    except Exception:
+        # Fallback when dask isn't available in the runtime environment.
+        import hashlib
+
+        token = hashlib.sha1(repr(agg_expr).encode()).hexdigest()
+
+    return f"__agg_{agg_expr.column}_{agg_expr.operation}_{token[:12]}"
+
+
+def _replace_aggregation_exprs(expr: MeasureExpr, agg_name_map: dict) -> MeasureExpr:
+    """Replace AggregationExpr in an expression with MeasureRef to pre-computed aggregations."""
+    from .measure_scope import AggregationExpr
+
+    if isinstance(expr, AggregationExpr):
+        name = agg_name_map.get(expr)
+        return MeasureRef(name) if name is not None else expr
+    elif isinstance(expr, BinOp):
+        new_left = _replace_aggregation_exprs(expr.left, agg_name_map)
+        new_right = _replace_aggregation_exprs(expr.right, agg_name_map)
+        return BinOp(op=expr.op, left=new_left, right=new_right)
+    elif isinstance(expr, AllOf):
+        new_ref = _replace_aggregation_exprs(expr.ref, agg_name_map)
+        return AllOf(ref=new_ref)
+    return expr
+
+
+def _make_agg_fn_from_expr(agg_expr):
+    """Create an aggregation function from an AggregationExpr."""
+    operations = {
+        "sum": lambda col: col.sum(),
+        "mean": lambda col: col.mean(),
+        "avg": lambda col: col.mean(),
+        "count": lambda col: col.count(),
+        "min": lambda col: col.min(),
+        "max": lambda col: col.max(),
+    }
+
+    def agg_fn(t):
+        if agg_expr.operation == "count":
+            result = t.count()
+        else:
+            result = operations[agg_expr.operation](t[agg_expr.column])
+
+        # Apply post_ops (e.g., .coalesce(0))
+        for method_name, args, kwargs_tuple in agg_expr.post_ops:
+            result = getattr(result, method_name)(*args, **dict(kwargs_tuple))
+
+        return result
+
+    return agg_fn
+
+
 @curry
 def _compile_binop(by_tbl, all_tbl, base_tbl, op: str, left: Any, right: Any):
     left_val = _compile_formula(left, by_tbl, all_tbl, base_tbl)
@@ -126,10 +197,15 @@ def _compile_formula(expr: MeasureExpr, by_tbl, all_tbl, base_tbl):
 
         # Apply the operation to the base table column
         if expr.operation == "count":
-            return base_tbl.count()
+            result = base_tbl.count()
+        else:
+            column = base_tbl[expr.column]
+            result = op_fn(column)
 
-        column = base_tbl[expr.column]
-        result = op_fn(column)
+        # Apply post_ops (e.g., .coalesce(0), .abs(), etc.)
+        for method_name, args, kwargs_tuple in expr.post_ops:
+            result = getattr(result, method_name)(*args, **dict(kwargs_tuple))
+
         return result
     if isinstance(expr, BinOp):
         return _compile_binop(by_tbl, all_tbl, base_tbl, expr.op, expr.left, expr.right)
@@ -374,8 +450,31 @@ def compile_grouped_with_all(
     calc_specs: dict[str, MeasureExpr],
     requested_measures: Iterable[str] = None,
 ):
-    # Step 1: Classify measures
-    classification = make_measure_classification(base_tbl, agg_specs)
+    # Step 0: Extract AggregationExpr from calc_specs and add them as regular measures
+    # This ensures they are computed in the grouped context instead of as scalar subqueries
+    all_agg_exprs = set()
+    for calc_expr in calc_specs.values():
+        _collect_aggregation_exprs(calc_expr, all_agg_exprs)
+
+    # Create a mapping from AggregationExpr to generated measure name
+    agg_name_map = {}
+    extended_agg_specs = dict(agg_specs)
+    for agg_expr in sorted(all_agg_exprs, key=repr):
+        name = _make_agg_name(agg_expr)
+        # Avoid name collisions
+        while name in extended_agg_specs:
+            name = name + "_"
+        agg_name_map[agg_expr] = name
+        extended_agg_specs[name] = _make_agg_fn_from_expr(agg_expr)
+
+    # Replace AggregationExpr in calc_specs with MeasureRef to the new measures
+    updated_calc_specs = {
+        name: _replace_aggregation_exprs(expr, agg_name_map)
+        for name, expr in calc_specs.items()
+    }
+
+    # Step 1: Classify measures (using extended agg_specs)
+    classification = make_measure_classification(base_tbl, extended_agg_specs)
 
     # Step 2: Build result tables for each level
     result_tables = []
@@ -402,26 +501,26 @@ def compile_grouped_with_all(
 
     # Step 4: Add totals if needed
     needed_totals = set()
-    for ast in calc_specs.values():
+    for ast in updated_calc_specs.values():
         _collect_all_refs(ast, needed_totals)
 
     if needed_totals:
-        all_tbl = _build_totals_table(base_tbl, needed_totals, classification, agg_specs)
+        all_tbl = _build_totals_table(base_tbl, needed_totals, classification, extended_agg_specs)
         out = by_tbl.join(all_tbl, how="cross")
     else:
         all_tbl = None
         out = by_tbl
 
     # Step 5: Apply calculated measures
-    calc_cols = {name: _compile_formula(ast, out, all_tbl, base_tbl) for name, ast in calc_specs.items()}
+    calc_cols = {name: _compile_formula(ast, out, all_tbl, base_tbl) for name, ast in updated_calc_specs.items()}
     out = out.mutate(**calc_cols)
 
-    # Step 6: Select requested columns
+    # Step 6: Select requested columns (exclude internal __agg_ measures)
     if requested_measures is not None:
         # Preserve order and uniqueness
         select_cols = list(
             dict.fromkeys(
-                list(by_cols) + list(requested_measures) + list(calc_specs.keys()),
+                list(by_cols) + list(requested_measures) + list(updated_calc_specs.keys()),
             ),
         )
         out = out.select([out[c] for c in select_cols])
