@@ -42,6 +42,7 @@ from .measure_scope import (
     ColumnScope,
     MeasureRef,
     MeasureScope,
+    MethodCall,
 )
 from .nested_access import NestedAccessMarker
 
@@ -360,6 +361,8 @@ def _collect_measure_refs(expr, refs_out: set):
     elif isinstance(expr, BinOp):
         _collect_measure_refs(expr.left, refs_out)
         _collect_measure_refs(expr.right, refs_out)
+    elif isinstance(expr, MethodCall):
+        _collect_measure_refs(expr.receiver, refs_out)
 
 
 def _extract_missing_column_name(exc: Exception) -> str | None:
@@ -502,8 +505,16 @@ def _extract_measure_metadata(fn_or_expr: Any) -> tuple[Any, str | None, tuple]:
         return (fn_or_expr, None, ())
 
 
+_AGG_METHODS = frozenset({"sum", "mean", "avg", "count", "min", "max"})
+
+
 def _is_calculated_measure(val: Any) -> bool:
-    return isinstance(val, MeasureRef | AllOf | BinOp | int | float)
+    # A MethodCall with an aggregation method on a MeasureRef is a base measure:
+    # the column name matched a known measure name in MeasureScope, but the user
+    # is really defining a column aggregation (e.g. lambda t: t.flight_count.sum()).
+    if isinstance(val, MethodCall) and val.method in _AGG_METHODS and isinstance(val.receiver, MeasureRef):
+        return False
+    return isinstance(val, MeasureRef | AllOf | BinOp | MethodCall | int | float)
 
 
 def _matches_aggregation_pattern(measure_expr, agg_expr, tbl):
@@ -1190,6 +1201,15 @@ def _resolve_aggregation_exprs(
 
     if isinstance(expr, AggregationExpr):
         return resolve_aggregation(expr)
+    elif isinstance(expr, MethodCall):
+        return MethodCall(
+            receiver=_resolve_aggregation_exprs(
+                expr.receiver, merged_base_measures, merged_calc_measures, tbl
+            ),
+            method=expr.method,
+            args=expr.args,
+            kwargs=expr.kwargs,
+        )
     elif isinstance(expr, BinOp):
         return BinOp(
             op=expr.op,
@@ -1235,7 +1255,7 @@ def _create_measure_spec(
         else:
             return _MeasureSpec(name=name, kind="calc", value=val)
 
-    if isinstance(val, AllOf | BinOp | int | float):
+    if isinstance(val, AllOf | BinOp | MethodCall | int | float):
         return _MeasureSpec(name=name, kind="calc", value=val)
 
     return _MeasureSpec(name=name, kind="agg", value=fn)
@@ -1278,6 +1298,13 @@ def _expand_calc_measure_refs(
                 left=_lift_to_allof(value.left),
                 right=_lift_to_allof(value.right),
             )
+        if isinstance(value, MethodCall):
+            return MethodCall(
+                receiver=_lift_to_allof(value.receiver),
+                method=value.method,
+                args=value.args,
+                kwargs=value.kwargs,
+            )
         return value
 
     if isinstance(expr, MeasureRef):
@@ -1303,6 +1330,16 @@ def _expand_calc_measure_refs(
         )
         cache[ref_name] = expanded
         return expanded
+
+    if isinstance(expr, MethodCall):
+        return MethodCall(
+            receiver=_expand_calc_measure_refs(
+                expr.receiver, merged_base_measures, merged_calc_measures, tbl, cache, path
+            ),
+            method=expr.method,
+            args=expr.args,
+            kwargs=expr.kwargs,
+        )
 
     if isinstance(expr, BinOp):
         return BinOp(
@@ -1616,24 +1653,10 @@ class SemanticAggregateOp(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        all_roots = _find_all_root_models(self.source)
+        from xorq.common.utils.ibis_utils import from_ibis
 
-        merged_dimensions = _merge_fields_with_prefixing(
-            all_roots,
-            lambda root: root.get_dimensions(),
-        )
-
-        base_tbl = self.source.to_expr()
-
-        vals: dict[str, Any] = {}
-        for k in self.keys:
-            if k in merged_dimensions:
-                vals[k] = merged_dimensions[k](base_tbl).op()
-            else:
-                vals[k] = base_tbl[k].op()
-        for name, fn in self.aggs.items():
-            vals[name] = fn(base_tbl).op()
-        return FrozenOrderedDict(vals)
+        tbl = from_ibis(self.to_untagged())
+        return FrozenOrderedDict({col: tbl[col].op() for col in tbl.columns})
 
     @property
     def schema(self) -> Schema:
@@ -3425,7 +3448,7 @@ def _update_measure_refs_in_calc(expr, prefix_map: dict[str, str]):
     Recursively update MeasureRef names in a calculated measure expression.
 
     Args:
-        expr: A MeasureExpr (MeasureRef, AllOf, BinOp, or literal)
+        expr: A MeasureExpr (MeasureRef, AllOf, BinOp, MethodCall, or literal)
         prefix_map: Mapping from old name to new prefixed name
 
     Returns:
@@ -3439,6 +3462,14 @@ def _update_measure_refs_in_calc(expr, prefix_map: dict[str, str]):
         # Update the inner MeasureRef
         updated_ref = _update_measure_refs_in_calc(expr.ref, prefix_map)
         return AllOf(updated_ref)
+    elif isinstance(expr, MethodCall):
+        updated_receiver = _update_measure_refs_in_calc(expr.receiver, prefix_map)
+        return MethodCall(
+            receiver=updated_receiver,
+            method=expr.method,
+            args=expr.args,
+            kwargs=expr.kwargs,
+        )
     elif isinstance(expr, BinOp):
         # Recursively update left and right
         updated_left = _update_measure_refs_in_calc(expr.left, prefix_map)
@@ -3655,12 +3686,12 @@ def _merge_fields_with_prefixing(
     if all_roots:
         sample_fields = field_accessor(all_roots[0])
         if sample_fields:
-            from .measure_scope import AllOf, BinOp, MeasureRef
+            from .measure_scope import AllOf, BinOp, MeasureRef, MethodCall
 
             first_val = next(iter(sample_fields.values()), None)
             is_calc_measures = isinstance(
                 first_val,
-                MeasureRef | AllOf | BinOp | int | float,
+                MeasureRef | AllOf | BinOp | MethodCall | int | float,
             )
             is_dimensions = isinstance(first_val, Dimension)
 

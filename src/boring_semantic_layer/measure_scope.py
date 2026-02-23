@@ -8,6 +8,28 @@ from returns.maybe import Maybe, Some
 from toolz import curry
 
 
+class _PendingMethodCall:
+    """Captures a method access on a calc-measure AST node, waiting for ``()``."""
+
+    __slots__ = ("_receiver", "_method")
+
+    def __init__(self, receiver, method):
+        object.__setattr__(self, "_receiver", receiver)
+        object.__setattr__(self, "_method", method)
+
+    def __call__(self, *args, **kwargs):
+        if args and hasattr(args[0], "columns"):
+            return self._receiver  # table-call passthrough
+        return MethodCall(self._receiver, self._method, args, tuple(sorted(kwargs.items())))
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        # Zero-arg call of current method, then chain next method
+        zero_call = MethodCall(self._receiver, self._method, (), ())
+        return _PendingMethodCall(zero_call, name)
+
+
 class _Node:
     def _bin(self, op: str, other: Any) -> BinOp:
         return BinOp(op, self, other)
@@ -49,6 +71,11 @@ class _Node:
     def div(self, other: Any) -> BinOp:
         return self / other
 
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(f"'{type(self).__name__}' has no attribute {name!r}")
+        return _PendingMethodCall(self, name)
+
 
 @frozen
 class MeasureRef(_Node):
@@ -65,6 +92,14 @@ class BinOp(_Node):
     op: str
     left: Any
     right: Any
+
+
+@frozen
+class MethodCall(_Node):
+    receiver: Any
+    method: str
+    args: tuple = ()
+    kwargs: tuple = ()  # tuple of (key, value) pairs
 
 
 @frozen
@@ -95,7 +130,7 @@ class AggregationExpr(_Node):
         )
 
 
-MeasureExpr = MeasureRef | AllOf | BinOp | AggregationExpr | float | int
+MeasureExpr = MeasureRef | AllOf | BinOp | MethodCall | AggregationExpr | float | int
 
 
 class DeferredColumn:

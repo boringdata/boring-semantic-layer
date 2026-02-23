@@ -8,7 +8,7 @@ import ibis
 from attrs import frozen
 from toolz import curry, pipe
 
-from .measure_scope import AllOf, BinOp, MeasureExpr, MeasureRef
+from .measure_scope import AllOf, BinOp, MeasureExpr, MeasureRef, MethodCall
 
 
 @curry
@@ -47,6 +47,8 @@ def _collect_all_refs(expr: MeasureExpr, out: set[str]) -> None:
         if isinstance(expr.ref, MeasureRef):
             out.add(expr.ref.name)
         # If it's an AggregationExpr, it will be resolved during compilation
+    elif isinstance(expr, MethodCall):
+        _collect_all_refs(expr.receiver, out)
     elif isinstance(expr, BinOp):
         _collect_all_refs(expr.left, out)
         _collect_all_refs(expr.right, out)
@@ -207,6 +209,9 @@ def _compile_formula(expr: MeasureExpr, by_tbl, all_tbl, base_tbl):
             result = getattr(result, method_name)(*args, **dict(kwargs_tuple))
 
         return result
+    if isinstance(expr, MethodCall):
+        compiled = _compile_formula(expr.receiver, by_tbl, all_tbl, base_tbl)
+        return getattr(compiled, expr.method)(*expr.args, **dict(expr.kwargs))
     if isinstance(expr, BinOp):
         return _compile_binop(by_tbl, all_tbl, base_tbl, expr.op, expr.left, expr.right)
     return expr
