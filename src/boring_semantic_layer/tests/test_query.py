@@ -1311,5 +1311,48 @@ class TestFilterInteractions:
         assert "passengers_per_mile" in result.columns
 
 
+class TestDerivedTypeInference:
+    """Test .type() on derived dimensions and measures (issue #175)."""
+
+    def test_type_on_derived_dimensions(self, flights_data):
+        st = to_semantic_table(flights_data, "flights").with_dimensions(
+            dist_plus_one=lambda t: t.distance + 1,
+            dist_plus_two=lambda t: t.dist_plus_one + 1,
+        )
+        assert str(st.distance.type()) == "int64"
+        assert str(st.dist_plus_one.type()) == "int64"
+        assert str(st.dist_plus_two.type()) == "int64"
+
+    def test_type_on_base_columns_after_derived_dims(self, flights_data):
+        st = to_semantic_table(flights_data, "flights").with_dimensions(
+            dist_plus_one=lambda t: t.distance + 1,
+        )
+        # Base columns should still resolve after adding derived dims
+        assert str(st.carrier.type()) == "string"
+        assert str(st.distance.type()) == "int64"
+
+    def test_type_on_base_measures(self, flights_data):
+        st = to_semantic_table(flights_data, "flights").with_measures(
+            total_passengers=lambda t: t.passengers.sum(),
+            max_distance=lambda t: t.distance.max(),
+        )
+        assert str(st.total_passengers.type()) == "int64"
+        assert str(st.max_distance.type()) == "int64"
+
+    def test_type_on_derived_measures(self, flights_data):
+        st = (
+            to_semantic_table(flights_data, "flights")
+            .with_measures(
+                total_passengers=lambda t: t.passengers.sum(),
+                total_distance=lambda t: t.distance.sum(),
+            )
+            .with_measures(
+                passengers_per_distance=lambda t: t.total_passengers / t.total_distance,
+            )
+        )
+        assert str(st.total_passengers.type()) == "int64"
+        assert str(st.passengers_per_distance.type()) == "float64"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
