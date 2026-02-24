@@ -869,13 +869,39 @@ class SemanticTableOp(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        return FrozenOrderedDict(
-            {
-                **{col: self.table[col].op() for col in self.table.columns},
-                **{name: fn(self.table).op() for name, fn in self.get_dimensions().items()},
-                **{name: fn(self.table).op() for name, fn in self.get_measures().items()},
-            },
+        dims = self.get_dimensions()
+        measures = self.get_measures()
+        calc_measures = self.get_calculated_measures()
+        # Build enriched table with all dimensions resolved (handles derived deps)
+        enriched = _mutate_dimensions_with_dependencies(
+            self.table, dims.keys(), dims
         )
+        base_values = {
+            **{col: self.table[col].op() for col in self.table.columns},
+            **{name: enriched[name].op() for name in dims},
+            **{name: fn(enriched).op() for name, fn in measures.items()},
+        }
+        # Resolve calculated measure types via a dummy table with base measure dtypes
+        if calc_measures:
+            from .compile_all import _compile_formula
+
+            measure_schema = {
+                name: base_values[name].dtype for name in measures if name in base_values
+            }
+            try:
+                dummy = ibis.table(measure_schema, name="__type_inference__")
+            except Exception:
+                # ibis.table() rejects schemas with dotted names (joined models);
+                # skip calc-measure type inference in that case.
+                dummy = None
+            if dummy is not None:
+                for name, expr in calc_measures.items():
+                    try:
+                        compiled = _compile_formula(expr, dummy, dummy, enriched)
+                        base_values[name] = compiled.op()
+                    except Exception:
+                        pass
+        return FrozenOrderedDict(base_values)
 
     @property
     def schema(self):
