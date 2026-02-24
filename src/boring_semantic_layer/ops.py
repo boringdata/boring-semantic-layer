@@ -888,13 +888,19 @@ class SemanticTableOp(Relation):
             measure_schema = {
                 name: base_values[name].dtype for name in measures if name in base_values
             }
-            dummy = ibis.table(measure_schema, name="__type_inference__")
-            for name, expr in calc_measures.items():
-                try:
-                    compiled = _compile_formula(expr, dummy, dummy, enriched)
-                    base_values[name] = compiled.op()
-                except Exception:
-                    pass
+            try:
+                dummy = ibis.table(measure_schema, name="__type_inference__")
+            except Exception:
+                # ibis.table() rejects schemas with dotted names (joined models);
+                # skip calc-measure type inference in that case.
+                dummy = None
+            if dummy is not None:
+                for name, expr in calc_measures.items():
+                    try:
+                        compiled = _compile_formula(expr, dummy, dummy, enriched)
+                        base_values[name] = compiled.op()
+                    except Exception:
+                        pass
         return FrozenOrderedDict(base_values)
 
     @property
