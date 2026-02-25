@@ -653,12 +653,16 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
         )
 
     def _unwrap_cached_nodes(expr):
-        """Unwrap CachedNode wrappers to get to the underlying expression.
+        """Unwrap Tag and CachedNode wrappers to get to the underlying expression.
 
         When aggregate_cache_storage is used, the expression is wrapped as:
-        Tag(parent=CachedNode(parent=RemoteTable(args[3]=actual_computation)))
+        Tag(parent=CachedNode(parent=...))
+
+        RemoteTable is NOT unwrapped — it is the backend consolidation layer
+        that into_backend places on each leaf table.  Stripping it exposes
+        inner Read ops on separate backends → "Multiple backends found".
         """
-        from xorq.expr.relations import CachedNode, RemoteTable, Tag
+        from xorq.expr.relations import CachedNode, Tag
 
         op = expr.op()
 
@@ -668,10 +672,6 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
 
         if isinstance(op, CachedNode):
             expr = op.parent
-            op = expr.op()
-
-        if isinstance(op, RemoteTable):
-            expr = op.args[3]
 
         return expr
 
