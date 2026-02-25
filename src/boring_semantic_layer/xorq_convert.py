@@ -735,6 +735,45 @@ def _reconstruct_limit(metadata: dict, xorq_expr, source):
     return source.limit(n=int(metadata.get("n", 0)), offset=int(metadata.get("offset", 0)))
 
 
+def _split_join_expr(xorq_expr):
+    """Extract left and right table expressions from a joined xorq expression.
+
+    When reconstructing a SemanticJoinOp, the xorq_expr contains the full
+    joined expression. Each side needs its own individual table expression
+    so _reconstruct_table sees a single leaf table, not the entire join.
+    """
+    from xorq.expr.relations import CachedNode, RemoteTable, Tag
+    from xorq.vendor.ibis.expr.operations.relations import JoinChain
+
+    expr = xorq_expr
+    op = expr.op()
+    if isinstance(op, Tag):
+        expr = op.parent.to_expr() if hasattr(op.parent, "to_expr") else op.parent
+        op = expr.op()
+    if isinstance(op, CachedNode):
+        expr = op.parent
+        op = expr.op()
+    if isinstance(op, RemoteTable):
+        expr = op.args[3]
+        op = expr.op()
+
+    if not isinstance(op, JoinChain) or not op.rest:
+        return xorq_expr, xorq_expr
+
+    right_expr = op.rest[-1].table.to_expr()
+    match len(op.rest):
+        case 1:
+            left_expr = op.first.to_expr()
+        case _:
+            # Multi-way join: reconstruct left sub-join from first + rest[:-1]
+            left_expr = op.first.to_expr()
+            for link in op.rest[:-1]:
+                preds = tuple(p.to_expr() for p in link.predicates)
+                left_expr = left_expr.join(link.table.to_expr(), preds, how=link.how)
+
+    return left_expr, right_expr
+
+
 @_register_reconstructor("SemanticJoinOp")
 def _reconstruct_join(metadata: dict, xorq_expr, source):
     from . import expr as bsl_expr
@@ -745,8 +784,10 @@ def _reconstruct_join(metadata: dict, xorq_expr, source):
     if not left_metadata or not right_metadata:
         raise ValueError("SemanticJoinOp requires both 'left' and 'right' metadata")
 
-    left_model = _reconstruct_bsl_operation(left_metadata, xorq_expr)
-    right_model = _reconstruct_bsl_operation(right_metadata, xorq_expr)
+    left_xorq_expr, right_xorq_expr = _split_join_expr(xorq_expr)
+
+    left_model = _reconstruct_bsl_operation(left_metadata, left_xorq_expr)
+    right_model = _reconstruct_bsl_operation(right_metadata, right_xorq_expr)
 
     how = metadata.get("how", "inner")
     on_pickle = metadata.get("on_pickle")
