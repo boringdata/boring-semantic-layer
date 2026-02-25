@@ -405,7 +405,7 @@ def _extract_join(op) -> dict[str, Any]:
 
     from .utils import join_predicate_to_structured
 
-    metadata = {"how": op.how}
+    metadata = {"how": op.how, "cardinality": op.cardinality}
     if op.on is not None:
         struct_result = join_predicate_to_structured(op.on)
         match struct_result:
@@ -912,28 +912,39 @@ def _reconstruct_join(metadata: dict, xorq_expr, source):
     right_model = _reconstruct_bsl_operation(right_metadata, right_xorq_expr)
 
     how = metadata.get("how", "inner")
+    cardinality = metadata.get("cardinality", "many")
     on_struct = metadata.get("on_struct")
     on_pickle = metadata.get("on_pickle")
 
+    # Deserialize predicate
     match (on_struct, on_pickle):
         case (None, None):
-            return bsl_expr.SemanticJoin(
-                left=left_model.op() if hasattr(left_model, "op") else left_model,
-                right=right_model.op() if hasattr(right_model, "op") else right_model,
-                on=None,
-                how=how,
-            )
+            predicate = None
         case (tuple() | list(), _):
             data = _list_to_tuple(on_struct) if isinstance(on_struct, list) else on_struct
             predicate = structured_to_join_predicate(data).value_or(None)
             if predicate is None:
                 raise ValueError("SemanticJoinOp: failed to deserialize on_struct")
-            return left_model.join_many(right_model, on=predicate, how=how)
         case (_, str()):
             predicate = _unpickle_callable(on_pickle)  # backward compat
-            return left_model.join_many(right_model, on=predicate, how=how)
         case _:
             raise ValueError("SemanticJoinOp has invalid on predicate data")
+
+    # Dispatch to correct join method based on cardinality
+    match cardinality:
+        case "cross":
+            return left_model.join_cross(right_model)
+        case "one":
+            return left_model.join_one(right_model, on=predicate, how=how)
+        case _:
+            if predicate is None:
+                return bsl_expr.SemanticJoin(
+                    left=left_model.op() if hasattr(left_model, "op") else left_model,
+                    right=right_model.op() if hasattr(right_model, "op") else right_model,
+                    on=None,
+                    how=how,
+                )
+            return left_model.join_many(right_model, on=predicate, how=how)
 
 
 # ---------------------------------------------------------------------------

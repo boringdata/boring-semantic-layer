@@ -1535,7 +1535,7 @@ def test_tagged_roundtrip_join_one_left_join():
         )
     )
 
-    joined = orders_st.join_one(products_st, on=lambda o, p: o.product_id == p.pid)
+    joined = orders_st.join_one(products_st, on=lambda o, p: o.product_id == p.pid, how="left")
 
     tagged = to_tagged(joined)
     reconstructed = from_tagged(tagged)
