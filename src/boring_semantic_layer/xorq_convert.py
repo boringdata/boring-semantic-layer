@@ -694,14 +694,7 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
             return from_ibis(expr) if not hasattr(expr.op(), "source") else expr
 
         if read_ops:
-            read_op = read_ops[0]
-            read_kwargs = read_op.args[4] if len(read_op.args) > 4 else None
-            if read_kwargs and isinstance(read_kwargs, tuple):
-                path = next((v for k, v in read_kwargs if k in ("path", "source_list")), None)
-                if path:
-                    from xorq import api as xo
-
-                    return xo.deferred_read_parquet(path)
+            return read_ops[0].to_expr()
 
         if in_memory_tables:
             proxy = in_memory_tables[0].args[2]
