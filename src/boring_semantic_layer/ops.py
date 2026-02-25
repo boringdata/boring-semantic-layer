@@ -2479,7 +2479,7 @@ class SemanticJoinOp(Relation):
         self,
         left: Relation,
         right: Relation,
-        how: str = "inner",
+        how: str = "left",
         on: Callable[[Any, Any], Any] | None = None,
         cardinality: str = "one",
     ) -> None:
@@ -2666,7 +2666,7 @@ class SemanticJoinOp(Relation):
         self,
         other: SemanticTable,
         on: Callable[[Any, Any], ir.BooleanValue],
-        how: str = "inner",
+        how: str = "left",
     ):
         """Join with one-to-one relationship semantics."""
         from .expr import SemanticJoin
