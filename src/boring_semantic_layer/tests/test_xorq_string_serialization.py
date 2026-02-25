@@ -1422,3 +1422,201 @@ def test_tagged_roundtrip_join_inner():
     got = dict(zip(df.label, df["left_inner.row_count"], strict=False))
     assert got["x"] == 1
     assert got["y"] == 1
+
+
+def test_tagged_roundtrip_join_one_preserves_predicate():
+    """join_one round-trip preserves the join predicate (not a cross join).
+
+    Regression test: previously both sides of the join received the full
+    joined xorq expression during reconstruction, causing a self-join
+    where the predicate became a tautology (cross join).
+    """
+    import pandas as pd
+
+    from boring_semantic_layer import Dimension, Measure
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    con = ibis.duckdb.connect(":memory:")
+    flights = pd.DataFrame({
+        "origin": ["SEA", "SEA", "LAX", "LAX", "ORD"],
+        "carrier": ["AA", "UA", "AA", "DL", "UA"],
+    })
+    carriers = pd.DataFrame({
+        "code": ["AA", "UA", "DL"],
+        "nickname": ["American", "United", "Delta"],
+    })
+    f_tbl = con.create_table("flights_jo", flights)
+    c_tbl = con.create_table("carriers_jo", carriers)
+
+    flights_st = (
+        to_semantic_table(f_tbl, name="flights_jo")
+        .with_dimensions(
+            origin=Dimension(expr=lambda t: t.origin, description="Origin"),
+            carrier=Dimension(expr=lambda t: t.carrier, description="Carrier"),
+        )
+        .with_measures(
+            flight_count=Measure(expr=lambda t: t.count(), description="Count"),
+        )
+    )
+    carriers_st = (
+        to_semantic_table(c_tbl, name="carriers_jo")
+        .with_dimensions(
+            code=Dimension(expr=lambda t: t.code, description="Code"),
+            nickname=Dimension(expr=lambda t: t.nickname, description="Nickname"),
+        )
+        .with_measures(
+            carrier_count=Measure(expr=lambda t: t.count(), description="Count"),
+        )
+    )
+
+    joined = flights_st.join_one(carriers_st, on=lambda f, c: f.carrier == c.code)
+
+    # Baseline
+    baseline = (
+        joined
+        .group_by("carriers_jo.nickname")
+        .aggregate("flights_jo.flight_count")
+        .order_by("carriers_jo.nickname")
+        .execute()
+    )
+
+    # Round-trip
+    tagged = to_tagged(joined)
+    reconstructed = from_tagged(tagged)
+    result = (
+        reconstructed
+        .group_by("carriers_jo.nickname")
+        .aggregate("flights_jo.flight_count")
+        .order_by("carriers_jo.nickname")
+        .execute()
+    )
+
+    assert len(result) == 3
+    got = dict(zip(result["carriers_jo.nickname"], result["flights_jo.flight_count"], strict=False))
+    assert got["American"] == 2
+    assert got["United"] == 2
+    assert got["Delta"] == 1
+
+    # Verify baseline and round-trip match exactly
+    assert list(baseline["carriers_jo.nickname"]) == list(result["carriers_jo.nickname"])
+    assert list(baseline["flights_jo.flight_count"]) == list(result["flights_jo.flight_count"])
+
+
+def test_tagged_roundtrip_join_one_left_join():
+    """join_one with left join preserves NULLs for non-matching rows."""
+    import pandas as pd
+
+    from boring_semantic_layer import Dimension, Measure
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    con = ibis.duckdb.connect(":memory:")
+    orders = pd.DataFrame({
+        "order_id": [1, 2, 3, 4],
+        "product_id": [10, 20, 30, 99],  # 99 has no matching product
+    })
+    products = pd.DataFrame({
+        "pid": [10, 20, 30],
+        "name": ["Widget", "Gadget", "Gizmo"],
+    })
+    o_tbl = con.create_table("orders_lj", orders)
+    p_tbl = con.create_table("products_lj", products)
+
+    orders_st = (
+        to_semantic_table(o_tbl, name="orders_lj")
+        .with_dimensions(
+            order_id=Dimension(expr=lambda t: t.order_id, description="Order ID"),
+            product_id=Dimension(expr=lambda t: t.product_id, description="Product ID"),
+        )
+        .with_measures(
+            order_count=Measure(expr=lambda t: t.count(), description="Count"),
+        )
+    )
+    products_st = (
+        to_semantic_table(p_tbl, name="products_lj")
+        .with_dimensions(
+            pid=Dimension(expr=lambda t: t.pid, description="Product ID"),
+            name=Dimension(expr=lambda t: t.name, description="Name"),
+        )
+    )
+
+    joined = orders_st.join_one(products_st, on=lambda o, p: o.product_id == p.pid)
+
+    tagged = to_tagged(joined)
+    reconstructed = from_tagged(tagged)
+
+    result = (
+        reconstructed
+        .group_by("products_lj.name")
+        .aggregate("orders_lj.order_count")
+        .order_by("products_lj.name")
+        .execute()
+    )
+
+    got = dict(zip(result["products_lj.name"], result["orders_lj.order_count"], strict=False))
+    assert got["Gadget"] == 1
+    assert got["Gizmo"] == 1
+    assert got["Widget"] == 1
+    # Left join: the unmatched order (product_id=99) shows up with NULL name
+    assert len(result) == 4
+
+
+def test_tagged_roundtrip_join_many_without_with_dimensions():
+    """join_many without .with_dimensions() round-trips correctly.
+
+    When there is no .with_dimensions() wrapper, the top-level op is
+    SemanticJoinOp and reconstruction must split the join expression.
+    """
+    import pandas as pd
+
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    con = ibis.duckdb.connect(":memory:")
+    employees = pd.DataFrame({
+        "emp_id": [1, 2, 3],
+        "dept_id": [10, 10, 20],
+        "salary": [50000, 60000, 70000],
+    })
+    departments = pd.DataFrame({
+        "dept_id": [10, 20],
+        "dept_name": ["Engineering", "Sales"],
+    })
+    e_tbl = con.create_table("employees_jm", employees)
+    d_tbl = con.create_table("departments_jm", departments)
+
+    emp_st = (
+        to_semantic_table(e_tbl, "employees_jm")
+        .with_dimensions(dept_id=lambda t: t.dept_id)
+        .with_measures(
+            headcount=lambda t: t.count(),
+            total_salary=lambda t: t.salary.sum(),
+        )
+    )
+    dept_st = (
+        to_semantic_table(d_tbl, "departments_jm")
+        .with_dimensions(
+            dept_id=lambda t: t.dept_id,
+            dept_name=lambda t: t.dept_name,
+        )
+    )
+
+    # join_many without .with_dimensions() → top-level SemanticJoinOp
+    joined = emp_st.join_many(dept_st, lambda e, d: e.dept_id == d.dept_id)
+
+    tagged = to_tagged(joined)
+    reconstructed = from_tagged(tagged)
+
+    df = (
+        reconstructed
+        .group_by("departments_jm.dept_name")
+        .aggregate("employees_jm.headcount", "employees_jm.total_salary")
+        .order_by("departments_jm.dept_name")
+        .execute()
+    )
+
+    assert len(df) == 2
+    got_hc = dict(zip(df["departments_jm.dept_name"], df["employees_jm.headcount"], strict=False))
+    got_sal = dict(zip(df["departments_jm.dept_name"], df["employees_jm.total_salary"], strict=False))
+    assert got_hc["Engineering"] == 2
+    assert got_hc["Sales"] == 1
+    assert got_sal["Engineering"] == 110000
+    assert got_sal["Sales"] == 70000
