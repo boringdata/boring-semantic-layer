@@ -735,6 +735,15 @@ def _reconstruct_limit(metadata: dict, xorq_expr, source):
     return source.limit(n=int(metadata.get("n", 0)), offset=int(metadata.get("offset", 0)))
 
 
+def _unwrap_join_ref(expr):
+    """If expr is a JoinReference, return the underlying table."""
+    from xorq.vendor.ibis.expr.operations.relations import JoinReference
+
+    if isinstance(expr.op(), JoinReference):
+        return expr.op().parent.to_expr()
+    return expr
+
+
 def _split_join_expr(xorq_expr):
     """Extract left and right table expressions from a joined xorq expression.
 
@@ -760,16 +769,18 @@ def _split_join_expr(xorq_expr):
     if not isinstance(op, JoinChain) or not op.rest:
         return xorq_expr, xorq_expr
 
-    right_expr = op.rest[-1].table.to_expr()
+    right_expr = _unwrap_join_ref(op.rest[-1].table.to_expr())
     match len(op.rest):
         case 1:
-            left_expr = op.first.to_expr()
+            left_expr = _unwrap_join_ref(op.first.to_expr())
         case _:
             # Multi-way join: reconstruct left sub-join from first + rest[:-1]
-            left_expr = op.first.to_expr()
+            left_expr = _unwrap_join_ref(op.first.to_expr())
             for link in op.rest[:-1]:
                 preds = tuple(p.to_expr() for p in link.predicates)
-                left_expr = left_expr.join(link.table.to_expr(), preds, how=link.how)
+                left_expr = left_expr.join(
+                    _unwrap_join_ref(link.table.to_expr()), preds, how=link.how
+                )
 
     return left_expr, right_expr
 
