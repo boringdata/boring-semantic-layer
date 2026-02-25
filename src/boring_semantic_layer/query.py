@@ -370,6 +370,126 @@ def _normalize_order_by(
     ]
 
 
+def _extract_filter_fields(filter_spec: dict) -> set[str]:
+    """Extract all field names referenced by a dict filter (including compound)."""
+    if not isinstance(filter_spec, dict):
+        return set()
+    if filter_spec.get("operator") in ("AND", "OR"):
+        fields: set[str] = set()
+        for cond in filter_spec.get("conditions", []):
+            fields |= _extract_filter_fields(cond)
+        return fields
+    field = filter_spec.get("field")
+    return {field} if field else set()
+
+
+def _normalize_filter_fields(
+    filter_obj: dict,
+    known_fields: set[str],
+    model_name: str | None = None,
+) -> dict:
+    """Recursively normalize field names inside a filter dict."""
+    if filter_obj.get("operator") in ("AND", "OR"):
+        return {
+            **filter_obj,
+            "conditions": [
+                _normalize_filter_fields(c, known_fields, model_name)
+                for c in filter_obj.get("conditions", [])
+            ],
+        }
+    field = filter_obj.get("field")
+    if field:
+        normalized = _normalize_field_name(field, known_fields, model_name)
+        if normalized != field:
+            return {**filter_obj, "field": normalized}
+    return filter_obj
+
+
+def _build_post_agg_predicate(filter_obj: dict) -> Any:
+    """Build an ibis predicate for post-aggregation filters.
+
+    Uses bracket access (``t[field]``) instead of attribute access so that
+    dotted column names from joined models (e.g. ``orders.total_amount``)
+    resolve correctly on the aggregated table.
+    """
+    if filter_obj.get("operator") in ("AND", "OR"):
+        conditions = filter_obj.get("conditions", [])
+        expr = _build_post_agg_predicate(conditions[0])
+        for cond in conditions[1:]:
+            next_expr = _build_post_agg_predicate(cond)
+            expr = OPERATOR_MAPPING[filter_obj["operator"]](expr, next_expr)
+        return expr
+
+    field = filter_obj["field"]
+    op = filter_obj["operator"]
+    # Use bracket access on ibis._ to preserve dotted names
+    field_expr = ibis._[field]
+
+    if op in ("is null", "is not null"):
+        return OPERATOR_MAPPING[op](field_expr, None)
+    if op in ("in", "not in"):
+        return OPERATOR_MAPPING[op](field_expr, filter_obj.get("values", []))
+
+    value = filter_obj.get("value")
+    # Convert date/timestamp strings
+    if isinstance(value, str):
+        for dtype in ("timestamp", "date"):
+            try:
+                value = ibis.literal(value, type=dtype)
+                break
+            except (ValueError, TypeError):
+                pass
+    return OPERATOR_MAPPING[op](field_expr, value)
+
+
+def _normalize_post_agg_filter(
+    filter_spec: Any,
+    known_measures: set[str],
+    model_name: str | None = None,
+) -> Callable:
+    """Normalize a measure filter for post-aggregation (HAVING) application.
+
+    Handles dict, Filter objects, and callables.  For dict/Filter filters the
+    field names are accessed via bracket notation so dotted names from joined
+    models work correctly after aggregation.  Field names are normalised
+    against *known_measures* so that ``"model.total_sales"`` resolves to
+    ``"total_sales"`` on standalone models but stays prefixed on joins.
+    """
+    raw = filter_spec.filter if isinstance(filter_spec, Filter) else filter_spec
+    if isinstance(raw, dict):
+        raw = _normalize_filter_fields(raw, known_measures, model_name)
+        expr = _build_post_agg_predicate(raw)
+        return lambda t: expr.resolve(t)
+    if callable(raw):
+        return raw
+    return _normalize_filter(filter_spec)
+
+
+def _is_measure_filter(
+    filter_spec: Any,
+    known_measures: set[str],
+    model_name: str | None = None,
+) -> bool:
+    """Return True if *any* field in a dict/Filter filter references a known measure."""
+    # Unwrap Filter objects to inspect their inner dict
+    raw = filter_spec
+    if isinstance(raw, Filter):
+        raw = raw.filter
+    if not isinstance(raw, dict):
+        return False
+    for field in _extract_filter_fields(raw):
+        if field in known_measures:
+            return True
+        # Handle model-prefixed names like "lineitems.metric_ventas"
+        if "." in field:
+            _prefix, name = field.split(".", 1)
+            if name in known_measures:
+                return True
+            if model_name and _prefix == model_name and name in known_measures:
+                return True
+    return False
+
+
 def query(
     semantic_table: Any,  # SemanticModel, but avoiding circular import
     dimensions: Sequence[str] | None = None,
@@ -505,8 +625,16 @@ def query(
         if time_dims_to_transform:
             result = result.with_dimensions(**time_dims_to_transform)
 
-    # Step 2: Apply filters using functional composition
+    # Step 2: Apply filters — separate pre-agg (dimension) from post-agg (measure)
+    pre_agg_filters = []
+    post_agg_filters = []
     for filter_spec in filters:
+        if _is_measure_filter(filter_spec, known_measures, model_name):
+            post_agg_filters.append(filter_spec)
+        else:
+            pre_agg_filters.append(filter_spec)
+
+    for filter_spec in pre_agg_filters:
         filter_fn = _normalize_filter(filter_spec)
         result = result.filter(filter_fn)
 
@@ -519,6 +647,11 @@ def query(
     elif measures:
         # No dimensions = grand total aggregation
         result = result.group_by().aggregate(*measures)
+
+    # Step 3.5: Apply measure filters after aggregation (HAVING semantics)
+    for filter_spec in post_agg_filters:
+        filter_fn = _normalize_post_agg_filter(filter_spec, known_measures, model_name)
+        result = result.filter(filter_fn)
 
     # Step 4: Apply ordering using functional composition
     if order_by:

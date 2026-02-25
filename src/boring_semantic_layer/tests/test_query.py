@@ -1354,5 +1354,111 @@ class TestDerivedTypeInference:
         assert str(st.passengers_per_distance.type()) == "float64"
 
 
+class TestMeasureFilters:
+    """Test filtering by measures in query() (issue #177)."""
+
+    def test_filter_measure_greater_than(self, flights_data):
+        """Measure filter should apply as post-aggregation (HAVING)."""
+        st = (
+            to_semantic_table(flights_data, "flights")
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(total_distance=lambda t: t.distance.sum())
+        )
+        result = st.query(
+            dimensions=["carrier"],
+            measures=["total_distance"],
+            filters=[{"field": "total_distance", "operator": ">", "value": 1500}],
+        ).execute()
+        assert all(result["total_distance"] > 1500)
+
+    def test_filter_measure_is_not_null(self, flights_data):
+        """'is not null' on a measure should not error."""
+        st = (
+            to_semantic_table(flights_data, "flights")
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(total_passengers=lambda t: t.passengers.sum())
+        )
+        result = st.query(
+            dimensions=["carrier"],
+            measures=["total_passengers"],
+            filters=[{"field": "total_passengers", "operator": "is not null"}],
+        ).execute()
+        assert len(result) > 0
+
+    def test_mixed_dimension_and_measure_filters(self, flights_data):
+        """Dimension filters apply pre-agg, measure filters apply post-agg."""
+        st = (
+            to_semantic_table(flights_data, "flights")
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(total_distance=lambda t: t.distance.sum())
+        )
+        # Filter: carrier != 'DL' AND total_distance > 1000
+        result = st.query(
+            dimensions=["carrier"],
+            measures=["total_distance"],
+            filters=[
+                {"field": "carrier", "operator": "!=", "value": "DL"},
+                {"field": "total_distance", "operator": ">", "value": 1000},
+            ],
+        ).execute()
+        assert "DL" not in result["carrier"].values
+        assert all(result["total_distance"] > 1000)
+
+    def test_model_prefixed_measure_filter(self, flights_data):
+        """Model-prefixed measure names should be detected as measure filters."""
+        st = (
+            to_semantic_table(flights_data, "flights")
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(total_distance=lambda t: t.distance.sum())
+        )
+        result = st.query(
+            dimensions=["flights.carrier"],
+            measures=["flights.total_distance"],
+            filters=[{"field": "flights.total_distance", "operator": ">", "value": 0}],
+        ).execute()
+        assert len(result) > 0
+        assert all(result["total_distance"] > 0)
+
+    def test_compound_measure_filter(self, flights_data):
+        """Compound AND filter on measures should work post-aggregation."""
+        st = (
+            to_semantic_table(flights_data, "flights")
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(total_distance=lambda t: t.distance.sum())
+        )
+        result = st.query(
+            dimensions=["carrier"],
+            measures=["total_distance"],
+            filters=[{
+                "operator": "AND",
+                "conditions": [
+                    {"field": "total_distance", "operator": ">", "value": 1000},
+                    {"field": "total_distance", "operator": "<", "value": 5000},
+                ],
+            }],
+        ).execute()
+        assert all(result["total_distance"] > 1000)
+        assert all(result["total_distance"] < 5000)
+
+    def test_dimension_filter_still_pre_aggregation(self, flights_data):
+        """Dimension filters should still be applied before aggregation."""
+        st = (
+            to_semantic_table(flights_data, "flights")
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(total_distance=lambda t: t.distance.sum())
+        )
+        # Filter only AA rows, then aggregate — should only count AA distances
+        all_result = st.query(
+            dimensions=["carrier"], measures=["total_distance"]
+        ).execute()
+        filtered_result = st.query(
+            dimensions=["carrier"],
+            measures=["total_distance"],
+            filters=[{"field": "carrier", "operator": "=", "value": "AA"}],
+        ).execute()
+        assert len(filtered_result) == 1
+        assert filtered_result["carrier"].iloc[0] == "AA"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
