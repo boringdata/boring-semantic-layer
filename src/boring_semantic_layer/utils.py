@@ -538,6 +538,45 @@ def structured_to_expr(data: tuple) -> Result:
     return do_convert()
 
 
+def join_predicate_to_structured(fn: Callable) -> Result[tuple, Exception]:
+    """Convert a binary join predicate to a structured tuple representation.
+
+    Binary predicates like ``lambda l, r: l.col == r.col`` are serialized by
+    calling the function with two named Deferred variables (``left``, ``right``)
+    and serializing the resulting resolver tree.
+    """
+    from xorq.vendor.ibis.common.deferred import Deferred, Variable
+
+    @safe
+    def do_convert():
+        from .ops import _CallableWrapper
+
+        raw_fn = fn._fn if isinstance(fn, _CallableWrapper) else fn
+        left = Deferred(Variable("left"))
+        right = Deferred(Variable("right"))
+        result = raw_fn(left, right)
+        if not hasattr(result, "_resolver"):
+            raise ValueError(
+                f"Join predicate did not produce a Deferred, got {type(result)}"
+            )
+        return serialize_resolver(result._resolver)
+
+    return do_convert()
+
+
+def structured_to_join_predicate(data: tuple) -> Result[Callable, Exception]:
+    """Reconstruct a binary join predicate from a structured tuple representation."""
+    from xorq.vendor.ibis.common.deferred import Deferred
+
+    @safe
+    def do_convert():
+        resolver = deserialize_resolver(data)
+        deferred = Deferred(resolver)
+        return lambda left, right: deferred.resolve(left=left, right=right)
+
+    return do_convert()
+
+
 def _is_url(path: str | Path | None) -> bool:
     """Check if a path is a URL."""
     if path is None:
@@ -612,6 +651,8 @@ __all__ = [
     "ibis_string_to_expr",
     "expr_to_structured",
     "structured_to_expr",
+    "join_predicate_to_structured",
+    "structured_to_join_predicate",
     "serialize_resolver",
     "deserialize_resolver",
     "read_yaml_file",
