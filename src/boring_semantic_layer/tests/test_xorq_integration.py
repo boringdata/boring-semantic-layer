@@ -141,7 +141,7 @@ class TestXorqIntegration:
 
         # Verify BSL metadata is present
         assert metadata["bsl_op_type"] == "SemanticTableOp"
-        assert metadata["bsl_version"] == "1.0"
+        assert metadata["bsl_version"] == "2.0"
 
         # Verify dimension metadata (now stored as nested tuples)
         dims_tuple = metadata["dimensions"]

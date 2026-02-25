@@ -5,20 +5,14 @@ from typing import Any
 
 from attrs import frozen
 from returns.result import Failure, Result, safe
-from xorq.ibis_yaml.common import deserialize_callable, serialize_callable
-
-
-def _pickle_callable(fn) -> str:
-    """Serialize a callable via xorq's cloudpickle-based serializer."""
-    from .ops import _CallableWrapper
-
-    if isinstance(fn, _CallableWrapper):
-        fn = fn._fn
-    return serialize_callable(fn)
+from xorq.ibis_yaml.common import deserialize_callable
 
 
 def _unpickle_callable(data: str) -> Callable:
-    """Deserialize a callable via xorq's cloudpickle-based deserializer."""
+    """Deserialize a callable via xorq's cloudpickle-based deserializer.
+
+    Retained for backward compatibility with v1.0 tags that used pickle.
+    """
     return deserialize_callable(data)
 
 
@@ -74,6 +68,10 @@ def _extract_simple_column_name(expr) -> str | None:
 def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exception]:
     @safe
     def do_serialize():
+        from returns.result import Success
+
+        from .utils import expr_to_structured
+
         dim_metadata = {}
         for name, dim in dimensions.items():
             entry = {
@@ -84,10 +82,18 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
                 "smallest_time_grain": dim.smallest_time_grain,
             }
             col_name = _extract_simple_column_name(dim.expr)
-            if col_name is not None:
-                entry["expr"] = col_name
-            else:
-                entry["expr_pickle"] = _pickle_callable(dim.expr)
+            match col_name:
+                case str():
+                    entry["expr"] = col_name
+                case _:
+                    struct_result = expr_to_structured(dim.expr)
+                    match struct_result:
+                        case Success():
+                            entry["expr_struct"] = struct_result.unwrap()
+                        case _:
+                            raise ValueError(
+                                f"Dimension '{name}': failed to serialize expression"
+                            )
             dim_metadata[name] = entry
         return dim_metadata
 
@@ -108,11 +114,18 @@ def serialize_measures(measures: Mapping[str, Any]) -> Result[dict, Exception]:
                 "requires_unnest": list(meas.requires_unnest),
             }
             original = getattr(meas, "original_expr", None)
-            struct_result = expr_to_structured(original) if original is not None else None
-            if struct_result is not None and isinstance(struct_result, Success):
-                entry["expr_struct"] = struct_result.unwrap()
-            else:
-                entry["expr_pickle"] = _pickle_callable(meas.expr)
+            struct_result = (
+                expr_to_structured(original)
+                if original is not None
+                else expr_to_structured(meas.expr)
+            )
+            match struct_result:
+                case Success():
+                    entry["expr_struct"] = struct_result.unwrap()
+                case _:
+                    raise ValueError(
+                        f"Measure '{name}': failed to serialize expression"
+                    )
             meas_metadata[name] = entry
         return meas_metadata
 
@@ -319,7 +332,16 @@ def _extract_semantic_table(op) -> dict[str, Any]:
 
 @_register_extractor("SemanticFilterOp")
 def _extract_filter(op) -> dict[str, Any]:
-    return {"predicate_pickle": _pickle_callable(op.predicate)}
+    from returns.result import Success
+
+    from .utils import expr_to_structured
+
+    struct_result = expr_to_structured(op.predicate)
+    match struct_result:
+        case Success():
+            return {"predicate_struct": struct_result.unwrap()}
+        case _:
+            raise ValueError("SemanticFilterOp: failed to serialize predicate")
 
 
 @_register_extractor("SemanticGroupByOp")
@@ -329,19 +351,29 @@ def _extract_group_by(op) -> dict[str, Any]:
 
 @_register_extractor("SemanticAggregateOp")
 def _extract_aggregate(op) -> dict[str, Any]:
+    from .utils import expr_to_structured
+
     metadata = {}
     if op.keys:
         metadata["by"] = list(op.keys)
     if op.aggs:
-        metadata["aggs_pickle"] = {name: _pickle_callable(fn) for name, fn in op.aggs.items()}
+        metadata["aggs_struct"] = {
+            name: expr_to_structured(fn).value_or(None) for name, fn in op.aggs.items()
+        }
     return metadata
 
 
 @_register_extractor("SemanticMutateOp")
 def _extract_mutate(op) -> dict[str, Any]:
+    from .utils import expr_to_structured
+
     if not op.post:
         return {}
-    return {"post_pickle": {name: _pickle_callable(fn) for name, fn in op.post.items()}}
+    return {
+        "post_struct": {
+            name: expr_to_structured(fn).value_or(None) for name, fn in op.post.items()
+        }
+    }
 
 
 @_register_extractor("SemanticProjectOp")
@@ -356,20 +388,31 @@ def _extract_limit(op) -> dict[str, Any]:
 
 @_register_extractor("SemanticOrderByOp")
 def _extract_order_by(op) -> dict[str, Any]:
-    order_keys = []
-    for key in op.keys:
-        if isinstance(key, str):
-            order_keys.append({"type": "string", "value": key})
-        else:
-            order_keys.append({"type": "callable", "value_pickle": _pickle_callable(key)})
+    from .utils import expr_to_structured
+
+    order_keys = [
+        {"type": "string", "value": key}
+        if isinstance(key, str)
+        else {"type": "callable", "value_struct": expr_to_structured(key).value_or(None)}
+        for key in op.keys
+    ]
     return {"order_keys": order_keys}
 
 
 @_register_extractor("SemanticJoinOp")
 def _extract_join(op) -> dict[str, Any]:
+    from returns.result import Success
+
+    from .utils import join_predicate_to_structured
+
     metadata = {"how": op.how}
     if op.on is not None:
-        metadata["on_pickle"] = _pickle_callable(op.on)
+        struct_result = join_predicate_to_structured(op.on)
+        match struct_result:
+            case Success():
+                metadata["on_struct"] = struct_result.unwrap()
+            case _:
+                raise ValueError("SemanticJoinOp: failed to serialize join predicate")
     return metadata
 
 
@@ -377,7 +420,7 @@ def _extract_op_metadata(op) -> dict[str, Any]:
     op_type = type(op).__name__
     metadata = {
         "bsl_op_type": op_type,
-        "bsl_version": "1.0",
+        "bsl_version": "2.0",
     }
 
     extractor = _EXTRACTORS.get(op_type)
@@ -492,6 +535,24 @@ def _list_to_tuple(obj):
     return obj
 
 
+def _parse_structured_dict(raw) -> dict:
+    """Convert a FrozenOrderedDict-encoded tuple-of-pairs to a dict (one level only).
+
+    Unlike ``_tuple_to_mutable``, this does NOT recurse into values.
+    Resolver tuples stored as values are returned untouched.
+    """
+    match raw:
+        case dict():
+            return raw
+        case tuple() if raw and all(
+            isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str)
+            for item in raw
+        ):
+            return {k: v for k, v in raw}
+        case _:
+            return {}
+
+
 # ---------------------------------------------------------------------------
 # Metadata extraction from xorq expressions
 # ---------------------------------------------------------------------------
@@ -544,14 +605,24 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
     from . import ops
 
     def _create_dimension(name: str, dim_data: dict) -> ops.Dimension:
+        from .utils import structured_to_expr
+
         expr_col = dim_data.get("expr")
+        expr_struct = dim_data.get("expr_struct")
         expr_pickle = dim_data.get("expr_pickle")
-        if expr_col is not None:
-            expr = lambda t, c=expr_col: t[c]  # noqa: E731
-        elif expr_pickle:
-            expr = _unpickle_callable(expr_pickle)
-        else:
-            expr = lambda t, n=name: t[n]  # noqa: E731
+        match (expr_col, expr_struct, expr_pickle):
+            case (str(), _, _):
+                expr = lambda t, c=expr_col: t[c]  # noqa: E731
+            case (_, tuple() | list(), _):
+                data = _list_to_tuple(expr_struct) if isinstance(expr_struct, list) else expr_struct
+                result = structured_to_expr(data)
+                expr = result.value_or(None)
+                if expr is None:
+                    raise ValueError(f"Dimension '{name}': failed to deserialize expr_struct")
+            case (_, _, str()):
+                expr = _unpickle_callable(expr_pickle)  # backward compat
+            case _:
+                expr = lambda t, n=name: t[n]  # noqa: E731
         return ops.Dimension(
             expr=expr,
             description=dim_data.get("description"),
@@ -628,9 +699,9 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
             if read_kwargs and isinstance(read_kwargs, tuple):
                 path = next((v for k, v in read_kwargs if k in ("path", "source_list")), None)
                 if path:
-                    import pandas as pd
+                    from xorq import api as xo
 
-                    return from_ibis(ibis.memtable(pd.read_parquet(path)))
+                    return xo.deferred_read_parquet(path)
 
         if in_memory_tables:
             proxy = in_memory_tables[0].args[2]
@@ -664,12 +735,24 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
 
 @_register_reconstructor("SemanticFilterOp")
 def _reconstruct_filter(metadata: dict, xorq_expr, source):
+    from .utils import structured_to_expr
+
     if source is None:
         raise ValueError("SemanticFilterOp requires source")
-    pickle_data = metadata.get("predicate_pickle")
-    if not pickle_data:
-        raise ValueError("SemanticFilterOp has no predicate_pickle")
-    return source.filter(_unpickle_callable(pickle_data))
+
+    predicate_struct = metadata.get("predicate_struct")
+    predicate_pickle = metadata.get("predicate_pickle")
+    match (predicate_struct, predicate_pickle):
+        case (tuple() | list(), _):
+            data = _list_to_tuple(predicate_struct) if isinstance(predicate_struct, list) else predicate_struct
+            expr = structured_to_expr(data).value_or(None)
+            if expr is None:
+                raise ValueError("SemanticFilterOp: failed to deserialize predicate_struct")
+            return source.filter(expr)
+        case (_, str()):
+            return source.filter(_unpickle_callable(predicate_pickle))  # backward compat
+        case _:
+            raise ValueError("SemanticFilterOp has no predicate_struct or predicate_pickle")
 
 
 @_register_reconstructor("SemanticGroupByOp")
@@ -684,20 +767,39 @@ def _reconstruct_group_by(metadata: dict, xorq_expr, source):
 def _reconstruct_aggregate(metadata: dict, xorq_expr, source):
     if source is None:
         raise ValueError("SemanticAggregateOp requires source")
-    aggs_pickle = _parse_field(metadata, "aggs_pickle")
-    if not aggs_pickle:
-        raise ValueError("SemanticAggregateOp has no aggs_pickle")
-    return source.aggregate(*aggs_pickle.keys())
+    aggs_struct = _parse_structured_dict(metadata.get("aggs_struct", ()))
+    aggs_pickle = _parse_field(metadata, "aggs_pickle") if not aggs_struct else {}
+    agg_names = aggs_struct or aggs_pickle
+    if not agg_names:
+        raise ValueError("SemanticAggregateOp has no aggs_struct or aggs_pickle")
+    return source.aggregate(*agg_names.keys())
 
 
 @_register_reconstructor("SemanticMutateOp")
 def _reconstruct_mutate(metadata: dict, xorq_expr, source):
+    from .utils import structured_to_expr
+
     if source is None:
         raise ValueError("SemanticMutateOp requires source")
-    post_pickle = _parse_field(metadata, "post_pickle")
-    if not post_pickle:
+
+    post_struct = _parse_structured_dict(metadata.get("post_struct", ()))
+    post_pickle = _parse_field(metadata, "post_pickle") if not post_struct else {}
+
+    if post_struct:
+        exprs = {
+            name: structured_to_expr(
+                _list_to_tuple(data) if isinstance(data, list) else data
+            ).value_or(None)
+            for name, data in post_struct.items()
+        }
+        if any(v is None for v in exprs.values()):
+            failed = [n for n, v in exprs.items() if v is None]
+            raise ValueError(f"Mutate: failed to deserialize post_struct for {failed}")
+        return source.mutate(**exprs)
+    elif post_pickle:
+        return source.mutate(**{name: _unpickle_callable(data) for name, data in post_pickle.items()})
+    else:
         return source
-    return source.mutate(**{name: _unpickle_callable(data) for name, data in post_pickle.items()})
 
 
 @_register_reconstructor("SemanticProjectOp")
@@ -710,16 +812,31 @@ def _reconstruct_project(metadata: dict, xorq_expr, source):
 
 @_register_reconstructor("SemanticOrderByOp")
 def _reconstruct_order_by(metadata: dict, xorq_expr, source):
+    from .utils import structured_to_expr
+
     if source is None:
         raise ValueError("SemanticOrderByOp requires source")
 
     def _deserialize_key(key_meta: dict):
-        if key_meta["type"] == "string":
-            return key_meta["value"]
-        pickle_data = key_meta.get("value_pickle")
-        if not pickle_data:
-            raise ValueError("Order-by callable key has no value_pickle")
-        return _unpickle_callable(pickle_data)
+        match key_meta.get("type"):
+            case "string":
+                return key_meta["value"]
+            case "callable":
+                value_struct = key_meta.get("value_struct")
+                value_pickle = key_meta.get("value_pickle")
+                match (value_struct, value_pickle):
+                    case (tuple() | list(), _):
+                        data = _list_to_tuple(value_struct) if isinstance(value_struct, list) else value_struct
+                        result = structured_to_expr(data).value_or(None)
+                        if result is None:
+                            raise ValueError("Order-by: failed to deserialize value_struct")
+                        return result
+                    case (_, str()):
+                        return _unpickle_callable(value_pickle)  # backward compat
+                    case _:
+                        raise ValueError("Order-by callable key has no value_struct or value_pickle")
+            case _:
+                raise ValueError(f"Unknown order-by key type: {key_meta.get('type')}")
 
     order_keys_meta = _parse_field(metadata, "order_keys")
     if not order_keys_meta:
@@ -788,6 +905,7 @@ def _split_join_expr(xorq_expr):
 @_register_reconstructor("SemanticJoinOp")
 def _reconstruct_join(metadata: dict, xorq_expr, source):
     from . import expr as bsl_expr
+    from .utils import structured_to_join_predicate
 
     left_metadata = _parse_field(metadata, "left")
     right_metadata = _parse_field(metadata, "right")
@@ -801,18 +919,28 @@ def _reconstruct_join(metadata: dict, xorq_expr, source):
     right_model = _reconstruct_bsl_operation(right_metadata, right_xorq_expr)
 
     how = metadata.get("how", "inner")
+    on_struct = metadata.get("on_struct")
     on_pickle = metadata.get("on_pickle")
 
-    if on_pickle is None:
-        return bsl_expr.SemanticJoin(
-            left=left_model.op() if hasattr(left_model, "op") else left_model,
-            right=right_model.op() if hasattr(right_model, "op") else right_model,
-            on=None,
-            how=how,
-        )
-
-    predicate = _unpickle_callable(on_pickle)
-    return left_model.join_many(right_model, on=predicate, how=how)
+    match (on_struct, on_pickle):
+        case (None, None):
+            return bsl_expr.SemanticJoin(
+                left=left_model.op() if hasattr(left_model, "op") else left_model,
+                right=right_model.op() if hasattr(right_model, "op") else right_model,
+                on=None,
+                how=how,
+            )
+        case (tuple() | list(), _):
+            data = _list_to_tuple(on_struct) if isinstance(on_struct, list) else on_struct
+            predicate = structured_to_join_predicate(data).value_or(None)
+            if predicate is None:
+                raise ValueError("SemanticJoinOp: failed to deserialize on_struct")
+            return left_model.join_many(right_model, on=predicate, how=how)
+        case (_, str()):
+            predicate = _unpickle_callable(on_pickle)  # backward compat
+            return left_model.join_many(right_model, on=predicate, how=how)
+        case _:
+            raise ValueError("SemanticJoinOp has invalid on predicate data")
 
 
 # ---------------------------------------------------------------------------
