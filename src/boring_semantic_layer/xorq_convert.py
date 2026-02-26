@@ -647,7 +647,12 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
         in_memory_tables = list(walk_nodes((xorq_rel.InMemoryTable,), unwrapped_expr))
         db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), unwrapped_expr))
 
-        total_leaf_tables = len(read_ops) + len(in_memory_tables) + len(db_tables)
+        # A Read op internally contains a DatabaseTable, so exclude db_tables
+        # when Read ops exist to avoid double-counting a single
+        # deferred_read_parquet as two leaf tables.
+        total_leaf_tables = (
+            len(read_ops) + len(in_memory_tables) + (len(db_tables) if not read_ops else 0)
+        )
         if total_leaf_tables > 1:
             expr = unwrapped_expr.to_expr() if hasattr(unwrapped_expr, "to_expr") else unwrapped_expr
             return from_ibis(expr) if not hasattr(expr.op(), "source") else expr
