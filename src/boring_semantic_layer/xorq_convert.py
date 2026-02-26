@@ -691,9 +691,13 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
 
         return xorq_expr.to_expr()
 
-    dim_meta = _parse_field(metadata, "dimensions")
-    meas_meta = _parse_field(metadata, "measures")
-    calc_meta = _parse_field(metadata, "calc_measures")
+    dim_outer = _parse_structured_dict(metadata.get("dimensions", ()))
+    dim_meta = {name: _parse_structured_dict(entry) for name, entry in dim_outer.items()}
+
+    meas_outer = _parse_structured_dict(metadata.get("measures", ()))
+    meas_meta = {name: _parse_structured_dict(entry) for name, entry in meas_outer.items()}
+
+    calc_meta = _parse_structured_dict(metadata.get("calc_measures", ()))
 
     dimensions = {name: _create_dimension(name, data) for name, data in dim_meta.items()}
     measures = {name: _create_measure(name, data) for name, data in meas_meta.items()}
@@ -734,7 +738,7 @@ def _reconstruct_filter(metadata: dict, xorq_expr, source):
 def _reconstruct_group_by(metadata: dict, xorq_expr, source):
     if source is None:
         raise ValueError("SemanticGroupByOp requires source")
-    keys = tuple(_parse_field(metadata, "keys")) or ()
+    keys = tuple(metadata.get("keys", ()))
     return source.group_by(*keys) if keys else source
 
 
@@ -743,7 +747,7 @@ def _reconstruct_aggregate(metadata: dict, xorq_expr, source):
     if source is None:
         raise ValueError("SemanticAggregateOp requires source")
     aggs_struct = _parse_structured_dict(metadata.get("aggs_struct", ()))
-    aggs_pickle = _parse_field(metadata, "aggs_pickle") if not aggs_struct else {}
+    aggs_pickle = _parse_structured_dict(metadata.get("aggs_pickle", ())) if not aggs_struct else {}
     agg_names = aggs_struct or aggs_pickle
     if not agg_names:
         raise ValueError("SemanticAggregateOp has no aggs_struct or aggs_pickle")
@@ -758,7 +762,7 @@ def _reconstruct_mutate(metadata: dict, xorq_expr, source):
         raise ValueError("SemanticMutateOp requires source")
 
     post_struct = _parse_structured_dict(metadata.get("post_struct", ()))
-    post_pickle = _parse_field(metadata, "post_pickle") if not post_struct else {}
+    post_pickle = _parse_structured_dict(metadata.get("post_pickle", ())) if not post_struct else {}
 
     if post_struct:
         exprs = {
@@ -781,7 +785,7 @@ def _reconstruct_mutate(metadata: dict, xorq_expr, source):
 def _reconstruct_project(metadata: dict, xorq_expr, source):
     if source is None:
         raise ValueError("SemanticProjectOp requires source")
-    fields = tuple(_parse_field(metadata, "fields")) or ()
+    fields = tuple(metadata.get("fields", ()))
     return source.select(*fields) if fields else source
 
 
@@ -813,9 +817,10 @@ def _reconstruct_order_by(metadata: dict, xorq_expr, source):
             case _:
                 raise ValueError(f"Unknown order-by key type: {key_meta.get('type')}")
 
-    order_keys_meta = _parse_field(metadata, "order_keys")
-    if not order_keys_meta:
+    order_keys_raw = metadata.get("order_keys", ())
+    if not order_keys_raw:
         return source
+    order_keys_meta = [_parse_structured_dict(entry) for entry in order_keys_raw]
     keys = [_deserialize_key(key_meta) for key_meta in order_keys_meta]
     return source.order_by(*keys) if keys else source
 
@@ -882,8 +887,8 @@ def _reconstruct_join(metadata: dict, xorq_expr, source):
     from . import expr as bsl_expr
     from .utils import structured_to_join_predicate
 
-    left_metadata = _parse_field(metadata, "left")
-    right_metadata = _parse_field(metadata, "right")
+    left_metadata = _parse_structured_dict(metadata.get("left", ()))
+    right_metadata = _parse_structured_dict(metadata.get("right", ()))
 
     if not left_metadata or not right_metadata:
         raise ValueError("SemanticJoinOp requires both 'left' and 'right' metadata")
@@ -937,7 +942,7 @@ def _reconstruct_join(metadata: dict, xorq_expr, source):
 def _reconstruct_bsl_operation(metadata: dict[str, Any], xorq_expr):
     op_type = metadata.get("bsl_op_type")
     source = None
-    source_metadata = _parse_field(metadata, "source")
+    source_metadata = _parse_structured_dict(metadata.get("source", ()))
     if source_metadata:
         source = _reconstruct_bsl_operation(source_metadata, xorq_expr)
     reconstructor = _RECONSTRUCTORS.get(op_type)

@@ -1616,3 +1616,90 @@ def test_tagged_roundtrip_join_many_without_with_dimensions():
     assert got_hc["Sales"] == 1
     assert got_sal["Engineering"] == 110000
     assert got_sal["Sales"] == 70000
+
+
+def test_tagged_roundtrip_join_derived_dimension_on_root():
+    """Derived dimension on root table survives to_tagged → from_tagged round-trip.
+
+    Regression: _parse_field's _tuple_to_mutable mangled expr_struct resolver
+    tuples (e.g. converting empty () to {}, collapsing tuple-of-pairs into
+    dicts), causing _create_dimension to fall through to a literal column
+    lookup that fails with XorqTypeError.
+    """
+    import pandas as pd
+
+    from boring_semantic_layer import Dimension, Measure
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    con = ibis.duckdb.connect(":memory:")
+    flights = pd.DataFrame(
+        {
+            "origin": ["SEA", "SEA", "LAX", "LAX", "ORD"],
+            "dep_time": pd.to_datetime(
+                ["2024-01-01 08:00", "2024-01-01 14:00", "2024-01-01 08:00", "2024-01-01 20:00", "2024-01-01 14:00"]
+            ),
+            "carrier": ["AA", "UA", "AA", "DL", "UA"],
+        }
+    )
+    carriers = pd.DataFrame(
+        {
+            "code": ["AA", "UA", "DL"],
+            "nickname": ["American", "United", "Delta"],
+        }
+    )
+    f_tbl = con.create_table("flights_dd", flights)
+    c_tbl = con.create_table("carriers_dd", carriers)
+
+    flights_st = (
+        to_semantic_table(f_tbl, name="flights_dd")
+        .with_dimensions(
+            origin=Dimension(expr=lambda t: t.origin, description="Origin"),
+            dep_hour=Dimension(expr=lambda t: t.dep_time.hour(), description="Departure hour"),
+        )
+        .with_measures(
+            flight_count=Measure(expr=lambda t: t.count(), description="Count"),
+        )
+    )
+    carriers_st = (
+        to_semantic_table(c_tbl, name="carriers_dd")
+        .with_dimensions(
+            code=Dimension(expr=lambda t: t.code, description="Code"),
+            nickname=Dimension(expr=lambda t: t.nickname, description="Nickname"),
+        )
+        .with_measures(
+            carrier_count=Measure(expr=lambda t: t.count(), description="Count"),
+        )
+    )
+
+    joined = flights_st.join_one(carriers_st, on=lambda f, c: f.carrier == c.code)
+
+    # Baseline: group by the derived dimension before round-trip
+    baseline = (
+        joined
+        .group_by("flights_dd.dep_hour")
+        .aggregate("flights_dd.flight_count")
+        .order_by("flights_dd.dep_hour")
+        .execute()
+    )
+
+    # Round-trip
+    tagged = to_tagged(joined)
+    reconstructed = from_tagged(tagged)
+
+    result = (
+        reconstructed
+        .group_by("flights_dd.dep_hour")
+        .aggregate("flights_dd.flight_count")
+        .order_by("flights_dd.dep_hour")
+        .execute()
+    )
+
+    assert len(result) == len(baseline)
+    assert list(result["flights_dd.dep_hour"]) == list(baseline["flights_dd.dep_hour"])
+    assert list(result["flights_dd.flight_count"]) == list(baseline["flights_dd.flight_count"])
+
+    # Verify actual values: hour 8 → 2 flights, hour 14 → 2 flights, hour 20 → 1 flight
+    got = dict(zip(result["flights_dd.dep_hour"], result["flights_dd.flight_count"], strict=False))
+    assert got[8] == 2
+    assert got[14] == 2
+    assert got[20] == 1
