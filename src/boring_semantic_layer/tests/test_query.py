@@ -1459,6 +1459,41 @@ class TestMeasureFilters:
         assert len(filtered_result) == 1
         assert filtered_result["carrier"].iloc[0] == "AA"
 
+    def test_having_parameter_with_lambda(self, flights_data):
+        """Explicit having= for callable filters on measures."""
+        st = (
+            to_semantic_table(flights_data, "flights")
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(total_distance=lambda t: t.distance.sum())
+        )
+        result = st.query(
+            dimensions=["carrier"],
+            measures=["total_distance"],
+            having=[lambda t: t.total_distance > 1500],
+        ).execute()
+        assert all(result["total_distance"] > 1500)
+
+    def test_mixed_compound_and_filter_is_split(self, flights_data):
+        """AND compound mixing dim + measure fields should split correctly."""
+        st = (
+            to_semantic_table(flights_data, "flights")
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(total_distance=lambda t: t.distance.sum())
+        )
+        result = st.query(
+            dimensions=["carrier"],
+            measures=["total_distance"],
+            filters=[{
+                "operator": "AND",
+                "conditions": [
+                    {"field": "carrier", "operator": "!=", "value": "DL"},
+                    {"field": "total_distance", "operator": ">", "value": 0},
+                ],
+            }],
+        ).execute()
+        assert "DL" not in result["carrier"].values
+        assert all(result["total_distance"] > 0)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

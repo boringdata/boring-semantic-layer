@@ -490,6 +490,36 @@ def _is_measure_filter(
     return False
 
 
+def _split_filter(
+    filter_spec: Any,
+    known_measures: set[str],
+    model_name: str | None,
+    pre_agg: list,
+    post_agg: list,
+) -> None:
+    """Route *filter_spec* to *pre_agg* or *post_agg* lists.
+
+    For AND compound filters mixing dimension and measure conditions the
+    compound is split so that each condition lands in the right bucket.
+    OR compounds with any measure field are kept whole in *post_agg*.
+    """
+    raw = filter_spec.filter if isinstance(filter_spec, Filter) else filter_spec
+
+    # Compound AND: split individual conditions
+    if isinstance(raw, dict) and raw.get("operator") == "AND":
+        conditions = raw.get("conditions", [])
+        if not conditions:
+            raise ValueError("Compound filter must have non-empty conditions list")
+        for cond in conditions:
+            _split_filter(cond, known_measures, model_name, pre_agg, post_agg)
+        return
+
+    if _is_measure_filter(filter_spec, known_measures, model_name):
+        post_agg.append(filter_spec)
+    else:
+        pre_agg.append(filter_spec)
+
+
 def query(
     semantic_table: Any,  # SemanticModel, but avoiding circular import
     dimensions: Sequence[str] | None = None,
@@ -499,6 +529,7 @@ def query(
     limit: int | None = None,
     time_grain: TimeGrain | None = None,
     time_range: Mapping[str, str] | None = None,
+    having: Sequence[dict[str, Any] | str | Callable | Filter] | None = None,
 ) -> Any:  # Returns SemanticModel or SemanticAggregate
     """
     Query semantic table using parameter-based interface with time dimension support.
@@ -507,11 +538,17 @@ def query(
         semantic_table: The SemanticTable to query
         dimensions: List of dimension names to group by
         measures: List of measure names to aggregate
-        filters: List of filters (dict, str, callable, or Filter objects)
+        filters: List of filters (dict, str, callable, or Filter objects).
+            Dict filters referencing measure fields are automatically applied
+            after aggregation (HAVING semantics).  Callable/string filters are
+            always applied before aggregation.
         order_by: List of (field, direction) tuples
         limit: Maximum number of rows to return
         time_grain: Optional time grain to apply to time dimensions (e.g., "TIME_GRAIN_MONTH")
         time_range: Optional time range filter with 'start' and 'end' keys
+        having: Optional list of post-aggregation filters.  These are always
+            applied after group-by/aggregate regardless of field type.  Use
+            this for callable/lambda filters that reference measures.
 
     Returns:
         SemanticAggregate or SemanticTable ready for execution
@@ -523,11 +560,18 @@ def query(
             measures=["flight_count"]
         ).execute()
 
-        # With JSON filter
+        # With JSON filter on a measure (auto-detected as HAVING)
         result = st.query(
             dimensions=["carrier"],
             measures=["flight_count"],
-            filters=[{"field": "distance", "operator": ">", "value": 1000}]
+            filters=[{"field": "flight_count", "operator": ">", "value": 100}]
+        ).execute()
+
+        # With explicit having for callable filters on measures
+        result = st.query(
+            dimensions=["carrier"],
+            measures=["flight_count"],
+            having=[lambda t: t.flight_count > 100]
         ).execute()
 
         # With time grain
@@ -627,12 +671,9 @@ def query(
 
     # Step 2: Apply filters — separate pre-agg (dimension) from post-agg (measure)
     pre_agg_filters = []
-    post_agg_filters = []
+    post_agg_filters = list(having or [])
     for filter_spec in filters:
-        if _is_measure_filter(filter_spec, known_measures, model_name):
-            post_agg_filters.append(filter_spec)
-        else:
-            pre_agg_filters.append(filter_spec)
+        _split_filter(filter_spec, known_measures, model_name, pre_agg_filters, post_agg_filters)
 
     for filter_spec in pre_agg_filters:
         filter_fn = _normalize_filter(filter_spec)
