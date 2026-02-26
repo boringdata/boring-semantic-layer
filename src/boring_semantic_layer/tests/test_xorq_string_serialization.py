@@ -1621,10 +1621,11 @@ def test_tagged_roundtrip_join_many_without_with_dimensions():
 def test_tagged_roundtrip_join_derived_dimension_on_root():
     """Derived dimension on root table survives to_tagged → from_tagged round-trip.
 
-    Regression: _parse_field's _tuple_to_mutable mangled expr_struct resolver
-    tuples (e.g. converting empty () to {}, collapsing tuple-of-pairs into
-    dicts), causing _create_dimension to fall through to a literal column
-    lookup that fails with XorqTypeError.
+    Regression: the old _parse_field helper recursively mangled expr_struct
+    resolver tuples (e.g. converting empty () to {}, collapsing tuple-of-pairs
+    into dicts), causing _create_dimension to fall through to a literal column
+    lookup that fails with XorqTypeError.  Fixed by replacing _parse_field
+    with _parse_structured_dict (one-level-only conversion).
     """
     import pandas as pd
 
