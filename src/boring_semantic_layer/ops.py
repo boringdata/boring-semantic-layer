@@ -2603,6 +2603,7 @@ class SemanticJoinOp(Relation):
         limit: int | None = None,
         time_grain: str | None = None,
         time_range: dict[str, str] | None = None,
+        having: list | None = None,
     ):
         from .query import query as build_query
 
@@ -2615,6 +2616,7 @@ class SemanticJoinOp(Relation):
             limit=limit,
             time_grain=time_grain,
             time_range=time_range,
+            having=having,
         )
 
     def with_dimensions(self, **dims) -> SemanticTable:
