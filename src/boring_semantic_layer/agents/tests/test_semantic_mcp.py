@@ -705,3 +705,129 @@ class TestDescriptionSupport:
             assert "carriers" in model_info["description"]
             assert "Airline carrier information" in model_info["description"]
             assert "Joined model combining" in model_info["description"]
+
+
+class TestSearchDimensionValues:
+    """Test search_dimension_values tool."""
+
+    @pytest.mark.asyncio
+    async def test_basic_no_filter(self, sample_models):
+        """Test listing top values without a search term."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "search_dimension_values",
+                {"model_name": "flights", "dimension_name": "carrier"},
+            )
+            data = json.loads(result.content[0].text)
+
+            assert "total_distinct" in data
+            assert "is_complete" in data
+            assert "values" in data
+            assert data["total_distinct"] >= 1
+            assert data["is_complete"] is True
+            assert all(v["value"] in {"AA", "UA", "DL"} for v in data["values"])
+            assert len(data["values"]) >= 1
+
+    @pytest.mark.asyncio
+    async def test_with_matching_search_term(self, sample_models):
+        """Test filtering by a search term that matches values."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "search_dimension_values",
+                {
+                    "model_name": "flights",
+                    "dimension_name": "carrier",
+                    "search_term": "aa",
+                },
+            )
+            data = json.loads(result.content[0].text)
+
+            assert data["total_distinct"] >= 1
+            assert len(data["values"]) == 1
+            assert data["values"][0]["value"] == "AA"
+
+    @pytest.mark.asyncio
+    async def test_with_nonmatching_search_term_returns_fallback(self, sample_models):
+        """Test that a non-matching search term returns fallback top values."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "search_dimension_values",
+                {
+                    "model_name": "flights",
+                    "dimension_name": "carrier",
+                    "search_term": "ZZZNOTFOUND",
+                },
+            )
+            data = json.loads(result.content[0].text)
+
+            assert data["values"] == []
+            assert "fallback_top_values" in data
+            assert len(data["fallback_top_values"]) > 0
+            assert "note" in data
+
+    @pytest.mark.asyncio
+    async def test_limit_respected(self, sample_models):
+        """Test that the limit parameter is respected."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "search_dimension_values",
+                {
+                    "model_name": "flights",
+                    "dimension_name": "carrier",
+                    "limit": 1,
+                },
+            )
+            data = json.loads(result.content[0].text)
+
+            assert len(data["values"]) == 1
+            assert data["is_complete"] is False
+
+    @pytest.mark.asyncio
+    async def test_model_not_found(self, sample_models):
+        """Test error when model does not exist."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        async with Client(mcp) as client:
+            with pytest.raises(ToolError, match="not found"):
+                await client.call_tool(
+                    "search_dimension_values",
+                    {"model_name": "nonexistent", "dimension_name": "carrier"},
+                )
+
+    @pytest.mark.asyncio
+    async def test_dimension_not_found(self, sample_models):
+        """Test error when dimension does not exist in the model."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        async with Client(mcp) as client:
+            with pytest.raises(ToolError, match="not found"):
+                await client.call_tool(
+                    "search_dimension_values",
+                    {"model_name": "flights", "dimension_name": "nonexistent_dim"},
+                )
+
+    @pytest.mark.asyncio
+    async def test_values_include_frequency_counts(self, sample_models):
+        """Test that returned values include frequency count."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "search_dimension_values",
+                {"model_name": "flights", "dimension_name": "carrier"},
+            )
+            data = json.loads(result.content[0].text)
+
+            for item in data["values"]:
+                assert "value" in item
+                assert "count" in item
+                assert isinstance(item["count"], int)
+                assert item["count"] > 0
