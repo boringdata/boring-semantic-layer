@@ -481,35 +481,12 @@ def from_tagged(tagged_expr):
 # ---------------------------------------------------------------------------
 
 
-def _parse_field(metadata: dict, field: str) -> dict | list:
-    """Extract a field from tag metadata, converting frozen tuples back to mutable types.
-
-    xorq's FrozenOrderedDict stores dicts as tuples-of-pairs and lists as tuples.
-    This function reverses that transformation so reconstructors see plain dicts/lists.
-    """
-    value = metadata.get(field)
-    if not value:
-        return {} if field != "order_keys" else []
-
-    def _tuple_to_mutable(obj):
-        if isinstance(obj, tuple):
-            if len(obj) == 0:
-                return {}
-            if all(
-                isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str)
-                for item in obj
-            ):
-                return {k: _tuple_to_mutable(v) for k, v in obj}
-            else:
-                return [_tuple_to_mutable(item) for item in obj]
-        else:
-            return obj
-
-    return _tuple_to_mutable(value)
-
-
 def _list_to_tuple(obj):
-    """Recursively convert lists back to tuples (reverses _tuple_to_mutable for expr_struct)."""
+    """Recursively convert lists/dicts back to nested tuples.
+
+    Used as a safety net for v1.0 backward-compat paths where data may have
+    been stored via the old ``_tuple_to_mutable`` (removed) round-trip.
+    """
     if isinstance(obj, list):
         return tuple(_list_to_tuple(item) for item in obj)
     if isinstance(obj, dict):
@@ -520,8 +497,8 @@ def _list_to_tuple(obj):
 def _parse_structured_dict(raw) -> dict:
     """Convert a FrozenOrderedDict-encoded tuple-of-pairs to a dict (one level only).
 
-    Unlike ``_tuple_to_mutable``, this does NOT recurse into values.
-    Resolver tuples stored as values are returned untouched.
+    Does NOT recurse into values — resolver tuples stored as values are
+    returned untouched, which is critical for correct deserialization.
     """
     match raw:
         case dict():
