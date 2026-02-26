@@ -824,6 +824,10 @@ def _split_join_expr(xorq_expr):
     When reconstructing a SemanticJoinOp, the xorq_expr contains the full
     joined expression. Each side needs its own individual table expression
     so _reconstruct_table sees a single leaf table, not the entire join.
+
+    Walks past Tag, CachedNode, RemoteTable wrappers *and* single-input
+    relational operations (Sort, Aggregate, Project, …) to reach the
+    underlying JoinChain.
     """
     from xorq.expr.relations import CachedNode, RemoteTable, Tag
     from xorq.vendor.ibis.expr.operations.relations import JoinChain
@@ -838,6 +842,12 @@ def _split_join_expr(xorq_expr):
         op = expr.op()
     if isinstance(op, RemoteTable):
         expr = op.args[3]
+        op = expr.op()
+
+    # Walk past single-input relational ops (Sort, Aggregate, Project, …)
+    # to find the underlying JoinChain.
+    while not isinstance(op, JoinChain) and hasattr(op, "parent"):
+        expr = op.parent.to_expr() if hasattr(op.parent, "to_expr") else op.parent
         op = expr.op()
 
     if not isinstance(op, JoinChain) or not op.rest:
