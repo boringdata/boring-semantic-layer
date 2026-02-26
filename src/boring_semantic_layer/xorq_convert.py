@@ -68,8 +68,6 @@ def _extract_simple_column_name(expr) -> str | None:
 def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exception]:
     @safe
     def do_serialize():
-        from returns.result import Success
-
         from .utils import expr_to_structured
 
         dim_metadata = {}
@@ -86,14 +84,7 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
                 case str():
                     entry["expr"] = col_name
                 case _:
-                    struct_result = expr_to_structured(dim.expr)
-                    match struct_result:
-                        case Success():
-                            entry["expr_struct"] = struct_result.unwrap()
-                        case _:
-                            raise ValueError(
-                                f"Dimension '{name}': failed to serialize expression"
-                            )
+                    entry["expr_struct"] = expr_to_structured(dim.expr).value_or(None)
             dim_metadata[name] = entry
         return dim_metadata
 
@@ -103,8 +94,6 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
 def serialize_measures(measures: Mapping[str, Any]) -> Result[dict, Exception]:
     @safe
     def do_serialize():
-        from returns.result import Success
-
         from .utils import expr_to_structured
 
         meas_metadata = {}
@@ -114,18 +103,11 @@ def serialize_measures(measures: Mapping[str, Any]) -> Result[dict, Exception]:
                 "requires_unnest": list(meas.requires_unnest),
             }
             original = getattr(meas, "original_expr", None)
-            struct_result = (
+            entry["expr_struct"] = (
                 expr_to_structured(original)
                 if original is not None
                 else expr_to_structured(meas.expr)
-            )
-            match struct_result:
-                case Success():
-                    entry["expr_struct"] = struct_result.unwrap()
-                case _:
-                    raise ValueError(
-                        f"Measure '{name}': failed to serialize expression"
-                    )
+            ).value_or(None)
             meas_metadata[name] = entry
         return meas_metadata
 
