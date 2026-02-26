@@ -3709,8 +3709,8 @@ def _merge_fields_with_prefixing(
 
     is_calc_measures = False
     is_dimensions = False
-    if all_roots:
-        sample_fields = field_accessor(all_roots[0])
+    for root in all_roots:
+        sample_fields = field_accessor(root)
         if sample_fields:
             from .measure_scope import AllOf, BinOp, MeasureRef, MethodCall
 
@@ -3720,6 +3720,7 @@ def _merge_fields_with_prefixing(
                 MeasureRef | AllOf | BinOp | MethodCall | int | float,
             )
             is_dimensions = isinstance(first_val, Dimension)
+            break
 
     # For dimensions, build a column rename map to handle Ibis join conflicts
     column_rename_map = {}
