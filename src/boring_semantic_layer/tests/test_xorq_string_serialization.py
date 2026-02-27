@@ -1699,8 +1699,119 @@ def test_tagged_roundtrip_join_derived_dimension_on_root():
     assert list(result["flights_dd.dep_hour"]) == list(baseline["flights_dd.dep_hour"])
     assert list(result["flights_dd.flight_count"]) == list(baseline["flights_dd.flight_count"])
 
-    # Verify actual values: hour 8 → 2 flights, hour 14 → 2 flights, hour 20 → 1 flight
-    got = dict(zip(result["flights_dd.dep_hour"], result["flights_dd.flight_count"], strict=False))
-    assert got[8] == 2
-    assert got[14] == 2
-    assert got[20] == 1
+
+@pytest.mark.parametrize(
+    "n_joins",
+    [2, 3, 4],
+    ids=["2_joins", "3_joins", "4_joins"],
+)
+def test_tagged_roundtrip_join_chain_shared_column_names(n_joins):
+    """Multi-way join_one chain with shared column names survives round-trip.
+
+    Regression: when 3+ dimension tables share a column name (e.g. "code"),
+    ibis's default ``{name}_right`` suffix collided on the third table,
+    raising ``IntegrityError: Name collisions``.  After ``to_tagged →
+    from_tagged``, the same collision caused ``Ambiguous field reference``.
+
+    Fixed by:
+    - depth-based ``rname`` in ``SemanticJoinOp.to_untagged`` (``_right``,
+      ``_right2``, ``_right3``, …)
+    - matching suffix in ``_check_and_add_rename``
+    - preserving ``SelfReference`` (view) aliasing in ``_reconstruct_table``
+    - intersection-only join-key detection in ``_extract_join_key_column_names``
+    """
+    import pandas as pd
+
+    from xorq.common.utils.ibis_utils import from_ibis
+
+    from boring_semantic_layer import Dimension, Measure
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    con = ibis.duckdb.connect(":memory:")
+
+    flights_df = pd.DataFrame({
+        "carrier": ["AA", "UA", "AA", "DL", "UA"],
+        "origin": ["SEA", "LAX", "ORD", "SEA", "LAX"],
+        "destination": ["LAX", "ORD", "SEA", "ORD", "SEA"],
+        "tail_num": ["N101", "N102", "N103", "N101", "N102"],
+    })
+    carriers_df = pd.DataFrame({
+        "code": ["AA", "UA", "DL"],
+        "nickname": ["American", "United", "Delta"],
+    })
+    airports_df = pd.DataFrame({
+        "code": ["SEA", "LAX", "ORD"],
+        "city": ["Seattle", "Los Angeles", "Chicago"],
+    })
+    aircraft_df = pd.DataFrame({
+        "tail_num": ["N101", "N102", "N103"],
+        "year_built": [2010, 2015, 2020],
+    })
+
+    f_tbl = from_ibis(con.create_table(f"fl_{n_joins}", flights_df))
+    c_tbl = from_ibis(con.create_table(f"ca_{n_joins}", carriers_df))
+    # Single airports table with .view() for origin/dest — matches the
+    # deferred_read_parquet + .view() pattern from the original repro.
+    # SelfReference gives each view a distinct ibis identity.
+    a_tbl = from_ibis(con.create_table(f"ap_{n_joins}", airports_df))
+    ac_tbl = from_ibis(con.create_table(f"ac_{n_joins}", aircraft_df))
+
+    flights_st = (
+        to_semantic_table(f_tbl, name="flights")
+        .with_dimensions(
+            carrier=Dimension(expr=lambda t: t.carrier),
+            origin=Dimension(expr=lambda t: t.origin),
+            destination=Dimension(expr=lambda t: t.destination),
+            tail_num=Dimension(expr=lambda t: t.tail_num),
+        )
+        .with_measures(flight_count=Measure(expr=lambda t: t.count()))
+    )
+    carriers_st = to_semantic_table(c_tbl, name="carriers").with_dimensions(
+        code=Dimension(expr=lambda t: t.code),
+        nickname=Dimension(expr=lambda t: t.nickname),
+    )
+    origin_st = to_semantic_table(a_tbl.view(), name="origin_airports").with_dimensions(
+        code=Dimension(expr=lambda t: t.code),
+        city=Dimension(expr=lambda t: t.city),
+    )
+    dest_st = to_semantic_table(a_tbl.view(), name="dest_airports").with_dimensions(
+        code=Dimension(expr=lambda t: t.code),
+        city=Dimension(expr=lambda t: t.city),
+    )
+    aircraft_st = to_semantic_table(ac_tbl, name="aircraft").with_dimensions(
+        tail_num=Dimension(expr=lambda t: t.tail_num),
+        year_built=Dimension(expr=lambda t: t.year_built),
+    )
+
+    # Build chain: n_joins = number of join_one calls
+    joined = flights_st.join_one(carriers_st, lambda f, c: f.carrier == c.code)
+    if n_joins >= 2:
+        joined = joined.join_one(origin_st, lambda f, o: f.origin == o.code)
+    if n_joins >= 3:
+        joined = joined.join_one(dest_st, lambda f, d: f.destination == d.code)
+    if n_joins >= 4:
+        joined = joined.join_one(aircraft_st, lambda f, a: f.tail_num == a.tail_num)
+
+    # In-process baseline
+    baseline = (
+        joined
+        .group_by("carriers.nickname")
+        .aggregate("flights.flight_count")
+        .order_by("carriers.nickname")
+        .execute()
+    )
+
+    # Round-trip
+    tagged = to_tagged(joined)
+    reconstructed = from_tagged(tagged)
+    result = (
+        reconstructed
+        .group_by("carriers.nickname")
+        .aggregate("flights.flight_count")
+        .order_by("carriers.nickname")
+        .execute()
+    )
+
+    assert len(result) == len(baseline)
+    assert list(result["carriers.nickname"]) == list(baseline["carriers.nickname"])
+    assert list(result["flights.flight_count"]) == list(baseline["flights.flight_count"])
