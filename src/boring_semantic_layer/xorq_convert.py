@@ -667,9 +667,13 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
         if db_tables:
             db_table = db_tables[0]
             table_name, xorq_backend = db_table.args[0], db_table.args[2]
-            backend_class = getattr(ibis, xorq_backend.name)
-            backend = backend_class.from_connection(xorq_backend.con)
-            return from_ibis(backend.table(table_name))
+            try:
+                backend_class = getattr(ibis, xorq_backend.name)
+                backend = backend_class.from_connection(xorq_backend.con)
+                return from_ibis(backend.table(table_name))
+            except AttributeError:
+                # xorq-native backend: use its table() directly
+                return from_ibis(xorq_backend.table(table_name))
 
         return xorq_expr.to_expr()
 
