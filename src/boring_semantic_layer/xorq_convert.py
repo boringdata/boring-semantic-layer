@@ -526,7 +526,21 @@ def _extract_xorq_metadata(xorq_expr) -> dict[str, Any] | None:
 
     @safe
     def get_parent_expr(op):
-        return op.parent.to_expr()
+        # CachedNode.parent is an expression; Tag/others have a Node parent
+        # RemoteTable has no .parent — its inner expr is in .remote_expr
+        match op:
+            case _ if hasattr(op, "parent"):
+                parent = op.parent
+                match parent:
+                    case _ if hasattr(parent, "to_expr"):
+                        return parent.to_expr()
+                    case _ if hasattr(parent, "op"):
+                        return parent
+            case _ if hasattr(op, "remote_expr"):
+                return op.remote_expr
+        raise AttributeError(
+            f"Cannot extract parent expression from {type(op).__name__}"
+        )
 
     def is_bsl_tag(op) -> bool:
         return isinstance(op, Tag) and "bsl_op_type" in op.metadata
@@ -637,9 +651,21 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
     def _reconstruct_table():
         from xorq.common.utils.graph_utils import walk_nodes
         from xorq.common.utils.ibis_utils import from_ibis
-        from xorq.expr.relations import Read
+        from xorq.expr.relations import CachedNode, Read, Tag
         from xorq.vendor import ibis
         from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+
+        # CachedNode IS a valid DatabaseTableView — when present,
+        # use the cached expression directly instead of unwrapping
+        # to dead leaf tables.
+        top_op = xorq_expr.op()
+        match top_op:
+            case CachedNode():
+                return xorq_expr
+            case Tag() if isinstance(top_op.parent, CachedNode):
+                return top_op.parent.to_expr()
+            case _:
+                pass
 
         unwrapped_expr = _unwrap_cached_nodes(xorq_expr)
 

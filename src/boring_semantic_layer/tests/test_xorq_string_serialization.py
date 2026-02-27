@@ -1876,3 +1876,45 @@ def test_tagged_roundtrip_join_chain_shared_column_names(n_joins):
     assert len(result) == len(baseline)
     assert list(result["carriers.nickname"]) == list(baseline["carriers.nickname"])
     assert list(result["flights.flight_count"]) == list(baseline["flights.flight_count"])
+
+
+def test_tagged_roundtrip_cached_node(flights_data):
+    """CachedNode wrapping a tagged expression survives from_tagged round-trip.
+
+    When users do ``to_tagged(st).cache(ParquetCache.from_kwargs())``, the
+    expression tree becomes ``CachedNode(parent=Tag(metadata={...}))``.
+    ``from_tagged`` must extract metadata through the CachedNode and use
+    the cached expression directly instead of unwrapping to dead leaf tables.
+    """
+    from xorq.caching import ParquetCache
+
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    flights = (
+        to_semantic_table(flights_data, name="flights")
+        .with_dimensions(origin=lambda t: t.origin)
+        .with_measures(
+            avg_distance=lambda t: t.distance.mean(),
+            total_distance=lambda t: t.distance.sum(),
+        )
+    )
+
+    tagged = to_tagged(flights)
+    cached = tagged.cache(ParquetCache.from_kwargs())
+
+    reconstructed = from_tagged(cached)
+
+    result = (
+        reconstructed
+        .group_by("origin")
+        .aggregate("avg_distance", "total_distance")
+        .order_by("origin")
+        .execute()
+    )
+
+    assert len(result) == 3
+    assert set(result.columns) == {"origin", "avg_distance", "total_distance"}
+
+    jfk = result[result["origin"] == "JFK"].iloc[0]
+    assert jfk["total_distance"] == 100
+    assert jfk["avg_distance"] == 100.0
