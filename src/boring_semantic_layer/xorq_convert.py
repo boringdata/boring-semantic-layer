@@ -613,6 +613,10 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
 
         unwrapped_expr = _unwrap_cached_nodes(xorq_expr)
 
+        # Detect SelfReference (from .view()) — must be preserved so that
+        # self-joins on the same underlying table get distinct ibis identities.
+        is_self_ref = isinstance(unwrapped_expr.op(), xorq_rel.SelfReference)
+
         read_ops = list(walk_nodes((Read,), unwrapped_expr))
         in_memory_tables = list(walk_nodes((xorq_rel.InMemoryTable,), unwrapped_expr))
         db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), unwrapped_expr))
@@ -623,14 +627,13 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
             return from_ibis(expr) if not hasattr(expr.op(), "source") else expr
 
         if read_ops:
-            read_op = read_ops[0]
-            read_kwargs = read_op.args[4] if len(read_op.args) > 4 else None
-            if read_kwargs and isinstance(read_kwargs, tuple):
-                path = next((v for k, v in read_kwargs if k in ("path", "source_list")), None)
-                if path:
-                    import pandas as pd
-
-                    return from_ibis(ibis.memtable(pd.read_parquet(path)))
+            base = read_ops[0].to_expr()
+            # Wrap in .view() to give this table a unique identity when
+            # the original source was a SelfReference (e.g. airports_tbl.view()).
+            # Without this, two SemanticTableOps sharing the same underlying
+            # Read op collapse to the same ibis relation, causing
+            # "Ambiguous field reference" in multi-way joins.
+            return base.view() if is_self_ref else base
 
         if in_memory_tables:
             proxy = in_memory_tables[0].args[2]
