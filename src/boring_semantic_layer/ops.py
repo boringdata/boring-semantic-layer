@@ -1467,8 +1467,8 @@ def _collect_join_tree_info(join_op: SemanticJoinOp) -> _JoinTreeInfo:
     def walk(node, is_right_of_many=False):
         if isinstance(node, SemanticJoinOp):
             this_is_many = node.cardinality in ("many", "cross")
-            walk(node.left, is_right_of_many=False)
-            walk(node.right, is_right_of_many=this_is_many)
+            walk(node.left, is_right_of_many=is_right_of_many)
+            walk(node.right, is_right_of_many=is_right_of_many or this_is_many)
         elif isinstance(node, SemanticTableOp):
             name = node.name
             if name:

@@ -2250,3 +2250,188 @@ class TestLeftJoinUnmatchedRows:
         assert west["customers.customer_count"].iloc[0] == 2
         assert west["orders.order_count"].iloc[0] == 3
         assert east["customers.customer_count"].iloc[0] == 2
+
+
+# ---------------------------------------------------------------------------
+# TestJoinOneInsideJoinMany
+# ---------------------------------------------------------------------------
+class TestJoinOneInsideJoinMany:
+    """join_one nested inside join_many must still trigger pre-aggregation.
+
+    Pattern: customers -< orders -- categories
+    (customers.join_many(orders.join_one(categories)))
+
+    Previously, ``_collect_join_tree_info`` failed to propagate
+    ``is_right_of_many`` through nested joins, so the orders table was
+    classified as "one" instead of "many", skipping pre-aggregation
+    and inflating counts.
+
+    Fixture
+    -------
+    customers (4 rows — 2 West, 2 East)
+        customer_id  name    region
+        1            Alice   West
+        2            Bob     West
+        3            Carol   East
+        4            Dave    East
+
+    orders (3 rows — West customers only)
+        order_id  customer_id  category_id  amount
+        1         1            10           100
+        2         1            20           200
+        3         2            10           300
+
+    categories (2 rows)
+        category_id  cat_name
+        10           Electronics
+        20           Books
+    """
+
+    @pytest.fixture()
+    def models(self):
+        con = ibis.duckdb.connect(":memory:")
+
+        customers_tbl = con.create_table(
+            "customers",
+            pd.DataFrame(
+                {
+                    "customer_id": [1, 2, 3, 4],
+                    "name": ["Alice", "Bob", "Carol", "Dave"],
+                    "region": ["West", "West", "East", "East"],
+                }
+            ),
+        )
+        orders_tbl = con.create_table(
+            "orders",
+            pd.DataFrame(
+                {
+                    "order_id": [1, 2, 3],
+                    "customer_id": [1, 1, 2],
+                    "category_id": [10, 20, 10],
+                    "amount": [100, 200, 300],
+                }
+            ),
+        )
+        categories_tbl = con.create_table(
+            "categories",
+            pd.DataFrame(
+                {
+                    "category_id": [10, 20],
+                    "cat_name": ["Electronics", "Books"],
+                }
+            ),
+        )
+
+        customers_st = (
+            to_semantic_table(customers_tbl, name="customers")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                name=lambda t: t.name,
+                region=lambda t: t.region,
+            )
+            .with_measures(customer_count=_.count())
+        )
+        orders_st = (
+            to_semantic_table(orders_tbl, name="orders")
+            .with_dimensions(
+                order_id=lambda t: t.order_id,
+                customer_id=lambda t: t.customer_id,
+                category_id=lambda t: t.category_id,
+            )
+            .with_measures(
+                order_count=_.count(),
+                total_amount=_.amount.sum(),
+            )
+        )
+        categories_st = (
+            to_semantic_table(categories_tbl, name="categories")
+            .with_dimensions(
+                category_id=lambda t: t.category_id,
+                cat_name=lambda t: t.cat_name,
+            )
+            .with_measures(category_count=_.count())
+        )
+        return {
+            "customers": customers_st,
+            "orders": orders_st,
+            "categories": categories_st,
+        }
+
+    def _build_nested(self, m):
+        """customers -< orders -- categories"""
+        orders_with_cats = m["orders"].join_one(
+            m["categories"], on="category_id"
+        )
+        return m["customers"].join_many(orders_with_cats, on="customer_id")
+
+    # -- tests ---------------------------------------------------------------
+
+    def test_scalar_order_count_not_inflated(self, models):
+        """order_count must be 3 (not inflated by the raw LEFT JOIN row count).
+
+        Without the fix, pre-aggregation is skipped and the raw join produces
+        more rows than expected.
+        """
+        joined = self._build_nested(models)
+        df = joined.aggregate("orders.order_count").execute()
+        assert df["orders.order_count"].iloc[0] == 3
+
+    def test_scalar_total_amount(self, models):
+        """total_amount = 100 + 200 + 300 = 600."""
+        joined = self._build_nested(models)
+        df = joined.aggregate("orders.total_amount").execute()
+        assert df["orders.total_amount"].iloc[0] == 600
+
+    def test_group_by_region(self, models):
+        """Group by customers.region with nested join_one.
+
+        West (cust 1, 2): orders [100, 200, 300] → 3 orders, sum=600
+        East (cust 3, 4): no orders → NULL
+        """
+        joined = self._build_nested(models)
+        df = (
+            joined.group_by("customers.region")
+            .aggregate("orders.order_count", "orders.total_amount")
+            .execute()
+        )
+        west = df[df["customers.region"] == "West"]
+        east = df[df["customers.region"] == "East"]
+        assert west["orders.order_count"].iloc[0] == 3
+        assert west["orders.total_amount"].iloc[0] == 600
+        assert len(east) == 1
+
+    def test_unmatched_rows_have_null_measures(self, models):
+        """East customers have no orders → NULL measures (not 0)."""
+        joined = self._build_nested(models)
+        df = (
+            joined.group_by("customers.region")
+            .aggregate("orders.total_amount")
+            .execute()
+        )
+        east = df[df["customers.region"] == "East"]
+        assert east["orders.total_amount"].isna().iloc[0]
+
+    def test_one_side_measure_customer_count(self, models):
+        """One-side measure (customer_count) should be correct across nested join."""
+        joined = self._build_nested(models)
+        df = joined.aggregate("customers.customer_count").execute()
+        assert df["customers.customer_count"].iloc[0] == 4
+
+    def test_group_by_nested_dim(self, models):
+        """Group by a dimension from the nested join_one table (categories.cat_name).
+
+        Electronics (cat 10): orders #1(100), #3(300) → 2 orders, sum=400
+        Books (cat 20): order #2(200) → 1 order, sum=200
+        """
+        joined = self._build_nested(models)
+        df = (
+            joined.group_by("categories.cat_name")
+            .aggregate("orders.order_count", "orders.total_amount")
+            .execute()
+        )
+        elec = df[df["categories.cat_name"] == "Electronics"]
+        books = df[df["categories.cat_name"] == "Books"]
+        assert elec["orders.order_count"].iloc[0] == 2
+        assert elec["orders.total_amount"].iloc[0] == 400
+        assert books["orders.order_count"].iloc[0] == 1
+        assert books["orders.total_amount"].iloc[0] == 200
