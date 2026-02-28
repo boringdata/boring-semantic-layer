@@ -1549,8 +1549,8 @@ def _find_chain_bridge(pt, gb_col, prefix, raw, measure_names, join_tree_info):
         ).distinct()
         chained = _left_join_bridge(inter_bridge, dim_bridge, sorted(overlap_dim))
 
-        # Join chained bridge onto pt
-        return _left_join_bridge(pt, chained, sorted(overlap_grain))
+        # Join chained bridge onto pt — bridge on preserved (left) side
+        return _left_join_bridge(chained, pt, sorted(overlap_grain))
 
     return pt
 
@@ -1593,7 +1593,7 @@ def _attach_dim_column(pt, gb_col, measure_names, join_tree_info,
             bridge = raw.select(
                 [raw[c] for c in (gb_col, *common_keys)]
             ).distinct()
-            return _left_join_bridge(pt, bridge, common_keys)
+            return _left_join_bridge(bridge, pt, common_keys)
 
 
 def _is_mean_expr(expr):
@@ -2195,10 +2195,9 @@ class SemanticAggregateOp(Relation):
             if not common:
                 return pt
 
-            preds = [pt[c] == dim_bridge[c] for c in common]
-            bridge_only = tuple(c for c in dim_bridge.columns if c not in common)
-            joined_pt = pt.left_join(dim_bridge, preds).select(
-                [pt] + [dim_bridge[c] for c in bridge_only]
+            preds = [dim_bridge[c] == pt[c] for c in common]
+            joined_pt = dim_bridge.left_join(pt, preds).select(
+                [dim_bridge] + [pt[c] for c in pt_meas]
             )
             gb_avail = tuple(c for c in group_by_cols if c in joined_pt.columns)
             if gb_avail:

@@ -407,6 +407,10 @@ class TestEcommerceDeepChainAndChasm:
         silver = df[df["customers.tier"] == "silver"]
         assert silver["orders.total_revenue"].iloc[0] == 600
 
+        bronze = df[df["customers.tier"] == "bronze"]
+        assert len(bronze) == 1
+        assert bronze["orders.total_revenue"].isna().iloc[0]
+
     def test_item_count_deep_chain(self, models):
         """item_count = 28 through the full 4-table deep chain."""
         joined = self._deep_chain(models)
