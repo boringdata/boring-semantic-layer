@@ -2096,3 +2096,157 @@ class TestDeepChainEdgeCases:
         )
         assert df["orders.order_count"].iloc[0] == 3
         assert df["orders.total_amount"].iloc[0] == 1500
+
+
+# ---------------------------------------------------------------------------
+# TestLeftJoinUnmatchedRows
+# ---------------------------------------------------------------------------
+class TestLeftJoinUnmatchedRows:
+    """Left join with unmatched dimension rows: pre-aggregation must preserve
+    dimension entries that have no matching rows on the right side.
+
+    Fixture
+    -------
+    customers (4 rows — 2 West, 2 East)
+        customer_id  name    region
+        1            Alice   West
+        2            Bob     West
+        3            Carol   East
+        4            Dave    East
+
+    orders (3 rows — only West customers have orders)
+        order_id  customer_id  amount
+        1         1            100
+        2         1            200
+        3         2            300
+    """
+
+    @pytest.fixture()
+    def models(self):
+        con = ibis.duckdb.connect(":memory:")
+
+        customers_tbl = con.create_table(
+            "customers",
+            pd.DataFrame(
+                {
+                    "customer_id": [1, 2, 3, 4],
+                    "name": ["Alice", "Bob", "Carol", "Dave"],
+                    "region": ["West", "West", "East", "East"],
+                }
+            ),
+        )
+        orders_tbl = con.create_table(
+            "orders",
+            pd.DataFrame(
+                {
+                    "order_id": [1, 2, 3],
+                    "customer_id": [1, 1, 2],
+                    "amount": [100, 200, 300],
+                }
+            ),
+        )
+
+        customers_st = (
+            to_semantic_table(customers_tbl, name="customers")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                name=lambda t: t.name,
+                region=lambda t: t.region,
+            )
+            .with_measures(customer_count=_.count())
+        )
+        orders_st = (
+            to_semantic_table(orders_tbl, name="orders")
+            .with_dimensions(
+                order_id=lambda t: t.order_id,
+                customer_id=lambda t: t.customer_id,
+            )
+            .with_measures(
+                order_count=_.count(),
+                total_amount=_.amount.sum(),
+                avg_amount=_.amount.mean(),
+            )
+        )
+        return {"customers": customers_st, "orders": orders_st}
+
+    def test_unmatched_rows_preserved(self, models):
+        """East region has no orders but must still appear in results."""
+        joined = models["customers"].join_many(
+            models["orders"], on="customer_id"
+        )
+        df = (
+            joined.group_by("customers.region")
+            .aggregate("orders.order_count")
+            .execute()
+        )
+        assert len(df) == 2
+        east = df[df["customers.region"] == "East"]
+        assert len(east) == 1
+
+    def test_unmatched_measures_are_null(self, models):
+        """Unmatched dimension values have NULL (not 0) for aggregated measures."""
+        joined = models["customers"].join_many(
+            models["orders"], on="customer_id"
+        )
+        df = (
+            joined.group_by("customers.region")
+            .aggregate("orders.total_amount")
+            .execute()
+        )
+        east = df[df["customers.region"] == "East"]
+        assert east["orders.total_amount"].isna().iloc[0]
+
+    def test_matched_measures_correct(self, models):
+        """West region totals are still correct."""
+        joined = models["customers"].join_many(
+            models["orders"], on="customer_id"
+        )
+        df = (
+            joined.group_by("customers.region")
+            .aggregate("orders.total_amount")
+            .execute()
+        )
+        west = df[df["customers.region"] == "West"]
+        assert west["orders.total_amount"].iloc[0] == 600  # 100 + 200 + 300
+
+    def test_scalar_aggregate_only_counts_matched(self, models):
+        """Grand total should only count matched rows (no NULLs added)."""
+        joined = models["customers"].join_many(
+            models["orders"], on="customer_id"
+        )
+        df = joined.aggregate("orders.total_amount").execute()
+        assert df["orders.total_amount"].iloc[0] == 600
+
+    def test_by_name_grouping_unmatched(self, models):
+        """Individual customers Carol and Dave appear with NULL measures."""
+        joined = models["customers"].join_many(
+            models["orders"], on="customer_id"
+        )
+        df = (
+            joined.group_by("customers.name")
+            .aggregate("orders.total_amount")
+            .execute()
+        )
+        carol = df[df["customers.name"] == "Carol"]
+        dave = df[df["customers.name"] == "Dave"]
+        assert len(carol) == 1
+        assert carol["orders.total_amount"].isna().iloc[0]
+        assert len(dave) == 1
+        assert dave["orders.total_amount"].isna().iloc[0]
+
+    def test_both_sides_measures(self, models):
+        """Aggregating measures from both left AND right — all rows appear."""
+        joined = models["customers"].join_many(
+            models["orders"], on="customer_id"
+        )
+        df = (
+            joined.group_by("customers.region")
+            .aggregate("customers.customer_count", "orders.order_count")
+            .execute()
+        )
+        assert len(df) == 2
+        west = df[df["customers.region"] == "West"]
+        east = df[df["customers.region"] == "East"]
+        assert west["customers.customer_count"].iloc[0] == 2
+        assert west["orders.order_count"].iloc[0] == 3
+        assert east["customers.customer_count"].iloc[0] == 2
