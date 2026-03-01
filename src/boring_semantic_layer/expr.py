@@ -445,7 +445,7 @@ class SemanticModel(SemanticTable):
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "inner",
+        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics.
 
@@ -454,7 +454,7 @@ class SemanticModel(SemanticTable):
             on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
                 name string, a Deferred ``_.col``, or a list of strings/Deferred for
                 compound equi-joins.
-            how: Join type - "inner", "left", "right", or "outer" (default: "inner")
+            how: Join type - "left", "inner", "right", or "outer" (default: "left")
 
         Returns:
             SemanticJoin: The joined semantic model
