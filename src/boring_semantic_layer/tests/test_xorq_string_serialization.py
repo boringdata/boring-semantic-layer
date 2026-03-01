@@ -33,10 +33,10 @@ def test_dimension_serialization(flights_data):
     dim_metadata = result.unwrap()
 
     assert "origin" in dim_metadata
-    assert dim_metadata["origin"]["expr_pickle"] is not None
+    assert "expr_struct" in dim_metadata["origin"] or "expr" in dim_metadata["origin"]
 
     assert "destination" in dim_metadata
-    assert dim_metadata["destination"]["expr_pickle"] is not None
+    assert "expr_struct" in dim_metadata["destination"] or "expr" in dim_metadata["destination"]
 
 
 def test_measure_serialization(flights_data):
@@ -85,18 +85,18 @@ def test_to_tagged_with_string_metadata(flights_data):
     dims = dict(metadata["dimensions"])
     # each dimension value is also a tuple of key-value pairs
     origin_dim = dict(dims["origin"])
-    assert "expr_pickle" in origin_dim or "expr" in origin_dim
+    assert "expr_struct" in origin_dim or "expr" in origin_dim
 
     destination_dim = dict(dims["destination"])
-    assert "expr_pickle" in destination_dim or "expr" in destination_dim
+    assert "expr_struct" in destination_dim or "expr" in destination_dim
 
     # measures are also stored as nested tuples
     meas = dict(metadata["measures"])
     avg_distance_meas = dict(meas["avg_distance"])
-    assert "expr_struct" in avg_distance_meas or "expr_pickle" in avg_distance_meas
+    assert "expr_struct" in avg_distance_meas
 
     total_distance_meas = dict(meas["total_distance"])
-    assert "expr_struct" in total_distance_meas or "expr_pickle" in total_distance_meas
+    assert "expr_struct" in total_distance_meas
 
 
 def test_to_tagged_instance_method(flights_data):
@@ -115,11 +115,11 @@ def test_to_tagged_instance_method(flights_data):
     metadata = dict(op.metadata)
     dims = dict(metadata["dimensions"])
     origin_dim = dict(dims["origin"])
-    assert "expr_pickle" in origin_dim or "expr" in origin_dim
+    assert "expr_struct" in origin_dim or "expr" in origin_dim
 
     meas = dict(metadata["measures"])
     avg_distance_meas = dict(meas["avg_distance"])
-    assert "expr_struct" in avg_distance_meas or "expr_pickle" in avg_distance_meas
+    assert "expr_struct" in avg_distance_meas
 
     # Verify round-trip works
     reconstructed = from_tagged(tagged_expr)
@@ -168,7 +168,7 @@ def test_serialize_entity_dimensions(flights_data):
     assert "origin" in dim_metadata
     assert dim_metadata["origin"]["is_entity"] is True
     assert dim_metadata["origin"]["description"] == "Origin airport"
-    assert dim_metadata["origin"]["expr_pickle"] is not None
+    assert "expr_struct" in dim_metadata["origin"] or "expr" in dim_metadata["origin"]
 
     # Regular dimension should not have is_entity flag
     assert "destination" in dim_metadata
@@ -360,8 +360,7 @@ def test_case_expr_measure_serialization(flights_data):
     meas_metadata = result.unwrap()
 
     assert "short_flight_count" in meas_metadata
-    assert "expr_struct" in meas_metadata["short_flight_count"] or "expr_pickle" in meas_metadata["short_flight_count"]
-
+    assert "expr_struct" in meas_metadata["short_flight_count"]
 
 def test_case_expr_tagged_roundtrip(flights_data):
     """Case expression measures should survive to_tagged → from_tagged."""
@@ -403,8 +402,7 @@ def test_ifelse_measure_serialization(flights_data):
     meas_metadata = result.unwrap()
 
     assert "short_flight_count" in meas_metadata
-    assert "expr_struct" in meas_metadata["short_flight_count"] or "expr_pickle" in meas_metadata["short_flight_count"]
-
+    assert "expr_struct" in meas_metadata["short_flight_count"]
 
 def test_ifelse_tagged_roundtrip(flights_data):
     """xo.ifelse measures should survive to_tagged → from_tagged."""
@@ -529,9 +527,8 @@ def test_structured_serialization_in_measures(flights_data):
     result = serialize_measures(measures)
     meas_metadata = result.unwrap()
 
-    assert "expr_struct" in meas_metadata["short_flight_count"] or "expr_pickle" in meas_metadata["short_flight_count"]
-    assert "expr_struct" in meas_metadata["avg_distance"] or "expr_pickle" in meas_metadata["avg_distance"]
-
+    assert "expr_struct" in meas_metadata["short_flight_count"]
+    assert "expr_struct" in meas_metadata["avg_distance"]
 
 def test_structured_tagged_roundtrip_case(flights_data):
     """Full to_tagged -> from_tagged with case expression using structured format."""
@@ -555,8 +552,7 @@ def test_structured_tagged_roundtrip_case(flights_data):
     metadata = dict(op.metadata)
     meas = dict(metadata["measures"])
     short_flight = dict(meas["short_flight_count"])
-    assert "expr_struct" in short_flight or "expr_pickle" in short_flight
-
+    assert "expr_struct" in short_flight
     # Reconstruct and verify
     reconstructed = from_tagged(tagged_expr)
 
@@ -964,6 +960,67 @@ def test_tagged_roundtrip_multiple_dimensions(flights_data):
     assert len(result) > 0
     assert "origin" in result.columns
     assert "destination" in result.columns
+
+def test_tagged_roundtrip_case_dimension():
+    """Case expression dimensions round-trip correctly."""
+    import xorq.api as xo
+
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    con = xo.connect()
+    data = {
+        "origin": ["JFK", "LAX", "SFO", "JFK", "LAX"],
+        "delay": [10, -5, 0, 15, -10],
+    }
+    tbl = xo.memtable(data)
+
+    # Use xo.case() builder for searched case expression
+    flights = (
+        to_semantic_table(tbl, name="flights_case_dim")
+        .with_dimensions(
+            origin=lambda t: t.origin,
+            delay_status=lambda t: (
+                xo.case()
+                .when(t.delay > 0, "Delayed")
+                .when(t.delay < 0, "Early")
+                .else_("On Time")
+                .end()
+            ),
+        )
+        .with_measures(flight_count=lambda t: t.count())
+    )
+
+    # Test in-process
+    result_before = (
+        flights
+        .group_by("delay_status")
+        .aggregate("flight_count")
+        .order_by("delay_status")
+        .execute()
+    )
+    assert len(result_before) > 0
+    assert "delay_status" in result_before.columns
+
+    # Round-trip
+    tagged = to_tagged(flights)
+    reconstructed = from_tagged(tagged)
+
+    # Verify dimensions are preserved
+    dims = reconstructed.get_dimensions()
+    assert "delay_status" in dims
+
+    # Test query execution
+    result_after = (
+        reconstructed
+        .group_by("delay_status")
+        .aggregate("flight_count")
+        .order_by("delay_status")
+        .execute()
+    )
+
+    # Verify results match
+    assert len(result_after) == len(result_before)
+    assert set(result_after["delay_status"]) == set(result_before["delay_status"])
 
 
 # --- Advanced modeling round-trip tests ---
@@ -1422,3 +1479,442 @@ def test_tagged_roundtrip_join_inner():
     got = dict(zip(df.label, df["left_inner.row_count"], strict=False))
     assert got["x"] == 1
     assert got["y"] == 1
+
+
+def test_tagged_roundtrip_join_one_preserves_predicate():
+    """join_one round-trip preserves the join predicate (not a cross join).
+
+    Regression test: previously both sides of the join received the full
+    joined xorq expression during reconstruction, causing a self-join
+    where the predicate became a tautology (cross join).
+    """
+    import pandas as pd
+
+    from boring_semantic_layer import Dimension, Measure
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    con = ibis.duckdb.connect(":memory:")
+    flights = pd.DataFrame({
+        "origin": ["SEA", "SEA", "LAX", "LAX", "ORD"],
+        "carrier": ["AA", "UA", "AA", "DL", "UA"],
+    })
+    carriers = pd.DataFrame({
+        "code": ["AA", "UA", "DL"],
+        "nickname": ["American", "United", "Delta"],
+    })
+    f_tbl = con.create_table("flights_jo", flights)
+    c_tbl = con.create_table("carriers_jo", carriers)
+
+    flights_st = (
+        to_semantic_table(f_tbl, name="flights_jo")
+        .with_dimensions(
+            origin=Dimension(expr=lambda t: t.origin, description="Origin"),
+            carrier=Dimension(expr=lambda t: t.carrier, description="Carrier"),
+        )
+        .with_measures(
+            flight_count=Measure(expr=lambda t: t.count(), description="Count"),
+        )
+    )
+    carriers_st = (
+        to_semantic_table(c_tbl, name="carriers_jo")
+        .with_dimensions(
+            code=Dimension(expr=lambda t: t.code, description="Code"),
+            nickname=Dimension(expr=lambda t: t.nickname, description="Nickname"),
+        )
+        .with_measures(
+            carrier_count=Measure(expr=lambda t: t.count(), description="Count"),
+        )
+    )
+
+    joined = flights_st.join_one(carriers_st, on=lambda f, c: f.carrier == c.code)
+
+    # Baseline
+    baseline = (
+        joined
+        .group_by("carriers_jo.nickname")
+        .aggregate("flights_jo.flight_count")
+        .order_by("carriers_jo.nickname")
+        .execute()
+    )
+
+    # Round-trip
+    tagged = to_tagged(joined)
+    reconstructed = from_tagged(tagged)
+    result = (
+        reconstructed
+        .group_by("carriers_jo.nickname")
+        .aggregate("flights_jo.flight_count")
+        .order_by("carriers_jo.nickname")
+        .execute()
+    )
+
+    assert len(result) == 3
+    got = dict(zip(result["carriers_jo.nickname"], result["flights_jo.flight_count"], strict=False))
+    assert got["American"] == 2
+    assert got["United"] == 2
+    assert got["Delta"] == 1
+
+    # Verify baseline and round-trip match exactly
+    assert list(baseline["carriers_jo.nickname"]) == list(result["carriers_jo.nickname"])
+    assert list(baseline["flights_jo.flight_count"]) == list(result["flights_jo.flight_count"])
+
+
+def test_tagged_roundtrip_join_one_left_join():
+    """join_one with left join preserves NULLs for non-matching rows."""
+    import pandas as pd
+
+    from boring_semantic_layer import Dimension, Measure
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    con = ibis.duckdb.connect(":memory:")
+    orders = pd.DataFrame({
+        "order_id": [1, 2, 3, 4],
+        "product_id": [10, 20, 30, 99],  # 99 has no matching product
+    })
+    products = pd.DataFrame({
+        "pid": [10, 20, 30],
+        "name": ["Widget", "Gadget", "Gizmo"],
+    })
+    o_tbl = con.create_table("orders_lj", orders)
+    p_tbl = con.create_table("products_lj", products)
+
+    orders_st = (
+        to_semantic_table(o_tbl, name="orders_lj")
+        .with_dimensions(
+            order_id=Dimension(expr=lambda t: t.order_id, description="Order ID"),
+            product_id=Dimension(expr=lambda t: t.product_id, description="Product ID"),
+        )
+        .with_measures(
+            order_count=Measure(expr=lambda t: t.count(), description="Count"),
+        )
+    )
+    products_st = (
+        to_semantic_table(p_tbl, name="products_lj")
+        .with_dimensions(
+            pid=Dimension(expr=lambda t: t.pid, description="Product ID"),
+            name=Dimension(expr=lambda t: t.name, description="Name"),
+        )
+    )
+
+    joined = orders_st.join_one(products_st, on=lambda o, p: o.product_id == p.pid, how="left")
+
+    tagged = to_tagged(joined)
+    reconstructed = from_tagged(tagged)
+
+    result = (
+        reconstructed
+        .group_by("products_lj.name")
+        .aggregate("orders_lj.order_count")
+        .order_by("products_lj.name")
+        .execute()
+    )
+
+    got = dict(zip(result["products_lj.name"], result["orders_lj.order_count"], strict=False))
+    assert got["Gadget"] == 1
+    assert got["Gizmo"] == 1
+    assert got["Widget"] == 1
+    # Left join: the unmatched order (product_id=99) shows up with NULL name
+    assert len(result) == 4
+
+
+def test_tagged_roundtrip_join_many_without_with_dimensions():
+    """join_many without .with_dimensions() round-trips correctly.
+
+    When there is no .with_dimensions() wrapper, the top-level op is
+    SemanticJoinOp and reconstruction must split the join expression.
+    """
+    import pandas as pd
+
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    con = ibis.duckdb.connect(":memory:")
+    employees = pd.DataFrame({
+        "emp_id": [1, 2, 3],
+        "dept_id": [10, 10, 20],
+        "salary": [50000, 60000, 70000],
+    })
+    departments = pd.DataFrame({
+        "dept_id": [10, 20],
+        "dept_name": ["Engineering", "Sales"],
+    })
+    e_tbl = con.create_table("employees_jm", employees)
+    d_tbl = con.create_table("departments_jm", departments)
+
+    emp_st = (
+        to_semantic_table(e_tbl, "employees_jm")
+        .with_dimensions(dept_id=lambda t: t.dept_id)
+        .with_measures(
+            headcount=lambda t: t.count(),
+            total_salary=lambda t: t.salary.sum(),
+        )
+    )
+    dept_st = (
+        to_semantic_table(d_tbl, "departments_jm")
+        .with_dimensions(
+            dept_id=lambda t: t.dept_id,
+            dept_name=lambda t: t.dept_name,
+        )
+    )
+
+    # join_many without .with_dimensions() → top-level SemanticJoinOp
+    joined = emp_st.join_many(dept_st, lambda e, d: e.dept_id == d.dept_id)
+
+    tagged = to_tagged(joined)
+    reconstructed = from_tagged(tagged)
+
+    df = (
+        reconstructed
+        .group_by("departments_jm.dept_name")
+        .aggregate("employees_jm.headcount", "employees_jm.total_salary")
+        .order_by("departments_jm.dept_name")
+        .execute()
+    )
+
+    assert len(df) == 2
+    got_hc = dict(zip(df["departments_jm.dept_name"], df["employees_jm.headcount"], strict=False))
+    got_sal = dict(zip(df["departments_jm.dept_name"], df["employees_jm.total_salary"], strict=False))
+    assert got_hc["Engineering"] == 2
+    assert got_hc["Sales"] == 1
+    assert got_sal["Engineering"] == 110000
+    assert got_sal["Sales"] == 70000
+
+
+def test_tagged_roundtrip_join_derived_dimension_on_root():
+    """Derived dimension on root table survives to_tagged → from_tagged round-trip.
+
+    Regression: the old _parse_field helper recursively mangled expr_struct
+    resolver tuples (e.g. converting empty () to {}, collapsing tuple-of-pairs
+    into dicts), causing _create_dimension to fall through to a literal column
+    lookup that fails with XorqTypeError.  Fixed by replacing _parse_field
+    with _parse_structured_dict (one-level-only conversion).
+    """
+    import pandas as pd
+
+    from boring_semantic_layer import Dimension, Measure
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    con = ibis.duckdb.connect(":memory:")
+    flights = pd.DataFrame(
+        {
+            "origin": ["SEA", "SEA", "LAX", "LAX", "ORD"],
+            "dep_time": pd.to_datetime(
+                ["2024-01-01 08:00", "2024-01-01 14:00", "2024-01-01 08:00", "2024-01-01 20:00", "2024-01-01 14:00"]
+            ),
+            "carrier": ["AA", "UA", "AA", "DL", "UA"],
+        }
+    )
+    carriers = pd.DataFrame(
+        {
+            "code": ["AA", "UA", "DL"],
+            "nickname": ["American", "United", "Delta"],
+        }
+    )
+    f_tbl = con.create_table("flights_dd", flights)
+    c_tbl = con.create_table("carriers_dd", carriers)
+
+    flights_st = (
+        to_semantic_table(f_tbl, name="flights_dd")
+        .with_dimensions(
+            origin=Dimension(expr=lambda t: t.origin, description="Origin"),
+            dep_hour=Dimension(expr=lambda t: t.dep_time.hour(), description="Departure hour"),
+        )
+        .with_measures(
+            flight_count=Measure(expr=lambda t: t.count(), description="Count"),
+        )
+    )
+    carriers_st = (
+        to_semantic_table(c_tbl, name="carriers_dd")
+        .with_dimensions(
+            code=Dimension(expr=lambda t: t.code, description="Code"),
+            nickname=Dimension(expr=lambda t: t.nickname, description="Nickname"),
+        )
+        .with_measures(
+            carrier_count=Measure(expr=lambda t: t.count(), description="Count"),
+        )
+    )
+
+    joined = flights_st.join_one(carriers_st, on=lambda f, c: f.carrier == c.code)
+
+    # Baseline: group by the derived dimension before round-trip
+    baseline = (
+        joined
+        .group_by("flights_dd.dep_hour")
+        .aggregate("flights_dd.flight_count")
+        .order_by("flights_dd.dep_hour")
+        .execute()
+    )
+
+    # Round-trip
+    tagged = to_tagged(joined)
+    reconstructed = from_tagged(tagged)
+
+    result = (
+        reconstructed
+        .group_by("flights_dd.dep_hour")
+        .aggregate("flights_dd.flight_count")
+        .order_by("flights_dd.dep_hour")
+        .execute()
+    )
+
+    assert len(result) == len(baseline)
+    assert list(result["flights_dd.dep_hour"]) == list(baseline["flights_dd.dep_hour"])
+    assert list(result["flights_dd.flight_count"]) == list(baseline["flights_dd.flight_count"])
+
+
+@pytest.mark.parametrize(
+    "n_joins",
+    [2, 3, 4],
+    ids=["2_joins", "3_joins", "4_joins"],
+)
+def test_tagged_roundtrip_join_chain_shared_column_names(n_joins):
+    """Multi-way join_one chain with shared column names survives round-trip.
+
+    Regression: when 3+ dimension tables share a column name (e.g. "code"),
+    ibis's default ``{name}_right`` suffix collided on the third table,
+    raising ``IntegrityError: Name collisions``.  After ``to_tagged →
+    from_tagged``, the same collision caused ``Ambiguous field reference``.
+
+    Fixed by:
+    - depth-based ``rname`` in ``SemanticJoinOp.to_untagged`` (``_right``,
+      ``_right2``, ``_right3``, …)
+    - matching suffix in ``_check_and_add_rename``
+    - preserving ``SelfReference`` (view) aliasing in ``_reconstruct_table``
+    - intersection-only join-key detection in ``_extract_join_key_column_names``
+    """
+    import pandas as pd
+
+    from xorq.common.utils.ibis_utils import from_ibis
+
+    from boring_semantic_layer import Dimension, Measure
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    con = ibis.duckdb.connect(":memory:")
+
+    flights_df = pd.DataFrame({
+        "carrier": ["AA", "UA", "AA", "DL", "UA"],
+        "origin": ["SEA", "LAX", "ORD", "SEA", "LAX"],
+        "destination": ["LAX", "ORD", "SEA", "ORD", "SEA"],
+        "tail_num": ["N101", "N102", "N103", "N101", "N102"],
+    })
+    carriers_df = pd.DataFrame({
+        "code": ["AA", "UA", "DL"],
+        "nickname": ["American", "United", "Delta"],
+    })
+    airports_df = pd.DataFrame({
+        "code": ["SEA", "LAX", "ORD"],
+        "city": ["Seattle", "Los Angeles", "Chicago"],
+    })
+    aircraft_df = pd.DataFrame({
+        "tail_num": ["N101", "N102", "N103"],
+        "year_built": [2010, 2015, 2020],
+    })
+
+    f_tbl = from_ibis(con.create_table(f"fl_{n_joins}", flights_df))
+    c_tbl = from_ibis(con.create_table(f"ca_{n_joins}", carriers_df))
+    # Single airports table with .view() for origin/dest — matches the
+    # deferred_read_parquet + .view() pattern from the original repro.
+    # SelfReference gives each view a distinct ibis identity.
+    a_tbl = from_ibis(con.create_table(f"ap_{n_joins}", airports_df))
+    ac_tbl = from_ibis(con.create_table(f"ac_{n_joins}", aircraft_df))
+
+    flights_st = (
+        to_semantic_table(f_tbl, name="flights")
+        .with_dimensions(
+            carrier=Dimension(expr=lambda t: t.carrier),
+            origin=Dimension(expr=lambda t: t.origin),
+            destination=Dimension(expr=lambda t: t.destination),
+            tail_num=Dimension(expr=lambda t: t.tail_num),
+        )
+        .with_measures(flight_count=Measure(expr=lambda t: t.count()))
+    )
+    carriers_st = to_semantic_table(c_tbl, name="carriers").with_dimensions(
+        code=Dimension(expr=lambda t: t.code),
+        nickname=Dimension(expr=lambda t: t.nickname),
+    )
+    origin_st = to_semantic_table(a_tbl.view(), name="origin_airports").with_dimensions(
+        code=Dimension(expr=lambda t: t.code),
+        city=Dimension(expr=lambda t: t.city),
+    )
+    dest_st = to_semantic_table(a_tbl.view(), name="dest_airports").with_dimensions(
+        code=Dimension(expr=lambda t: t.code),
+        city=Dimension(expr=lambda t: t.city),
+    )
+    aircraft_st = to_semantic_table(ac_tbl, name="aircraft").with_dimensions(
+        tail_num=Dimension(expr=lambda t: t.tail_num),
+        year_built=Dimension(expr=lambda t: t.year_built),
+    )
+
+    # Build chain: n_joins = number of join_one calls
+    joined = flights_st.join_one(carriers_st, lambda f, c: f.carrier == c.code)
+    if n_joins >= 2:
+        joined = joined.join_one(origin_st, lambda f, o: f.origin == o.code)
+    if n_joins >= 3:
+        joined = joined.join_one(dest_st, lambda f, d: f.destination == d.code)
+    if n_joins >= 4:
+        joined = joined.join_one(aircraft_st, lambda f, a: f.tail_num == a.tail_num)
+
+    # In-process baseline
+    baseline = (
+        joined
+        .group_by("carriers.nickname")
+        .aggregate("flights.flight_count")
+        .order_by("carriers.nickname")
+        .execute()
+    )
+
+    # Round-trip
+    tagged = to_tagged(joined)
+    reconstructed = from_tagged(tagged)
+    result = (
+        reconstructed
+        .group_by("carriers.nickname")
+        .aggregate("flights.flight_count")
+        .order_by("carriers.nickname")
+        .execute()
+    )
+
+    assert len(result) == len(baseline)
+    assert list(result["carriers.nickname"]) == list(baseline["carriers.nickname"])
+    assert list(result["flights.flight_count"]) == list(baseline["flights.flight_count"])
+
+
+def test_tagged_roundtrip_cached_node(flights_data):
+    """CachedNode wrapping a tagged expression survives from_tagged round-trip.
+
+    When users do ``to_tagged(st).cache(ParquetCache.from_kwargs())``, the
+    expression tree becomes ``CachedNode(parent=Tag(metadata={...}))``.
+    ``from_tagged`` must extract metadata through the CachedNode and use
+    the cached expression directly instead of unwrapping to dead leaf tables.
+    """
+    from xorq.caching import ParquetCache
+
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    flights = (
+        to_semantic_table(flights_data, name="flights")
+        .with_dimensions(origin=lambda t: t.origin)
+        .with_measures(
+            avg_distance=lambda t: t.distance.mean(),
+            total_distance=lambda t: t.distance.sum(),
+        )
+    )
+
+    tagged = to_tagged(flights)
+    cached = tagged.cache(ParquetCache.from_kwargs())
+
+    reconstructed = from_tagged(cached)
+
+    result = (
+        reconstructed
+        .group_by("origin")
+        .aggregate("avg_distance", "total_distance")
+        .order_by("origin")
+        .execute()
+    )
+
+    assert len(result) == 3
+    assert set(result.columns) == {"origin", "avg_distance", "total_distance"}
+
+    jfk = result[result["origin"] == "JFK"].iloc[0]
+    assert jfk["total_distance"] == 100
+    assert jfk["avg_distance"] == 100.0

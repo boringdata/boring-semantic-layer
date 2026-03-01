@@ -296,6 +296,7 @@ def serialize_resolver(resolver) -> tuple:
         Attr,
         BinaryOperator,
         Call,
+        Item,
         Just,
         JustUnhashable,
         Mapping as MappingResolver,
@@ -334,6 +335,9 @@ def serialize_resolver(resolver) -> tuple:
 
     if isinstance(resolver, Attr):
         return ("attr", serialize_resolver(resolver.obj), serialize_resolver(resolver.name))
+
+    if isinstance(resolver, Item):
+        return ("item", serialize_resolver(resolver.obj), serialize_resolver(resolver.name))
 
     if isinstance(resolver, Call):
         func_tuple = serialize_resolver(resolver.func)
@@ -400,12 +404,26 @@ def _resolve_qualname(module_obj, qualname: str):
     return obj
 
 
+def _finalize_frozen_slotted(obj):
+    """Compute and set __precomputed_hash__ for a FrozenSlotted object.
+
+    FrozenSlotted.__init__ normally computes the hash as:
+        hash((self.__class__, tuple(field_values)))
+    We replicate this behavior after manually setting fields via object.__setattr__.
+    """
+    values = tuple(getattr(obj, field) for field in obj.__fields__)
+    hashvalue = hash((obj.__class__, values))
+    object.__setattr__(obj, "__precomputed_hash__", hashvalue)
+    return obj
+
+
 def deserialize_resolver(data: tuple):
     """Reconstruct a Resolver tree from a nested-tuple representation."""
     from xorq.vendor.ibis.common.deferred import (
         Attr,
         BinaryOperator,
         Call,
+        Item,
         Just,
         Mapping as MappingResolver,
         Sequence,
@@ -436,7 +454,15 @@ def deserialize_resolver(data: tuple):
             attr = object.__new__(Attr)
             object.__setattr__(attr, "obj", obj_resolver)
             object.__setattr__(attr, "name", name_resolver)
-            return attr
+            return _finalize_frozen_slotted(attr)
+
+        case ("item", obj_data, name_data):
+            obj_resolver = deserialize_resolver(obj_data)
+            name_resolver = deserialize_resolver(name_data)
+            item = object.__new__(Item)
+            object.__setattr__(item, "obj", obj_resolver)
+            object.__setattr__(item, "name", name_resolver)
+            return _finalize_frozen_slotted(item)
 
         case ("call", func_data, args_data, kwargs_data):
             func_resolver = deserialize_resolver(func_data)
@@ -449,7 +475,7 @@ def deserialize_resolver(data: tuple):
             object.__setattr__(call, "func", func_resolver)
             object.__setattr__(call, "args", args_resolvers)
             object.__setattr__(call, "kwargs", kwargs_resolvers)
-            return call
+            return _finalize_frozen_slotted(call)
 
         case ("binop", op_name, left_data, right_data):
             func = _OPERATOR_MAP.get(op_name)
@@ -461,7 +487,7 @@ def deserialize_resolver(data: tuple):
             object.__setattr__(binop, "func", func)
             object.__setattr__(binop, "left", left)
             object.__setattr__(binop, "right", right)
-            return binop
+            return _finalize_frozen_slotted(binop)
 
         case ("unop", op_name, arg_data):
             func = _OPERATOR_MAP.get(op_name)
@@ -471,7 +497,7 @@ def deserialize_resolver(data: tuple):
             unop = object.__new__(UnaryOperator)
             object.__setattr__(unop, "func", func)
             object.__setattr__(unop, "arg", arg)
-            return unop
+            return _finalize_frozen_slotted(unop)
 
         case ("seq", type_name, items_data):
             typ = {"tuple": tuple, "list": list}[type_name]
@@ -479,7 +505,7 @@ def deserialize_resolver(data: tuple):
             seq = object.__new__(Sequence)
             object.__setattr__(seq, "typ", typ)
             object.__setattr__(seq, "values", values)
-            return seq
+            return _finalize_frozen_slotted(seq)
 
         case ("map", type_name, items_data):
             typ = {"dict": dict}[type_name]
@@ -490,7 +516,7 @@ def deserialize_resolver(data: tuple):
             mapping = object.__new__(MappingResolver)
             object.__setattr__(mapping, "typ", typ)
             object.__setattr__(mapping, "values", values)
-            return mapping
+            return _finalize_frozen_slotted(mapping)
 
         case _:
             raise ValueError(f"Unknown resolver tag: {data[0]}")
@@ -534,6 +560,45 @@ def structured_to_expr(data: tuple) -> Result:
     def do_convert():
         resolver = deserialize_resolver(data)
         return Deferred(resolver)
+
+    return do_convert()
+
+
+def join_predicate_to_structured(fn: Callable) -> Result[tuple, Exception]:
+    """Convert a binary join predicate to a structured tuple representation.
+
+    Binary predicates like ``lambda l, r: l.col == r.col`` are serialized by
+    calling the function with two named Deferred variables (``left``, ``right``)
+    and serializing the resulting resolver tree.
+    """
+    from xorq.vendor.ibis.common.deferred import Deferred, Variable
+
+    @safe
+    def do_convert():
+        from .ops import _CallableWrapper
+
+        raw_fn = fn._fn if isinstance(fn, _CallableWrapper) else fn
+        left = Deferred(Variable("left"))
+        right = Deferred(Variable("right"))
+        result = raw_fn(left, right)
+        if not hasattr(result, "_resolver"):
+            raise ValueError(
+                f"Join predicate did not produce a Deferred, got {type(result)}"
+            )
+        return serialize_resolver(result._resolver)
+
+    return do_convert()
+
+
+def structured_to_join_predicate(data: tuple) -> Result[Callable, Exception]:
+    """Reconstruct a binary join predicate from a structured tuple representation."""
+    from xorq.vendor.ibis.common.deferred import Deferred
+
+    @safe
+    def do_convert():
+        resolver = deserialize_resolver(data)
+        deferred = Deferred(resolver)
+        return lambda left, right: deferred.resolve(left=left, right=right)
 
     return do_convert()
 
@@ -612,6 +677,8 @@ __all__ = [
     "ibis_string_to_expr",
     "expr_to_structured",
     "structured_to_expr",
+    "join_predicate_to_structured",
+    "structured_to_join_predicate",
     "serialize_resolver",
     "deserialize_resolver",
     "read_yaml_file",

@@ -445,7 +445,7 @@ class SemanticModel(SemanticTable):
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "inner",
+        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics.
 
@@ -454,7 +454,7 @@ class SemanticModel(SemanticTable):
             on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
                 name string, a Deferred ``_.col``, or a list of strings/Deferred for
                 compound equi-joins.
-            how: Join type - "inner", "left", "right", or "outer" (default: "inner")
+            how: Join type - "left", "inner", "right", or "outer" (default: "left")
 
         Returns:
             SemanticJoin: The joined semantic model
@@ -512,7 +512,7 @@ class SemanticModel(SemanticTable):
         """Deprecated: Use join_one() or join_many() instead.
 
         The generic join() method has been removed. Please use:
-        - join_one(other, lambda l, r: condition, how="inner") for one-to-one relationships
+        - join_one(other, lambda l, r: condition) for one-to-one relationships
         - join_many(other, lambda l, r: condition, how="left") for one-to-many relationships
         - join_cross(other) for Cartesian product
 
@@ -520,15 +520,15 @@ class SemanticModel(SemanticTable):
             Old: table.join(other, lambda l, r: l.id == r.id, how="left")
             New: table.join_many(other, lambda l, r: l.id == r.id)
 
-            Old: table.join(other, lambda l, r: l.id == r.id, how="inner")
+            Old: table.join(other, lambda l, r: l.id == r.id)
             New: table.join_one(other, lambda l, r: l.id == r.id)
         """
         raise TypeError(
             "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
             "For one-to-one relationships:\n"
-            "  table.join_one(other, lambda l, r: l.id == r.id, how='inner')\n\n"
+            "  table.join_one(other, lambda l, r: l.id == r.id)\n\n"
             "For one-to-many relationships:\n"
-            "  table.join_many(other, lambda l, r: l.id == r.id, how='left')\n\n"
+            "  table.join_many(other, lambda l, r: l.id == r.id)\n\n"
             "For Cartesian product:\n"
             "  table.join_cross(other)"
         )
@@ -843,9 +843,9 @@ class SemanticJoin(SemanticTable):
         raise TypeError(
             "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
             "For one-to-one relationships:\n"
-            "  table.join_one(other, lambda l, r: l.id == r.id, how='inner')\n\n"
+            "  table.join_one(other, lambda l, r: l.id == r.id)\n\n"
             "For one-to-many relationships:\n"
-            "  table.join_many(other, lambda l, r: l.id == r.id, how='left')\n\n"
+            "  table.join_many(other, lambda l, r: l.id == r.id)\n\n"
             "For Cartesian product:\n"
             "  table.join_cross(other)"
         )
@@ -1167,9 +1167,9 @@ class SemanticAggregate(SemanticTable):
         raise TypeError(
             "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
             "For one-to-one relationships:\n"
-            "  table.join_one(other, lambda l, r: l.id == r.id, how='inner')\n\n"
+            "  table.join_one(other, lambda l, r: l.id == r.id)\n\n"
             "For one-to-many relationships:\n"
-            "  table.join_many(other, lambda l, r: l.id == r.id, how='left')\n\n"
+            "  table.join_many(other, lambda l, r: l.id == r.id)\n\n"
             "For Cartesian product:\n"
             "  table.join_cross(other)"
         )

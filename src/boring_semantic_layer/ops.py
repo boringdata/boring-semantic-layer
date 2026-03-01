@@ -18,15 +18,22 @@ from ibis.expr.schema import Schema
 
 try:
     from xorq.vendor.ibis.common.collections import FrozenDict, FrozenOrderedDict
+    from xorq.vendor.ibis.expr import operations as xorq_ops
     from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
 
     _SchemaClass = XorqSchema
     _FrozenOrderedDict = FrozenOrderedDict
+    _MeanTypes = (ibis_ops.reductions.Mean, xorq_ops.reductions.Mean)
+    _MinTypes = (ibis_ops.reductions.Min, xorq_ops.reductions.Min)
+    _MaxTypes = (ibis_ops.reductions.Max, xorq_ops.reductions.Max)
 except ImportError:
     from ibis.common.collections import FrozenDict, FrozenOrderedDict
 
     _SchemaClass = Schema
     _FrozenOrderedDict = FrozenOrderedDict
+    _MeanTypes = (ibis_ops.reductions.Mean,)
+    _MinTypes = (ibis_ops.reductions.Min,)
+    _MaxTypes = (ibis_ops.reductions.Max,)
 
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Success, safe
@@ -1467,8 +1474,8 @@ def _collect_join_tree_info(join_op: SemanticJoinOp) -> _JoinTreeInfo:
     def walk(node, is_right_of_many=False):
         if isinstance(node, SemanticJoinOp):
             this_is_many = node.cardinality in ("many", "cross")
-            walk(node.left, is_right_of_many=False)
-            walk(node.right, is_right_of_many=this_is_many)
+            walk(node.left, is_right_of_many=is_right_of_many)
+            walk(node.right, is_right_of_many=is_right_of_many or this_is_many)
         elif isinstance(node, SemanticTableOp):
             name = node.name
             if name:
@@ -1491,7 +1498,12 @@ def _collect_join_tree_info(join_op: SemanticJoinOp) -> _JoinTreeInfo:
         table_cardinalities[root_name] = "root"
 
     has_join_many = any(c == "many" for c in table_cardinalities.values())
-    table_join_keys = join_op._collect_join_keys_for_leaves()
+    # table_join_keys is only used by the pre-aggregation path
+    # (has_join_many=True).  Skip the potentially expensive call when
+    # all joins are join_one.
+    table_join_keys = (
+        join_op._collect_join_keys_for_leaves() if has_join_many else {}
+    )
 
     return _JoinTreeInfo(
         has_join_many=has_join_many,
@@ -1544,8 +1556,8 @@ def _find_chain_bridge(pt, gb_col, prefix, raw, measure_names, join_tree_info):
         ).distinct()
         chained = _left_join_bridge(inter_bridge, dim_bridge, sorted(overlap_dim))
 
-        # Join chained bridge onto pt
-        return _left_join_bridge(pt, chained, sorted(overlap_grain))
+        # Join chained bridge onto pt — bridge on preserved (left) side
+        return _left_join_bridge(chained, pt, sorted(overlap_grain))
 
     return pt
 
@@ -1588,13 +1600,13 @@ def _attach_dim_column(pt, gb_col, measure_names, join_tree_info,
             bridge = raw.select(
                 [raw[c] for c in (gb_col, *common_keys)]
             ).distinct()
-            return _left_join_bridge(pt, bridge, common_keys)
+            return _left_join_bridge(bridge, pt, common_keys)
 
 
 def _is_mean_expr(expr):
     """Check if an ibis expression is a Mean/Average reduction."""
     try:
-        return isinstance(expr.op(), ibis_ops.reductions.Mean)
+        return isinstance(expr.op(), _MeanTypes)
     except Exception:
         return False
 
@@ -1604,18 +1616,19 @@ def _reagg_op_for_expr(expr):
 
     Additive measures (SUM, COUNT) re-aggregate with ``sum``.
     MIN and MAX re-aggregate with ``min`` and ``max`` respectively.
+    MEAN should never reach here — it is decomposed by ``_is_mean_expr``.
     """
-    try:
-        op = expr.op()
-    except Exception:
-        return "sum"
-    match op:
-        case ibis_ops.reductions.Min():
-            return "min"
-        case ibis_ops.reductions.Max():
-            return "max"
-        case _:
-            return "sum"
+    op = expr.op()
+    if isinstance(op, _MinTypes):
+        return "min"
+    if isinstance(op, _MaxTypes):
+        return "max"
+    if isinstance(op, _MeanTypes):
+        raise ValueError(
+            f"Mean expression {expr.get_name()!r} was not decomposed — "
+            "this is a bug in the pre-aggregation logic"
+        )
+    return "sum"
 
 
 def _build_reagg(col_ref, op_name):
@@ -2190,10 +2203,9 @@ class SemanticAggregateOp(Relation):
             if not common:
                 return pt
 
-            preds = [pt[c] == dim_bridge[c] for c in common]
-            bridge_only = tuple(c for c in dim_bridge.columns if c not in common)
-            joined_pt = pt.left_join(dim_bridge, preds).select(
-                [pt] + [dim_bridge[c] for c in bridge_only]
+            preds = [dim_bridge[c] == pt[c] for c in common]
+            joined_pt = dim_bridge.left_join(pt, preds).select(
+                [dim_bridge] + [pt[c] for c in pt_meas]
             )
             gb_avail = tuple(c for c in group_by_cols if c in joined_pt.columns)
             if gb_avail:
@@ -2479,7 +2491,7 @@ class SemanticJoinOp(Relation):
         self,
         left: Relation,
         right: Relation,
-        how: str = "inner",
+        how: str = "left",
         on: Callable[[Any, Any], Any] | None = None,
         cardinality: str = "one",
     ) -> None:
@@ -2666,9 +2678,9 @@ class SemanticJoinOp(Relation):
         self,
         other: SemanticTable,
         on: Callable[[Any, Any], ir.BooleanValue],
-        how: str = "inner",
+        how: str = "left",
     ):
-        """Join with one-to-one relationship semantics."""
+        """Join with one-to-one relationship semantics (left outer join)."""
         from .expr import SemanticJoin
 
         return SemanticJoin(
@@ -2713,9 +2725,9 @@ class SemanticJoinOp(Relation):
         raise TypeError(
             "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
             "For one-to-one relationships:\n"
-            "  table.join_one(other, lambda l, r: l.id == r.id, how='inner')\n\n"
+            "  table.join_one(other, lambda l, r: l.id == r.id)\n\n"
             "For one-to-many relationships:\n"
-            "  table.join_many(other, lambda l, r: l.id == r.id, how='left')\n\n"
+            "  table.join_many(other, lambda l, r: l.id == r.id)\n\n"
             "For Cartesian product:\n"
             "  table.join_cross(other)"
         )
@@ -2990,6 +3002,27 @@ class SemanticJoinOp(Relation):
 
         return join_columns
 
+    @staticmethod
+    def _join_depth(op) -> int:
+        """Count nested left SemanticJoinOps to determine join depth."""
+        depth = 0
+        current = op
+        while isinstance(current, SemanticJoinOp):
+            depth += 1
+            current = current.left
+        return depth
+
+    @staticmethod
+    def _rname_for_depth(depth: int) -> str:
+        """Return the ``rname`` template for the given join depth.
+
+        ibis uses ``{name}_right`` by default.  When three or more tables
+        share a column name the second ``_right`` collides with the first.
+        We avoid this by appending the depth: ``_right``, ``_right2``,
+        ``_right3``, …
+        """
+        return "{name}_right" if depth <= 1 else f"{{name}}_right{depth}"
+
     def to_untagged(self, parent_requirements: dict[str, set[str]] | None = None):
         """Convert join to Ibis expression.
 
@@ -3017,15 +3050,57 @@ class SemanticJoinOp(Relation):
             else self.right.to_untagged()
         )
 
-        return (
-            left_tbl.join(
-                right_tbl,
-                self.on(_Resolver(left_tbl), _Resolver(right_tbl)),
-                how=self.how,
-            )
-            if self.on is not None
-            else left_tbl.join(right_tbl, how=self.how)
+        depth = self._join_depth(self)
+        rname = self._rname_for_depth(depth)
+
+        if self.on is None:
+            return left_tbl.join(right_tbl, how=self.how, rname=rname)
+
+        # Detect column name conflicts that cause ibis/xorq to raise
+        # "Ambiguous field reference" during predicate resolution.
+        conflicting = frozenset(left_tbl.columns) & frozenset(right_tbl.columns)
+
+        if not conflicting:
+            pred = self.on(_Resolver(left_tbl), _Resolver(right_tbl))
+            return left_tbl.join(right_tbl, pred, how=self.how, rname=rname)
+
+        # Temporarily rename conflicting left columns so the predicate
+        # can be resolved without ambiguity.
+        # ibis rename convention: {new_name: old_name}
+        _TMP = "__bsl_jk_"
+        rename_left = {f"{_TMP}{c}": c for c in conflicting}
+        left_safe = left_tbl.rename(rename_left)
+
+        # Resolver that transparently maps original names → temp names,
+        # so predicates like ``lambda f, a: f.tail_num == a.tail_num``
+        # still work even though left's ``tail_num`` was renamed.
+        orig_to_tmp = {c: f"{_TMP}{c}" for c in conflicting}
+
+        class _RenamedResolver:
+            def __init__(self, table, name_map):
+                object.__setattr__(self, "_table", table)
+                object.__setattr__(self, "_name_map", name_map)
+
+            def __getattr__(self, name):
+                mapped = self._name_map.get(name, name)
+                return getattr(self._table, mapped)
+
+        pred = self.on(
+            _RenamedResolver(left_safe, orig_to_tmp),
+            _Resolver(right_tbl),
         )
+        joined = left_safe.join(right_tbl, pred, how=self.how, rname=rname)
+
+        # Restore final column names (ibis convention: {new: old}):
+        # - left temp columns → original names
+        # - right conflicting columns → depth-based rname suffix
+        rename_final = {
+            c: f"{_TMP}{c}" for c in conflicting
+        } | {
+            rname.replace("{name}", c): c for c in conflicting
+        }
+
+        return joined.rename(rename_final)
 
     def execute(self):
         return self.to_untagged().execute()
@@ -3508,42 +3583,35 @@ def _update_measure_refs_in_calc(expr, prefix_map: dict[str, str]):
 
 def _extract_join_key_column_names(source: Relation) -> set[str]:
     """
-    Extract column names used as join keys from the operation tree.
+    Extract column names that ibis will merge (coalesce) during joins.
 
-    When columns are used as join keys, Ibis merges them instead of creating
-    _right suffixes, so we need to identify them to avoid incorrect renaming.
+    Ibis only merges join-key columns when **both** sides of an equi-join share
+    the **same** column name (e.g., ``l.code == r.code``).  When names differ
+    (e.g., ``l.carrier == r.code``), the right column gets a ``_right`` suffix
+    instead.  We return only the intersection of left/right key names so that
+    ``_check_and_add_rename`` correctly detects columns that need renaming.
 
     Args:
         source: The relation to search for join operations
 
     Returns:
-        Set of column names used as join keys
+        Set of column names that ibis merges (same-name equi-join keys)
     """
-    from ibis.expr.operations.relations import Field
-
-    join_keys = set()
+    join_keys: set[str] = set()
 
     def find_joins(node):
-        """Recursively find join operations and extract key columns."""
+        """Recursively find join operations and extract merged key columns."""
         if isinstance(node, SemanticJoinOp) and node.on:
-            # Evaluate the join predicate with expressions, not operations
             try:
                 left_expr = node.left.to_expr() if hasattr(node.left, "to_expr") else node.left
                 right_expr = node.right.to_expr() if hasattr(node.right, "to_expr") else node.right
-                pred_expr = node.on(left_expr, right_expr)
-
-                # Walk the predicate to find Field nodes
-                from .graph_utils import walk_nodes
-
-                fields = list(walk_nodes(Field, pred_expr))
-                for field in fields:
-                    if hasattr(field, "name"):
-                        join_keys.add(field.name)
+                result = _extract_join_key_columns(node.on, left_expr, right_expr)
+                if result.is_success():
+                    # ibis merges only same-name equi-join columns
+                    join_keys.update(result.left_columns & result.right_columns)
             except Exception:
-                # If we can't extract keys, continue - better to skip than fail
                 pass
 
-        # Recursively search in left and right
         if hasattr(node, "left") and isinstance(node.left, Relation):
             find_joins(node.left)
         if hasattr(node, "right") and isinstance(node.right, Relation):
@@ -3638,11 +3706,18 @@ def _check_and_add_rename(
     Helper function for _build_column_rename_map that encapsulates the
     rename decision logic.
 
+    The suffix must match ``SemanticJoinOp._rname_for_depth``:
+    depth 1 → ``_right``, depth 2 → ``_right2``, depth 3 → ``_right3``, …
+
+    Since ``all_roots[0]`` is the left-most table (never renamed) and
+    ``all_roots[N]`` is the right side of the *N*-th join, ``table_idx``
+    maps directly to join depth.
+
     Args:
         rename_map: Map to update with renames
         base_column: The base column name
         prefixed_name: The prefixed dimension name (e.g., 'airports.city')
-        table_idx: Index of the current table
+        table_idx: Index of the current table (== join depth)
         column_index: Index of column occurrences
         join_keys: Set of column names used as join keys (these don't get renamed)
     """
@@ -3655,8 +3730,9 @@ def _check_and_add_rename(
         # Check if any table before this one has the same column
         earlier_tables = [t for t in tables_with_column if t < table_idx]
         if earlier_tables:
-            # This column will be renamed with _right suffix
-            rename_map[prefixed_name] = f"{base_column}_right"
+            # Suffix mirrors SemanticJoinOp._rname_for_depth(table_idx)
+            suffix = "_right" if table_idx <= 1 else f"_right{table_idx}"
+            rename_map[prefixed_name] = f"{base_column}{suffix}"
 
 
 def _wrap_dimension_for_renamed_column(dimension: Dimension, renamed_column: str) -> Dimension:
@@ -3709,8 +3785,8 @@ def _merge_fields_with_prefixing(
 
     is_calc_measures = False
     is_dimensions = False
-    if all_roots:
-        sample_fields = field_accessor(all_roots[0])
+    for root in all_roots:
+        sample_fields = field_accessor(root)
         if sample_fields:
             from .measure_scope import AllOf, BinOp, MeasureRef, MethodCall
 
@@ -3720,6 +3796,7 @@ def _merge_fields_with_prefixing(
                 MeasureRef | AllOf | BinOp | MethodCall | int | float,
             )
             is_dimensions = isinstance(first_val, Dimension)
+            break
 
     # For dimensions, build a column rename map to handle Ibis join conflicts
     column_rename_map = {}
