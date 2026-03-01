@@ -2483,7 +2483,7 @@ class SemanticJoinOp(Relation):
         self,
         left: Relation,
         right: Relation,
-        how: str = "inner",
+        how: str = "left",
         on: Callable[[Any, Any], Any] | None = None,
         cardinality: str = "one",
     ) -> None:
@@ -2670,9 +2670,9 @@ class SemanticJoinOp(Relation):
         self,
         other: SemanticTable,
         on: Callable[[Any, Any], ir.BooleanValue],
-        how: str = "inner",
+        how: str = "left",
     ):
-        """Join with one-to-one relationship semantics."""
+        """Join with one-to-one relationship semantics (left outer join)."""
         from .expr import SemanticJoin
 
         return SemanticJoin(
@@ -2717,9 +2717,9 @@ class SemanticJoinOp(Relation):
         raise TypeError(
             "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
             "For one-to-one relationships:\n"
-            "  table.join_one(other, lambda l, r: l.id == r.id, how='inner')\n\n"
+            "  table.join_one(other, lambda l, r: l.id == r.id)\n\n"
             "For one-to-many relationships:\n"
-            "  table.join_many(other, lambda l, r: l.id == r.id, how='left')\n\n"
+            "  table.join_many(other, lambda l, r: l.id == r.id)\n\n"
             "For Cartesian product:\n"
             "  table.join_cross(other)"
         )
