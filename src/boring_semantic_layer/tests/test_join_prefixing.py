@@ -1090,5 +1090,182 @@ class TestEdgeCases:
         assert fh_row["flights.flight_count"].values[0] == 2
 
 
+class TestShortNameResolution:
+    """Test that unambiguous short (unprefixed) names resolve to prefixed equivalents."""
+
+    def test_aggregate_with_short_name(self, ecommerce_tables):
+        """Short name in aggregate resolves when unambiguous."""
+        orders_tbl = ecommerce_tables["orders"]
+        customers_tbl = ecommerce_tables["customers"]
+
+        orders_st = (
+            to_semantic_table(orders_tbl, "orders")
+            .with_dimensions(customer_id=lambda t: t.customer_id)
+            .with_measures(revenue=lambda t: t.total_amount.sum())
+        )
+
+        customers_st = (
+            to_semantic_table(customers_tbl, "customers")
+            .with_dimensions(customer_id=lambda t: t.customer_id)
+            .with_measures(customer_count=lambda t: t.count())
+        )
+
+        joined = orders_st.join_many(
+            customers_st,
+            lambda o, c: o.customer_id == c.customer_id,
+        )
+
+        # "revenue" is unambiguous — only "orders.revenue" exists
+        result = (
+            joined.group_by("orders.customer_id")
+            .aggregate("revenue")
+            .execute()
+        )
+
+        assert "revenue" in result.columns
+        alice_rev = result[result["orders.customer_id"] == 101]["revenue"].iloc[0]
+        assert alice_rev == 250.0
+
+    def test_with_measures_lambda_short_name(self, ecommerce_tables):
+        """Short name inside with_measures lambda resolves on joined scope."""
+        orders_tbl = ecommerce_tables["orders"]
+        customers_tbl = ecommerce_tables["customers"]
+
+        orders_st = (
+            to_semantic_table(orders_tbl, "orders")
+            .with_dimensions(customer_id=lambda t: t.customer_id)
+            .with_measures(
+                order_count=lambda t: t.count(),
+                revenue=lambda t: t.total_amount.sum(),
+            )
+        )
+
+        customers_st = (
+            to_semantic_table(customers_tbl, "customers")
+            .with_dimensions(customer_id=lambda t: t.customer_id)
+            .with_measures(customer_count=lambda t: t.count())
+        )
+
+        joined = orders_st.join_many(
+            customers_st,
+            lambda o, c: o.customer_id == c.customer_id,
+        )
+
+        # Use short names in the lambda — both are unambiguous
+        result = (
+            joined.with_measures(
+                avg_revenue=lambda t: t.revenue / t.order_count,
+            )
+            .group_by("orders.customer_id")
+            .aggregate("avg_revenue")
+            .execute()
+        )
+
+        assert "avg_revenue" in result.columns
+        assert all(result["avg_revenue"] > 0)
+
+    def test_ambiguous_short_name_still_fails(self, ecommerce_tables):
+        """Short name that matches multiple prefixed measures still fails."""
+        orders_tbl = ecommerce_tables["orders"]
+        customers_tbl = ecommerce_tables["customers"]
+
+        orders_st = (
+            to_semantic_table(orders_tbl, "orders")
+            .with_dimensions(customer_id=lambda t: t.customer_id)
+            .with_measures(total=lambda t: t.total_amount.sum())
+        )
+
+        customers_st = (
+            to_semantic_table(customers_tbl, "customers")
+            .with_dimensions(customer_id=lambda t: t.customer_id)
+            .with_measures(total=lambda t: t.count())
+        )
+
+        joined = orders_st.join_many(
+            customers_st,
+            lambda o, c: o.customer_id == c.customer_id,
+        )
+
+        # "total" matches both "orders.total" and "customers.total" — should fail
+        with pytest.raises(Exception):
+            joined.group_by("orders.customer_id").aggregate("total").execute()
+
+    def test_all_with_short_name(self, ecommerce_tables):
+        """t.all('revenue') resolves on joined scope when unambiguous."""
+        orders_tbl = ecommerce_tables["orders"]
+        customers_tbl = ecommerce_tables["customers"]
+
+        orders_st = (
+            to_semantic_table(orders_tbl, "orders")
+            .with_dimensions(customer_id=lambda t: t.customer_id)
+            .with_measures(revenue=lambda t: t.total_amount.sum())
+        )
+
+        customers_st = (
+            to_semantic_table(customers_tbl, "customers")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                country=lambda t: t.country,
+            )
+            .with_measures(customer_count=lambda t: t.count())
+        )
+
+        joined = orders_st.join_many(
+            customers_st,
+            lambda o, c: o.customer_id == c.customer_id,
+        )
+
+        # Use short name in t.all()
+        result = (
+            joined.with_measures(
+                revenue_pct=lambda t: t.revenue / t.all("revenue"),
+            )
+            .group_by("customers.country")
+            .aggregate("revenue_pct")
+            .execute()
+        )
+
+        assert "revenue_pct" in result.columns
+        assert pytest.approx(result["revenue_pct"].sum(), abs=0.01) == 1.0
+
+    def test_getitem_short_name(self, ecommerce_tables):
+        """t['revenue'] resolves via bracket notation on joined scope."""
+        orders_tbl = ecommerce_tables["orders"]
+        customers_tbl = ecommerce_tables["customers"]
+
+        orders_st = (
+            to_semantic_table(orders_tbl, "orders")
+            .with_dimensions(customer_id=lambda t: t.customer_id)
+            .with_measures(
+                order_count=lambda t: t.count(),
+                revenue=lambda t: t.total_amount.sum(),
+            )
+        )
+
+        customers_st = (
+            to_semantic_table(customers_tbl, "customers")
+            .with_dimensions(customer_id=lambda t: t.customer_id)
+            .with_measures(customer_count=lambda t: t.count())
+        )
+
+        joined = orders_st.join_many(
+            customers_st,
+            lambda o, c: o.customer_id == c.customer_id,
+        )
+
+        # Use bracket notation with short name
+        result = (
+            joined.with_measures(
+                avg_revenue=lambda t: t["revenue"] / t["order_count"],
+            )
+            .group_by("orders.customer_id")
+            .aggregate("avg_revenue")
+            .execute()
+        )
+
+        assert "avg_revenue" in result.columns
+        assert all(result["avg_revenue"] > 0)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
