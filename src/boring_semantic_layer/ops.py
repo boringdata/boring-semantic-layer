@@ -1597,9 +1597,13 @@ def _attach_dim_column(pt, gb_col, measure_names, join_tree_info,
 
 
 def _is_mean_expr(expr):
-    """Check if an ibis expression is a Mean/Average reduction."""
+    """Check if an ibis expression is a Mean/Average reduction.
+
+    Uses class name matching to work with both ibis and xorq vendored ibis,
+    which define separate ``Mean`` classes that fail ``isinstance`` checks.
+    """
     try:
-        return isinstance(expr.op(), ibis_ops.reductions.Mean)
+        return type(expr.op()).__name__ == "Mean"
     except Exception:
         return False
 
@@ -1609,15 +1613,17 @@ def _reagg_op_for_expr(expr):
 
     Additive measures (SUM, COUNT) re-aggregate with ``sum``.
     MIN and MAX re-aggregate with ``min`` and ``max`` respectively.
+
+    Uses class name matching to work with both ibis and xorq vendored ibis.
     """
     try:
-        op = expr.op()
+        op_name = type(expr.op()).__name__
     except Exception:
         return "sum"
-    match op:
-        case ibis_ops.reductions.Min():
+    match op_name:
+        case "Min":
             return "min"
-        case ibis_ops.reductions.Max():
+        case "Max":
             return "max"
         case _:
             return "sum"
