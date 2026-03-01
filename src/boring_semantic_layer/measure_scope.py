@@ -209,6 +209,11 @@ def _resolve_measure_name(
 ) -> Maybe[str]:
     if name in known_set:
         return Some(name)
+    # Suffix matching: resolve unprefixed name to prefixed equivalent
+    suffix = f".{name}"
+    matches = tuple(k for k in known if k.endswith(suffix))
+    if len(matches) == 1:
+        return Some(matches[0])
     return Maybe.from_optional(None)
 
 
