@@ -18,15 +18,22 @@ from ibis.expr.schema import Schema
 
 try:
     from xorq.vendor.ibis.common.collections import FrozenDict, FrozenOrderedDict
+    from xorq.vendor.ibis.expr import operations as xorq_ops
     from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
 
     _SchemaClass = XorqSchema
     _FrozenOrderedDict = FrozenOrderedDict
+    _MeanTypes = (ibis_ops.reductions.Mean, xorq_ops.reductions.Mean)
+    _MinTypes = (ibis_ops.reductions.Min, xorq_ops.reductions.Min)
+    _MaxTypes = (ibis_ops.reductions.Max, xorq_ops.reductions.Max)
 except ImportError:
     from ibis.common.collections import FrozenDict, FrozenOrderedDict
 
     _SchemaClass = Schema
     _FrozenOrderedDict = FrozenOrderedDict
+    _MeanTypes = (ibis_ops.reductions.Mean,)
+    _MinTypes = (ibis_ops.reductions.Min,)
+    _MaxTypes = (ibis_ops.reductions.Max,)
 
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Success, safe
@@ -1597,13 +1604,9 @@ def _attach_dim_column(pt, gb_col, measure_names, join_tree_info,
 
 
 def _is_mean_expr(expr):
-    """Check if an ibis expression is a Mean/Average reduction.
-
-    Uses class name matching to work with both ibis and xorq vendored ibis,
-    which define separate ``Mean`` classes that fail ``isinstance`` checks.
-    """
+    """Check if an ibis expression is a Mean/Average reduction."""
     try:
-        return type(expr.op()).__name__ == "Mean"
+        return isinstance(expr.op(), _MeanTypes)
     except Exception:
         return False
 
@@ -1613,20 +1616,19 @@ def _reagg_op_for_expr(expr):
 
     Additive measures (SUM, COUNT) re-aggregate with ``sum``.
     MIN and MAX re-aggregate with ``min`` and ``max`` respectively.
-
-    Uses class name matching to work with both ibis and xorq vendored ibis.
+    MEAN should never reach here — it is decomposed by ``_is_mean_expr``.
     """
-    try:
-        op_name = type(expr.op()).__name__
-    except Exception:
-        return "sum"
-    match op_name:
-        case "Min":
-            return "min"
-        case "Max":
-            return "max"
-        case _:
-            return "sum"
+    op = expr.op()
+    if isinstance(op, _MinTypes):
+        return "min"
+    if isinstance(op, _MaxTypes):
+        return "max"
+    if isinstance(op, _MeanTypes):
+        raise ValueError(
+            f"Mean expression {expr.get_name()!r} was not decomposed — "
+            "this is a bug in the pre-aggregation logic"
+        )
+    return "sum"
 
 
 def _build_reagg(col_ref, op_name):
