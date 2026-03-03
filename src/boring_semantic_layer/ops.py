@@ -1046,10 +1046,23 @@ class SemanticFilterOp(Relation):
             else _get_merged_fields(all_roots, "dimensions")
         )
 
+        # Enrich table with derived dimensions so multi-level deps
+        # (e.g. d_two -> d_one -> distance) resolve correctly in filters.
+        # Best-effort: skip dimensions whose columns aren't available yet
+        # (e.g. join-based dims); those resolve through the Resolver fallback.
+        enriched = base_tbl
+        for dim_name in dim_map:
+            try:
+                enriched = _mutate_dimensions_with_dependencies(
+                    enriched, [dim_name], dim_map
+                )
+            except (TypeError, KeyError, AttributeError):
+                pass
+
         pred_fn = _unwrap(self.predicate)
-        resolver = _Resolver(base_tbl, dim_map)
+        resolver = _Resolver(enriched, dim_map)
         pred = _resolve_expr(pred_fn, resolver)
-        return base_tbl.filter(pred)
+        return enriched.filter(pred)
 
     def get_dimensions(self) -> Mapping[str, Dimension]:
         """Get dictionary of dimensions from source."""

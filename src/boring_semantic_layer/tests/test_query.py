@@ -266,6 +266,95 @@ class TestMultiLayerDerivedFields:
         assert "total_flights" in sql_two
 
 
+class TestMultiLevelDimensionFilters:
+    """Test filtering on multi-level derived dimensions (#182)."""
+
+    @pytest.fixture()
+    def flights_st(self):
+        tbl = ibis.memtable({
+            "origin": ["NYC", "LAX", "NYC", "SFO", "LAX"],
+            "distance": [2789, 2789, 2902, 347, 347],
+            "duration": [330, 330, 360, 65, 65],
+        })
+        return (
+            to_semantic_table(tbl, name="flights")
+            .with_dimensions(
+                origin=lambda t: t.origin,
+                distance=lambda t: t.distance,
+                d_one=lambda t: t.distance.add(1),
+                d_two=lambda t: t.d_one.add(1),
+            )
+            .with_measures(
+                avg_duration=lambda t: t.duration.mean(),
+            )
+        )
+
+    def test_filter_lambda_on_second_level_derived(self, flights_st):
+        result = flights_st.filter(ibis._.d_two > 1000).execute()
+        assert len(result) > 0
+        assert all(result["d_two"] > 1000)
+
+    def test_query_dict_filter_on_second_level_derived(self, flights_st):
+        result = flights_st.query(
+            dimensions=["d_two"],
+            measures=["avg_duration"],
+            filters=[{"field": "d_two", "operator": ">", "value": 1000}],
+        ).execute()
+        assert len(result) > 0
+        assert all(result["d_two"] > 1000)
+
+    def test_query_deferred_filter_on_second_level_derived(self, flights_st):
+        result = flights_st.query(
+            dimensions=["d_two"],
+            filters=[ibis._.d_two > 1000],
+        ).execute()
+        assert len(result) > 0
+
+    def test_filter_on_first_level_derived_still_works(self, flights_st):
+        result = flights_st.filter(ibis._.d_one > 1000).execute()
+        assert len(result) > 0
+        assert all(result["d_one"] > 1000)
+
+    def test_chained_filters_on_derived_dims(self, flights_st):
+        """Stacked filter().filter() both referencing derived dimensions."""
+        result = (
+            flights_st
+            .filter(ibis._.d_one > 500)
+            .filter(ibis._.d_two > 1000)
+            .execute()
+        )
+        assert len(result) > 0
+        assert all(result["d_one"] > 500)
+        assert all(result["d_two"] > 1000)
+
+    def test_three_level_derived_dimension_filter(self):
+        """Arbitrary-depth chain: d_three -> d_two -> d_one -> distance."""
+        tbl = ibis.memtable({
+            "distance": [2789, 347, 2902],
+        })
+        st = (
+            to_semantic_table(tbl, name="test")
+            .with_dimensions(
+                d_one=lambda t: t.distance.add(1),
+                d_two=lambda t: t.d_one.add(1),
+                d_three=lambda t: t.d_two.add(1),
+            )
+        )
+        result = st.filter(ibis._.d_three > 1000).execute()
+        assert len(result) > 0
+        assert all(result["d_three"] > 1000)
+
+    def test_filter_derived_dim_not_in_query_dimensions(self, flights_st):
+        """Filter on a derived dim that is not in the requested dimensions."""
+        result = flights_st.query(
+            dimensions=["origin"],
+            measures=["avg_duration"],
+            filters=[ibis._.d_two > 1000],
+        ).execute()
+        assert len(result) > 0
+        assert "origin" in result.columns
+
+
 class TestFilters:
     """Test filter functionality."""
 
