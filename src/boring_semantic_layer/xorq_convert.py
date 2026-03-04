@@ -702,13 +702,13 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
             return from_ibis(ibis.memtable(proxy.to_frame()))
 
         if db_tables:
-            db_table = db_tables[0]
-            table_name, xorq_backend = db_table.args[0], db_table.args[2]
-            # Use xorq_backend.table() directly so that both sides of a
-            # split join share the *same* backend instance.
-            # from_connection() creates a new wrapper each time, causing
-            # "Multiple backends found" when the two halves recombine.
-            return from_ibis(xorq_backend.table(table_name))
+            # Return the DatabaseTable expression directly — it already
+            # carries the correct backend reference.  Reconstructing via
+            # from_ibis(backend.table(...)) creates new backend wrappers,
+            # causing "Multiple backends found" when both sides of a
+            # split join are recombined.
+            base = db_tables[0].to_expr()
+            return base.view() if is_self_ref else base
 
         return xorq_expr.to_expr()
 
