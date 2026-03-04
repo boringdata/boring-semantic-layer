@@ -11,7 +11,7 @@ dependencies = [
     "pyyaml>=6.0",
     "returns>=0.26.0",
     "toolz>=1.0.0",
-    "xorq>=0.3.5",
+    "xorq>=0.3.11",
 ]
 urls = { Homepage = "https://github.com/boringdata/boring-semantic-layer/tree/main" }
 license = "MIT"

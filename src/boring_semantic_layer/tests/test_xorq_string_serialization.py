@@ -33,10 +33,10 @@ def test_dimension_serialization(flights_data):
     dim_metadata = result.unwrap()
 
     assert "origin" in dim_metadata
-    assert dim_metadata["origin"]["expr_pickle"] is not None
+    assert "expr_struct" in dim_metadata["origin"] or "expr" in dim_metadata["origin"]
 
     assert "destination" in dim_metadata
-    assert dim_metadata["destination"]["expr_pickle"] is not None
+    assert "expr_struct" in dim_metadata["destination"] or "expr" in dim_metadata["destination"]
 
 
 def test_measure_serialization(flights_data):
@@ -85,18 +85,18 @@ def test_to_tagged_with_string_metadata(flights_data):
     dims = dict(metadata["dimensions"])
     # each dimension value is also a tuple of key-value pairs
     origin_dim = dict(dims["origin"])
-    assert "expr_pickle" in origin_dim or "expr" in origin_dim
+    assert "expr_struct" in origin_dim or "expr" in origin_dim
 
     destination_dim = dict(dims["destination"])
-    assert "expr_pickle" in destination_dim or "expr" in destination_dim
+    assert "expr_struct" in destination_dim or "expr" in destination_dim
 
     # measures are also stored as nested tuples
     meas = dict(metadata["measures"])
     avg_distance_meas = dict(meas["avg_distance"])
-    assert "expr_struct" in avg_distance_meas or "expr_pickle" in avg_distance_meas
+    assert "expr_struct" in avg_distance_meas
 
     total_distance_meas = dict(meas["total_distance"])
-    assert "expr_struct" in total_distance_meas or "expr_pickle" in total_distance_meas
+    assert "expr_struct" in total_distance_meas
 
 
 def test_to_tagged_instance_method(flights_data):
@@ -115,11 +115,11 @@ def test_to_tagged_instance_method(flights_data):
     metadata = dict(op.metadata)
     dims = dict(metadata["dimensions"])
     origin_dim = dict(dims["origin"])
-    assert "expr_pickle" in origin_dim or "expr" in origin_dim
+    assert "expr_struct" in origin_dim or "expr" in origin_dim
 
     meas = dict(metadata["measures"])
     avg_distance_meas = dict(meas["avg_distance"])
-    assert "expr_struct" in avg_distance_meas or "expr_pickle" in avg_distance_meas
+    assert "expr_struct" in avg_distance_meas
 
     # Verify round-trip works
     reconstructed = from_tagged(tagged_expr)
@@ -168,7 +168,7 @@ def test_serialize_entity_dimensions(flights_data):
     assert "origin" in dim_metadata
     assert dim_metadata["origin"]["is_entity"] is True
     assert dim_metadata["origin"]["description"] == "Origin airport"
-    assert dim_metadata["origin"]["expr_pickle"] is not None
+    assert "expr_struct" in dim_metadata["origin"] or "expr" in dim_metadata["origin"]
 
     # Regular dimension should not have is_entity flag
     assert "destination" in dim_metadata
@@ -360,8 +360,7 @@ def test_case_expr_measure_serialization(flights_data):
     meas_metadata = result.unwrap()
 
     assert "short_flight_count" in meas_metadata
-    assert "expr_struct" in meas_metadata["short_flight_count"] or "expr_pickle" in meas_metadata["short_flight_count"]
-
+    assert "expr_struct" in meas_metadata["short_flight_count"]
 
 def test_case_expr_tagged_roundtrip(flights_data):
     """Case expression measures should survive to_tagged → from_tagged."""
@@ -403,8 +402,7 @@ def test_ifelse_measure_serialization(flights_data):
     meas_metadata = result.unwrap()
 
     assert "short_flight_count" in meas_metadata
-    assert "expr_struct" in meas_metadata["short_flight_count"] or "expr_pickle" in meas_metadata["short_flight_count"]
-
+    assert "expr_struct" in meas_metadata["short_flight_count"]
 
 def test_ifelse_tagged_roundtrip(flights_data):
     """xo.ifelse measures should survive to_tagged → from_tagged."""
@@ -529,9 +527,8 @@ def test_structured_serialization_in_measures(flights_data):
     result = serialize_measures(measures)
     meas_metadata = result.unwrap()
 
-    assert "expr_struct" in meas_metadata["short_flight_count"] or "expr_pickle" in meas_metadata["short_flight_count"]
-    assert "expr_struct" in meas_metadata["avg_distance"] or "expr_pickle" in meas_metadata["avg_distance"]
-
+    assert "expr_struct" in meas_metadata["short_flight_count"]
+    assert "expr_struct" in meas_metadata["avg_distance"]
 
 def test_structured_tagged_roundtrip_case(flights_data):
     """Full to_tagged -> from_tagged with case expression using structured format."""
@@ -555,8 +552,7 @@ def test_structured_tagged_roundtrip_case(flights_data):
     metadata = dict(op.metadata)
     meas = dict(metadata["measures"])
     short_flight = dict(meas["short_flight_count"])
-    assert "expr_struct" in short_flight or "expr_pickle" in short_flight
-
+    assert "expr_struct" in short_flight
     # Reconstruct and verify
     reconstructed = from_tagged(tagged_expr)
 
