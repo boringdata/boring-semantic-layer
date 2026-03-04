@@ -1420,7 +1420,7 @@ def test_tagged_roundtrip_join_inner():
     assert got["y"] == 1
 
 
-@pytest.mark.xfail(reason="xorq upstream bug: Multiple backends found after from_tagged round-trip")
+
 def test_tagged_roundtrip_join_one_preserves_predicate():
     """join_one round-trip preserves the join predicate (not a cross join).
 
@@ -1499,7 +1499,7 @@ def test_tagged_roundtrip_join_one_preserves_predicate():
     assert list(baseline["flights_jo.flight_count"]) == list(result["flights_jo.flight_count"])
 
 
-@pytest.mark.xfail(reason="xorq upstream bug: Multiple backends found after from_tagged round-trip")
+
 def test_tagged_roundtrip_join_one_left_join():
     """join_one with left join preserves NULLs for non-matching rows."""
     import pandas as pd
@@ -1620,7 +1620,7 @@ def test_tagged_roundtrip_join_many_without_with_dimensions():
     assert got_sal["Sales"] == 70000
 
 
-@pytest.mark.xfail(reason="xorq upstream bug: Multiple backends found after from_tagged round-trip")
+
 def test_tagged_roundtrip_join_derived_dimension_on_root():
     """Derived dimension on root table survives to_tagged → from_tagged round-trip.
 
@@ -1703,7 +1703,7 @@ def test_tagged_roundtrip_join_derived_dimension_on_root():
     assert list(result["flights_dd.flight_count"]) == list(baseline["flights_dd.flight_count"])
 
 
-@pytest.mark.xfail(reason="xorq upstream bug: Multiple backends found after from_tagged round-trip")
+
 @pytest.mark.parametrize(
     "n_joins",
     [2, 3, 4],
