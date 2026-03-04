@@ -961,6 +961,67 @@ def test_tagged_roundtrip_multiple_dimensions(flights_data):
     assert "origin" in result.columns
     assert "destination" in result.columns
 
+def test_tagged_roundtrip_case_dimension():
+    """Case expression dimensions round-trip correctly."""
+    import xorq.api as xo
+
+    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+
+    con = xo.connect()
+    data = {
+        "origin": ["JFK", "LAX", "SFO", "JFK", "LAX"],
+        "delay": [10, -5, 0, 15, -10],
+    }
+    tbl = xo.memtable(data)
+
+    # Use xo.case() builder for searched case expression
+    flights = (
+        to_semantic_table(tbl, name="flights_case_dim")
+        .with_dimensions(
+            origin=lambda t: t.origin,
+            delay_status=lambda t: (
+                xo.case()
+                .when(t.delay > 0, "Delayed")
+                .when(t.delay < 0, "Early")
+                .else_("On Time")
+                .end()
+            ),
+        )
+        .with_measures(flight_count=lambda t: t.count())
+    )
+
+    # Test in-process
+    result_before = (
+        flights
+        .group_by("delay_status")
+        .aggregate("flight_count")
+        .order_by("delay_status")
+        .execute()
+    )
+    assert len(result_before) > 0
+    assert "delay_status" in result_before.columns
+
+    # Round-trip
+    tagged = to_tagged(flights)
+    reconstructed = from_tagged(tagged)
+
+    # Verify dimensions are preserved
+    dims = reconstructed.get_dimensions()
+    assert "delay_status" in dims
+
+    # Test query execution
+    result_after = (
+        reconstructed
+        .group_by("delay_status")
+        .aggregate("flight_count")
+        .order_by("delay_status")
+        .execute()
+    )
+
+    # Verify results match
+    assert len(result_after) == len(result_before)
+    assert set(result_after["delay_status"]) == set(result_before["delay_status"])
+
 
 # --- Advanced modeling round-trip tests ---
 
