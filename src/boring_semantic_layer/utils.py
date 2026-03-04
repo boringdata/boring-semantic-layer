@@ -296,6 +296,7 @@ def serialize_resolver(resolver) -> tuple:
         Attr,
         BinaryOperator,
         Call,
+        Item,
         Just,
         JustUnhashable,
         Mapping as MappingResolver,
@@ -334,6 +335,9 @@ def serialize_resolver(resolver) -> tuple:
 
     if isinstance(resolver, Attr):
         return ("attr", serialize_resolver(resolver.obj), serialize_resolver(resolver.name))
+
+    if isinstance(resolver, Item):
+        return ("item", serialize_resolver(resolver.obj), serialize_resolver(resolver.name))
 
     if isinstance(resolver, Call):
         func_tuple = serialize_resolver(resolver.func)
@@ -419,6 +423,7 @@ def deserialize_resolver(data: tuple):
         Attr,
         BinaryOperator,
         Call,
+        Item,
         Just,
         Mapping as MappingResolver,
         Sequence,
@@ -458,6 +463,14 @@ def deserialize_resolver(data: tuple):
             object.__setattr__(item, "obj", obj_resolver)
             object.__setattr__(item, "name", name_resolver)
             return _finalize_frozen_slotted(item)
+
+        case ("item", obj_data, name_data):
+            obj_resolver = deserialize_resolver(obj_data)
+            name_resolver = deserialize_resolver(name_data)
+            item = object.__new__(Item)
+            object.__setattr__(item, "obj", obj_resolver)
+            object.__setattr__(item, "name", name_resolver)
+            return item
 
         case ("call", func_data, args_data, kwargs_data):
             func_resolver = deserialize_resolver(func_data)
