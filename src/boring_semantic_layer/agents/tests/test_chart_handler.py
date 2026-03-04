@@ -832,7 +832,6 @@ class TestChartTypeOverride:
         chart_obj = backend.create_chart(df, params, "bar", spec={"chart_type": "line"})
         assert chart_obj is not None
 
-    @pytest.mark.xfail(reason="xorq upstream bug: column rename suffix collision in multi-way joins")
     def test_chart_init_fast_path_with_explicit_type(self):
         """Test that chart/__init__.py uses fast path when chart_type is explicit."""
         from pathlib import Path
