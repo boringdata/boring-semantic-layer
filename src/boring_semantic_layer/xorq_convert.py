@@ -68,8 +68,6 @@ def _extract_simple_column_name(expr) -> str | None:
 def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exception]:
     @safe
     def do_serialize():
-        from returns.result import Success
-
         from .utils import expr_to_structured
 
         dim_metadata = {}
@@ -86,14 +84,7 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
                 case str():
                     entry["expr"] = col_name
                 case _:
-                    struct_result = expr_to_structured(dim.expr)
-                    match struct_result:
-                        case Success():
-                            entry["expr_struct"] = struct_result.unwrap()
-                        case _:
-                            raise ValueError(
-                                f"Dimension '{name}': failed to serialize expression"
-                            )
+                    entry["expr_struct"] = expr_to_structured(dim.expr).value_or(None)
             dim_metadata[name] = entry
         return dim_metadata
 
@@ -103,8 +94,6 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
 def serialize_measures(measures: Mapping[str, Any]) -> Result[dict, Exception]:
     @safe
     def do_serialize():
-        from returns.result import Success
-
         from .utils import expr_to_structured
 
         meas_metadata = {}
@@ -114,18 +103,11 @@ def serialize_measures(measures: Mapping[str, Any]) -> Result[dict, Exception]:
                 "requires_unnest": list(meas.requires_unnest),
             }
             original = getattr(meas, "original_expr", None)
-            struct_result = (
+            entry["expr_struct"] = (
                 expr_to_structured(original)
                 if original is not None
                 else expr_to_structured(meas.expr)
-            )
-            match struct_result:
-                case Success():
-                    entry["expr_struct"] = struct_result.unwrap()
-                case _:
-                    raise ValueError(
-                        f"Measure '{name}': failed to serialize expression"
-                    )
+            ).value_or(None)
             meas_metadata[name] = entry
         return meas_metadata
 
@@ -665,7 +647,12 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
         in_memory_tables = list(walk_nodes((xorq_rel.InMemoryTable,), unwrapped_expr))
         db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), unwrapped_expr))
 
-        total_leaf_tables = len(read_ops) + len(in_memory_tables) + len(db_tables)
+        # A Read op internally contains a DatabaseTable, so exclude db_tables
+        # when Read ops exist to avoid double-counting a single
+        # deferred_read_parquet as two leaf tables.
+        total_leaf_tables = (
+            len(read_ops) + len(in_memory_tables) + (len(db_tables) if not read_ops else 0)
+        )
         if total_leaf_tables > 1:
             expr = unwrapped_expr.to_expr() if hasattr(unwrapped_expr, "to_expr") else unwrapped_expr
             return from_ibis(expr) if not hasattr(expr.op(), "source") else expr
@@ -680,9 +667,13 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
         if db_tables:
             db_table = db_tables[0]
             table_name, xorq_backend = db_table.args[0], db_table.args[2]
-            backend_class = getattr(ibis, xorq_backend.name)
-            backend = backend_class.from_connection(xorq_backend.con)
-            return from_ibis(backend.table(table_name))
+            try:
+                backend_class = getattr(ibis, xorq_backend.name)
+                backend = backend_class.from_connection(xorq_backend.con)
+                return from_ibis(backend.table(table_name))
+            except AttributeError:
+                # xorq-native backend: use its table() directly
+                return from_ibis(xorq_backend.table(table_name))
 
         return xorq_expr.to_expr()
 
@@ -842,6 +833,10 @@ def _split_join_expr(xorq_expr):
     When reconstructing a SemanticJoinOp, the xorq_expr contains the full
     joined expression. Each side needs its own individual table expression
     so _reconstruct_table sees a single leaf table, not the entire join.
+
+    Walks past Tag, CachedNode, RemoteTable wrappers *and* single-input
+    relational operations (Sort, Aggregate, Project, …) to reach the
+    underlying JoinChain.
     """
     from xorq.expr.relations import CachedNode, RemoteTable, Tag
     from xorq.vendor.ibis.expr.operations.relations import JoinChain
@@ -856,6 +851,12 @@ def _split_join_expr(xorq_expr):
         op = expr.op()
     if isinstance(op, RemoteTable):
         expr = op.args[3]
+        op = expr.op()
+
+    # Walk past single-input relational ops (Sort, Aggregate, Project, …)
+    # to find the underlying JoinChain.
+    while not isinstance(op, JoinChain) and hasattr(op, "parent"):
+        expr = op.parent.to_expr() if hasattr(op.parent, "to_expr") else op.parent
         op = expr.op()
 
     if not isinstance(op, JoinChain) or not op.rest:
