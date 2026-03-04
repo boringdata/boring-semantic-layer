@@ -3544,6 +3544,63 @@ def _find_all_root_models(node: Any) -> tuple[SemanticTableOp, ...]:
     return roots
 
 
+def _build_join_depth_map(node: Any) -> dict[str, int]:
+    """Map each leaf table name to its actual ibis rname depth.
+
+    ``SemanticJoinOp.to_untagged`` calls ``_join_depth`` to determine the
+    rname suffix for each join level.  ``_join_depth`` counts the number
+    of ``SemanticJoinOp`` ancestors on the *left* spine.  The right child
+    at depth *d* gets ``rname = _rname_for_depth(d)``.
+
+    For nested subtrees on the right side of a join, ibis applies the
+    inner subtree's rname independently.  So ``aircraft_models`` at inner
+    depth 1 gets ``_right``, not ``_right3`` even if the outer depth is 3.
+
+    This function mirrors ``_join_depth`` logic: walk down the left spine,
+    recording the right child's depth at each level.  If the right child is
+    itself a join tree, recurse to get inner depths for its leaves.
+    """
+    depth_map: dict[str, int] = {}
+
+    def _record_leaf(n, depth: int):
+        """Record a leaf table at the given depth."""
+        if isinstance(n, SemanticTableOp):
+            name = n.name
+            if name and name not in depth_map:
+                depth_map[name] = depth
+
+    def _walk_join_spine(n):
+        """Walk the left spine of a join tree, recording depths."""
+        if not isinstance(n, SemanticJoinOp):
+            # Leftmost leaf: depth 0 (root, never renamed)
+            _record_leaf(n, 0)
+            return
+
+        depth = SemanticJoinOp._join_depth(n)
+        # The right child is joined at this depth
+        right = n.right
+        if isinstance(right, SemanticJoinOp):
+            # Right is a subtree — its leaves get inner depths
+            inner_map = _build_join_depth_map(right)
+            for tname, idepth in inner_map.items():
+                if tname not in depth_map:
+                    if idepth == 0:
+                        # Leftmost leaf of subtree sits at the outer depth
+                        # (it receives the outer rname suffix if conflicting)
+                        depth_map[tname] = depth
+                    else:
+                        # Inner leaves keep their inner depth (inner rname)
+                        depth_map[tname] = idepth
+        else:
+            _record_leaf(right, depth)
+
+        # Recurse down the left spine
+        _walk_join_spine(n.left)
+
+    _walk_join_spine(node)
+    return depth_map
+
+
 def _update_measure_refs_in_calc(expr, prefix_map: dict[str, str]):
     """
     Recursively update MeasureRef names in a calculated measure expression.
@@ -3660,16 +3717,13 @@ def _build_column_rename_map(
     # Extract join key columns to exclude from renaming
     join_keys = _extract_join_key_column_names(source) if source else set()
 
-    # Get actual columns from the joined table to find real renamed column names.
-    # table_idx in the flat all_roots list does NOT equal ibis join depth for
-    # nested joins (e.g. aircraft → aircraft_models inside a flights join tree),
-    # so we search the actual columns instead of computing the suffix from the index.
-    actual_columns = set()
+    # Build a map from table name → actual ibis join depth by walking the
+    # join tree.  The flat index in all_roots does NOT equal ibis join depth
+    # for nested joins (e.g. aircraft → aircraft_models inside a flights
+    # join tree), so we must compute it from the tree structure.
+    join_depth_map: dict[str, int] = {}
     if source is not None:
-        try:
-            actual_columns = set(source.to_untagged().columns)
-        except Exception:
-            pass
+        join_depth_map = _build_join_depth_map(source)
 
     # Process dimensions and determine which need renamed columns
     rename_map = {}
@@ -3683,6 +3737,8 @@ def _build_column_rename_map(
             continue
 
         root_tbl = root.to_untagged()
+        # Use the actual join depth if available, otherwise fall back to table_idx
+        effective_depth = join_depth_map.get(root.name, idx)
 
         for field_name, field_value in fields_dict.items():
             # Extract column name using graph_utils (returns Maybe)
@@ -3697,7 +3753,7 @@ def _build_column_rename_map(
                     table_idx=idx,  # noqa: B023
                     column_index=column_index,
                     join_keys=join_keys,
-                    actual_columns=actual_columns,
+                    join_depth=effective_depth,  # noqa: B023
                 )
             )
 
@@ -3711,45 +3767,37 @@ def _check_and_add_rename(
     table_idx: int,
     column_index: dict[str, list[int]],
     join_keys: set[str],
-    actual_columns: set[str] | None = None,
+    join_depth: int | None = None,
 ) -> None:
     """
     Check if a column needs renaming and add to rename map if so.
 
-    When ``actual_columns`` is provided (the real column names from the joined
-    ibis table), we search for the correct suffixed name there instead of
-    computing it from ``table_idx``.  This handles nested joins where the flat
-    index in ``all_roots`` does not equal the ibis join depth.
+    ``table_idx`` is the flat index in ``all_roots`` used to detect
+    whether an earlier table has the same column.  ``join_depth`` is
+    the actual ibis join depth (from ``_build_join_depth_map``) used
+    to compute the ``_right`` / ``_right2`` / … suffix.
 
     Args:
         rename_map: Map to update with renames
         base_column: The base column name
         prefixed_name: The prefixed dimension name (e.g., 'airports.city')
-        table_idx: Index of the current table in all_roots
+        table_idx: Flat index in all_roots (for conflict detection)
         column_index: Index of column occurrences
         join_keys: Set of column names used as join keys (these don't get renamed)
-        actual_columns: Real column names from the joined table (optional)
+        join_depth: Actual ibis join depth for suffix computation (defaults to table_idx)
     """
     # Skip columns that are join keys - they get merged, not renamed
     if base_column in join_keys:
         return
 
+    depth = join_depth if join_depth is not None else table_idx
+
     if base_column in column_index:
         tables_with_column = column_index[base_column]
-        # Check if any table before this one has the same column
+        # Check if any table before this one (in flat order) has the same column
         earlier_tables = [t for t in tables_with_column if t < table_idx]
         if earlier_tables:
-            # Search actual joined table columns for the correct suffixed name.
-            # This handles nested joins where table_idx != ibis join depth.
-            if actual_columns:
-                for depth in range(1, table_idx + 1):
-                    suffix = "_right" if depth <= 1 else f"_right{depth}"
-                    candidate = f"{base_column}{suffix}"
-                    if candidate in actual_columns:
-                        rename_map[prefixed_name] = candidate
-                        return
-            # Fallback: compute from table_idx (works for flat join trees)
-            suffix = "_right" if table_idx <= 1 else f"_right{table_idx}"
+            suffix = "_right" if depth <= 1 else f"_right{depth}"
             rename_map[prefixed_name] = f"{base_column}{suffix}"
 
 
