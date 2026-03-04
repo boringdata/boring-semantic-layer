@@ -1871,16 +1871,35 @@ class SemanticAggregateOp(Relation):
         is_post_agg = has_prior_aggregate(self.source)
         collected_filters = collect_filters_to_join(self.source)
 
+        def collect_mutates_to_join(node):
+            """Collect SemanticMutateOp.post dicts between here and the join."""
+            mutates = []
+            current = node
+            while current is not None:
+                match current:
+                    case SemanticMutateOp():
+                        mutates.append(current.post)
+                        current = current.source
+                    case SemanticJoinOp() | SemanticTableOp():
+                        break
+                    case _ if hasattr(current, "source"):
+                        current = current.source
+                    case _:
+                        break
+            return tuple(mutates)
+
         # Pre-aggregation path: when join_many is present, aggregate each
         # source table's measures at its own grain before joining.
         if join_op is not None and not is_post_agg:
             join_tree_info = _collect_join_tree_info(join_op)
             if join_tree_info.has_join_many:
+                collected_mutates = collect_mutates_to_join(self.source)
                 return self._to_untagged_with_preagg(
                     all_roots,
                     join_op,
                     join_tree_info,
                     filters=collected_filters,
+                    mutates=collected_mutates,
                 )
 
         # Only use the join optimization if there are no filters after the join
@@ -1936,6 +1955,7 @@ class SemanticAggregateOp(Relation):
         join_op: SemanticJoinOp,
         join_tree_info: _JoinTreeInfo,
         filters: list | None = None,
+        mutates: tuple | None = None,
     ):
         """Pre-aggregate each source table's measures at its own grain, then join.
 
@@ -1947,6 +1967,19 @@ class SemanticAggregateOp(Relation):
         group_by_cols = list(self.keys)
 
         filters = filters or []
+        mutates = mutates or ()
+
+        # Identify group-by keys that come from .mutate() rather than
+        # semantic dimensions — these need special handling.  This is a
+        # process-of-elimination heuristic: any key that is not a known
+        # dimension, measure, or calc measure is assumed to originate
+        # from a .mutate() call in the operation chain.
+        mutated_gb_keys = frozenset(
+            k for k in group_by_cols
+            if k not in merged_dimensions
+            and k not in merged_base_measures
+            and k not in merged_calc_measures
+        )
 
         # --- 1. Try to build the full joined table (for scope / dim bridge) ---
         try:
@@ -1956,6 +1989,19 @@ class SemanticAggregateOp(Relation):
                 [k for k in self.keys if k in merged_dimensions],
                 merged_dimensions,
             )
+            # Apply mutate operations so mutated group-by keys are available
+            # on the full joined table (needed for dimension bridges).
+            if mutated_gb_keys:
+                for mutate_post in mutates:
+                    for name, fn_wrapped in mutate_post.items():
+                        if name in mutated_gb_keys:
+                            try:
+                                fn = _unwrap(fn_wrapped)
+                                resolved = _resolve_expr(fn, tbl)
+                                tbl = tbl.mutate(**{name: resolved})
+                            except (TypeError, KeyError, AttributeError,
+                                    ibis.common.exceptions.IbisTypeError):
+                                pass
             # Apply collected filters to the full joined table so that
             # dimension bridges only include rows surviving the filter.
             if filters:
@@ -2075,8 +2121,24 @@ class SemanticAggregateOp(Relation):
                                     raw_tbl = raw_tbl.inner_join(key_bridge, preds).select(raw_tbl)
                                     break
 
+            # Apply mutated group-by keys to this raw table so they can
+            # participate in the per-table grain computation.
+            if mutated_gb_keys:
+                for mutate_post in mutates:
+                    for name, fn_wrapped in mutate_post.items():
+                        if name in mutated_gb_keys and name not in raw_tbl.columns:
+                            try:
+                                fn = _unwrap(fn_wrapped)
+                                resolved = _resolve_expr(fn, raw_tbl)
+                                raw_tbl = raw_tbl.mutate(**{name: resolved})
+                            except (TypeError, KeyError, AttributeError,
+                                    ibis.common.exceptions.IbisTypeError):
+                                pass
+
             table_measures = _get_field_dict(table_op, "measures")
             table_dims = _get_field_dict(table_op, "dimensions")
+            # Captured after mutated-key application above so the grain
+            # computation can see the newly-added columns.
             raw_columns = set(raw_tbl.columns)
 
             # Build agg expressions on the raw table
@@ -2117,7 +2179,11 @@ class SemanticAggregateOp(Relation):
             _local_dims = []
             has_cross_table_gb = False
             for gb_key in group_by_cols:
-                if "." in gb_key:
+                # Mutated columns are already on raw_tbl (applied above)
+                if gb_key in mutated_gb_keys:
+                    if gb_key in raw_columns and gb_key not in _local_dims:
+                        _local_dims.append(gb_key)
+                elif "." in gb_key:
                     prefix, short = gb_key.split(".", 1)
                     if prefix == table_name and short in table_dims:
                         dim_fn = table_dims[short]
