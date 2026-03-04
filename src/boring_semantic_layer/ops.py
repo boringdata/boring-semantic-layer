@@ -3660,6 +3660,17 @@ def _build_column_rename_map(
     # Extract join key columns to exclude from renaming
     join_keys = _extract_join_key_column_names(source) if source else set()
 
+    # Get actual columns from the joined table to find real renamed column names.
+    # table_idx in the flat all_roots list does NOT equal ibis join depth for
+    # nested joins (e.g. aircraft → aircraft_models inside a flights join tree),
+    # so we search the actual columns instead of computing the suffix from the index.
+    actual_columns = set()
+    if source is not None:
+        try:
+            actual_columns = set(source.to_untagged().columns)
+        except Exception:
+            pass
+
     # Process dimensions and determine which need renamed columns
     rename_map = {}
 
@@ -3686,6 +3697,7 @@ def _build_column_rename_map(
                     table_idx=idx,  # noqa: B023
                     column_index=column_index,
                     join_keys=join_keys,
+                    actual_columns=actual_columns,
                 )
             )
 
@@ -3699,27 +3711,24 @@ def _check_and_add_rename(
     table_idx: int,
     column_index: dict[str, list[int]],
     join_keys: set[str],
+    actual_columns: set[str] | None = None,
 ) -> None:
     """
     Check if a column needs renaming and add to rename map if so.
 
-    Helper function for _build_column_rename_map that encapsulates the
-    rename decision logic.
-
-    The suffix must match ``SemanticJoinOp._rname_for_depth``:
-    depth 1 → ``_right``, depth 2 → ``_right2``, depth 3 → ``_right3``, …
-
-    Since ``all_roots[0]`` is the left-most table (never renamed) and
-    ``all_roots[N]`` is the right side of the *N*-th join, ``table_idx``
-    maps directly to join depth.
+    When ``actual_columns`` is provided (the real column names from the joined
+    ibis table), we search for the correct suffixed name there instead of
+    computing it from ``table_idx``.  This handles nested joins where the flat
+    index in ``all_roots`` does not equal the ibis join depth.
 
     Args:
         rename_map: Map to update with renames
         base_column: The base column name
         prefixed_name: The prefixed dimension name (e.g., 'airports.city')
-        table_idx: Index of the current table (== join depth)
+        table_idx: Index of the current table in all_roots
         column_index: Index of column occurrences
         join_keys: Set of column names used as join keys (these don't get renamed)
+        actual_columns: Real column names from the joined table (optional)
     """
     # Skip columns that are join keys - they get merged, not renamed
     if base_column in join_keys:
@@ -3730,7 +3739,16 @@ def _check_and_add_rename(
         # Check if any table before this one has the same column
         earlier_tables = [t for t in tables_with_column if t < table_idx]
         if earlier_tables:
-            # Suffix mirrors SemanticJoinOp._rname_for_depth(table_idx)
+            # Search actual joined table columns for the correct suffixed name.
+            # This handles nested joins where table_idx != ibis join depth.
+            if actual_columns:
+                for depth in range(1, table_idx + 1):
+                    suffix = "_right" if depth <= 1 else f"_right{depth}"
+                    candidate = f"{base_column}{suffix}"
+                    if candidate in actual_columns:
+                        rename_map[prefixed_name] = candidate
+                        return
+            # Fallback: compute from table_idx (works for flat join trees)
             suffix = "_right" if table_idx <= 1 else f"_right{table_idx}"
             rename_map[prefixed_name] = f"{base_column}{suffix}"
 
