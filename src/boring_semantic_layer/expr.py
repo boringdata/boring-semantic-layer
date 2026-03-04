@@ -41,6 +41,16 @@ from .ops import (
 )
 from .query import query as build_query
 
+_JOIN_REMOVED_MESSAGE = (
+    "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
+    "For one-to-one relationships:\n"
+    "  table.join_one(other, lambda l, r: l.id == r.id)\n\n"
+    "For one-to-many relationships:\n"
+    "  table.join_many(other, lambda l, r: l.id == r.id)\n\n"
+    "For Cartesian product:\n"
+    "  table.join_cross(other)"
+)
+
 _BLOCKED_IBIS_METHODS = [
     'alias', 'anti_join', 'any_inner_join', 'any_left_join',
     'as_scalar', 'asof_join', 'bind', 'cache', 'cast',
@@ -523,15 +533,7 @@ class SemanticModel(SemanticTable):
             Old: table.join(other, lambda l, r: l.id == r.id)
             New: table.join_one(other, lambda l, r: l.id == r.id)
         """
-        raise TypeError(
-            "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
-            "For one-to-one relationships:\n"
-            "  table.join_one(other, lambda l, r: l.id == r.id)\n\n"
-            "For one-to-many relationships:\n"
-            "  table.join_many(other, lambda l, r: l.id == r.id)\n\n"
-            "For Cartesian product:\n"
-            "  table.join_cross(other)"
-        )
+        raise TypeError(_JOIN_REMOVED_MESSAGE)
 
     def index(
         self,
@@ -840,15 +842,7 @@ class SemanticJoin(SemanticTable):
 
     def join(self, *args, **kwargs):
         """Deprecated: Use join_one(), join_many(), or join_cross() instead."""
-        raise TypeError(
-            "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
-            "For one-to-one relationships:\n"
-            "  table.join_one(other, lambda l, r: l.id == r.id)\n\n"
-            "For one-to-many relationships:\n"
-            "  table.join_many(other, lambda l, r: l.id == r.id)\n\n"
-            "For Cartesian product:\n"
-            "  table.join_cross(other)"
-        )
+        raise TypeError(_JOIN_REMOVED_MESSAGE)
 
     def group_by(self, *keys: str | Deferred):
         normalized = tuple(_normalize_to_name(k) for k in keys)
@@ -1164,15 +1158,7 @@ class SemanticAggregate(SemanticTable):
 
     def join(self, *args, **kwargs):
         """Deprecated: Use join_one(), join_many(), or join_cross() instead."""
-        raise TypeError(
-            "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
-            "For one-to-one relationships:\n"
-            "  table.join_one(other, lambda l, r: l.id == r.id)\n\n"
-            "For one-to-many relationships:\n"
-            "  table.join_many(other, lambda l, r: l.id == r.id)\n\n"
-            "For Cartesian product:\n"
-            "  table.join_cross(other)"
-        )
+        raise TypeError(_JOIN_REMOVED_MESSAGE)
 
     def as_table(self) -> SemanticModel:
         return SemanticModel(

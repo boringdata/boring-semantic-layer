@@ -53,6 +53,36 @@ from .measure_scope import (
 )
 from .nested_access import NestedAccessMarker
 
+_JOIN_REMOVED_MESSAGE = (
+    "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
+    "For one-to-one relationships:\n"
+    "  table.join_one(other, lambda l, r: l.id == r.id)\n\n"
+    "For one-to-many relationships:\n"
+    "  table.join_many(other, lambda l, r: l.id == r.id)\n\n"
+    "For Cartesian product:\n"
+    "  table.join_cross(other)"
+)
+
+_BSL_JOIN_KEY_TMP_PREFIX = "__bsl_jk_"
+
+
+class _RenamedResolver:
+    """Resolver that maps original column names to temporary names.
+
+    Used during join predicate resolution to avoid ibis "Ambiguous field
+    reference" errors when left and right tables share column names.
+    """
+
+    __slots__ = ("_table", "_name_map")
+
+    def __init__(self, table, name_map):
+        object.__setattr__(self, "_table", table)
+        object.__setattr__(self, "_name_map", name_map)
+
+    def __getattr__(self, name):
+        mapped = self._name_map.get(name, name)
+        return getattr(self._table, mapped)
+
 
 def _is_deferred(expr) -> bool:
     # Duck-type check: works for both ibis and xorq Deferred objects
@@ -2722,15 +2752,7 @@ class SemanticJoinOp(Relation):
 
     def join(self, *args, **kwargs):
         """Deprecated: Use join_one(), join_many(), or join_cross() instead."""
-        raise TypeError(
-            "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
-            "For one-to-one relationships:\n"
-            "  table.join_one(other, lambda l, r: l.id == r.id)\n\n"
-            "For one-to-many relationships:\n"
-            "  table.join_many(other, lambda l, r: l.id == r.id)\n\n"
-            "For Cartesian product:\n"
-            "  table.join_cross(other)"
-        )
+        raise TypeError(_JOIN_REMOVED_MESSAGE)
 
     def index(
         self,
@@ -3067,23 +3089,13 @@ class SemanticJoinOp(Relation):
         # Temporarily rename conflicting left columns so the predicate
         # can be resolved without ambiguity.
         # ibis rename convention: {new_name: old_name}
-        _TMP = "__bsl_jk_"
-        rename_left = {f"{_TMP}{c}": c for c in conflicting}
+        rename_left = {f"{_BSL_JOIN_KEY_TMP_PREFIX}{c}": c for c in conflicting}
         left_safe = left_tbl.rename(rename_left)
 
         # Resolver that transparently maps original names → temp names,
         # so predicates like ``lambda f, a: f.tail_num == a.tail_num``
         # still work even though left's ``tail_num`` was renamed.
-        orig_to_tmp = {c: f"{_TMP}{c}" for c in conflicting}
-
-        class _RenamedResolver:
-            def __init__(self, table, name_map):
-                object.__setattr__(self, "_table", table)
-                object.__setattr__(self, "_name_map", name_map)
-
-            def __getattr__(self, name):
-                mapped = self._name_map.get(name, name)
-                return getattr(self._table, mapped)
+        orig_to_tmp = {c: f"{_BSL_JOIN_KEY_TMP_PREFIX}{c}" for c in conflicting}
 
         pred = self.on(
             _RenamedResolver(left_safe, orig_to_tmp),
@@ -3095,7 +3107,7 @@ class SemanticJoinOp(Relation):
         # - left temp columns → original names
         # - right conflicting columns → depth-based rname suffix
         rename_final = {
-            c: f"{_TMP}{c}" for c in conflicting
+            c: f"{_BSL_JOIN_KEY_TMP_PREFIX}{c}" for c in conflicting
         } | {
             rname.replace("{name}", c): c for c in conflicting
         }
@@ -3666,7 +3678,7 @@ def _extract_join_key_column_names(source: Relation) -> set[str]:
                 if result.is_success():
                     # ibis merges only same-name equi-join columns
                     join_keys.update(result.left_columns & result.right_columns)
-            except Exception:
+            except (AttributeError, TypeError):
                 pass
 
         if hasattr(node, "left") and isinstance(node.left, Relation):
