@@ -189,9 +189,7 @@ def test_serialize_event_timestamp_dimensions(flights_data):
 
     flights = to_semantic_table(tbl, name="flights").with_dimensions(
         arr_time=time_dimension(
-            lambda t: t.arr_time,
-            "Arrival time",
-            smallest_time_grain="TIME_GRAIN_DAY"
+            lambda t: t.arr_time, "Arrival time", smallest_time_grain="TIME_GRAIN_DAY"
         ),
         origin=lambda t: t.origin,
     )
@@ -263,9 +261,7 @@ def test_event_timestamp_roundtrip(flights_data):
         to_semantic_table(tbl, name="flights")
         .with_dimensions(
             arr_time=time_dimension(
-                lambda t: t.arr_time,
-                "Arrival time",
-                smallest_time_grain="TIME_GRAIN_DAY"
+                lambda t: t.arr_time, "Arrival time", smallest_time_grain="TIME_GRAIN_DAY"
             ),
             origin=lambda t: t.origin,
         )
@@ -309,9 +305,7 @@ def test_entity_and_event_timestamp_roundtrip(flights_data):
         .with_dimensions(
             business_id=entity_dimension(lambda t: t.business_id, "Business identifier"),
             statement_date=time_dimension(
-                lambda t: t.statement_date,
-                "Statement date",
-                smallest_time_grain="TIME_GRAIN_DAY"
+                lambda t: t.statement_date, "Statement date", smallest_time_grain="TIME_GRAIN_DAY"
             ),
         )
         .with_measures(total_balance=lambda t: t.balance.sum())
@@ -339,7 +333,9 @@ def test_entity_and_event_timestamp_roundtrip(flights_data):
     assert "statement_date" in json_def["event_timestamp"]
 
     # Verify it still works
-    result = reconstructed.group_by("business_id", "statement_date").aggregate("total_balance").execute()
+    result = (
+        reconstructed.group_by("business_id", "statement_date").aggregate("total_balance").execute()
+    )
     assert len(result) > 0
 
 
@@ -361,6 +357,7 @@ def test_case_expr_measure_serialization(flights_data):
 
     assert "short_flight_count" in meas_metadata
     assert "expr_struct" in meas_metadata["short_flight_count"]
+
 
 def test_case_expr_tagged_roundtrip(flights_data):
     """Case expression measures should survive to_tagged → from_tagged."""
@@ -403,6 +400,7 @@ def test_ifelse_measure_serialization(flights_data):
 
     assert "short_flight_count" in meas_metadata
     assert "expr_struct" in meas_metadata["short_flight_count"]
+
 
 def test_ifelse_tagged_roundtrip(flights_data):
     """xo.ifelse measures should survive to_tagged → from_tagged."""
@@ -530,6 +528,7 @@ def test_structured_serialization_in_measures(flights_data):
     assert "expr_struct" in meas_metadata["short_flight_count"]
     assert "expr_struct" in meas_metadata["avg_distance"]
 
+
 def test_structured_tagged_roundtrip_case(flights_data):
     """Full to_tagged -> from_tagged with case expression using structured format."""
     import xorq.api as xo
@@ -556,7 +555,9 @@ def test_structured_tagged_roundtrip_case(flights_data):
     # Reconstruct and verify
     reconstructed = from_tagged(tagged_expr)
 
-    result = reconstructed.group_by("origin").aggregate("short_flight_count", "avg_distance").execute()
+    result = (
+        reconstructed.group_by("origin").aggregate("short_flight_count", "avg_distance").execute()
+    )
     assert len(result) > 0
     assert "origin" in result.columns
     assert "short_flight_count" in result.columns
@@ -646,7 +647,9 @@ def test_resolver_roundtrip_binary_arithmetic(xorq_flights):
 
     for label, fn in [("add", fn_add), ("sub", fn_sub), ("mul", fn_mul), ("div", fn_div)]:
         deferred = _make_resolver_roundtrip(fn)
-        assert fn(xorq_flights).execute() == deferred.resolve(xorq_flights).execute(), f"{label} mismatch"
+        assert fn(xorq_flights).execute() == deferred.resolve(xorq_flights).execute(), (
+            f"{label} mismatch"
+        )
 
 
 def test_resolver_roundtrip_comparison_operators(xorq_flights):
@@ -664,7 +667,9 @@ def test_resolver_roundtrip_comparison_operators(xorq_flights):
 
     for label, fn in comparisons.items():
         deferred = _make_resolver_roundtrip(fn)
-        assert fn(xorq_flights).execute() == deferred.resolve(xorq_flights).execute(), f"{label} mismatch"
+        assert fn(xorq_flights).execute() == deferred.resolve(xorq_flights).execute(), (
+            f"{label} mismatch"
+        )
 
 
 def test_resolver_roundtrip_unary_neg(xorq_flights):
@@ -705,12 +710,7 @@ def test_resolver_roundtrip_multi_when_case(xorq_flights):
     import xorq.api as xo
 
     fn = lambda t: (
-        xo.case()
-        .when(t.distance < 150, 1)
-        .when(t.distance < 250, 2)
-        .else_(3)
-        .end()
-        .sum()
+        xo.case().when(t.distance < 150, 1).when(t.distance < 250, 2).else_(3).end().sum()
     )
     deferred = _make_resolver_roundtrip(fn)
     assert fn(xorq_flights).execute() == deferred.resolve(xorq_flights).execute()
@@ -748,13 +748,18 @@ def test_tagged_roundtrip_multiple_measure_types(flights_data):
     reconstructed = from_tagged(tagged)
 
     result = (
-        reconstructed
-        .group_by("origin")
+        reconstructed.group_by("origin")
         .aggregate("flight_count", "total_distance", "avg_distance", "short_flight_count")
         .execute()
     )
     assert len(result) > 0
-    assert set(result.columns) == {"origin", "flight_count", "total_distance", "avg_distance", "short_flight_count"}
+    assert set(result.columns) == {
+        "origin",
+        "flight_count",
+        "total_distance",
+        "avg_distance",
+        "short_flight_count",
+    }
 
 
 def test_tagged_roundtrip_filter_predicate(flights_data):
@@ -791,16 +796,14 @@ def test_tagged_roundtrip_mutate_arithmetic(flights_data):
     )
 
     result_original = (
-        flights
-        .group_by("origin")
+        flights.group_by("origin")
         .aggregate("total_distance", "flight_count")
         .mutate(avg_distance_per_flight=lambda t: t.total_distance / t.flight_count)
         .execute()
     )
 
     tagged = to_tagged(
-        flights
-        .group_by("origin")
+        flights.group_by("origin")
         .aggregate("total_distance", "flight_count")
         .mutate(avg_distance_per_flight=lambda t: t.total_distance / t.flight_count)
     )
@@ -822,8 +825,7 @@ def test_tagged_roundtrip_order_by(flights_data):
     )
 
     tagged = to_tagged(
-        flights
-        .group_by("origin")
+        flights.group_by("origin")
         .aggregate("total_distance")
         .order_by(lambda t: t.total_distance.desc())
     )
@@ -847,12 +849,7 @@ def test_tagged_roundtrip_with_limit(flights_data):
         .with_measures(total_distance=lambda t: t.distance.sum())
     )
 
-    tagged = to_tagged(
-        flights
-        .group_by("origin")
-        .aggregate("total_distance")
-        .limit(2)
-    )
+    tagged = to_tagged(flights.group_by("origin").aggregate("total_distance").limit(2))
     reconstructed = from_tagged(tagged)
     result = reconstructed.execute()
 
@@ -874,8 +871,7 @@ def test_tagged_roundtrip_full_pipeline(flights_data):
     )
 
     pipeline = (
-        flights
-        .group_by("origin")
+        flights.group_by("origin")
         .aggregate("total_distance", "flight_count")
         .mutate(avg_dist=lambda t: t.total_distance / t.flight_count)
         .order_by(lambda t: t.avg_dist.desc())
@@ -951,12 +947,7 @@ def test_tagged_roundtrip_multiple_dimensions(flights_data):
     assert "origin" in dims
     assert "destination" in dims
 
-    result = (
-        reconstructed
-        .group_by("origin", "destination")
-        .aggregate("total_distance")
-        .execute()
-    )
+    result = reconstructed.group_by("origin", "destination").aggregate("total_distance").execute()
     assert len(result) > 0
     assert "origin" in result.columns
     assert "destination" in result.columns
@@ -992,8 +983,7 @@ def test_tagged_roundtrip_deferred_underscore_measures():
     reconstructed = from_tagged(tagged)
 
     result = (
-        reconstructed
-        .group_by("origin")
+        reconstructed.group_by("origin")
         .aggregate("total_distance", "avg_distance", "flight_count")
         .order_by("origin")
         .execute()
@@ -1034,8 +1024,7 @@ def test_tagged_roundtrip_composite_deferred_measure():
     reconstructed = from_tagged(tagged)
 
     result = (
-        reconstructed
-        .group_by("origin")
+        reconstructed.group_by("origin")
         .aggregate("total_distance", "flight_count")
         .mutate(avg_distance=lambda t: t.total_distance / t.flight_count)
         .order_by("origin")
@@ -1073,8 +1062,7 @@ def test_tagged_roundtrip_boolean_condition_measure():
     reconstructed = from_tagged(tagged)
 
     result = (
-        reconstructed
-        .group_by("origin")
+        reconstructed.group_by("origin")
         .aggregate("short_flights", "total_flights")
         .order_by("origin")
         .execute()
@@ -1110,13 +1098,7 @@ def test_tagged_roundtrip_case_with_value_verification(flights_data):
     tagged = to_tagged(flights)
     reconstructed = from_tagged(tagged)
 
-    result = (
-        reconstructed
-        .group_by("origin")
-        .aggregate("short_count")
-        .order_by("origin")
-        .execute()
-    )
+    result = reconstructed.group_by("origin").aggregate("short_count").order_by("origin").execute()
 
     assert len(result) > 0
     # flights_data: JFK->100, LAX->200, SFO->300
@@ -1154,7 +1136,8 @@ def test_tagged_roundtrip_percent_of_total():
         flights_st.join_many(carriers_st, lambda f, c: f.carrier == c.code)
         .with_dimensions(nickname=lambda t: t.nickname)
         .with_measures(
-            percent_of_total=lambda t: t["flights_pct.flight_count"] / t.all(t["flights_pct.flight_count"]),
+            percent_of_total=lambda t: t["flights_pct.flight_count"]
+            / t.all(t["flights_pct.flight_count"]),
         )
     )
 
@@ -1162,8 +1145,7 @@ def test_tagged_roundtrip_percent_of_total():
     reconstructed = from_tagged(tagged)
 
     df = (
-        reconstructed
-        .group_by("nickname")
+        reconstructed.group_by("nickname")
         .aggregate("percent_of_total")
         .order_by("nickname")
         .execute()
@@ -1183,10 +1165,12 @@ def test_tagged_roundtrip_join_with_multiple_measures():
     from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
-    flights = pd.DataFrame({
-        "carrier": ["AA", "AA", "UA", "DL", "DL", "DL"],
-        "distance": [100, 200, 300, 400, 500, 600],
-    })
+    flights = pd.DataFrame(
+        {
+            "carrier": ["AA", "AA", "UA", "DL", "DL", "DL"],
+            "distance": [100, 200, 300, 400, 500, 600],
+        }
+    )
     carriers = pd.DataFrame(
         {"code": ["AA", "UA", "DL"], "nickname": ["American", "United", "Delta"]},
     )
@@ -1202,17 +1186,15 @@ def test_tagged_roundtrip_join_with_multiple_measures():
         nickname=lambda t: t.nickname,
     )
 
-    joined = (
-        flights_st.join_many(carriers_st, lambda f, c: f.carrier == c.code)
-        .with_dimensions(nickname=lambda t: t.nickname)
+    joined = flights_st.join_many(carriers_st, lambda f, c: f.carrier == c.code).with_dimensions(
+        nickname=lambda t: t.nickname
     )
 
     tagged = to_tagged(joined)
     reconstructed = from_tagged(tagged)
 
     df = (
-        reconstructed
-        .group_by("nickname")
+        reconstructed.group_by("nickname")
         .aggregate("flights_join.flight_count", "flights_join.total_distance")
         .order_by("nickname")
         .execute()
@@ -1252,8 +1234,7 @@ def test_tagged_roundtrip_filter_aggregate_mutate_pipeline():
     )
 
     pipeline = (
-        flights
-        .group_by("origin")
+        flights.group_by("origin")
         .aggregate("total_distance", "flight_count")
         .mutate(avg_dist=lambda t: t.total_distance / t.flight_count)
         .order_by(lambda t: t.avg_dist.desc())
@@ -1291,11 +1272,7 @@ def test_tagged_roundtrip_ifelse_with_value_verification(flights_data):
     reconstructed = from_tagged(tagged)
 
     result = (
-        reconstructed
-        .group_by("origin")
-        .aggregate("short_flag_sum")
-        .order_by("origin")
-        .execute()
+        reconstructed.group_by("origin").aggregate("short_flag_sum").order_by("origin").execute()
     )
 
     # flights_data: JFK->100, LAX->200, SFO->300 (1 row each)
@@ -1343,14 +1320,18 @@ def test_tagged_roundtrip_join_filter_aggregate():
     from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
-    orders = pd.DataFrame({
-        "customer_id": [1, 1, 2, 2, 3],
-        "amount": [10, 20, 30, 40, 50],
-    })
-    customers = pd.DataFrame({
-        "id": [1, 2, 3],
-        "name": ["Alice", "Bob", "Carol"],
-    })
+    orders = pd.DataFrame(
+        {
+            "customer_id": [1, 1, 2, 2, 3],
+            "amount": [10, 20, 30, 40, 50],
+        }
+    )
+    customers = pd.DataFrame(
+        {
+            "id": [1, 2, 3],
+            "name": ["Alice", "Bob", "Carol"],
+        }
+    )
     o_tbl = con.create_table("orders_jfa", orders)
     c_tbl = con.create_table("customers_jfa", customers)
 
@@ -1372,8 +1353,7 @@ def test_tagged_roundtrip_join_filter_aggregate():
     reconstructed = from_tagged(tagged)
 
     df = (
-        reconstructed
-        .group_by("name")
+        reconstructed.group_by("name")
         .aggregate("orders_jfa.total_amount")
         .order_by("name")
         .execute()
@@ -1397,28 +1377,35 @@ def test_tagged_roundtrip_join_inner():
     l_tbl = con.create_table("left_inner", left)
     r_tbl = con.create_table("right_inner", right)
 
-    left_st = to_semantic_table(l_tbl, "left_inner").with_dimensions(
-        val=lambda t: t.val,
-    ).with_measures(row_count=lambda t: t.count())
+    left_st = (
+        to_semantic_table(l_tbl, "left_inner")
+        .with_dimensions(
+            val=lambda t: t.val,
+        )
+        .with_measures(row_count=lambda t: t.count())
+    )
     right_st = to_semantic_table(r_tbl, "right_inner").with_dimensions(
         key=lambda t: t.key,
         label=lambda t: t.label,
     )
 
-    joined = (
-        left_st.join_many(right_st, lambda l, r: l.key == r.key, how="inner")
-        .with_dimensions(label=lambda t: t.label)
+    joined = left_st.join_many(right_st, lambda l, r: l.key == r.key, how="inner").with_dimensions(
+        label=lambda t: t.label
     )
 
     tagged = to_tagged(joined)
     reconstructed = from_tagged(tagged)
 
-    df = reconstructed.group_by("label").aggregate("left_inner.row_count").order_by("label").execute()
+    df = (
+        reconstructed.group_by("label")
+        .aggregate("left_inner.row_count")
+        .order_by("label")
+        .execute()
+    )
     assert len(df) == 2  # keys 2 and 3 match
     got = dict(zip(df.label, df["left_inner.row_count"], strict=False))
     assert got["x"] == 1
     assert got["y"] == 1
-
 
 
 def test_tagged_roundtrip_join_one_preserves_predicate():
@@ -1434,14 +1421,18 @@ def test_tagged_roundtrip_join_one_preserves_predicate():
     from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
-    flights = pd.DataFrame({
-        "origin": ["SEA", "SEA", "LAX", "LAX", "ORD"],
-        "carrier": ["AA", "UA", "AA", "DL", "UA"],
-    })
-    carriers = pd.DataFrame({
-        "code": ["AA", "UA", "DL"],
-        "nickname": ["American", "United", "Delta"],
-    })
+    flights = pd.DataFrame(
+        {
+            "origin": ["SEA", "SEA", "LAX", "LAX", "ORD"],
+            "carrier": ["AA", "UA", "AA", "DL", "UA"],
+        }
+    )
+    carriers = pd.DataFrame(
+        {
+            "code": ["AA", "UA", "DL"],
+            "nickname": ["American", "United", "Delta"],
+        }
+    )
     f_tbl = con.create_table("flights_jo", flights)
     c_tbl = con.create_table("carriers_jo", carriers)
 
@@ -1470,8 +1461,7 @@ def test_tagged_roundtrip_join_one_preserves_predicate():
 
     # Baseline
     baseline = (
-        joined
-        .group_by("carriers_jo.nickname")
+        joined.group_by("carriers_jo.nickname")
         .aggregate("flights_jo.flight_count")
         .order_by("carriers_jo.nickname")
         .execute()
@@ -1481,8 +1471,7 @@ def test_tagged_roundtrip_join_one_preserves_predicate():
     tagged = to_tagged(joined)
     reconstructed = from_tagged(tagged)
     result = (
-        reconstructed
-        .group_by("carriers_jo.nickname")
+        reconstructed.group_by("carriers_jo.nickname")
         .aggregate("flights_jo.flight_count")
         .order_by("carriers_jo.nickname")
         .execute()
@@ -1499,7 +1488,6 @@ def test_tagged_roundtrip_join_one_preserves_predicate():
     assert list(baseline["flights_jo.flight_count"]) == list(result["flights_jo.flight_count"])
 
 
-
 def test_tagged_roundtrip_join_one_left_join():
     """join_one with left join preserves NULLs for non-matching rows."""
     import pandas as pd
@@ -1508,14 +1496,18 @@ def test_tagged_roundtrip_join_one_left_join():
     from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
-    orders = pd.DataFrame({
-        "order_id": [1, 2, 3, 4],
-        "product_id": [10, 20, 30, 99],  # 99 has no matching product
-    })
-    products = pd.DataFrame({
-        "pid": [10, 20, 30],
-        "name": ["Widget", "Gadget", "Gizmo"],
-    })
+    orders = pd.DataFrame(
+        {
+            "order_id": [1, 2, 3, 4],
+            "product_id": [10, 20, 30, 99],  # 99 has no matching product
+        }
+    )
+    products = pd.DataFrame(
+        {
+            "pid": [10, 20, 30],
+            "name": ["Widget", "Gadget", "Gizmo"],
+        }
+    )
     o_tbl = con.create_table("orders_lj", orders)
     p_tbl = con.create_table("products_lj", products)
 
@@ -1529,12 +1521,9 @@ def test_tagged_roundtrip_join_one_left_join():
             order_count=Measure(expr=lambda t: t.count(), description="Count"),
         )
     )
-    products_st = (
-        to_semantic_table(p_tbl, name="products_lj")
-        .with_dimensions(
-            pid=Dimension(expr=lambda t: t.pid, description="Product ID"),
-            name=Dimension(expr=lambda t: t.name, description="Name"),
-        )
+    products_st = to_semantic_table(p_tbl, name="products_lj").with_dimensions(
+        pid=Dimension(expr=lambda t: t.pid, description="Product ID"),
+        name=Dimension(expr=lambda t: t.name, description="Name"),
     )
 
     joined = orders_st.join_one(products_st, on=lambda o, p: o.product_id == p.pid, how="left")
@@ -1543,8 +1532,7 @@ def test_tagged_roundtrip_join_one_left_join():
     reconstructed = from_tagged(tagged)
 
     result = (
-        reconstructed
-        .group_by("products_lj.name")
+        reconstructed.group_by("products_lj.name")
         .aggregate("orders_lj.order_count")
         .order_by("products_lj.name")
         .execute()
@@ -1569,15 +1557,19 @@ def test_tagged_roundtrip_join_many_without_with_dimensions():
     from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
-    employees = pd.DataFrame({
-        "emp_id": [1, 2, 3],
-        "dept_id": [10, 10, 20],
-        "salary": [50000, 60000, 70000],
-    })
-    departments = pd.DataFrame({
-        "dept_id": [10, 20],
-        "dept_name": ["Engineering", "Sales"],
-    })
+    employees = pd.DataFrame(
+        {
+            "emp_id": [1, 2, 3],
+            "dept_id": [10, 10, 20],
+            "salary": [50000, 60000, 70000],
+        }
+    )
+    departments = pd.DataFrame(
+        {
+            "dept_id": [10, 20],
+            "dept_name": ["Engineering", "Sales"],
+        }
+    )
     e_tbl = con.create_table("employees_jm", employees)
     d_tbl = con.create_table("departments_jm", departments)
 
@@ -1589,12 +1581,9 @@ def test_tagged_roundtrip_join_many_without_with_dimensions():
             total_salary=lambda t: t.salary.sum(),
         )
     )
-    dept_st = (
-        to_semantic_table(d_tbl, "departments_jm")
-        .with_dimensions(
-            dept_id=lambda t: t.dept_id,
-            dept_name=lambda t: t.dept_name,
-        )
+    dept_st = to_semantic_table(d_tbl, "departments_jm").with_dimensions(
+        dept_id=lambda t: t.dept_id,
+        dept_name=lambda t: t.dept_name,
     )
 
     # join_many without .with_dimensions() → top-level SemanticJoinOp
@@ -1604,8 +1593,7 @@ def test_tagged_roundtrip_join_many_without_with_dimensions():
     reconstructed = from_tagged(tagged)
 
     df = (
-        reconstructed
-        .group_by("departments_jm.dept_name")
+        reconstructed.group_by("departments_jm.dept_name")
         .aggregate("employees_jm.headcount", "employees_jm.total_salary")
         .order_by("departments_jm.dept_name")
         .execute()
@@ -1613,12 +1601,13 @@ def test_tagged_roundtrip_join_many_without_with_dimensions():
 
     assert len(df) == 2
     got_hc = dict(zip(df["departments_jm.dept_name"], df["employees_jm.headcount"], strict=False))
-    got_sal = dict(zip(df["departments_jm.dept_name"], df["employees_jm.total_salary"], strict=False))
+    got_sal = dict(
+        zip(df["departments_jm.dept_name"], df["employees_jm.total_salary"], strict=False)
+    )
     assert got_hc["Engineering"] == 2
     assert got_hc["Sales"] == 1
     assert got_sal["Engineering"] == 110000
     assert got_sal["Sales"] == 70000
-
 
 
 def test_tagged_roundtrip_join_derived_dimension_on_root():
@@ -1640,7 +1629,13 @@ def test_tagged_roundtrip_join_derived_dimension_on_root():
         {
             "origin": ["SEA", "SEA", "LAX", "LAX", "ORD"],
             "dep_time": pd.to_datetime(
-                ["2024-01-01 08:00", "2024-01-01 14:00", "2024-01-01 08:00", "2024-01-01 20:00", "2024-01-01 14:00"]
+                [
+                    "2024-01-01 08:00",
+                    "2024-01-01 14:00",
+                    "2024-01-01 08:00",
+                    "2024-01-01 20:00",
+                    "2024-01-01 14:00",
+                ]
             ),
             "carrier": ["AA", "UA", "AA", "DL", "UA"],
         }
@@ -1679,8 +1674,7 @@ def test_tagged_roundtrip_join_derived_dimension_on_root():
 
     # Baseline: group by the derived dimension before round-trip
     baseline = (
-        joined
-        .group_by("flights_dd.dep_hour")
+        joined.group_by("flights_dd.dep_hour")
         .aggregate("flights_dd.flight_count")
         .order_by("flights_dd.dep_hour")
         .execute()
@@ -1691,8 +1685,7 @@ def test_tagged_roundtrip_join_derived_dimension_on_root():
     reconstructed = from_tagged(tagged)
 
     result = (
-        reconstructed
-        .group_by("flights_dd.dep_hour")
+        reconstructed.group_by("flights_dd.dep_hour")
         .aggregate("flights_dd.flight_count")
         .order_by("flights_dd.dep_hour")
         .execute()
@@ -1701,7 +1694,6 @@ def test_tagged_roundtrip_join_derived_dimension_on_root():
     assert len(result) == len(baseline)
     assert list(result["flights_dd.dep_hour"]) == list(baseline["flights_dd.dep_hour"])
     assert list(result["flights_dd.flight_count"]) == list(baseline["flights_dd.flight_count"])
-
 
 
 @pytest.mark.parametrize(
@@ -1733,24 +1725,32 @@ def test_tagged_roundtrip_join_chain_shared_column_names(n_joins):
 
     con = ibis.duckdb.connect(":memory:")
 
-    flights_df = pd.DataFrame({
-        "carrier": ["AA", "UA", "AA", "DL", "UA"],
-        "origin": ["SEA", "LAX", "ORD", "SEA", "LAX"],
-        "destination": ["LAX", "ORD", "SEA", "ORD", "SEA"],
-        "tail_num": ["N101", "N102", "N103", "N101", "N102"],
-    })
-    carriers_df = pd.DataFrame({
-        "code": ["AA", "UA", "DL"],
-        "nickname": ["American", "United", "Delta"],
-    })
-    airports_df = pd.DataFrame({
-        "code": ["SEA", "LAX", "ORD"],
-        "city": ["Seattle", "Los Angeles", "Chicago"],
-    })
-    aircraft_df = pd.DataFrame({
-        "tail_num": ["N101", "N102", "N103"],
-        "year_built": [2010, 2015, 2020],
-    })
+    flights_df = pd.DataFrame(
+        {
+            "carrier": ["AA", "UA", "AA", "DL", "UA"],
+            "origin": ["SEA", "LAX", "ORD", "SEA", "LAX"],
+            "destination": ["LAX", "ORD", "SEA", "ORD", "SEA"],
+            "tail_num": ["N101", "N102", "N103", "N101", "N102"],
+        }
+    )
+    carriers_df = pd.DataFrame(
+        {
+            "code": ["AA", "UA", "DL"],
+            "nickname": ["American", "United", "Delta"],
+        }
+    )
+    airports_df = pd.DataFrame(
+        {
+            "code": ["SEA", "LAX", "ORD"],
+            "city": ["Seattle", "Los Angeles", "Chicago"],
+        }
+    )
+    aircraft_df = pd.DataFrame(
+        {
+            "tail_num": ["N101", "N102", "N103"],
+            "year_built": [2010, 2015, 2020],
+        }
+    )
 
     f_tbl = from_ibis(con.create_table(f"fl_{n_joins}", flights_df))
     c_tbl = from_ibis(con.create_table(f"ca_{n_joins}", carriers_df))
@@ -1798,8 +1798,7 @@ def test_tagged_roundtrip_join_chain_shared_column_names(n_joins):
 
     # In-process baseline
     baseline = (
-        joined
-        .group_by("carriers.nickname")
+        joined.group_by("carriers.nickname")
         .aggregate("flights.flight_count")
         .order_by("carriers.nickname")
         .execute()
@@ -1809,8 +1808,7 @@ def test_tagged_roundtrip_join_chain_shared_column_names(n_joins):
     tagged = to_tagged(joined)
     reconstructed = from_tagged(tagged)
     result = (
-        reconstructed
-        .group_by("carriers.nickname")
+        reconstructed.group_by("carriers.nickname")
         .aggregate("flights.flight_count")
         .order_by("carriers.nickname")
         .execute()

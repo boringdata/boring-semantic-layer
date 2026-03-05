@@ -52,17 +52,56 @@ _JOIN_REMOVED_MESSAGE = (
 )
 
 _BLOCKED_IBIS_METHODS = [
-    'alias', 'anti_join', 'any_inner_join', 'any_left_join',
-    'as_scalar', 'asof_join', 'bind', 'cache', 'cast',
-    'count', 'cross_join', 'describe', 'difference', 'distinct',
-    'drop', 'drop_null', 'dropna', 'equals', 'fill_null', 'fillna',
-    'get_backend', 'head', 'info', 'inner_join', 'intersect',
-    'left_join', 'nunique', 'outer_join', 'pivot_longer', 'pivot_wider',
-    'preview', 'projection', 'relocate', 'rename', 'right_join',
-    'rowid', 'sample', 'semi_join',
-    'to_array', 'to_delta', 'to_torch',
-    'topk', 'try_cast', 'unbind', 'union', 'unpack', 'value_counts',
-    'view', 'visualize', 'window_by',
+    "alias",
+    "anti_join",
+    "any_inner_join",
+    "any_left_join",
+    "as_scalar",
+    "asof_join",
+    "bind",
+    "cache",
+    "cast",
+    "count",
+    "cross_join",
+    "describe",
+    "difference",
+    "distinct",
+    "drop",
+    "drop_null",
+    "dropna",
+    "equals",
+    "fill_null",
+    "fillna",
+    "get_backend",
+    "head",
+    "info",
+    "inner_join",
+    "intersect",
+    "left_join",
+    "nunique",
+    "outer_join",
+    "pivot_longer",
+    "pivot_wider",
+    "preview",
+    "projection",
+    "relocate",
+    "rename",
+    "right_join",
+    "rowid",
+    "sample",
+    "semi_join",
+    "to_array",
+    "to_delta",
+    "to_torch",
+    "topk",
+    "try_cast",
+    "unbind",
+    "union",
+    "unpack",
+    "value_counts",
+    "view",
+    "visualize",
+    "window_by",
 ]
 
 
@@ -264,6 +303,7 @@ def _make_blocked_method(name):
             f"'{type(self).__name__}' does not support '{name}()'. "
             f"Call .to_untagged().{name}() to use ibis operations directly."
         )
+
     method.__name__ = name
     method.__qualname__ = f"SemanticTable.{name}"
     return method
@@ -516,7 +556,9 @@ class SemanticModel(SemanticTable):
             >>> table_a.join_cross(table_b)  # Cartesian product of all rows
         """
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(left=self.op(), right=other_op, on=None, how="cross", cardinality="cross")
+        return SemanticJoin(
+            left=self.op(), right=other_op, on=None, how="cross", cardinality="cross"
+        )
 
     def join(self, *args, **kwargs):
         """Deprecated: Use join_one() or join_many() instead.

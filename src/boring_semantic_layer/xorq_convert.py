@@ -89,9 +89,7 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
                         case Success():
                             entry["expr_struct"] = struct_result.unwrap()
                         case _:
-                            raise ValueError(
-                                f"Dimension '{name}': failed to serialize expression"
-                            )
+                            raise ValueError(f"Dimension '{name}': failed to serialize expression")
             dim_metadata[name] = entry
         return dim_metadata
 
@@ -119,9 +117,7 @@ def serialize_measures(measures: Mapping[str, Any]) -> Result[dict, Exception]:
                 case Success():
                     entry["expr_struct"] = struct_result.unwrap()
                 case _:
-                    raise ValueError(
-                        f"Measure '{name}': failed to serialize expression"
-                    )
+                    raise ValueError(f"Measure '{name}': failed to serialize expression")
             meas_metadata[name] = entry
         return meas_metadata
 
@@ -147,7 +143,12 @@ def serialize_calc_measures(calc_measures: Mapping[str, Any]) -> Result[dict, Ex
                     tuple(expr.kwargs),
                 )
             if isinstance(expr, BinOp):
-                return ("calc_binop", expr.op, _serialize_calc_expr(expr.left), _serialize_calc_expr(expr.right))
+                return (
+                    "calc_binop",
+                    expr.op,
+                    _serialize_calc_expr(expr.left),
+                    _serialize_calc_expr(expr.right),
+                )
             if isinstance(expr, int | float):
                 return ("num", expr)
             return None
@@ -364,9 +365,7 @@ def _extract_mutate(op) -> dict[str, Any]:
     if not op.post:
         return {}
     return {
-        "post_struct": {
-            name: expr_to_structured(fn).value_or(None) for name, fn in op.post.items()
-        }
+        "post_struct": {name: expr_to_structured(fn).value_or(None) for name, fn in op.post.items()}
     }
 
 
@@ -560,8 +559,7 @@ def _parse_structured_dict(raw) -> dict:
         case dict():
             return raw
         case tuple() if raw and all(
-            isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str)
-            for item in raw
+            isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str) for item in raw
         ):
             return {k: v for k, v in raw}
         case _:
@@ -685,7 +683,9 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
             len(read_ops) + len(in_memory_tables) + (len(db_tables) if not read_ops else 0)
         )
         if total_leaf_tables > 1:
-            expr = unwrapped_expr.to_expr() if hasattr(unwrapped_expr, "to_expr") else unwrapped_expr
+            expr = (
+                unwrapped_expr.to_expr() if hasattr(unwrapped_expr, "to_expr") else unwrapped_expr
+            )
             return from_ibis(expr) if not hasattr(expr.op(), "source") else expr
 
         if read_ops:
@@ -776,7 +776,9 @@ def _reconstruct_mutate(metadata: dict, xorq_expr, source):
         }
         return source.mutate(**exprs)
     elif post_pickle:
-        return source.mutate(**{name: _unpickle_callable(data) for name, data in post_pickle.items()})
+        return source.mutate(
+            **{name: _unpickle_callable(data) for name, data in post_pickle.items()}
+        )
     else:
         return source
 
@@ -851,6 +853,28 @@ def _unwrap_join_ref(expr):
     return expr
 
 
+def _rebind_to_backend(expr, target_backend):
+    """Rebind all DatabaseTable ops in *expr* to use *target_backend*.
+
+    When tables are individually wrapped via ``from_ibis()``, each
+    acquires a distinct ``Backend`` object.  xorq >=0.3.11 raises
+    ``Multiple backends found`` if a join combines tables from different
+    backend instances.  This helper normalises all ``DatabaseTable``
+    sources so that ``_find_backend`` sees exactly one backend.
+    """
+    from xorq.common.utils.graph_utils import replace_nodes
+    from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+
+    def replacer(op, _kwargs):
+        if isinstance(op, xorq_rel.DatabaseTable) and op.source is not target_backend:
+            kwargs = dict(zip(op.__argnames__, op.__args__, strict=False))
+            kwargs["source"] = target_backend
+            return op.__recreate__(kwargs)
+        return op
+
+    return replace_nodes(replacer, expr).to_expr()
+
+
 def _split_join_expr(xorq_expr):
     """Extract left and right table expressions from a joined xorq expression.
 
@@ -909,6 +933,9 @@ def _deserialize_join_predicate(struct_data, pickle_data) -> Callable:
 
 @_register_reconstructor("SemanticJoinOp")
 def _reconstruct_join(metadata: dict, xorq_expr, source):
+    from xorq.common.utils.graph_utils import walk_nodes
+    from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+
     from . import expr as bsl_expr
 
     left_metadata = _parse_field(metadata, "left")
@@ -918,6 +945,15 @@ def _reconstruct_join(metadata: dict, xorq_expr, source):
         raise ValueError("SemanticJoinOp requires both 'left' and 'right' metadata")
 
     left_xorq_expr, right_xorq_expr = _split_join_expr(xorq_expr)
+
+    # Rebind all DatabaseTable ops to a single backend to prevent
+    # "Multiple backends found" in xorq >=0.3.11 when tables were
+    # individually wrapped via from_ibis().
+    db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), xorq_expr))
+    if db_tables:
+        canonical_backend = db_tables[0].source
+        left_xorq_expr = _rebind_to_backend(left_xorq_expr, canonical_backend)
+        right_xorq_expr = _rebind_to_backend(right_xorq_expr, canonical_backend)
 
     left_model = _reconstruct_bsl_operation(left_metadata, left_xorq_expr)
     right_model = _reconstruct_bsl_operation(right_metadata, right_xorq_expr)
