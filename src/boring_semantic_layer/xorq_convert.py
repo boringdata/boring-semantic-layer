@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from attrs import frozen
-from returns.result import Failure, Result, safe
+from returns.result import Failure, Result, Success, safe
 from xorq.ibis_yaml.common import deserialize_callable
 
 
@@ -66,12 +66,10 @@ def _extract_simple_column_name(expr) -> str | None:
 
 
 def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exception]:
+    from .utils import expr_to_structured
+
     @safe
     def do_serialize():
-        from returns.result import Success
-
-        from .utils import expr_to_structured
-
         dim_metadata = {}
         for name, dim in dimensions.items():
             entry = {
@@ -91,9 +89,7 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
                         case Success():
                             entry["expr_struct"] = struct_result.unwrap()
                         case _:
-                            raise ValueError(
-                                f"Dimension '{name}': failed to serialize expression"
-                            )
+                            raise ValueError(f"Dimension '{name}': failed to serialize expression")
             dim_metadata[name] = entry
         return dim_metadata
 
@@ -101,12 +97,10 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
 
 
 def serialize_measures(measures: Mapping[str, Any]) -> Result[dict, Exception]:
+    from .utils import expr_to_structured
+
     @safe
     def do_serialize():
-        from returns.result import Success
-
-        from .utils import expr_to_structured
-
         meas_metadata = {}
         for name, meas in measures.items():
             entry = {
@@ -123,9 +117,7 @@ def serialize_measures(measures: Mapping[str, Any]) -> Result[dict, Exception]:
                 case Success():
                     entry["expr_struct"] = struct_result.unwrap()
                 case _:
-                    raise ValueError(
-                        f"Measure '{name}': failed to serialize expression"
-                    )
+                    raise ValueError(f"Measure '{name}': failed to serialize expression")
             meas_metadata[name] = entry
         return meas_metadata
 
@@ -151,7 +143,12 @@ def serialize_calc_measures(calc_measures: Mapping[str, Any]) -> Result[dict, Ex
                     tuple(expr.kwargs),
                 )
             if isinstance(expr, BinOp):
-                return ("calc_binop", expr.op, _serialize_calc_expr(expr.left), _serialize_calc_expr(expr.right))
+                return (
+                    "calc_binop",
+                    expr.op,
+                    _serialize_calc_expr(expr.left),
+                    _serialize_calc_expr(expr.right),
+                )
             if isinstance(expr, int | float):
                 return ("num", expr)
             return None
@@ -332,8 +329,6 @@ def _extract_semantic_table(op) -> dict[str, Any]:
 
 @_register_extractor("SemanticFilterOp")
 def _extract_filter(op) -> dict[str, Any]:
-    from returns.result import Success
-
     from .utils import expr_to_structured
 
     struct_result = expr_to_structured(op.predicate)
@@ -370,9 +365,7 @@ def _extract_mutate(op) -> dict[str, Any]:
     if not op.post:
         return {}
     return {
-        "post_struct": {
-            name: expr_to_structured(fn).value_or(None) for name, fn in op.post.items()
-        }
+        "post_struct": {name: expr_to_structured(fn).value_or(None) for name, fn in op.post.items()}
     }
 
 
@@ -401,8 +394,6 @@ def _extract_order_by(op) -> dict[str, Any]:
 
 @_register_extractor("SemanticJoinOp")
 def _extract_join(op) -> dict[str, Any]:
-    from returns.result import Success
-
     from .utils import join_predicate_to_structured
 
     metadata = {"how": op.how}
@@ -535,6 +526,29 @@ def _list_to_tuple(obj):
     return obj
 
 
+def _deserialize_structured_or_pickle(
+    struct_data,
+    pickle_data,
+    context: str,
+) -> Any:
+    """Try structured deserialization, fall back to pickle, or raise.
+
+    Consolidates the repeated ``match (struct, pickle)`` pattern used by
+    multiple reconstructors.
+    """
+    from .utils import structured_to_expr
+
+    if isinstance(struct_data, (tuple, list)):
+        data = _list_to_tuple(struct_data) if isinstance(struct_data, list) else struct_data
+        result = structured_to_expr(data).value_or(None)
+        if result is None:
+            raise ValueError(f"{context}: failed to deserialize struct")
+        return result
+    if isinstance(pickle_data, str):
+        return _unpickle_callable(pickle_data)  # backward compat
+    raise ValueError(f"{context}: no struct or pickle data")
+
+
 def _parse_structured_dict(raw) -> dict:
     """Convert a FrozenOrderedDict-encoded tuple-of-pairs to a dict (one level only).
 
@@ -545,8 +559,7 @@ def _parse_structured_dict(raw) -> dict:
         case dict():
             return raw
         case tuple() if raw and all(
-            isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str)
-            for item in raw
+            isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str) for item in raw
         ):
             return {k: v for k, v in raw}
         case _:
@@ -605,24 +618,17 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
     from . import ops
 
     def _create_dimension(name: str, dim_data: dict) -> ops.Dimension:
-        from .utils import structured_to_expr
-
         expr_col = dim_data.get("expr")
         expr_struct = dim_data.get("expr_struct")
         expr_pickle = dim_data.get("expr_pickle")
-        match (expr_col, expr_struct, expr_pickle):
-            case (str(), _, _):
-                expr = lambda t, c=expr_col: t[c]  # noqa: E731
-            case (_, tuple() | list(), _):
-                data = _list_to_tuple(expr_struct) if isinstance(expr_struct, list) else expr_struct
-                result = structured_to_expr(data)
-                expr = result.value_or(None)
-                if expr is None:
-                    raise ValueError(f"Dimension '{name}': failed to deserialize expr_struct")
-            case (_, _, str()):
-                expr = _unpickle_callable(expr_pickle)  # backward compat
-            case _:
-                expr = lambda t, n=name: t[n]  # noqa: E731
+        if isinstance(expr_col, str):
+            expr = lambda t, c=expr_col: t[c]  # noqa: E731
+        elif expr_struct is not None or expr_pickle is not None:
+            expr = _deserialize_structured_or_pickle(
+                expr_struct, expr_pickle, f"Dimension '{name}'"
+            )
+        else:
+            expr = lambda t, n=name: t[n]  # noqa: E731
         return ops.Dimension(
             expr=expr,
             description=dim_data.get("description"),
@@ -633,19 +639,11 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
         )
 
     def _create_measure(name: str, meas_data: dict) -> ops.Measure:
-        from .utils import structured_to_expr
-
-        expr_struct = meas_data.get("expr_struct")
-        expr_pickle = meas_data.get("expr_pickle")
-        if expr_struct is not None:
-            result = structured_to_expr(_list_to_tuple(expr_struct))
-            expr = result.value_or(None)
-            if expr is None:
-                raise ValueError(f"Measure '{name}': failed to deserialize expr_struct")
-        elif expr_pickle:
-            expr = _unpickle_callable(expr_pickle)
-        else:
-            raise ValueError(f"Measure '{name}' has no expr_struct or expr_pickle")
+        expr = _deserialize_structured_or_pickle(
+            meas_data.get("expr_struct"),
+            meas_data.get("expr_pickle"),
+            f"Measure '{name}'",
+        )
         return ops.Measure(
             expr=expr,
             description=meas_data.get("description"),
@@ -655,25 +653,11 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
     def _unwrap_cached_nodes(expr):
         """Unwrap Tag and CachedNode wrappers to get to the underlying expression.
 
-        When aggregate_cache_storage is used, the expression is wrapped as:
-        Tag(parent=CachedNode(parent=...))
-
         RemoteTable is NOT unwrapped — it is the backend consolidation layer
         that into_backend places on each leaf table.  Stripping it exposes
         inner Read ops on separate backends → "Multiple backends found".
         """
-        from xorq.expr.relations import CachedNode, Tag
-
-        op = expr.op()
-
-        if isinstance(op, Tag):
-            expr = op.parent.to_expr() if hasattr(op.parent, "to_expr") else op.parent
-            op = expr.op()
-
-        if isinstance(op, CachedNode):
-            expr = op.parent
-
-        return expr
+        return _unwrap_xorq_wrappers(expr, strip_remote=False)
 
     def _reconstruct_table():
         from xorq.common.utils.graph_utils import walk_nodes
@@ -684,28 +668,47 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
 
         unwrapped_expr = _unwrap_cached_nodes(xorq_expr)
 
+        # Detect SelfReference (from .view()) — must be preserved so that
+        # self-joins on the same underlying table get distinct ibis identities.
+        is_self_ref = isinstance(unwrapped_expr.op(), xorq_rel.SelfReference)
+
         read_ops = list(walk_nodes((Read,), unwrapped_expr))
         in_memory_tables = list(walk_nodes((xorq_rel.InMemoryTable,), unwrapped_expr))
         db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), unwrapped_expr))
 
-        total_leaf_tables = len(read_ops) + len(in_memory_tables) + len(db_tables)
+        # A Read op internally contains a DatabaseTable, so exclude db_tables
+        # when Read ops exist to avoid double-counting a single
+        # deferred_read_parquet as two leaf tables.
+        total_leaf_tables = (
+            len(read_ops) + len(in_memory_tables) + (len(db_tables) if not read_ops else 0)
+        )
         if total_leaf_tables > 1:
-            expr = unwrapped_expr.to_expr() if hasattr(unwrapped_expr, "to_expr") else unwrapped_expr
+            expr = (
+                unwrapped_expr.to_expr() if hasattr(unwrapped_expr, "to_expr") else unwrapped_expr
+            )
             return from_ibis(expr) if not hasattr(expr.op(), "source") else expr
 
         if read_ops:
-            return read_ops[0].to_expr()
+            base = read_ops[0].to_expr()
+            # Wrap in .view() to give this table a unique identity when
+            # the original source was a SelfReference (e.g. airports_tbl.view()).
+            # Without this, two SemanticTableOps sharing the same underlying
+            # Read op collapse to the same ibis relation, causing
+            # "Ambiguous field reference" in multi-way joins.
+            return base.view() if is_self_ref else base
 
         if in_memory_tables:
             proxy = in_memory_tables[0].args[2]
             return from_ibis(ibis.memtable(proxy.to_frame()))
 
         if db_tables:
-            db_table = db_tables[0]
-            table_name, xorq_backend = db_table.args[0], db_table.args[2]
-            backend_class = getattr(ibis, xorq_backend.name)
-            backend = backend_class.from_connection(xorq_backend.con)
-            return from_ibis(backend.table(table_name))
+            # Return the DatabaseTable expression directly — it already
+            # carries the correct backend reference.  Reconstructing via
+            # from_ibis(backend.table(...)) creates new backend wrappers,
+            # causing "Multiple backends found" when both sides of a
+            # split join are recombined.
+            base = db_tables[0].to_expr()
+            return base.view() if is_self_ref else base
 
         return xorq_expr.to_expr()
 
@@ -728,24 +731,14 @@ def _reconstruct_semantic_table(metadata: dict, xorq_expr, source):
 
 @_register_reconstructor("SemanticFilterOp")
 def _reconstruct_filter(metadata: dict, xorq_expr, source):
-    from .utils import structured_to_expr
-
     if source is None:
         raise ValueError("SemanticFilterOp requires source")
-
-    predicate_struct = metadata.get("predicate_struct")
-    predicate_pickle = metadata.get("predicate_pickle")
-    match (predicate_struct, predicate_pickle):
-        case (tuple() | list(), _):
-            data = _list_to_tuple(predicate_struct) if isinstance(predicate_struct, list) else predicate_struct
-            expr = structured_to_expr(data).value_or(None)
-            if expr is None:
-                raise ValueError("SemanticFilterOp: failed to deserialize predicate_struct")
-            return source.filter(expr)
-        case (_, str()):
-            return source.filter(_unpickle_callable(predicate_pickle))  # backward compat
-        case _:
-            raise ValueError("SemanticFilterOp has no predicate_struct or predicate_pickle")
+    predicate = _deserialize_structured_or_pickle(
+        metadata.get("predicate_struct"),
+        metadata.get("predicate_pickle"),
+        "SemanticFilterOp",
+    )
+    return source.filter(predicate)
 
 
 @_register_reconstructor("SemanticGroupByOp")
@@ -770,8 +763,6 @@ def _reconstruct_aggregate(metadata: dict, xorq_expr, source):
 
 @_register_reconstructor("SemanticMutateOp")
 def _reconstruct_mutate(metadata: dict, xorq_expr, source):
-    from .utils import structured_to_expr
-
     if source is None:
         raise ValueError("SemanticMutateOp requires source")
 
@@ -780,17 +771,14 @@ def _reconstruct_mutate(metadata: dict, xorq_expr, source):
 
     if post_struct:
         exprs = {
-            name: structured_to_expr(
-                _list_to_tuple(data) if isinstance(data, list) else data
-            ).value_or(None)
+            name: _deserialize_structured_or_pickle(data, None, f"Mutate({name})")
             for name, data in post_struct.items()
         }
-        if any(v is None for v in exprs.values()):
-            failed = [n for n, v in exprs.items() if v is None]
-            raise ValueError(f"Mutate: failed to deserialize post_struct for {failed}")
         return source.mutate(**exprs)
     elif post_pickle:
-        return source.mutate(**{name: _unpickle_callable(data) for name, data in post_pickle.items()})
+        return source.mutate(
+            **{name: _unpickle_callable(data) for name, data in post_pickle.items()}
+        )
     else:
         return source
 
@@ -805,8 +793,6 @@ def _reconstruct_project(metadata: dict, xorq_expr, source):
 
 @_register_reconstructor("SemanticOrderByOp")
 def _reconstruct_order_by(metadata: dict, xorq_expr, source):
-    from .utils import structured_to_expr
-
     if source is None:
         raise ValueError("SemanticOrderByOp requires source")
 
@@ -815,19 +801,11 @@ def _reconstruct_order_by(metadata: dict, xorq_expr, source):
             case "string":
                 return key_meta["value"]
             case "callable":
-                value_struct = key_meta.get("value_struct")
-                value_pickle = key_meta.get("value_pickle")
-                match (value_struct, value_pickle):
-                    case (tuple() | list(), _):
-                        data = _list_to_tuple(value_struct) if isinstance(value_struct, list) else value_struct
-                        result = structured_to_expr(data).value_or(None)
-                        if result is None:
-                            raise ValueError("Order-by: failed to deserialize value_struct")
-                        return result
-                    case (_, str()):
-                        return _unpickle_callable(value_pickle)  # backward compat
-                    case _:
-                        raise ValueError("Order-by callable key has no value_struct or value_pickle")
+                return _deserialize_structured_or_pickle(
+                    key_meta.get("value_struct"),
+                    key_meta.get("value_pickle"),
+                    "Order-by callable key",
+                )
             case _:
                 raise ValueError(f"Unknown order-by key type: {key_meta.get('type')}")
 
@@ -845,6 +823,27 @@ def _reconstruct_limit(metadata: dict, xorq_expr, source):
     return source.limit(n=int(metadata.get("n", 0)), offset=int(metadata.get("offset", 0)))
 
 
+def _unwrap_xorq_wrappers(expr, *, strip_remote: bool = False):
+    """Walk past Tag, CachedNode, and optionally RemoteTable wrappers.
+
+    Used by both ``_reconstruct_table`` (strip_remote=False) and
+    ``_split_join_expr`` (strip_remote=True) to reach the underlying
+    relational expression.
+    """
+    from xorq.expr.relations import CachedNode, RemoteTable, Tag
+
+    op = expr.op()
+    if isinstance(op, Tag):
+        expr = op.parent.to_expr() if hasattr(op.parent, "to_expr") else op.parent
+        op = expr.op()
+    if isinstance(op, CachedNode):
+        expr = op.parent
+        op = expr.op()
+    if strip_remote and isinstance(op, RemoteTable):
+        expr = op.args[3]
+    return expr
+
+
 def _unwrap_join_ref(expr):
     """If expr is a JoinReference, return the underlying table."""
     from xorq.vendor.ibis.expr.operations.relations import JoinReference
@@ -854,26 +853,48 @@ def _unwrap_join_ref(expr):
     return expr
 
 
+def _rebind_to_backend(expr, target_backend):
+    """Rebind all DatabaseTable ops in *expr* to use *target_backend*.
+
+    When tables are individually wrapped via ``from_ibis()``, each
+    acquires a distinct ``Backend`` object.  xorq >=0.3.11 raises
+    ``Multiple backends found`` if a join combines tables from different
+    backend instances.  This helper normalises all ``DatabaseTable``
+    sources so that ``_find_backend`` sees exactly one backend.
+    """
+    from xorq.common.utils.graph_utils import replace_nodes
+    from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+
+    def replacer(op, _kwargs):
+        if isinstance(op, xorq_rel.DatabaseTable) and op.source is not target_backend:
+            kwargs = dict(zip(op.__argnames__, op.__args__, strict=False))
+            kwargs["source"] = target_backend
+            return op.__recreate__(kwargs)
+        return op
+
+    return replace_nodes(replacer, expr).to_expr()
+
+
 def _split_join_expr(xorq_expr):
     """Extract left and right table expressions from a joined xorq expression.
 
     When reconstructing a SemanticJoinOp, the xorq_expr contains the full
     joined expression. Each side needs its own individual table expression
     so _reconstruct_table sees a single leaf table, not the entire join.
+
+    Walks past Tag, CachedNode, RemoteTable wrappers *and* single-input
+    relational operations (Sort, Aggregate, Project, …) to reach the
+    underlying JoinChain.
     """
-    from xorq.expr.relations import CachedNode, RemoteTable, Tag
     from xorq.vendor.ibis.expr.operations.relations import JoinChain
 
-    expr = xorq_expr
+    expr = _unwrap_xorq_wrappers(xorq_expr, strip_remote=True)
     op = expr.op()
-    if isinstance(op, Tag):
+
+    # Walk past single-input relational ops (Sort, Aggregate, Project, …)
+    # to find the underlying JoinChain.
+    while not isinstance(op, JoinChain) and hasattr(op, "parent"):
         expr = op.parent.to_expr() if hasattr(op.parent, "to_expr") else op.parent
-        op = expr.op()
-    if isinstance(op, CachedNode):
-        expr = op.parent
-        op = expr.op()
-    if isinstance(op, RemoteTable):
-        expr = op.args[3]
         op = expr.op()
 
     if not isinstance(op, JoinChain) or not op.rest:
@@ -895,10 +916,27 @@ def _split_join_expr(xorq_expr):
     return left_expr, right_expr
 
 
+def _deserialize_join_predicate(struct_data, pickle_data) -> Callable:
+    """Deserialize a join predicate from struct or pickle data."""
+    from .utils import structured_to_join_predicate
+
+    if isinstance(struct_data, (tuple, list)):
+        data = _list_to_tuple(struct_data) if isinstance(struct_data, list) else struct_data
+        predicate = structured_to_join_predicate(data).value_or(None)
+        if predicate is None:
+            raise ValueError("SemanticJoinOp: failed to deserialize on_struct")
+        return predicate
+    if isinstance(pickle_data, str):
+        return _unpickle_callable(pickle_data)  # backward compat
+    raise ValueError("SemanticJoinOp: no on_struct or on_pickle data")
+
+
 @_register_reconstructor("SemanticJoinOp")
 def _reconstruct_join(metadata: dict, xorq_expr, source):
+    from xorq.common.utils.graph_utils import walk_nodes
+    from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+
     from . import expr as bsl_expr
-    from .utils import structured_to_join_predicate
 
     left_metadata = _parse_field(metadata, "left")
     right_metadata = _parse_field(metadata, "right")
@@ -908,6 +946,15 @@ def _reconstruct_join(metadata: dict, xorq_expr, source):
 
     left_xorq_expr, right_xorq_expr = _split_join_expr(xorq_expr)
 
+    # Rebind all DatabaseTable ops to a single backend to prevent
+    # "Multiple backends found" in xorq >=0.3.11 when tables were
+    # individually wrapped via from_ibis().
+    db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), xorq_expr))
+    if db_tables:
+        canonical_backend = db_tables[0].source
+        left_xorq_expr = _rebind_to_backend(left_xorq_expr, canonical_backend)
+        right_xorq_expr = _rebind_to_backend(right_xorq_expr, canonical_backend)
+
     left_model = _reconstruct_bsl_operation(left_metadata, left_xorq_expr)
     right_model = _reconstruct_bsl_operation(right_metadata, right_xorq_expr)
 
@@ -915,25 +962,16 @@ def _reconstruct_join(metadata: dict, xorq_expr, source):
     on_struct = metadata.get("on_struct")
     on_pickle = metadata.get("on_pickle")
 
-    match (on_struct, on_pickle):
-        case (None, None):
-            return bsl_expr.SemanticJoin(
-                left=left_model.op() if hasattr(left_model, "op") else left_model,
-                right=right_model.op() if hasattr(right_model, "op") else right_model,
-                on=None,
-                how=how,
-            )
-        case (tuple() | list(), _):
-            data = _list_to_tuple(on_struct) if isinstance(on_struct, list) else on_struct
-            predicate = structured_to_join_predicate(data).value_or(None)
-            if predicate is None:
-                raise ValueError("SemanticJoinOp: failed to deserialize on_struct")
-            return left_model.join_many(right_model, on=predicate, how=how)
-        case (_, str()):
-            predicate = _unpickle_callable(on_pickle)  # backward compat
-            return left_model.join_many(right_model, on=predicate, how=how)
-        case _:
-            raise ValueError("SemanticJoinOp has invalid on predicate data")
+    if on_struct is None and on_pickle is None:
+        return bsl_expr.SemanticJoin(
+            left=left_model.op() if hasattr(left_model, "op") else left_model,
+            right=right_model.op() if hasattr(right_model, "op") else right_model,
+            on=None,
+            how=how,
+        )
+
+    predicate = _deserialize_join_predicate(on_struct, on_pickle)
+    return left_model.join_many(right_model, on=predicate, how=how)
 
 
 # ---------------------------------------------------------------------------
