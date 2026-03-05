@@ -4,6 +4,7 @@ import os
 import tempfile
 
 import ibis
+import pandas as pd
 import pytest
 
 from boring_semantic_layer import SemanticTable, from_config, from_yaml
@@ -1262,3 +1263,41 @@ carriers:
 
     finally:
         os.unlink(yaml_path)
+
+
+def test_from_config_with_filter_and_joins():
+    """Regression test for #186: from_config crashes when a model has both
+    a filter and joins because SemanticFilter lacked join methods."""
+    con = ibis.duckdb.connect(":memory:")
+    orders = con.create_table(
+        "orders_186",
+        pd.DataFrame({"oid": [1, 2, 3], "cid": [1, 1, 2], "amount": [10, 20, 30]}),
+    )
+    customers = con.create_table(
+        "custs_186",
+        pd.DataFrame({"cid": [1, 2], "name": ["Alice", "Bob"]}),
+    )
+    config = {
+        "customers": {
+            "table": "custs_186",
+            "dimensions": {"name": {"expr": "_.name"}},
+        },
+        "orders": {
+            "table": "orders_186",
+            "dimensions": {"oid": {"expr": "_.oid"}},
+            "measures": {"total": {"expr": "_.amount.sum()"}},
+            "filter": "_.amount > 5",
+            "joins": {
+                "customers": {
+                    "model": "customers",
+                    "type": "one",
+                    "left_on": "cid",
+                    "right_on": "cid",
+                },
+            },
+        },
+    }
+    models = from_config(config, tables={"orders_186": orders, "custs_186": customers})
+    result = models["orders"].group_by("orders.oid").aggregate("orders.total").execute()
+    assert "orders.oid" in result.columns
+    assert len(result) == 3
