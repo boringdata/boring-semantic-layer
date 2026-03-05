@@ -255,13 +255,19 @@ class SemanticTable(ir.Table):
 
     def execute(self, **kwargs):
         # Accept kwargs for ibis compatibility (params, limit, etc)
-        return to_untagged(self).execute(**kwargs)
+        from .ops import _unify_backends
+
+        return _unify_backends(to_untagged(self)).execute(**kwargs)
 
     def compile(self, **kwargs):
-        return to_untagged(self).compile(**kwargs)
+        from .ops import _unify_backends
+
+        return _unify_backends(to_untagged(self)).compile(**kwargs)
 
     def sql(self, **kwargs):
-        return ibis.to_sql(to_untagged(self), **kwargs)
+        from .ops import _unify_backends
+
+        return ibis.to_sql(_unify_backends(to_untagged(self)), **kwargs)
 
     def to_pandas(self, **kwargs):
         return self.to_untagged().to_pandas(**kwargs)

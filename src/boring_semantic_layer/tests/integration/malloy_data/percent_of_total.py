@@ -1,4 +1,5 @@
 import ibis
+from xorq.vendor import ibis as xibis
 
 from boring_semantic_layer import to_semantic_table
 
@@ -42,18 +43,18 @@ query_3 = (
     .aggregate(flight_count=lambda t: t.count())
     .mutate(
         flights_by_this_carrier=lambda t: t.flight_count.sum().over(
-            ibis.window(group_by="nickname"),
+            xibis.window(group_by="nickname"),
         ),
         flights_to_this_destination=lambda t: t.flight_count.sum().over(
-            ibis.window(group_by="destination"),
+            xibis.window(group_by="destination"),
         ),
         flights_by_this_origin=lambda t: t.flight_count.sum().over(
-            ibis.window(group_by="origin"),
+            xibis.window(group_by="origin"),
         ),
     )
     .mutate(
         flights_on_this_route=lambda t: t.flight_count.sum().over(
-            ibis.window(group_by=["destination", "origin"]),
+            xibis.window(group_by=["destination", "origin"]),
         ),
     )
     .order_by(*BASE_GROUP_BY)
@@ -66,21 +67,21 @@ query_4 = (
     .mutate(
         **{
             "carrier as a percent of all flights": lambda t: (
-                t.flight_count.sum().over(ibis.window(group_by="nickname"))
+                t.flight_count.sum().over(xibis.window(group_by="nickname"))
                 / t.flight_count.sum().over()
             ),
             "destination as a percent of all flights": lambda t: (
-                t.flight_count.sum().over(ibis.window(group_by="destination"))
+                t.flight_count.sum().over(xibis.window(group_by="destination"))
                 / t.flight_count.sum().over()
             ),
             "origin as a percent of all flights": lambda t: (
-                t.flight_count.sum().over(ibis.window(group_by="origin"))
+                t.flight_count.sum().over(xibis.window(group_by="origin"))
                 / t.flight_count.sum().over()
             ),
             "carriers as a percentage of route": lambda t: (
                 t.flight_count
                 / t.flight_count.sum().over(
-                    ibis.window(group_by=["destination", "origin"]),
+                    xibis.window(group_by=["destination", "origin"]),
                 )
             ),
         },

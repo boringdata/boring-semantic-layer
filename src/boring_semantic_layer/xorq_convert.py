@@ -230,11 +230,10 @@ def to_tagged(semantic_expr, aggregate_cache_storage=None):
 
         import re
 
-        from xorq.common.utils.ibis_utils import from_ibis
         from xorq.common.utils.node_utils import replace_nodes
         from xorq.vendor.ibis.expr.operations.relations import DatabaseTable
 
-        xorq_table = from_ibis(ibis_expr)
+        xorq_table = ibis_expr
 
         def replace_read_parquet(node, _kwargs):
             if not isinstance(node, DatabaseTable):

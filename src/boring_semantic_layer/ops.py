@@ -7,7 +7,7 @@ from functools import reduce
 from typing import TYPE_CHECKING, Any
 
 import ibis
-import ibis.selectors as s
+from xorq.vendor.ibis import selectors as s
 from attrs import field, frozen
 from ibis.common.deferred import Deferred
 from ibis.expr import datatypes as dt
@@ -191,6 +191,51 @@ if TYPE_CHECKING:
         SemanticOrderBy,
         SemanticTable,
     )
+
+
+def _ensure_xorq_table(table):
+    """Convert plain ibis Table to xorq-vendored ibis."""
+    from xorq.common.utils.ibis_utils import from_ibis
+
+    if "xorq.vendor.ibis" not in type(table).__module__:
+        return from_ibis(table)
+    return table
+
+
+def _unify_backends(expr):
+    """Ensure all DatabaseTable nodes in *expr* share a single xorq backend.
+
+    ``from_ibis()`` creates a distinct Backend per call, so expressions
+    built by composing separately-converted tables contain multiple
+    backends.  This function rewrites the tree so every DatabaseTable
+    points at the same canonical backend, eliminating "Multiple backends
+    found" errors at execution time.
+    """
+    from xorq.common.utils.node_utils import walk_nodes
+    from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+
+    db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), expr))
+    canonical = db_tables[0].source if db_tables else None
+
+    if canonical is None:
+        return expr
+
+    # 2. Replace divergent backends.
+    def _recreate(op, _kwargs, **overrides):
+        kwargs = dict(zip(op.__argnames__, op.__args__, strict=False))
+        if _kwargs:
+            kwargs.update(_kwargs)
+        kwargs.update(overrides)
+        return op.__recreate__(kwargs)
+
+    def replacer(op, _kwargs):
+        if isinstance(op, xorq_rel.DatabaseTable) and op.source is not canonical:
+            return _recreate(op, _kwargs, source=canonical)
+        if _kwargs:
+            return _recreate(op, _kwargs)
+        return op
+
+    return expr.op().replace(replacer).to_expr()
 
 
 def _to_untagged(source: Any) -> ir.Table:
@@ -1011,7 +1056,7 @@ class SemanticTableOp(Relation):
         return object.__getattribute__(self, name)
 
     def to_untagged(self):
-        return self.table
+        return _ensure_xorq_table(self.table)
 
 
 class SemanticFilterOp(Relation):
@@ -1714,9 +1759,7 @@ class SemanticAggregateOp(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        from xorq.common.utils.ibis_utils import from_ibis
-
-        tbl = from_ibis(self.to_untagged())
+        tbl = self.to_untagged()
         return FrozenOrderedDict({col: tbl[col].op() for col in tbl.columns})
 
     @property
@@ -2413,19 +2456,6 @@ class SemanticMutateOp(Relation):
         for name, fn_wrapped in self.post.items():
             proxy = MeasureScope(_tbl=current_tbl, _known=[], _post_agg=True)
             resolved = _resolve_expr(_unwrap(fn_wrapped), proxy)
-
-            # If resolved expression is from regular ibis but table is xorq, convert it
-            if hasattr(resolved, "__class__") and hasattr(current_tbl, "__class__"):
-                resolved_module = resolved.__class__.__module__
-                table_module = current_tbl.__class__.__module__
-                if (
-                    "ibis.expr" in resolved_module
-                    and "xorq" not in resolved_module
-                    and "xorq.vendor.ibis" in table_module
-                ):
-                    from xorq.common.utils.ibis_utils import from_ibis
-
-                    resolved = from_ibis(resolved)
 
             new_col = resolved.name(name)
             current_tbl = current_tbl.mutate([new_col])
@@ -3135,21 +3165,12 @@ class SemanticJoinOp(Relation):
         Uses ``op.replace()`` (ibis graph rewriting) to swap out the
         ``source`` field on every ``DatabaseTable`` node in the right tree.
         """
+        from xorq.common.utils.node_utils import walk_nodes
         from xorq.vendor.ibis.expr.operations import relations as xorq_rel
 
         # Find a canonical backend from the left tree.
-        canonical = None
-        visited = set()
-        stack = [left_tbl.op()]
-        while stack:
-            node = stack.pop()
-            if id(node) in visited:
-                continue
-            visited.add(id(node))
-            if isinstance(node, xorq_rel.DatabaseTable):
-                canonical = node.source
-                break
-            stack.extend(c for c in getattr(node, "__children__", ()) if hasattr(c, "__children__"))
+        db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), left_tbl))
+        canonical = db_tables[0].source if db_tables else None
 
         if canonical is None:
             return left_tbl, right_tbl
@@ -3175,13 +3196,13 @@ class SemanticJoinOp(Relation):
         return new_left, new_right
 
     def execute(self):
-        return self.to_untagged().execute()
+        return _unify_backends(self.to_untagged()).execute()
 
     def compile(self, **kwargs):
-        return self.to_untagged().compile(**kwargs)
+        return _unify_backends(self.to_untagged()).compile(**kwargs)
 
     def sql(self, **kwargs):
-        return ibis.to_sql(self.to_untagged(), **kwargs)
+        return ibis.to_sql(_unify_backends(self.to_untagged()), **kwargs)
 
     def __getitem__(self, key):
         dims_dict = self.get_dimensions()
@@ -3324,12 +3345,14 @@ def _get_weight_expr(
     all_roots: list,
     is_string: bool,
 ) -> Any:
+    from xorq.vendor import ibis as xibis
+
     if not by_measure:
-        return ibis._.count()
+        return xibis._.count()
 
     merged_measures = _get_merged_fields(all_roots, "measures")
     return (
-        merged_measures[by_measure](base_tbl) if by_measure in merged_measures else ibis._.count()
+        merged_measures[by_measure](base_tbl) if by_measure in merged_measures else xibis._.count()
     )
 
 
@@ -3341,15 +3364,17 @@ def _build_string_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
+    from xorq.vendor import ibis as xibis
+
     return (
         base_tbl.group_by(field_expr.name("value"))
         .aggregate(weight=weight_expr)
         .select(
-            fieldName=ibis.literal(field_name.split(".")[-1]),
-            fieldPath=ibis.literal(field_path),
-            fieldType=ibis.literal(type_str),
-            fieldValue=ibis._["value"].cast("string"),
-            weight=ibis._["weight"],
+            fieldName=xibis.literal(field_name.split(".")[-1]),
+            fieldPath=xibis.literal(field_path),
+            fieldType=xibis.literal(type_str),
+            fieldValue=xibis._["value"].cast("string"),
+            weight=xibis._["weight"],
         )
     )
 
@@ -3362,22 +3387,24 @@ def _build_numeric_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
+    from xorq.vendor import ibis as xibis
+
     return (
         base_tbl.select(field_expr.name("value"))
-        .filter(ibis._["value"].notnull())
+        .filter(xibis._["value"].notnull())
         .aggregate(
-            min_val=ibis._["value"].min(),
-            max_val=ibis._["value"].max(),
+            min_val=xibis._["value"].min(),
+            max_val=xibis._["value"].max(),
             weight=weight_expr,
         )
         .select(
-            fieldName=ibis.literal(field_name.split(".")[-1]),
-            fieldPath=ibis.literal(field_path),
-            fieldType=ibis.literal(type_str),
+            fieldName=xibis.literal(field_name.split(".")[-1]),
+            fieldPath=xibis.literal(field_path),
+            fieldType=xibis.literal(type_str),
             fieldValue=(
-                ibis._["min_val"].cast("string") + " to " + ibis._["max_val"].cast("string")
+                xibis._["min_val"].cast("string") + " to " + xibis._["max_val"].cast("string")
             ),
-            weight=ibis._["weight"],
+            weight=xibis._["weight"],
         )
     )
 
@@ -3458,13 +3485,15 @@ class SemanticIndexOp(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
+        from xorq.vendor import ibis as xibis
+
         return FrozenOrderedDict(
             {
-                "fieldName": ibis.literal("").op(),
-                "fieldPath": ibis.literal("").op(),
-                "fieldType": ibis.literal("").op(),
-                "fieldValue": ibis.literal("").op(),
-                "weight": ibis.literal(0).op(),
+                "fieldName": xibis.literal("").op(),
+                "fieldPath": xibis.literal("").op(),
+                "fieldType": xibis.literal("").op(),
+                "fieldValue": xibis.literal("").op(),
+                "weight": xibis.literal(0).op(),
             },
         )
 
@@ -3504,7 +3533,9 @@ class SemanticIndexOp(Relation):
         )
 
         if not fields_to_index:
-            return ibis.memtable(
+            from xorq.vendor import ibis as xibis
+
+            return xibis.memtable(
                 {
                     "fieldName": [],
                     "fieldPath": [],
@@ -3568,7 +3599,7 @@ class SemanticIndexOp(Relation):
         return SemanticLimit(source=self, n=n, offset=offset)
 
     def execute(self):
-        return self.to_untagged().execute()
+        return _unify_backends(self.to_untagged()).execute()
 
     def as_expr(self):
         """Return self as expression."""
