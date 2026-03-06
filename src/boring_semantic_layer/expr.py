@@ -982,6 +982,50 @@ class SemanticFilter(SemanticTable):
             calc_measures=new_calc_meas,
         )
 
+    def join_one(
+        self,
+        other: SemanticModel,
+        on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
+        how: str = "inner",
+    ) -> SemanticJoin:
+        """Join with one-to-one relationship semantics."""
+        return SemanticJoin(
+            left=self.op(),
+            right=other.op() if isinstance(other, SemanticModel) else other,
+            on=on,
+            how=how,
+            cardinality="one",
+        )
+
+    def join_many(
+        self,
+        other: SemanticModel,
+        on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
+        how: str = "left",
+    ) -> SemanticJoin:
+        """Join with one-to-many relationship semantics."""
+        return SemanticJoin(
+            left=self.op(),
+            right=other.op() if isinstance(other, SemanticModel) else other,
+            on=on,
+            how=how,
+            cardinality="many",
+        )
+
+    def join_cross(self, other: SemanticModel) -> SemanticJoin:
+        """Cross join (Cartesian product) with another semantic model."""
+        return SemanticJoin(
+            left=self.op(),
+            right=other.op() if isinstance(other, SemanticModel) else other,
+            on=None,
+            how="cross",
+            cardinality="cross",
+        )
+
+    def join(self, *args, **kwargs):
+        """Deprecated: Use join_one(), join_many(), or join_cross() instead."""
+        raise TypeError(_JOIN_REMOVED_MESSAGE)
+
 
 class SemanticGroupBy(SemanticTable):
     def __init__(self, source: SemanticTableOp, keys: tuple[str, ...]) -> None:
