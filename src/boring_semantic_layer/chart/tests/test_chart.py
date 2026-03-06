@@ -3,6 +3,7 @@
 import ibis
 import pandas as pd
 import pytest
+from xorq.vendor import ibis as xibis
 
 from boring_semantic_layer import to_semantic_table
 
@@ -386,7 +387,7 @@ class TestChartWithFilters:
             .order_by("flight_week")
             .mutate(
                 rolling_avg=lambda t: t.flight_count.mean().over(
-                    ibis.window(rows=(-2, 0), order_by="flight_week")
+                    xibis.window(rows=(-2, 0), order_by="flight_week")
                 )
             )
         )
