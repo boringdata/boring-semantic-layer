@@ -342,8 +342,14 @@ def _semantic_repr(op: Relation) -> str:
 
 
 def _make_schema(fields_dict: dict[str, str]):
-    """Create Schema instance from fields dict."""
-    return _SchemaClass(fields_dict)
+    """Create Schema instance from fields dict.
+
+    Strips length parameters from string types (e.g. ``string(50)`` → ``string``)
+    so that backends like Postgres whose ``VARCHAR(N)`` serialises as ``string(N)``
+    can be parsed by the Schema constructor.
+    """
+    cleaned = {k: re.sub(r"\bstring\(\d+\)", "string", v) for k, v in fields_dict.items()}
+    return _SchemaClass(cleaned)
 
 
 def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
