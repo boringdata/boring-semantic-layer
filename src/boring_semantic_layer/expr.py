@@ -631,6 +631,7 @@ class SemanticModel(SemanticTable):
         limit: int | None = None,
         time_grain: str | None = None,
         time_range: dict[str, str] | None = None,
+        having: list | None = None,
     ):
         return build_query(
             semantic_table=self,
@@ -641,6 +642,7 @@ class SemanticModel(SemanticTable):
             limit=limit,
             time_grain=time_grain,
             time_range=time_range,
+            having=having,
         )
 
 
@@ -788,6 +790,7 @@ class SemanticJoin(SemanticTable):
         limit: int | None = None,
         time_grain: str | None = None,
         time_range: dict[str, str] | None = None,
+        having: list | None = None,
     ):
         return build_query(
             semantic_table=self,
@@ -798,6 +801,7 @@ class SemanticJoin(SemanticTable):
             limit=limit,
             time_grain=time_grain,
             time_range=time_range,
+            having=having,
         )
 
     def as_table(self) -> SemanticModel:
