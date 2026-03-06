@@ -20,7 +20,7 @@ import ibis
 import pandas as pd
 import pytest
 from ibis import _
-from xorq.vendor import ibis as xibis
+import xorq.api as xo
 
 from boring_semantic_layer import to_semantic_table
 
@@ -291,7 +291,7 @@ class TestNestedSubtotals:
             .mutate(
                 # Percent of category (not grand total)
                 pct_of_category=lambda t: t["total_revenue"]
-                / t["total_revenue"].sum().over(xibis.window(group_by="category")),
+                / t["total_revenue"].sum().over(xo.window(group_by="category")),
             )
             .execute()
         )

@@ -13,7 +13,7 @@ from typing import Any, ClassVar, Literal
 import ibis
 from attrs import frozen
 from ibis.common.collections import FrozenDict
-from xorq.vendor import ibis as xibis
+import xorq.api as xo
 from toolz import curry
 
 from .utils import safe_eval
@@ -217,7 +217,7 @@ class Filter:
         # Try parsing as timestamp first (more general), then date
         for dtype in ("timestamp", "date"):
             try:
-                return xibis.literal(value, type=dtype)
+                return xo.literal(value, type=dtype)
             except (ValueError, TypeError):
                 pass
 
@@ -234,8 +234,8 @@ class Filter:
             # Extract just the field name, ignoring the table prefix
             # e.g., 'customers.country' -> 'country'
             _table_name, field_name = field.split(".", 1)
-            return getattr(xibis._, field_name)
-        return getattr(xibis._, field)
+            return getattr(xo._, field_name)
+        return getattr(xo._, field)
 
     def _parse_json_filter(self, filter_obj: FrozenDict) -> Any:
         """Parse JSON filter object into ibis expression."""
@@ -298,7 +298,7 @@ class Filter:
         elif isinstance(self.filter, str):
             expr = safe_eval(
                 self.filter,
-                context={"_": xibis._, "ibis": xibis},
+                context={"_": xo._, "ibis": xo},
             ).unwrap()
             return lambda t: expr.resolve(_ensure_xorq_table(t))
         elif callable(self.filter):

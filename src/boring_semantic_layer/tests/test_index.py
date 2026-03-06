@@ -14,7 +14,7 @@ Tests cover:
 import ibis
 import pandas as pd
 import pytest
-from xorq.vendor import ibis as xibis
+import xorq.api as xo
 
 from boring_semantic_layer import to_semantic_table
 
@@ -259,7 +259,7 @@ class TestIndexOnJoin:
         b_sem = to_semantic_table(b_table, name="b").with_dimensions(value=lambda t: t.value)
 
         # Cross join removed - using cartesian product via join_many with always-true condition
-        joined = a_sem.join_many(b_sem, lambda a, b: xibis.literal(True))
+        joined = a_sem.join_many(b_sem, lambda a, b: xo.literal(True))
         result = joined.index("a.name").execute()
 
         assert len(result) > 0

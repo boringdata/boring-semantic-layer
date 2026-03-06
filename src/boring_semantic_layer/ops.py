@@ -7,7 +7,7 @@ from functools import reduce
 from typing import TYPE_CHECKING, Any
 
 import ibis
-from xorq.vendor.ibis import selectors as s
+from xorq.api import selectors as s
 from attrs import field, frozen
 from ibis.common.deferred import Deferred
 from ibis.expr import datatypes as dt
@@ -3345,14 +3345,14 @@ def _get_weight_expr(
     all_roots: list,
     is_string: bool,
 ) -> Any:
-    from xorq.vendor import ibis as xibis
+    import xorq.api as xo
 
     if not by_measure:
-        return xibis._.count()
+        return xo._.count()
 
     merged_measures = _get_merged_fields(all_roots, "measures")
     return (
-        merged_measures[by_measure](base_tbl) if by_measure in merged_measures else xibis._.count()
+        merged_measures[by_measure](base_tbl) if by_measure in merged_measures else xo._.count()
     )
 
 
@@ -3364,17 +3364,17 @@ def _build_string_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
-    from xorq.vendor import ibis as xibis
+    import xorq.api as xo
 
     return (
         base_tbl.group_by(field_expr.name("value"))
         .aggregate(weight=weight_expr)
         .select(
-            fieldName=xibis.literal(field_name.split(".")[-1]),
-            fieldPath=xibis.literal(field_path),
-            fieldType=xibis.literal(type_str),
-            fieldValue=xibis._["value"].cast("string"),
-            weight=xibis._["weight"],
+            fieldName=xo.literal(field_name.split(".")[-1]),
+            fieldPath=xo.literal(field_path),
+            fieldType=xo.literal(type_str),
+            fieldValue=xo._["value"].cast("string"),
+            weight=xo._["weight"],
         )
     )
 
@@ -3387,24 +3387,24 @@ def _build_numeric_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
-    from xorq.vendor import ibis as xibis
+    import xorq.api as xo
 
     return (
         base_tbl.select(field_expr.name("value"))
-        .filter(xibis._["value"].notnull())
+        .filter(xo._["value"].notnull())
         .aggregate(
-            min_val=xibis._["value"].min(),
-            max_val=xibis._["value"].max(),
+            min_val=xo._["value"].min(),
+            max_val=xo._["value"].max(),
             weight=weight_expr,
         )
         .select(
-            fieldName=xibis.literal(field_name.split(".")[-1]),
-            fieldPath=xibis.literal(field_path),
-            fieldType=xibis.literal(type_str),
+            fieldName=xo.literal(field_name.split(".")[-1]),
+            fieldPath=xo.literal(field_path),
+            fieldType=xo.literal(type_str),
             fieldValue=(
-                xibis._["min_val"].cast("string") + " to " + xibis._["max_val"].cast("string")
+                xo._["min_val"].cast("string") + " to " + xo._["max_val"].cast("string")
             ),
-            weight=xibis._["weight"],
+            weight=xo._["weight"],
         )
     )
 
@@ -3485,15 +3485,15 @@ class SemanticIndexOp(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        from xorq.vendor import ibis as xibis
+        import xorq.api as xo
 
         return FrozenOrderedDict(
             {
-                "fieldName": xibis.literal("").op(),
-                "fieldPath": xibis.literal("").op(),
-                "fieldType": xibis.literal("").op(),
-                "fieldValue": xibis.literal("").op(),
-                "weight": xibis.literal(0).op(),
+                "fieldName": xo.literal("").op(),
+                "fieldPath": xo.literal("").op(),
+                "fieldType": xo.literal("").op(),
+                "fieldValue": xo.literal("").op(),
+                "weight": xo.literal(0).op(),
             },
         )
 
@@ -3533,9 +3533,9 @@ class SemanticIndexOp(Relation):
         )
 
         if not fields_to_index:
-            from xorq.vendor import ibis as xibis
+            import xorq.api as xo
 
-            return xibis.memtable(
+            return xo.memtable(
                 {
                     "fieldName": [],
                     "fieldPath": [],
