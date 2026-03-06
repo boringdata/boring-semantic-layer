@@ -1,0 +1,1 @@
+Returns the most frequent values of a dimension, optionally filtered by a search term. Use this before filtering to find the exact spelling of a value (e.g., search 'madrid' to discover 'Madrid Centro'). Results include frequency counts and indicate whether all values are shown.

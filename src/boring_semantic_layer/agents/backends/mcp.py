@@ -1,9 +1,11 @@
 import json
+import re
 import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any
 
+import ibis
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 from pydantic import Field
@@ -257,6 +259,97 @@ class MCPSemanticModel(FastMCP):
                 chart_spec=chart_spec,
                 default_backend="altair",
             )
+
+        @self.tool(
+            name="search_dimension_values",
+            description=load_prompt(PROMPTS_DIR, "tool-search-dimension-values-desc.md"),
+        )
+        def search_dimension_values(
+            model_name: str,
+            dimension_name: str,
+            search_term: str | None = None,
+            limit: int = 20,
+        ) -> dict:
+            if model_name not in self.models:
+                raise ValueError(f"Model '{model_name}' not found")
+
+            model = self.models[model_name]
+            dims = model.get_dimensions()
+
+            if dimension_name not in dims:
+                raise ValueError(
+                    f"Dimension '{dimension_name}' not found in model '{model_name}'. "
+                    f"Available dimensions: {list(dims.keys())}"
+                )
+
+            dim = dims[dimension_name]
+            tbl = model.table
+            col_expr = dim(tbl)
+
+            # Aggregate by value to get frequency counts
+            agg = (
+                tbl
+                .select(col_expr.name("_value"))
+                .filter(lambda t: t["_value"].notnull())
+                .group_by("_value")
+                .aggregate(frequency=lambda t: t.count())
+            )
+
+            # Total distinct count (before applying search filter)
+            total_distinct = int(agg.count().execute())
+
+            def _to_value_list(df):
+                return [
+                    {"value": str(row["_value"]), "count": int(row["frequency"])}
+                    for _, row in df.iterrows()
+                ]
+
+            def _fetch(base_agg, n):
+                """Fetch top n+1 rows and return (values_list, is_complete)."""
+                df = (
+                    base_agg
+                    .order_by(ibis.desc("frequency"))
+                    .limit(n + 1)
+                    .execute()
+                )
+                complete = len(df) <= n
+                return _to_value_list(df.head(n)), complete
+
+            _SEP = r"[\s\-_.,]+"
+
+            # Apply case-insensitive search filter if provided
+            if search_term:
+                search_normalized = re.sub(_SEP, " ", search_term.lower()).strip()
+                filtered_agg = agg.filter(
+                    lambda t: (
+                        t["_value"].cast("string").lower()
+                        .re_replace(_SEP, " ").strip()
+                        .contains(search_normalized)
+                    )
+                )
+                values, is_complete = _fetch(filtered_agg, limit)
+
+                # Fallback: if search returned nothing, show top values as reference
+                if not values:
+                    fallback_values, fallback_complete = _fetch(agg, limit)
+                    return {
+                        "total_distinct": total_distinct,
+                        "is_complete": fallback_complete,
+                        "values": [],
+                        "fallback_top_values": fallback_values,
+                        "note": (
+                            f"No matches found for '{search_term}'. "
+                            "Showing top values for reference — use one of these exact spellings."
+                        ),
+                    }
+            else:
+                values, is_complete = _fetch(agg, limit)
+
+            return {
+                "total_distinct": total_distinct,
+                "is_complete": is_complete,
+                "values": values,
+            }
 
 
 def create_mcp_server(
