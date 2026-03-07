@@ -2045,8 +2045,9 @@ class SemanticAggregateOp(Relation):
         _decomposed_means: dict[str, tuple[str, str]] = {}
         # Track correct re-aggregation op per measure (default "sum")
         _reagg_ops: dict[str, str] = {}
-        # Track COUNT DISTINCT measures deferred to full joined table
-        _deferred_count_distincts: dict[str, tuple[str, str]] = {}
+        # Track COUNT DISTINCT measures deferred past pre-aggregation.
+        # Value: (table_name, short_name, raw_tbl, measure_fn)
+        _deferred_count_distincts: dict[str, tuple] = {}
 
         for table_name, measures in partitioned.items():
             if table_name is None:
@@ -2136,8 +2137,10 @@ class SemanticAggregateOp(Relation):
                         agg_exprs[count_col] = base_col.count()
                         _decomposed_means[mname] = (sum_col, count_col)
                     elif _is_count_distinct_expr(expr):
-                        # COUNT DISTINCT is immune to fan-out — defer to full table
-                        _deferred_count_distincts[mname] = (table_name, short)
+                        # COUNT DISTINCT is immune to fan-out — defer past pre-agg
+                        _deferred_count_distincts[mname] = (
+                            table_name, short, raw_tbl, table_measures[short],
+                        )
                     else:
                         _reagg_ops[mname] = _reagg_op_for_expr(expr)
                         agg_exprs[mname] = expr
@@ -2234,40 +2237,64 @@ class SemanticAggregateOp(Relation):
                     reagg_ops=reagg_ops,
                 )
 
-        # --- 5b. Compute deferred COUNT DISTINCT on full joined table ---
+        # --- 5b. Compute deferred COUNT DISTINCT measures ---
+        # Optimisation: compute on the raw source table when all group-by
+        # columns are local (avoids scanning the fanned-out joined table).
+        # Fall back to the full joined table only for cross-table group-bys.
         if _deferred_count_distincts:
-            if tbl is None:
-                raise ValueError(
-                    "COUNT DISTINCT measures require the full joined table but it is "
-                    "unavailable (chasm fallback). Use join_one for reference tables "
-                    "or remove count-distinct measures from this query."
-                )
-            cd_aggs = {}
-            for mname, (_src_table, _short) in _deferred_count_distincts.items():
-                cd_aggs[mname] = plan.agg_specs[mname](tbl)
-            if group_by_cols:
-                gb_available = [c for c in group_by_cols if c in tbl.columns]
-                cd_result = tbl.group_by(
-                    [tbl[c] for c in gb_available]
-                ).aggregate(**cd_aggs)
-                if result is None:
-                    result = cd_result
+            cd_parts: list = []
+            for mname, (_src_tbl_name, _short, src_raw, src_fn) in (
+                _deferred_count_distincts.items()
+            ):
+                src_cols = set(src_raw.columns)
+                # Determine which group-by columns live on the raw source table
+                local_gb = [c for c in group_by_cols if c in src_cols]
+                if not group_by_cols or frozenset(local_gb) == frozenset(group_by_cols):
+                    # All group-by cols are local (or scalar) — compute on raw table
+                    cd_expr = src_fn(src_raw)
+                    if local_gb:
+                        cd_pt = src_raw.group_by(
+                            [src_raw[c] for c in local_gb]
+                        ).aggregate(**{mname: cd_expr})
+                    else:
+                        cd_pt = src_raw.aggregate(**{mname: cd_expr})
+                    cd_parts.append(cd_pt)
                 else:
-                    common = [c for c in gb_available if c in result.columns]
+                    # Cross-table group-by — need the full joined table
+                    if tbl is None:
+                        raise ValueError(
+                            "COUNT DISTINCT measures require the full joined table "
+                            "for cross-table group-by but it is unavailable (chasm "
+                            "fallback). Use join_one for reference tables or remove "
+                            "count-distinct measures from this query."
+                        )
+                    cd_expr = plan.agg_specs[mname](tbl)
+                    gb_available = [c for c in group_by_cols if c in tbl.columns]
+                    if gb_available:
+                        cd_pt = tbl.group_by(
+                            [tbl[c] for c in gb_available]
+                        ).aggregate(**{mname: cd_expr})
+                    else:
+                        cd_pt = tbl.aggregate(**{mname: cd_expr})
+                    cd_parts.append(cd_pt)
+
+            # Merge count-distinct parts into result
+            for cd_pt in cd_parts:
+                cd_meas = [c for c in cd_pt.columns if c in _deferred_count_distincts]
+                cd_grain = [c for c in cd_pt.columns if c not in _deferred_count_distincts]
+                if result is None:
+                    result = cd_pt
+                elif cd_grain:
+                    common = [c for c in cd_grain if c in result.columns]
                     if common:
-                        preds = [result[c] == cd_result[c] for c in common]
-                        cd_meas = list(cd_aggs.keys())
-                        result = result.left_join(cd_result, preds).select(
-                            [result] + [cd_result[m] for m in cd_meas]
+                        preds = [result[c] == cd_pt[c] for c in common]
+                        result = result.left_join(cd_pt, preds).select(
+                            [result] + [cd_pt[m] for m in cd_meas]
                         )
                     else:
-                        result = result.cross_join(cd_result)
-            else:
-                cd_result = tbl.aggregate(**cd_aggs)
-                if result is None:
-                    result = cd_result
+                        result = result.cross_join(cd_pt)
                 else:
-                    result = result.cross_join(cd_result)
+                    result = result.cross_join(cd_pt)
 
         # --- 6. Apply calc_specs ---
         if plan.calc_specs:
