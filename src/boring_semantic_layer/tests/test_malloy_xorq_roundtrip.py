@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from boring_semantic_layer.xorq_convert import from_tagged, to_tagged, try_import_xorq
+from boring_semantic_layer.serialization import from_tagged, to_tagged, try_import_xorq
 
 # Check if xorq is available
 try:

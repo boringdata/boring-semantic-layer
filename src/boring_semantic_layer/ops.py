@@ -7,7 +7,7 @@ from functools import reduce
 from typing import TYPE_CHECKING, Any
 
 import ibis
-import ibis.selectors as s
+from xorq.api import selectors as s
 from attrs import field, frozen
 from ibis.common.deferred import Deferred
 from ibis.expr import datatypes as dt
@@ -26,6 +26,10 @@ try:
     _MeanTypes = (ibis_ops.reductions.Mean, xorq_ops.reductions.Mean)
     _MinTypes = (ibis_ops.reductions.Min, xorq_ops.reductions.Min)
     _MaxTypes = (ibis_ops.reductions.Max, xorq_ops.reductions.Max)
+    _CountDistinctTypes = (
+        ibis_ops.reductions.CountDistinct,
+        xorq_ops.reductions.CountDistinct,
+    )
 except ImportError:
     from ibis.common.collections import FrozenDict, FrozenOrderedDict
 
@@ -34,6 +38,7 @@ except ImportError:
     _MeanTypes = (ibis_ops.reductions.Mean,)
     _MinTypes = (ibis_ops.reductions.Min,)
     _MaxTypes = (ibis_ops.reductions.Max,)
+    _CountDistinctTypes = (ibis_ops.reductions.CountDistinct,)
 
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Success, safe
@@ -191,6 +196,51 @@ if TYPE_CHECKING:
         SemanticOrderBy,
         SemanticTable,
     )
+
+
+def _ensure_xorq_table(table):
+    """Convert plain ibis Table to xorq-vendored ibis."""
+    from xorq.common.utils.ibis_utils import from_ibis
+
+    if "xorq.vendor.ibis" not in type(table).__module__:
+        return from_ibis(table)
+    return table
+
+
+def _unify_backends(expr):
+    """Ensure all DatabaseTable nodes in *expr* share a single xorq backend.
+
+    ``from_ibis()`` creates a distinct Backend per call, so expressions
+    built by composing separately-converted tables contain multiple
+    backends.  This function rewrites the tree so every DatabaseTable
+    points at the same canonical backend, eliminating "Multiple backends
+    found" errors at execution time.
+    """
+    from xorq.common.utils.node_utils import walk_nodes
+    from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+
+    db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), expr))
+    canonical = db_tables[0].source if db_tables else None
+
+    if canonical is None:
+        return expr
+
+    # 2. Replace divergent backends.
+    def _recreate(op, _kwargs, **overrides):
+        kwargs = dict(zip(op.__argnames__, op.__args__, strict=False))
+        if _kwargs:
+            kwargs.update(_kwargs)
+        kwargs.update(overrides)
+        return op.__recreate__(kwargs)
+
+    def replacer(op, _kwargs):
+        if isinstance(op, xorq_rel.DatabaseTable) and op.source is not canonical:
+            return _recreate(op, _kwargs, source=canonical)
+        if _kwargs:
+            return _recreate(op, _kwargs)
+        return op
+
+    return expr.op().replace(replacer).to_expr()
 
 
 def _to_untagged(source: Any) -> ir.Table:
@@ -1017,7 +1067,7 @@ class SemanticTableOp(Relation):
         return object.__getattribute__(self, name)
 
     def to_untagged(self):
-        return self.table
+        return _ensure_xorq_table(self.table)
 
 
 class SemanticFilterOp(Relation):
@@ -1652,6 +1702,11 @@ def _is_mean_expr(expr):
         return False
 
 
+def _is_count_distinct_expr(expr):
+    """Check if an ibis expression is a CountDistinct (nunique) reduction."""
+    return safe(lambda: isinstance(expr.op(), _CountDistinctTypes))().value_or(False)
+
+
 def _reagg_op_for_expr(expr):
     """Return the correct re-aggregation operation name for an ibis expression.
 
@@ -1667,6 +1722,11 @@ def _reagg_op_for_expr(expr):
     if isinstance(op, _MeanTypes):
         raise ValueError(
             f"Mean expression {expr.get_name()!r} was not decomposed — "
+            "this is a bug in the pre-aggregation logic"
+        )
+    if isinstance(op, _CountDistinctTypes):
+        raise ValueError(
+            f"CountDistinct expression {expr.get_name()!r} was not deferred — "
             "this is a bug in the pre-aggregation logic"
         )
     return "sum"
@@ -1733,9 +1793,7 @@ class SemanticAggregateOp(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        from xorq.common.utils.ibis_utils import from_ibis
-
-        tbl = from_ibis(self.to_untagged())
+        tbl = self.to_untagged()
         return FrozenOrderedDict({col: tbl[col].op() for col in tbl.columns})
 
     @property
@@ -2052,6 +2110,9 @@ class SemanticAggregateOp(Relation):
         _decomposed_means: dict[str, tuple[str, str]] = {}
         # Track correct re-aggregation op per measure (default "sum")
         _reagg_ops: dict[str, str] = {}
+        # Track COUNT DISTINCT measures deferred past pre-aggregation.
+        # Value: (table_name, short_name, raw_tbl, measure_fn)
+        _deferred_count_distincts: dict[str, tuple] = {}
 
         for table_name, measures in partitioned.items():
             if table_name is None:
@@ -2156,6 +2217,11 @@ class SemanticAggregateOp(Relation):
                         agg_exprs[sum_col] = base_col.sum()
                         agg_exprs[count_col] = base_col.count()
                         _decomposed_means[mname] = (sum_col, count_col)
+                    elif _is_count_distinct_expr(expr):
+                        # COUNT DISTINCT is immune to fan-out — defer past pre-agg
+                        _deferred_count_distincts[mname] = (
+                            table_name, short, raw_tbl, table_measures[short],
+                        )
                     else:
                         _reagg_ops[mname] = _reagg_op_for_expr(expr)
                         agg_exprs[mname] = expr
@@ -2222,37 +2288,98 @@ class SemanticAggregateOp(Relation):
         decomposed_means = tuple(_decomposed_means.items())
         reagg_ops = tuple(_reagg_ops.items())
 
-        if not preagg_results:
+        if not preagg_results and not _deferred_count_distincts:
             if tbl is not None:
                 return tbl.aggregate({n: f(tbl) for n, f in plan.agg_specs.items()})
             raise ValueError("No aggregation results and full join unavailable")
 
         # --- 5. Combine pre-agg results ---
-        if not group_by_cols:
-            # Cross-join all scalar results
-            result = preagg_results[0]
-            for pt in preagg_results[1:]:
-                result = result.cross_join(pt)
-        elif tbl is not None:
-            result = self._join_preagg_with_dim_bridge(
-                preagg_results,
-                plan,
-                tbl,
-                group_by_cols,
-                decomposed_means=decomposed_means,
-                reagg_ops=reagg_ops,
-            )
-        else:
-            # Chasm fallback with group-by: build minimal dim bridge from raw tables
-            result = self._build_minimal_dim_bridge(
-                preagg_results,
-                plan,
-                group_by_cols,
-                join_tree_info,
-                merged_dimensions,
-                decomposed_means=decomposed_means,
-                reagg_ops=reagg_ops,
-            )
+        result = None
+        if preagg_results:
+            if not group_by_cols:
+                # Cross-join all scalar results
+                result = preagg_results[0]
+                for pt in preagg_results[1:]:
+                    result = result.cross_join(pt)
+            elif tbl is not None:
+                result = self._join_preagg_with_dim_bridge(
+                    preagg_results,
+                    plan,
+                    tbl,
+                    group_by_cols,
+                    decomposed_means=decomposed_means,
+                    reagg_ops=reagg_ops,
+                )
+            else:
+                # Chasm fallback with group-by: build minimal dim bridge from raw tables
+                result = self._build_minimal_dim_bridge(
+                    preagg_results,
+                    plan,
+                    group_by_cols,
+                    join_tree_info,
+                    merged_dimensions,
+                    decomposed_means=decomposed_means,
+                    reagg_ops=reagg_ops,
+                )
+
+        # --- 5b. Compute deferred COUNT DISTINCT measures ---
+        # Optimisation: compute on the raw source table when all group-by
+        # columns are local (avoids scanning the fanned-out joined table).
+        # Fall back to the full joined table only for cross-table group-bys.
+        if _deferred_count_distincts:
+            cd_parts: list = []
+            for mname, (_src_tbl_name, _short, src_raw, src_fn) in (
+                _deferred_count_distincts.items()
+            ):
+                src_cols = set(src_raw.columns)
+                # Determine which group-by columns live on the raw source table
+                local_gb = [c for c in group_by_cols if c in src_cols]
+                if not group_by_cols or frozenset(local_gb) == frozenset(group_by_cols):
+                    # All group-by cols are local (or scalar) — compute on raw table
+                    cd_expr = src_fn(src_raw)
+                    if local_gb:
+                        cd_pt = src_raw.group_by(
+                            [src_raw[c] for c in local_gb]
+                        ).aggregate(**{mname: cd_expr})
+                    else:
+                        cd_pt = src_raw.aggregate(**{mname: cd_expr})
+                    cd_parts.append(cd_pt)
+                else:
+                    # Cross-table group-by — need the full joined table
+                    if tbl is None:
+                        raise ValueError(
+                            "COUNT DISTINCT measures require the full joined table "
+                            "for cross-table group-by but it is unavailable (chasm "
+                            "fallback). Use join_one for reference tables or remove "
+                            "count-distinct measures from this query."
+                        )
+                    cd_expr = plan.agg_specs[mname](tbl)
+                    gb_available = [c for c in group_by_cols if c in tbl.columns]
+                    if gb_available:
+                        cd_pt = tbl.group_by(
+                            [tbl[c] for c in gb_available]
+                        ).aggregate(**{mname: cd_expr})
+                    else:
+                        cd_pt = tbl.aggregate(**{mname: cd_expr})
+                    cd_parts.append(cd_pt)
+
+            # Merge count-distinct parts into result
+            for cd_pt in cd_parts:
+                cd_meas = [c for c in cd_pt.columns if c in _deferred_count_distincts]
+                cd_grain = [c for c in cd_pt.columns if c not in _deferred_count_distincts]
+                if result is None:
+                    result = cd_pt
+                elif cd_grain:
+                    common = [c for c in cd_grain if c in result.columns]
+                    if common:
+                        preds = [result[c] == cd_pt[c] for c in common]
+                        result = result.left_join(cd_pt, preds).select(
+                            [result] + [cd_pt[m] for m in cd_meas]
+                        )
+                    else:
+                        result = result.cross_join(cd_pt)
+                else:
+                    result = result.cross_join(cd_pt)
 
         # --- 6. Apply calc_specs ---
         if plan.calc_specs:
@@ -2498,19 +2625,6 @@ class SemanticMutateOp(Relation):
         for name, fn_wrapped in self.post.items():
             proxy = MeasureScope(_tbl=current_tbl, _known=[], _post_agg=True)
             resolved = _resolve_expr(_unwrap(fn_wrapped), proxy)
-
-            # If resolved expression is from regular ibis but table is xorq, convert it
-            if hasattr(resolved, "__class__") and hasattr(current_tbl, "__class__"):
-                resolved_module = resolved.__class__.__module__
-                table_module = current_tbl.__class__.__module__
-                if (
-                    "ibis.expr" in resolved_module
-                    and "xorq" not in resolved_module
-                    and "xorq.vendor.ibis" in table_module
-                ):
-                    from xorq.common.utils.ibis_utils import from_ibis
-
-                    resolved = from_ibis(resolved)
 
             new_col = resolved.name(name)
             current_tbl = current_tbl.mutate([new_col])
@@ -3222,21 +3336,12 @@ class SemanticJoinOp(Relation):
         Uses ``op.replace()`` (ibis graph rewriting) to swap out the
         ``source`` field on every ``DatabaseTable`` node in the right tree.
         """
+        from xorq.common.utils.node_utils import walk_nodes
         from xorq.vendor.ibis.expr.operations import relations as xorq_rel
 
         # Find a canonical backend from the left tree.
-        canonical = None
-        visited = set()
-        stack = [left_tbl.op()]
-        while stack:
-            node = stack.pop()
-            if id(node) in visited:
-                continue
-            visited.add(id(node))
-            if isinstance(node, xorq_rel.DatabaseTable):
-                canonical = node.source
-                break
-            stack.extend(c for c in getattr(node, "__children__", ()) if hasattr(c, "__children__"))
+        db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), left_tbl))
+        canonical = db_tables[0].source if db_tables else None
 
         if canonical is None:
             return left_tbl, right_tbl
@@ -3262,13 +3367,13 @@ class SemanticJoinOp(Relation):
         return new_left, new_right
 
     def execute(self):
-        return self.to_untagged().execute()
+        return _unify_backends(self.to_untagged()).execute()
 
     def compile(self, **kwargs):
-        return self.to_untagged().compile(**kwargs)
+        return _unify_backends(self.to_untagged()).compile(**kwargs)
 
     def sql(self, **kwargs):
-        return ibis.to_sql(self.to_untagged(), **kwargs)
+        return ibis.to_sql(_unify_backends(self.to_untagged()), **kwargs)
 
     def __getitem__(self, key):
         dims_dict = self.get_dimensions()
@@ -3411,12 +3516,14 @@ def _get_weight_expr(
     all_roots: list,
     is_string: bool,
 ) -> Any:
+    import xorq.api as xo
+
     if not by_measure:
-        return ibis._.count()
+        return xo._.count()
 
     merged_measures = _get_merged_fields(all_roots, "measures")
     return (
-        merged_measures[by_measure](base_tbl) if by_measure in merged_measures else ibis._.count()
+        merged_measures[by_measure](base_tbl) if by_measure in merged_measures else xo._.count()
     )
 
 
@@ -3428,15 +3535,17 @@ def _build_string_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
+    import xorq.api as xo
+
     return (
         base_tbl.group_by(field_expr.name("value"))
         .aggregate(weight=weight_expr)
         .select(
-            fieldName=ibis.literal(field_name.split(".")[-1]),
-            fieldPath=ibis.literal(field_path),
-            fieldType=ibis.literal(type_str),
-            fieldValue=ibis._["value"].cast("string"),
-            weight=ibis._["weight"],
+            fieldName=xo.literal(field_name.split(".")[-1]),
+            fieldPath=xo.literal(field_path),
+            fieldType=xo.literal(type_str),
+            fieldValue=xo._["value"].cast("string"),
+            weight=xo._["weight"],
         )
     )
 
@@ -3449,22 +3558,24 @@ def _build_numeric_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
+    import xorq.api as xo
+
     return (
         base_tbl.select(field_expr.name("value"))
-        .filter(ibis._["value"].notnull())
+        .filter(xo._["value"].notnull())
         .aggregate(
-            min_val=ibis._["value"].min(),
-            max_val=ibis._["value"].max(),
+            min_val=xo._["value"].min(),
+            max_val=xo._["value"].max(),
             weight=weight_expr,
         )
         .select(
-            fieldName=ibis.literal(field_name.split(".")[-1]),
-            fieldPath=ibis.literal(field_path),
-            fieldType=ibis.literal(type_str),
+            fieldName=xo.literal(field_name.split(".")[-1]),
+            fieldPath=xo.literal(field_path),
+            fieldType=xo.literal(type_str),
             fieldValue=(
-                ibis._["min_val"].cast("string") + " to " + ibis._["max_val"].cast("string")
+                xo._["min_val"].cast("string") + " to " + xo._["max_val"].cast("string")
             ),
-            weight=ibis._["weight"],
+            weight=xo._["weight"],
         )
     )
 
@@ -3545,13 +3656,15 @@ class SemanticIndexOp(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
+        import xorq.api as xo
+
         return FrozenOrderedDict(
             {
-                "fieldName": ibis.literal("").op(),
-                "fieldPath": ibis.literal("").op(),
-                "fieldType": ibis.literal("").op(),
-                "fieldValue": ibis.literal("").op(),
-                "weight": ibis.literal(0).op(),
+                "fieldName": xo.literal("").op(),
+                "fieldPath": xo.literal("").op(),
+                "fieldType": xo.literal("").op(),
+                "fieldValue": xo.literal("").op(),
+                "weight": xo.literal(0).op(),
             },
         )
 
@@ -3591,7 +3704,9 @@ class SemanticIndexOp(Relation):
         )
 
         if not fields_to_index:
-            return ibis.memtable(
+            import xorq.api as xo
+
+            return xo.memtable(
                 {
                     "fieldName": [],
                     "fieldPath": [],
@@ -3655,7 +3770,7 @@ class SemanticIndexOp(Relation):
         return SemanticLimit(source=self, n=n, offset=offset)
 
     def execute(self):
-        return self.to_untagged().execute()
+        return _unify_backends(self.to_untagged()).execute()
 
     def as_expr(self):
         """Return self as expression."""

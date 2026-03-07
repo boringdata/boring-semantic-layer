@@ -109,7 +109,7 @@ result = (
     .aggregate(
         year_order_count=lambda t: t.order_count.sum(),
         year_total_sales=lambda t: t.total_sales.sum(),
-        nest={"by_status": lambda t: t.group_by(["status", "order_count", "total_sales", "avg_price"]).order_by(_.total_sales.desc())}
+        nest={"by_status": lambda t: t.group_by(["status", "order_count", "total_sales", "avg_price"]).order_by(xo.desc("total_sales"))}
     )
     .order_by("created_year")
 )

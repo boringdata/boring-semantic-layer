@@ -18,7 +18,7 @@ def flights_data():
 
 
 def test_dimension_serialization(flights_data):
-    from boring_semantic_layer.xorq_convert import serialize_dimensions
+    from boring_semantic_layer.serialization import serialize_dimensions
 
     flights = to_semantic_table(flights_data, name="flights").with_dimensions(
         origin=lambda t: t.origin,
@@ -40,7 +40,7 @@ def test_dimension_serialization(flights_data):
 
 
 def test_measure_serialization(flights_data):
-    from boring_semantic_layer.xorq_convert import serialize_measures
+    from boring_semantic_layer.serialization import serialize_measures
 
     flights = to_semantic_table(flights_data, name="flights").with_measures(
         avg_distance=lambda t: t.distance.mean(),
@@ -62,7 +62,7 @@ def test_measure_serialization(flights_data):
 
 
 def test_to_tagged_with_string_metadata(flights_data):
-    from boring_semantic_layer.xorq_convert import to_tagged
+    from boring_semantic_layer.serialization import to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -101,7 +101,7 @@ def test_to_tagged_with_string_metadata(flights_data):
 
 def test_to_tagged_instance_method(flights_data):
     """SemanticTable.to_tagged() instance method works the same as the module-level function."""
-    from boring_semantic_layer.xorq_convert import from_tagged
+    from boring_semantic_layer.serialization import from_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -130,7 +130,7 @@ def test_to_tagged_instance_method(flights_data):
 
 
 def test_from_tagged_deserialization(flights_data):
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -150,7 +150,7 @@ def test_from_tagged_deserialization(flights_data):
 
 def test_serialize_entity_dimensions(flights_data):
     from boring_semantic_layer import entity_dimension
-    from boring_semantic_layer.xorq_convert import serialize_dimensions
+    from boring_semantic_layer.serialization import serialize_dimensions
 
     flights = to_semantic_table(flights_data, name="flights").with_dimensions(
         origin=entity_dimension(lambda t: t.origin, "Origin airport"),
@@ -177,7 +177,7 @@ def test_serialize_entity_dimensions(flights_data):
 
 def test_serialize_event_timestamp_dimensions(flights_data):
     from boring_semantic_layer import time_dimension
-    from boring_semantic_layer.xorq_convert import serialize_dimensions
+    from boring_semantic_layer.serialization import serialize_dimensions
 
     con = ibis.duckdb.connect(":memory:")
     data = {
@@ -216,7 +216,7 @@ def test_serialize_event_timestamp_dimensions(flights_data):
 
 def test_entity_dimension_roundtrip(flights_data):
     from boring_semantic_layer import entity_dimension
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -247,7 +247,7 @@ def test_entity_dimension_roundtrip(flights_data):
 
 def test_event_timestamp_roundtrip(flights_data):
     from boring_semantic_layer import time_dimension
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
     data = {
@@ -290,7 +290,7 @@ def test_event_timestamp_roundtrip(flights_data):
 
 def test_entity_and_event_timestamp_roundtrip(flights_data):
     from boring_semantic_layer import entity_dimension, time_dimension
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
     data = {
@@ -343,7 +343,7 @@ def test_case_expr_measure_serialization(flights_data):
     """Case expression measures should serialize via source extraction."""
     import xorq.api as xo
 
-    from boring_semantic_layer.xorq_convert import serialize_measures
+    from boring_semantic_layer.serialization import serialize_measures
 
     flights = to_semantic_table(flights_data, name="flights").with_measures(
         short_flight_count=lambda t: xo.case().when(t.distance < 200, 1).else_(0).end().sum(),
@@ -363,7 +363,7 @@ def test_case_expr_tagged_roundtrip(flights_data):
     """Case expression measures should survive to_tagged → from_tagged."""
     import xorq.api as xo
 
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -386,7 +386,7 @@ def test_ifelse_measure_serialization(flights_data):
     """xo.ifelse measures should serialize via source extraction."""
     import xorq.api as xo
 
-    from boring_semantic_layer.xorq_convert import serialize_measures
+    from boring_semantic_layer.serialization import serialize_measures
 
     flights = to_semantic_table(flights_data, name="flights").with_measures(
         short_flight_count=lambda t: xo.ifelse(t.distance < 200, 1, 0).sum(),
@@ -406,7 +406,7 @@ def test_ifelse_tagged_roundtrip(flights_data):
     """xo.ifelse measures should survive to_tagged → from_tagged."""
     import xorq.api as xo
 
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -513,7 +513,7 @@ def test_structured_serialization_in_measures(flights_data):
     """Measures serialize with both expr and expr_struct."""
     import xorq.api as xo
 
-    from boring_semantic_layer.xorq_convert import serialize_measures
+    from boring_semantic_layer.serialization import serialize_measures
 
     flights = to_semantic_table(flights_data, name="flights").with_measures(
         short_flight_count=lambda t: xo.case().when(t.distance < 200, 1).else_(0).end().sum(),
@@ -533,7 +533,7 @@ def test_structured_tagged_roundtrip_case(flights_data):
     """Full to_tagged -> from_tagged with case expression using structured format."""
     import xorq.api as xo
 
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -568,7 +568,7 @@ def test_structured_tagged_roundtrip_ifelse(flights_data):
     """Full to_tagged -> from_tagged with ifelse expression using structured format."""
     import xorq.api as xo
 
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -731,7 +731,7 @@ def test_tagged_roundtrip_multiple_measure_types(flights_data):
     """to_tagged -> from_tagged with mix of simple, case, and arithmetic measures."""
     import xorq.api as xo
 
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -764,7 +764,7 @@ def test_tagged_roundtrip_multiple_measure_types(flights_data):
 
 def test_tagged_roundtrip_filter_predicate(flights_data):
     """Filter predicates survive to_tagged -> from_tagged."""
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -784,7 +784,7 @@ def test_tagged_roundtrip_filter_predicate(flights_data):
 
 def test_tagged_roundtrip_mutate_arithmetic(flights_data):
     """Mutate with arithmetic expression survives to_tagged -> from_tagged."""
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -816,7 +816,7 @@ def test_tagged_roundtrip_mutate_arithmetic(flights_data):
 
 def test_tagged_roundtrip_order_by(flights_data):
     """Order by expression survives to_tagged -> from_tagged."""
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -841,7 +841,7 @@ def test_tagged_roundtrip_order_by(flights_data):
 
 def test_tagged_roundtrip_with_limit(flights_data):
     """Limit survives to_tagged -> from_tagged."""
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -858,7 +858,7 @@ def test_tagged_roundtrip_with_limit(flights_data):
 
 def test_tagged_roundtrip_full_pipeline(flights_data):
     """Full pipeline: filter -> group_by -> aggregate -> mutate -> order_by -> limit."""
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -891,7 +891,7 @@ def test_tagged_roundtrip_case_multi_when(flights_data):
     """Multi-when case expression measure survives full to_tagged -> from_tagged."""
     import xorq.api as xo
 
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
     data = {
@@ -929,7 +929,7 @@ def test_tagged_roundtrip_case_multi_when(flights_data):
 
 def test_tagged_roundtrip_multiple_dimensions(flights_data):
     """Multiple dimensions round-trip correctly."""
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -960,7 +960,7 @@ def test_tagged_roundtrip_deferred_underscore_measures():
     """Measures defined using the ibis _ deferred API round-trip correctly."""
     from ibis import _
 
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
     data = {
@@ -1002,7 +1002,7 @@ def test_tagged_roundtrip_composite_deferred_measure():
     """Composite deferred measure (ratio of two aggregations) round-trips."""
     from ibis import _
 
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
     data = {
@@ -1040,7 +1040,7 @@ def test_tagged_roundtrip_composite_deferred_measure():
 
 def test_tagged_roundtrip_boolean_condition_measure():
     """Measure that sums a boolean condition round-trips with value verification."""
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
     data = {
@@ -1078,7 +1078,7 @@ def test_tagged_roundtrip_case_with_value_verification(flights_data):
     """Case expression measure round-trips with correct computed values."""
     import xorq.api as xo
 
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -1114,7 +1114,7 @@ def test_tagged_roundtrip_percent_of_total():
     """Percent-of-total pattern survives to_tagged -> from_tagged with correct values."""
     import pandas as pd
 
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
     flights = pd.DataFrame({"carrier": ["AA", "AA", "UA", "DL", "DL", "DL"]})
@@ -1162,7 +1162,7 @@ def test_tagged_roundtrip_join_with_multiple_measures():
     """Joined semantic tables with multiple measures survive round-trip."""
     import pandas as pd
 
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
     flights = pd.DataFrame(
@@ -1214,7 +1214,7 @@ def test_tagged_roundtrip_join_with_multiple_measures():
 
 def test_tagged_roundtrip_filter_aggregate_mutate_pipeline():
     """Complex pipeline: filter -> aggregate -> mutate with value verification."""
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
     data = {
@@ -1258,7 +1258,7 @@ def test_tagged_roundtrip_ifelse_with_value_verification(flights_data):
     """ifelse measure round-trips with correct computed values."""
     import xorq.api as xo
 
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
@@ -1288,7 +1288,7 @@ def test_tagged_roundtrip_join_cross():
     """Cross join (no predicate) metadata survives round-trip."""
     import pandas as pd
 
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
     colors = pd.DataFrame({"color": ["red", "blue"]})
@@ -1317,7 +1317,7 @@ def test_tagged_roundtrip_join_filter_aggregate():
     """Filter and aggregate after join survive round-trip."""
     import pandas as pd
 
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
     orders = pd.DataFrame(
@@ -1369,7 +1369,7 @@ def test_tagged_roundtrip_join_inner():
     """Inner join survives round-trip and excludes non-matching rows."""
     import pandas as pd
 
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
     left = pd.DataFrame({"key": [1, 2, 3], "val": ["a", "b", "c"]})
@@ -1418,7 +1418,7 @@ def test_tagged_roundtrip_join_one_preserves_predicate():
     import pandas as pd
 
     from boring_semantic_layer import Dimension, Measure
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
     flights = pd.DataFrame(
@@ -1493,7 +1493,7 @@ def test_tagged_roundtrip_join_one_left_join():
     import pandas as pd
 
     from boring_semantic_layer import Dimension, Measure
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
     orders = pd.DataFrame(
@@ -1554,7 +1554,7 @@ def test_tagged_roundtrip_join_many_without_with_dimensions():
     """
     import pandas as pd
 
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
     employees = pd.DataFrame(
@@ -1622,7 +1622,7 @@ def test_tagged_roundtrip_join_derived_dimension_on_root():
     import pandas as pd
 
     from boring_semantic_layer import Dimension, Measure
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
     flights = pd.DataFrame(
@@ -1721,7 +1721,7 @@ def test_tagged_roundtrip_join_chain_shared_column_names(n_joins):
     from xorq.common.utils.ibis_utils import from_ibis
 
     from boring_semantic_layer import Dimension, Measure
-    from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     con = ibis.duckdb.connect(":memory:")
 

@@ -11,6 +11,7 @@ These tests demonstrate practical business intelligence scenarios:
 import ibis
 import pandas as pd
 import pytest
+import xorq.api as xo
 
 from boring_semantic_layer import to_semantic_table
 
@@ -608,7 +609,7 @@ class TestSupplyChainAnalytics:
             .aggregate("shipment_count")
             .mutate(
                 # Calculate lead time in aggregate result
-                avg_lead_time_days=lambda t: ibis.literal(
+                avg_lead_time_days=lambda t: xo.literal(
                     5.5,
                 ),  # Placeholder - would use date diff
             )
@@ -851,10 +852,10 @@ class TestAdvancedAnalytics:
             .mutate(
                 ma_3=lambda t: t["total_value"]
                 .mean()
-                .over(ibis.window(order_by="date", preceding=2, following=0)),
+                .over(xo.window(order_by="date", preceding=2, following=0)),
                 ma_6=lambda t: t["total_value"]
                 .mean()
-                .over(ibis.window(order_by="date", preceding=5, following=0)),
+                .over(xo.window(order_by="date", preceding=5, following=0)),
             )
             .order_by("date")
             .execute()

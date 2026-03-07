@@ -118,7 +118,7 @@ daily_revenue = (
 )
 
 # Calculate cumulative sum and running average
-window_unbounded = ibis.window(rows=(None, 0), order_by="sale_date")
+window_unbounded = xo.window(rows=(None, 0), order_by="sale_date")
 
 result = daily_revenue.mutate(
     cumulative_revenue=_.total_revenue.cumsum(),
@@ -145,7 +145,7 @@ daily_revenue = (
 )
 
 # 7-day moving average
-window_7d = ibis.window(rows=(-6, 0), order_by="sale_date")
+window_7d = xo.window(rows=(-6, 0), order_by="sale_date")
 
 result = daily_revenue.mutate(
     ma_7day=_.total_revenue.mean().over(window_7d).round(2),
@@ -176,9 +176,9 @@ category_revenue = (
 
 # Add rank columns
 result = category_revenue.mutate(
-    rank=ibis.rank().over(ibis.window(order_by=_.total_revenue.desc())),
-    dense_rank=ibis.dense_rank().over(ibis.window(order_by=_.total_revenue.desc())),
-    row_number=ibis.row_number().over(ibis.window(order_by=_.total_revenue.desc())),
+    rank=lambda t: xo.rank().over(xo.window(order_by=xo.desc(t.total_revenue))),
+    dense_rank=lambda t: xo.dense_rank().over(xo.window(order_by=xo.desc(t.total_revenue))),
+    row_number=lambda t: xo.row_number().over(xo.window(order_by=xo.desc(t.total_revenue))),
 )
 ```
 
@@ -258,7 +258,7 @@ weekend_revenue = (
 )
 
 # 3-weekend moving average
-window_3 = ibis.window(rows=(-2, 0), order_by="sale_date")
+window_3 = xo.window(rows=(-2, 0), order_by="sale_date")
 
 result = weekend_revenue.mutate(
     ma_3weekend=_.total_revenue.mean().over(window_3).round(2),

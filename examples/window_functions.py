@@ -2,6 +2,7 @@
 """Window Functions - Rolling Averages, Rankings, Running Totals, and t.all()."""
 
 import ibis
+import xorq.api as xo
 from ibis import _
 
 from boring_semantic_layer import to_semantic_table
@@ -31,13 +32,13 @@ def main():
     result = (
         daily_stats.mutate(
             rolling_avg=lambda t: t.flight_count.mean().over(
-                ibis.window(order_by=t.flight_date, preceding=6, following=0),
+                xo.window(order_by=t.flight_date, preceding=6, following=0),
             ),
-            rank=lambda t: ibis.dense_rank().over(
-                ibis.window(order_by=ibis.desc(t.flight_count)),
+            rank=lambda t: xo.dense_rank().over(
+                xo.window(order_by=xo.desc(t.flight_count)),
             ),
             running_total=lambda t: t.flight_count.sum().over(
-                ibis.window(order_by=t.flight_date),
+                xo.window(order_by=t.flight_date),
             ),
         )
         .order_by("flight_date")
@@ -64,8 +65,8 @@ def main():
 
     result = (
         carrier_stats.mutate(
-            total_flights=lambda t: t.flight_count.sum().over(ibis.window()),
-            percent_manual=lambda t: (t.flight_count / t.flight_count.sum().over(ibis.window()))
+            total_flights=lambda t: t.flight_count.sum().over(xo.window()),
+            percent_manual=lambda t: (t.flight_count / t.flight_count.sum().over(xo.window()))
             * 100,
         )
         .order_by(_.percent_manual.desc())

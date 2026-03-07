@@ -289,7 +289,7 @@ class MeasureScope:
         return _resolve_column_item(self.tbl, name)
 
     def all(self, ref):
-        import ibis as ibis_mod
+        from xorq.vendor import ibis as ibis_mod
 
         if isinstance(ref, str):
             if self.post_agg:
@@ -343,7 +343,7 @@ class ColumnScope:
         return self.tbl[name]
 
     def all(self, ref):
-        import ibis as ibis_mod
+        from xorq.vendor import ibis as ibis_mod
 
         if isinstance(ref, str):
             return self.tbl[ref].sum().over(ibis_mod.window())
