@@ -127,11 +127,13 @@ def serialize_measures(measures: Mapping[str, Any]) -> Result[dict, Exception]:
 def serialize_calc_measures(calc_measures: Mapping[str, Any]) -> Result[dict, Exception]:
     @safe
     def do_serialize():
-        from .measure_scope import AllOf, BinOp, MeasureRef, MethodCall
+        from .measure_scope import AggregationExpr, AllOf, BinOp, MeasureRef, MethodCall
 
         def _serialize_calc_expr(expr):
             if isinstance(expr, MeasureRef):
                 return ("measure_ref", expr.name)
+            if isinstance(expr, AggregationExpr):
+                return ("agg_expr", expr.column, expr.operation, expr.post_ops)
             if isinstance(expr, AllOf):
                 return ("all_of", _serialize_calc_expr(expr.ref))
             if isinstance(expr, MethodCall):
@@ -164,7 +166,7 @@ def serialize_calc_measures(calc_measures: Mapping[str, Any]) -> Result[dict, Ex
 
 
 def deserialize_calc_measures(calc_data: Mapping[str, Any]) -> dict[str, Any]:
-    from .measure_scope import AllOf, BinOp, MeasureRef, MethodCall
+    from .measure_scope import AggregationExpr, AllOf, BinOp, MeasureRef, MethodCall
 
     def _deserialize_calc_expr(data):
         if isinstance(data, int | float):
@@ -172,6 +174,8 @@ def deserialize_calc_measures(calc_data: Mapping[str, Any]) -> dict[str, Any]:
         tag = data[0]
         if tag == "measure_ref":
             return MeasureRef(data[1])
+        if tag == "agg_expr":
+            return AggregationExpr(column=data[1], operation=data[2], post_ops=_list_to_tuple(data[3]) if data[3] else ())
         if tag == "all_of":
             return AllOf(_deserialize_calc_expr(data[1]))
         if tag == "method_call":
