@@ -117,7 +117,7 @@ def to_untagged(expr):
 
 
 def to_tagged(expr, aggregate_cache_storage=None):
-    from .xorq_convert import to_tagged as _to_tagged
+    from .serialization import to_tagged as _to_tagged
 
     return _to_tagged(expr, aggregate_cache_storage=aggregate_cache_storage)
 
@@ -249,7 +249,7 @@ class SemanticTable(ir.Table):
         return self.op().to_untagged()
 
     def to_tagged(self, aggregate_cache_storage=None):
-        from .xorq_convert import to_tagged
+        from .serialization import to_tagged
 
         return to_tagged(self, aggregate_cache_storage=aggregate_cache_storage)
 
