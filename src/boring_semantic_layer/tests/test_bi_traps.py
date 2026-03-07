@@ -126,6 +126,30 @@ class TestFanOutTrap:
         assert df["orders.order_count"].iloc[0] == 3  # correct
         assert df["orders.distinct_orders"].iloc[0] == 3  # correct
 
+    def test_nunique_with_group_by_across_join(self, models):
+        """GROUP BY + nunique across join_many computes correctly.
+
+        Pre-agg SUM(partial_distinct_counts) would overcount because the same
+        value can appear across partitions.  COUNT DISTINCT is immune to
+        fan-out so it is deferred to the full joined table instead.
+
+        customer_id=10 has order_ids {1, 2} → distinct_orders = 2
+        customer_id=20 has order_ids {3}    → distinct_orders = 1
+        """
+        joined = models["orders"].join_many(models["line_items"], on="order_id")
+        df = (
+            joined.group_by("orders.customer_id")
+            .aggregate("orders.distinct_orders")
+            .execute()
+            .sort_values("orders.customer_id")
+            .reset_index(drop=True)
+        )
+
+        assert df.loc[0, "orders.customer_id"] == 10
+        assert df.loc[0, "orders.distinct_orders"] == 2
+        assert df.loc[1, "orders.customer_id"] == 20
+        assert df.loc[1, "orders.distinct_orders"] == 1
+
 
 # ---------------------------------------------------------------------------
 # TestChasmTrap

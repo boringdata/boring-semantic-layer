@@ -26,6 +26,10 @@ try:
     _MeanTypes = (ibis_ops.reductions.Mean, xorq_ops.reductions.Mean)
     _MinTypes = (ibis_ops.reductions.Min, xorq_ops.reductions.Min)
     _MaxTypes = (ibis_ops.reductions.Max, xorq_ops.reductions.Max)
+    _CountDistinctTypes = (
+        ibis_ops.reductions.CountDistinct,
+        xorq_ops.reductions.CountDistinct,
+    )
 except ImportError:
     from ibis.common.collections import FrozenDict, FrozenOrderedDict
 
@@ -34,6 +38,7 @@ except ImportError:
     _MeanTypes = (ibis_ops.reductions.Mean,)
     _MinTypes = (ibis_ops.reductions.Min,)
     _MaxTypes = (ibis_ops.reductions.Max,)
+    _CountDistinctTypes = (ibis_ops.reductions.CountDistinct,)
 
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Success, safe
@@ -1678,6 +1683,11 @@ def _is_mean_expr(expr):
         return False
 
 
+def _is_count_distinct_expr(expr):
+    """Check if an ibis expression is a CountDistinct (nunique) reduction."""
+    return safe(lambda: isinstance(expr.op(), _CountDistinctTypes))().value_or(False)
+
+
 def _reagg_op_for_expr(expr):
     """Return the correct re-aggregation operation name for an ibis expression.
 
@@ -1693,6 +1703,11 @@ def _reagg_op_for_expr(expr):
     if isinstance(op, _MeanTypes):
         raise ValueError(
             f"Mean expression {expr.get_name()!r} was not decomposed — "
+            "this is a bug in the pre-aggregation logic"
+        )
+    if isinstance(op, _CountDistinctTypes):
+        raise ValueError(
+            f"CountDistinct expression {expr.get_name()!r} was not deferred — "
             "this is a bug in the pre-aggregation logic"
         )
     return "sum"
@@ -2030,6 +2045,8 @@ class SemanticAggregateOp(Relation):
         _decomposed_means: dict[str, tuple[str, str]] = {}
         # Track correct re-aggregation op per measure (default "sum")
         _reagg_ops: dict[str, str] = {}
+        # Track COUNT DISTINCT measures deferred to full joined table
+        _deferred_count_distincts: dict[str, tuple[str, str]] = {}
 
         for table_name, measures in partitioned.items():
             if table_name is None:
@@ -2118,6 +2135,9 @@ class SemanticAggregateOp(Relation):
                         agg_exprs[sum_col] = base_col.sum()
                         agg_exprs[count_col] = base_col.count()
                         _decomposed_means[mname] = (sum_col, count_col)
+                    elif _is_count_distinct_expr(expr):
+                        # COUNT DISTINCT is immune to fan-out — defer to full table
+                        _deferred_count_distincts[mname] = (table_name, short)
                     else:
                         _reagg_ops[mname] = _reagg_op_for_expr(expr)
                         agg_exprs[mname] = expr
@@ -2180,37 +2200,74 @@ class SemanticAggregateOp(Relation):
         decomposed_means = tuple(_decomposed_means.items())
         reagg_ops = tuple(_reagg_ops.items())
 
-        if not preagg_results:
+        if not preagg_results and not _deferred_count_distincts:
             if tbl is not None:
                 return tbl.aggregate({n: f(tbl) for n, f in plan.agg_specs.items()})
             raise ValueError("No aggregation results and full join unavailable")
 
         # --- 5. Combine pre-agg results ---
-        if not group_by_cols:
-            # Cross-join all scalar results
-            result = preagg_results[0]
-            for pt in preagg_results[1:]:
-                result = result.cross_join(pt)
-        elif tbl is not None:
-            result = self._join_preagg_with_dim_bridge(
-                preagg_results,
-                plan,
-                tbl,
-                group_by_cols,
-                decomposed_means=decomposed_means,
-                reagg_ops=reagg_ops,
-            )
-        else:
-            # Chasm fallback with group-by: build minimal dim bridge from raw tables
-            result = self._build_minimal_dim_bridge(
-                preagg_results,
-                plan,
-                group_by_cols,
-                join_tree_info,
-                merged_dimensions,
-                decomposed_means=decomposed_means,
-                reagg_ops=reagg_ops,
-            )
+        result = None
+        if preagg_results:
+            if not group_by_cols:
+                # Cross-join all scalar results
+                result = preagg_results[0]
+                for pt in preagg_results[1:]:
+                    result = result.cross_join(pt)
+            elif tbl is not None:
+                result = self._join_preagg_with_dim_bridge(
+                    preagg_results,
+                    plan,
+                    tbl,
+                    group_by_cols,
+                    decomposed_means=decomposed_means,
+                    reagg_ops=reagg_ops,
+                )
+            else:
+                # Chasm fallback with group-by: build minimal dim bridge from raw tables
+                result = self._build_minimal_dim_bridge(
+                    preagg_results,
+                    plan,
+                    group_by_cols,
+                    join_tree_info,
+                    merged_dimensions,
+                    decomposed_means=decomposed_means,
+                    reagg_ops=reagg_ops,
+                )
+
+        # --- 5b. Compute deferred COUNT DISTINCT on full joined table ---
+        if _deferred_count_distincts:
+            if tbl is None:
+                raise ValueError(
+                    "COUNT DISTINCT measures require the full joined table but it is "
+                    "unavailable (chasm fallback). Use join_one for reference tables "
+                    "or remove count-distinct measures from this query."
+                )
+            cd_aggs = {}
+            for mname, (_src_table, _short) in _deferred_count_distincts.items():
+                cd_aggs[mname] = plan.agg_specs[mname](tbl)
+            if group_by_cols:
+                gb_available = [c for c in group_by_cols if c in tbl.columns]
+                cd_result = tbl.group_by(
+                    [tbl[c] for c in gb_available]
+                ).aggregate(**cd_aggs)
+                if result is None:
+                    result = cd_result
+                else:
+                    common = [c for c in gb_available if c in result.columns]
+                    if common:
+                        preds = [result[c] == cd_result[c] for c in common]
+                        cd_meas = list(cd_aggs.keys())
+                        result = result.left_join(cd_result, preds).select(
+                            [result] + [cd_result[m] for m in cd_meas]
+                        )
+                    else:
+                        result = result.cross_join(cd_result)
+            else:
+                cd_result = tbl.aggregate(**cd_aggs)
+                if result is None:
+                    result = cd_result
+                else:
+                    result = result.cross_join(cd_result)
 
         # --- 6. Apply calc_specs ---
         if plan.calc_specs:
