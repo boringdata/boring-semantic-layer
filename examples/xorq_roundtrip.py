@@ -10,7 +10,7 @@ import xorq.api as xo
 from ibis import _
 
 from boring_semantic_layer import to_semantic_table
-from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+from boring_semantic_layer.serialization import from_tagged, to_tagged
 
 BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
 
