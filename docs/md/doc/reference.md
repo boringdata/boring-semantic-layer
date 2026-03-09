@@ -89,7 +89,7 @@ Load semantic models from a YAML configuration file. Returns a dictionary of sem
 
 **Example:**
 ```python
-from boring_semantic_layer.yaml import from_yaml
+from boring_semantic_layer import from_yaml
 
 models = from_yaml("models.yaml")
 flights_st = models["flights"]

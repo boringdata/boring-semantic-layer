@@ -151,13 +151,13 @@ Then run:
 bsl chat --sm my_model.yaml
 ```
 
-See [Query Agent Chat](/examples/query-agent-chat) for full documentation on YAML models with joins and advanced features.
+See [Query Agent Chat](/agents/chat) for full documentation on YAML models with joins and advanced features.
 
 ## Next Steps
 
-- [Chat with your data](/examples/query-agent-chat) using natural language
-- Define models in [YAML configuration](/examples/yaml-config)
-- Configure database connections with [Profiles](/examples/profile)
-- Learn how to [Build Semantic Tables](/examples/semantic-table) with dimensions, measures, and joins
-- Explore [Query Methods](/examples/query-methods) for retrieving data
-- Discover how to [Compose Models](/examples/compose) together
+- [Chat with your data](/agents/chat) using natural language
+- Define models in [YAML configuration](/building/yaml)
+- Configure database connections with [Profiles](/building/profile)
+- Learn how to [Build Semantic Tables](/building/semantic-tables) with dimensions, measures, and joins
+- Explore [Query Methods](/querying/methods) for retrieving data
+- Discover how to [Compose Models](/building/compose) together
