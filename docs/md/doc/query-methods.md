@@ -388,11 +388,11 @@ result = (
     .aggregate("flight_count", "total_distance")
     .mutate(
         avg_distance_per_flight=lambda t: t.total_distance / t.flight_count,
-        flight_category=lambda t: ibis.cases(
-            (t.flight_count >= 3, "high"),
-            (t.flight_count >= 2, "medium"),
-            else_="low"
-        )
+        flight_category=lambda t: xo.case()
+            .when(t.flight_count >= 3, "high")
+            .when(t.flight_count >= 2, "medium")
+            .else_("low")
+            .end()
     )
 )
 ```
@@ -435,11 +435,11 @@ daily_flights = (
 )
 
 # Then apply window function for cumulative distance
-window_spec = ibis.window(order_by="origin")
+window_spec = xo.window(order_by="origin")
 
 result = daily_flights.mutate(
     cumulative_distance=_.total_distance.cumsum(),
-    flight_rank=lambda t: ibis.rank().over(ibis.window(order_by=_.flight_count.desc()))
+    flight_rank=lambda t: xo.rank().over(xo.window(order_by=xo.desc(t.flight_count)))
 ).limit(10)
 ```
 
@@ -448,7 +448,7 @@ result = daily_flights.mutate(
 **Key points:**
 - Window functions are applied **after** `.aggregate()` using `.mutate()`
 - Use `.order_by()` to establish row order for window operations
-- Combine with `ibis.window()` for advanced sliding window calculations
+- Combine with `xo.window()` for advanced sliding window calculations
 
 For comprehensive examples including lag/lead, moving averages, and ranking, see [Window Functions](/advanced/windowing).
 

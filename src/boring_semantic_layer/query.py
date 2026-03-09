@@ -13,6 +13,7 @@ from typing import Any, ClassVar, Literal
 import ibis
 from attrs import frozen
 from ibis.common.collections import FrozenDict
+import xorq.api as xo
 from toolz import curry
 
 from .utils import safe_eval
@@ -216,7 +217,7 @@ class Filter:
         # Try parsing as timestamp first (more general), then date
         for dtype in ("timestamp", "date"):
             try:
-                return ibis.literal(value, type=dtype)
+                return xo.literal(value, type=dtype)
             except (ValueError, TypeError):
                 pass
 
@@ -233,8 +234,8 @@ class Filter:
             # Extract just the field name, ignoring the table prefix
             # e.g., 'customers.country' -> 'country'
             _table_name, field_name = field.split(".", 1)
-            return getattr(ibis._, field_name)
-        return getattr(ibis._, field)
+            return getattr(xo._, field_name)
+        return getattr(xo._, field)
 
     def _parse_json_filter(self, filter_obj: FrozenDict) -> Any:
         """Parse JSON filter object into ibis expression."""
@@ -289,15 +290,17 @@ class Filter:
 
     def to_callable(self) -> Callable:
         """Convert filter to callable that can be used with SemanticTable.filter()."""
+        from .ops import _ensure_xorq_table
+
         if isinstance(self.filter, dict):
             expr = self._parse_json_filter(self.filter)
-            return lambda t: expr.resolve(t)
+            return lambda t: expr.resolve(_ensure_xorq_table(t))
         elif isinstance(self.filter, str):
             expr = safe_eval(
                 self.filter,
-                context={"_": ibis._, "ibis": ibis},
+                context={"_": xo._, "ibis": xo},
             ).unwrap()
-            return lambda t: expr.resolve(t)
+            return lambda t: expr.resolve(_ensure_xorq_table(t))
         elif callable(self.filter):
             return self.filter
         raise ValueError("Filter must be a dict, string, or callable")

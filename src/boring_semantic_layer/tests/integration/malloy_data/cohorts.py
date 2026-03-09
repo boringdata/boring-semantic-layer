@@ -1,5 +1,6 @@
 import ibis
 import pandas as pd
+import xorq.api as xo
 
 from boring_semantic_layer import to_semantic_table
 
@@ -47,10 +48,10 @@ query_1 = (
         **{
             "Users that Ordered Count": lambda t: t["Users in Cohort that Ordered"]
             .sum()
-            .over(ibis.window(group_by="Order Month")),
+            .over(xo.window(group_by="Order Month")),
             "Percent of cohort that ordered": lambda t: (
                 t["Users in Cohort that Ordered"]
-                / t["Users in Cohort that Ordered"].sum().over(ibis.window(group_by="Order Month"))
+                / t["Users in Cohort that Ordered"].sum().over(xo.window(group_by="Order Month"))
             ),
             "User Signup Cohort": lambda t: t["User Signup Cohort"].date().cast(str),
         },
@@ -65,10 +66,10 @@ query_2 = (
     .mutate(
         **{
             "Total Sales": lambda t: t.cohort_sales.sum().over(
-                ibis.window(group_by="Order Month"),
+                xo.window(group_by="Order Month"),
             ),
             "Cohort as Percent of Sales": lambda t: t.cohort_sales
-            / t.cohort_sales.sum().over(ibis.window(group_by="Order Month")),
+            / t.cohort_sales.sum().over(xo.window(group_by="Order Month")),
             "User Signup Cohort": lambda t: t["User Signup Cohort"].date().cast(str),
         },
     )

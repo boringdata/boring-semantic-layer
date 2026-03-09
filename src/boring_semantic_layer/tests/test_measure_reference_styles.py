@@ -477,7 +477,7 @@ def test_method_call_fillna_on_calc_measure():
 def test_method_call_serialization_roundtrip():
     """MethodCall should survive serialize/deserialize roundtrip."""
     from boring_semantic_layer.measure_scope import BinOp, MeasureRef, MethodCall
-    from boring_semantic_layer.xorq_convert import (
+    from boring_semantic_layer.serialization import (
         deserialize_calc_measures,
         serialize_calc_measures,
     )

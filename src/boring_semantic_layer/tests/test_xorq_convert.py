@@ -4,7 +4,7 @@ import pytest
 from returns.result import Failure, Success
 
 from boring_semantic_layer.utils import expr_to_ibis_string, ibis_string_to_expr
-from boring_semantic_layer.xorq_convert import (
+from boring_semantic_layer.serialization import (
     from_tagged,
     serialize_dimensions,
     serialize_measures,

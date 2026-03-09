@@ -5,6 +5,7 @@ import sys
 from typing import Any
 
 import ibis
+import xorq.api as xo
 from returns.result import Success
 
 from boring_semantic_layer import to_semantic_table
@@ -52,12 +53,12 @@ class QueryExecutor:
             sys.stdout = captured
 
         try:
-            namespace = {"ibis": ibis, "to_semantic_table": to_semantic_table, **self.context}
+            namespace = {"ibis": ibis, "xo": xo, "to_semantic_table": to_semantic_table, **self.context}
             last_expr = self._eval_last_expression(code, namespace)
 
             # Update context with new variables
             for key, val in namespace.items():
-                if not key.startswith("_") and key not in ["ibis", "to_semantic_table"]:
+                if not key.startswith("_") and key not in ["ibis", "xo", "to_semantic_table"]:
                     self.context[key] = val
 
             output = captured.getvalue() if self.capture_output else ""

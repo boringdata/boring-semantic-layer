@@ -1,4 +1,5 @@
 import ibis
+import xorq.api as xo
 
 from boring_semantic_layer import to_semantic_table
 
@@ -21,7 +22,7 @@ flights_st = (
 
 
 def moving_avg_window(order_by, preceding):
-    return ibis.window(order_by=order_by, preceding=preceding, following=0)
+    return xo.window(order_by=order_by, preceding=preceding, following=0)
 
 
 query_1 = (

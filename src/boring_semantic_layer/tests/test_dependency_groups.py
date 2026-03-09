@@ -99,14 +99,14 @@ class TestDependencyGroupDocumentation:
 class TestXorqErrorMessages:
     """Test that xorq functions have proper error handling."""
 
-    def test_xorq_convert_module_has_error_handling(self):
-        """Verify xorq_convert module has ImportError handling."""
+    def test_serialization_module_has_error_handling(self):
+        """Verify serialization module has ImportError handling."""
         import inspect
 
-        from boring_semantic_layer import xorq_convert
+        from boring_semantic_layer import serialization
 
         # Check that to_tagged raises ImportError with helpful message if xorq is not available
-        source = inspect.getsource(xorq_convert.to_tagged)
+        source = inspect.getsource(serialization.to_tagged)
         assert "ImportError" in source
         # xorq is now a core dependency, so the error message should be generic
         assert "xorq" in source.lower()
@@ -180,14 +180,14 @@ class TestErrorMessageQuality:
         # Should have install instructions
         assert "pip install" in source or "Install with" in source
 
-    def test_xorq_convert_has_clear_error_messages(self):
-        """Verify xorq_convert module has clear error messages."""
+    def test_serialization_has_clear_error_messages(self):
+        """Verify serialization module has clear error messages."""
         import inspect
 
-        from boring_semantic_layer import xorq_convert
+        from boring_semantic_layer import serialization
 
         # Check to_tagged function
-        source = inspect.getsource(xorq_convert.to_tagged)
+        source = inspect.getsource(serialization.to_tagged)
         assert "ImportError" in source
         # Should mention how to install
         assert "pip install" in source or "Install with" in source or "xorq" in source
@@ -256,7 +256,7 @@ class TestIntegrationWithRealDependencies:
         if xorq_available:
             # xorq is installed, verify it can be imported and used
             # Note: to_tagged and from_tagged are internal functions, not public API
-            from boring_semantic_layer.xorq_convert import from_tagged, to_tagged
+            from boring_semantic_layer.serialization import from_tagged, to_tagged
 
             assert callable(to_tagged)
             assert callable(from_tagged)
@@ -266,7 +266,7 @@ class TestIntegrationWithRealDependencies:
                 import ibis
 
                 from boring_semantic_layer import SemanticModel
-                from boring_semantic_layer.xorq_convert import to_tagged
+                from boring_semantic_layer.serialization import to_tagged
 
                 table = ibis.memtable({"a": [1]})
                 model = SemanticModel(table=table, dimensions={}, measures={})
