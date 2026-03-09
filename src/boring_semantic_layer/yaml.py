@@ -75,6 +75,69 @@ def _parse_filter(filter_expr: str) -> callable:
     return lambda t, d=deferred: d.resolve(t)
 
 
+def _resolve_join_model(
+    alias: str,
+    join_model_name: str,
+    tables: Mapping[str, Any],
+    yaml_configs: Mapping[str, Any],
+    models: dict[str, SemanticModel],
+) -> SemanticModel:
+    """Look up and return the model to join."""
+    if join_model_name in models:
+        return models[join_model_name]
+    elif join_model_name in tables:
+        table = tables[join_model_name]
+        if isinstance(table, SemanticModel | SemanticTable):
+            return table
+        else:
+            raise TypeError(
+                f"Join '{alias}' references '{join_model_name}' which is not a semantic model/table"
+            )
+    elif join_model_name in yaml_configs:
+        raise ValueError(
+            f"Model '{join_model_name}' in join '{alias}' not yet loaded. Check model order."
+        )
+    else:
+        available = sorted(
+            list(models.keys())
+            + [k for k in tables if isinstance(tables.get(k), SemanticModel | SemanticTable)]
+        )
+        raise KeyError(
+            f"Model '{join_model_name}' in join '{alias}' not found. Available: {', '.join(available)}"
+        )
+
+
+def _create_aliased_model(model: SemanticModel, alias: str) -> SemanticModel:
+    """Create an aliased copy of a model with a different name for join prefixing.
+
+    For self-joins (same model joined multiple times), also creates a distinct
+    table reference via ``.view()`` to avoid ambiguous column errors.
+    """
+    base_table = model.op().to_untagged()
+
+    # Create a distinct table reference for self-joins
+    try:
+        aliased_table = base_table.view()
+    except Exception:
+        aliased_table = base_table
+
+    aliased_model = to_semantic_table(aliased_table, name=alias)
+
+    dims = model.get_dimensions()
+    if dims:
+        aliased_model = aliased_model.with_dimensions(**dims)
+
+    measures = model.get_measures()
+    if measures:
+        aliased_model = aliased_model.with_measures(**measures)
+
+    calc_measures = model.get_calculated_measures()
+    if calc_measures:
+        aliased_model = aliased_model.with_measures(**calc_measures)
+
+    return aliased_model
+
+
 def _parse_joins(
     joins_config: dict[str, Mapping[str, Any]],
     tables: Mapping[str, Any],
@@ -85,39 +148,30 @@ def _parse_joins(
     """Parse join configuration and apply joins to a semantic model."""
     result_model = models[current_model_name]
 
+    # Track which models have been joined to detect self-joins
+    joined_model_names: dict[str, int] = {}
+
     # Process each join definition
     for alias, join_config in joins_config.items():
         join_model_name = join_config.get("model")
         if not join_model_name:
             raise ValueError(f"Join '{alias}' must specify 'model' field")
 
-        # Look up the model to join - check in order: models, tables, yaml_configs
-        if join_model_name in models:
-            # Already loaded model from this YAML
-            join_model = models[join_model_name]
-        elif join_model_name in tables:
-            # Table passed via tables parameter
-            table = tables[join_model_name]
-            if isinstance(table, SemanticModel | SemanticTable):
-                join_model = table
-            else:
-                raise TypeError(
-                    f"Join '{alias}' references '{join_model_name}' which is not a semantic model/table"
-                )
-        elif join_model_name in yaml_configs:
-            # Defined in YAML but not yet loaded - wrong order
-            raise ValueError(
-                f"Model '{join_model_name}' in join '{alias}' not yet loaded. Check model order."
-            )
-        else:
-            # Not found anywhere
-            available = sorted(
-                list(models.keys())
-                + [k for k in tables if isinstance(tables.get(k), SemanticModel | SemanticTable)]
-            )
-            raise KeyError(
-                f"Model '{join_model_name}' in join '{alias}' not found. Available: {', '.join(available)}"
-            )
+        join_model = _resolve_join_model(alias, join_model_name, tables, yaml_configs, models)
+
+        # Create an aliased copy when the alias differs from the model name,
+        # or for self-joins (same model joined multiple times).
+        # This ensures dimension prefixes match the YAML alias (e.g., "origin_airport.city")
+        # rather than the underlying model name (e.g., "airports.city").
+        join_count = joined_model_names.get(join_model_name, 0)
+        needs_alias = (
+            alias != join_model_name
+            or join_count > 0
+            or join_model_name == current_model_name
+        )
+        if needs_alias:
+            join_model = _create_aliased_model(join_model, alias)
+        joined_model_names[join_model_name] = join_count + 1
 
         # Apply the join based on type
         join_type = join_config.get("type", "one")  # Default to one-to-one
