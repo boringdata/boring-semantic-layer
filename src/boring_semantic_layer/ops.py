@@ -863,7 +863,11 @@ class _DimPrefixProxy:
         full_name = f"{self._prefix}.{name}"
         if full_name in self._dims:
             return self._dims[full_name](self._tbl)
-        return getattr(self._tbl, name)
+        raise AttributeError(
+            f"No dimension '{full_name}' found. "
+            f"Available dimensions with prefix '{self._prefix}.': "
+            f"{[k for k in self._dims if k.startswith(self._prefix + '.')]}"
+        )
 
 
 class _DimensionTableProxy:
@@ -915,6 +919,9 @@ class Dimension:
                 try:
                     proxy = _DimensionTableProxy(table, _dims)
                     return self.expr(proxy)
+                except AttributeError:
+                    # Re-raise proxy errors so dependency resolution can detect them
+                    raise
                 except Exception:
                     pass
             # Provide helpful error for missing columns

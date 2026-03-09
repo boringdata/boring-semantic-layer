@@ -34,14 +34,19 @@ class _ColumnPrefixProxy:
         full_name = f"{self._prefix}.{name}"
         if hasattr(self._tbl, "columns") and full_name in self._tbl.columns:
             return self._tbl[full_name]
-        # Fallback to raw table attribute
-        return getattr(self._tbl, name)
+        raise AttributeError(
+            f"No column '{full_name}' found on the table. "
+            f"Available columns with prefix '{self._prefix}.': "
+            f"{[c for c in (self._tbl.columns if hasattr(self._tbl, 'columns') else []) if c.startswith(self._prefix + '.')]}"
+        )
 
     def __getitem__(self, name: str):
         full_name = f"{self._prefix}.{name}"
         if hasattr(self._tbl, "columns") and full_name in self._tbl.columns:
             return self._tbl[full_name]
-        return self._tbl[name]
+        raise KeyError(
+            f"No column '{full_name}' found on the table."
+        )
 
 
 class _PendingMethodCall:
