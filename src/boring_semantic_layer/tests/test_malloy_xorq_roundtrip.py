@@ -412,7 +412,7 @@ class TestMalloyXorqFeatures:
         tagged_expr = to_tagged(data_st)
 
         # Apply xorq-specific tags (caching hints)
-        cached_expr = tagged_expr.tag(tag="cache", strategy="memory", ttl="3600")
+        cached_expr = tagged_expr.hashing_tag(tag="cache", strategy="memory", ttl="3600")
         assert cached_expr is not None
 
         # Should still be convertible back

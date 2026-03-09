@@ -173,10 +173,10 @@ class TestXorqIntegration:
 
         # Verify xorq-specific methods are available
         # (These are xorq features not available in regular ibis)
-        assert hasattr(tagged_expr, "tag"), "Xorq tables should have tag method"
+        assert hasattr(tagged_expr, "hashing_tag"), "Xorq tables should have hashing_tag method"
 
         # We can add more xorq tags (e.g., for caching hints)
-        cached_expr = tagged_expr.tag(tag="cache", cache_strategy="aggressive")
+        cached_expr = tagged_expr.hashing_tag(tag="cache", cache_strategy="aggressive")
         assert cached_expr is not None
 
     def test_filtered_expression_to_xorq(self):
@@ -223,8 +223,8 @@ class TestXorqFeatures:
         tagged_expr = to_tagged(model)
 
         # Add multiple tags
-        tagged = tagged_expr.tag(tag="cache", cache_ttl="3600")
-        tagged = tagged.tag(tag="monitoring", track_queries="true")
+        tagged = tagged_expr.hashing_tag(tag="cache", cache_ttl="3600")
+        tagged = tagged.hashing_tag(tag="monitoring", track_queries="true")
 
         # Both tags should be preserved
         # (This tests xorq's ability to nest tags)
@@ -238,7 +238,7 @@ class TestXorqFeatures:
         xorq_table = memtable({"a": [1, 2, 3]})
 
         # Tag is a noop - shouldn't affect query results
-        tagged_table = xorq_table.tag(tag="test", metadata="example")
+        tagged_table = xorq_table.hashing_tag(tag="test", metadata="example")
 
         df_untagged = execute(xorq_table)
         df_tagged = execute(tagged_table)

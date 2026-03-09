@@ -237,7 +237,7 @@ class TestXorqBackendFeatures:
         tagged_expr = to_tagged(model)
 
         # Tag for caching (noop for execution but useful for optimization layers)
-        cached_expr = tagged_expr.tag(tag="cache", cache_ttl="3600")
+        cached_expr = tagged_expr.hashing_tag(tag="cache", cache_ttl="3600")
 
         df = xo.execute(cached_expr)
 
