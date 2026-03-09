@@ -14,6 +14,26 @@ from .profile import get_connection
 from .utils import read_yaml_file, safe_eval
 
 
+def _parse_expression_config(name: str, config: str | dict, metric_type: str):
+    """Extract expression string, description, and extra kwargs from config."""
+    if isinstance(config, str):
+        return config, None, {}
+    elif isinstance(config, dict):
+        if "expr" not in config:
+            raise ValueError(
+                f"{metric_type.capitalize()} '{name}' must specify 'expr' field when using dict format"
+            )
+        extra_kwargs = {}
+        if metric_type == "dimension":
+            extra_kwargs["is_entity"] = config.get("is_entity", False)
+            extra_kwargs["is_event_timestamp"] = config.get("is_event_timestamp", False)
+            extra_kwargs["is_time_dimension"] = config.get("is_time_dimension", False)
+            extra_kwargs["smallest_time_grain"] = config.get("smallest_time_grain")
+        return config["expr"], config.get("description"), extra_kwargs
+    else:
+        raise ValueError(f"Invalid {metric_type} format for '{name}'. Must be a string or dict")
+
+
 def _parse_dimension_or_measure(
     name: str, config: str | dict, metric_type: str
 ) -> Dimension | Measure:
@@ -30,28 +50,7 @@ def _parse_dimension_or_measure(
           is_time_dimension: true/false (dimensions only)
           smallest_time_grain: "TIME_GRAIN_DAY" (dimensions only)
     """
-    # Parse expression and description
-    if isinstance(config, str):
-        expr_str = config
-        description = None
-        extra_kwargs = {}
-    elif isinstance(config, dict):
-        if "expr" not in config:
-            raise ValueError(
-                f"{metric_type.capitalize()} '{name}' must specify 'expr' field when using dict format"
-            )
-        expr_str = config["expr"]
-        description = config.get("description")
-        extra_kwargs = {}
-        if metric_type == "dimension":
-            extra_kwargs["is_entity"] = config.get("is_entity", False)
-            extra_kwargs["is_event_timestamp"] = config.get("is_event_timestamp", False)
-            extra_kwargs["is_time_dimension"] = config.get("is_time_dimension", False)
-            extra_kwargs["smallest_time_grain"] = config.get("smallest_time_grain")
-    else:
-        raise ValueError(f"Invalid {metric_type} format for '{name}'. Must be a string or dict")
-
-    # Create the metric
+    expr_str, description, extra_kwargs = _parse_expression_config(name, config, metric_type)
     deferred = safe_eval(expr_str, context={"_": _}).unwrap()
     base_kwargs = {"expr": deferred, "description": description}
     return (
@@ -59,6 +58,31 @@ def _parse_dimension_or_measure(
         if metric_type == "dimension"
         else Measure(**base_kwargs)
     )
+
+
+def _parse_calc_measure(name: str, config: str | dict) -> Measure:
+    """Parse a calculated measure that references other measures by name.
+
+    Unlike regular measures which use ibis Deferred (``_``), calculated measures
+    are evaluated at runtime against a MeasureScope, allowing them to reference
+    other measures by name and use ``.all()`` for window aggregations.
+
+    Example YAML::
+
+        calculated_measures:
+          fraud_rate:
+            expr: _.fraud_volume / _.transaction_volume
+          pct_of_total:
+            expr: _.distance_sum / _.all(_.distance_sum) * 100
+    """
+    expr_str, description, _ = _parse_expression_config(name, config, "measure")
+
+    def _make_calc_fn(source: str):
+        def calc_fn(scope):
+            return safe_eval(source, context={"_": scope}).unwrap()
+        return calc_fn
+
+    return Measure(expr=_make_calc_fn(expr_str), description=description)
 
 
 def _parse_filter(filter_expr: str) -> callable:
@@ -329,12 +353,19 @@ def from_config(
             for measure_name, measure_cfg in model_config.get("measures", {}).items()
         }
 
+        calc_measures = {
+            cm_name: _parse_calc_measure(cm_name, cm_cfg)
+            for cm_name, cm_cfg in model_config.get("calculated_measures", {}).items()
+        }
+
         # Create the semantic table and add dimensions/measures
         semantic_table = to_semantic_table(table, name=name)
         if dimensions:
             semantic_table = semantic_table.with_dimensions(**dimensions)
         if measures:
             semantic_table = semantic_table.with_measures(**measures)
+        if calc_measures:
+            semantic_table = semantic_table.with_measures(**calc_measures)
 
         # Apply filter if specified
         if "filter" in model_config:
@@ -403,6 +434,13 @@ def from_yaml(
             total_distance:
               expr: _.distance.sum()
               description: "Total distance flown"
+          calculated_measures:
+            avg_per_flight:
+              expr: _.total_distance / _.flight_count
+              description: "Average distance per flight"
+            pct_of_total:
+              expr: _.total_distance / _.all(_.total_distance) * 100
+              description: "Percentage of total distance"
           joins:
             carriers:
               model: carriers

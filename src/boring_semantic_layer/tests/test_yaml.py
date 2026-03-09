@@ -1301,3 +1301,101 @@ def test_from_config_with_filter_and_joins():
     result = models["orders"].group_by("orders.oid").aggregate("orders.total").execute()
     assert "orders.oid" in result.columns
     assert len(result) == 3
+
+
+# ---------------------------------------------------------------------------
+# Issue #202: calculated_measures in YAML
+# ---------------------------------------------------------------------------
+
+
+def test_yaml_calculated_measures(duckdb_conn):
+    """Test calculated_measures section in YAML config (#202)."""
+    tbl = duckdb_conn.create_table(
+        "calc_meas_tbl",
+        {"a": [1, 2, 3], "b": [10, 20, 30]},
+    )
+
+    config = {
+        "test": {
+            "table": "calc_meas_tbl",
+            "dimensions": {"a": "_.a"},
+            "measures": {
+                "total_a": "_.a.sum()",
+                "total_b": "_.b.sum()",
+            },
+            "calculated_measures": {
+                "ratio": {
+                    "expr": "_.total_a / _.total_b",
+                    "description": "ratio of a to b",
+                },
+            },
+        },
+    }
+
+    models = from_config(config, tables={"calc_meas_tbl": tbl})
+    df = models["test"].query(dimensions=("a",), measures=("ratio",)).execute()
+    assert len(df) == 3
+    assert "ratio" in df.columns
+    assert pytest.approx(df["ratio"].sum(), abs=0.01) == 0.3
+
+
+def test_yaml_calculated_measures_simple_format(duckdb_conn):
+    """Test calculated_measures with simple string format (#202)."""
+    tbl = duckdb_conn.create_table(
+        "calc_meas_simple_tbl",
+        {"x": [10, 20], "y": [2, 5]},
+    )
+
+    config = {
+        "test": {
+            "table": "calc_meas_simple_tbl",
+            "dimensions": {"x": "_.x"},
+            "measures": {
+                "sum_x": "_.x.sum()",
+                "sum_y": "_.y.sum()",
+            },
+            "calculated_measures": {
+                "ratio": "_.sum_x / _.sum_y",
+            },
+        },
+    }
+
+    models = from_config(config, tables={"calc_meas_simple_tbl": tbl})
+    df = models["test"].query(dimensions=("x",), measures=("ratio",)).execute()
+    assert len(df) == 2
+    assert "ratio" in df.columns
+
+
+# ---------------------------------------------------------------------------
+# Issue #115: .all() for window aggregations in YAML
+# ---------------------------------------------------------------------------
+
+
+def test_yaml_all_window_aggregation(duckdb_conn):
+    """Test .all() for percent-of-total in YAML calculated_measures (#115)."""
+    tbl = duckdb_conn.create_table(
+        "all_window_tbl",
+        {"carrier": ["AA", "UA", "DL"], "distance": [100, 200, 300]},
+    )
+
+    config = {
+        "flights": {
+            "table": "all_window_tbl",
+            "dimensions": {"carrier": "_.carrier"},
+            "measures": {
+                "total_distance": "_.distance.sum()",
+            },
+            "calculated_measures": {
+                "pct_of_total": {
+                    "expr": "_.total_distance / _.all(_.total_distance) * 100",
+                    "description": "Percentage of total distance",
+                },
+            },
+        },
+    }
+
+    models = from_config(config, tables={"all_window_tbl": tbl})
+    df = models["flights"].query(dimensions=("carrier",), measures=("pct_of_total",)).execute()
+    assert len(df) == 3
+    assert "pct_of_total" in df.columns
+    assert pytest.approx(df["pct_of_total"].sum(), abs=0.01) == 100.0
