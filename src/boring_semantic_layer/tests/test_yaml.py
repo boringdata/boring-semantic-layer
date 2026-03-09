@@ -1301,3 +1301,39 @@ def test_from_config_with_filter_and_joins():
     result = models["orders"].group_by("orders.oid").aggregate("orders.total").execute()
     assert "orders.oid" in result.columns
     assert len(result) == 3
+
+
+# ---------------------------------------------------------------------------
+# Issue #136: model prefix in with_dimensions/with_measures
+# ---------------------------------------------------------------------------
+
+
+def test_model_prefix_in_with_dimensions(duckdb_conn):
+    """Test model prefix works in with_dimensions after join (#136)."""
+    from boring_semantic_layer import to_semantic_table
+
+    carriers = duckdb_conn.create_table(
+        "carriers_136", {"code": ["AA", "UA"], "name": ["American", "United"]}
+    )
+    flights = duckdb_conn.create_table(
+        "flights_136", {"carrier": ["AA", "UA", "AA"], "distance": [100, 200, 300]}
+    )
+
+    carriers_st = to_semantic_table(carriers, name="carriers").with_dimensions(
+        code=lambda t: t.code, name=lambda t: t.name
+    )
+    flights_st = (
+        to_semantic_table(flights, name="flights")
+        .with_dimensions(carrier=lambda t: t.carrier)
+        .with_measures(total_distance=lambda t: t.distance.sum())
+    )
+
+    joined = flights_st.join_one(carriers_st, on=lambda l, r: l.carrier == r.code)
+
+    # Model prefix should work in with_dimensions after join
+    result = joined.with_dimensions(carrier_name=lambda t: t.carriers.name)
+    df = result.group_by("carrier_name").aggregate("total_distance").execute()
+
+    assert len(df) == 2
+    assert "carrier_name" in df.columns
+    assert set(df["carrier_name"]) == {"American", "United"}
