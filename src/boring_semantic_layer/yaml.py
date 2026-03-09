@@ -14,6 +14,26 @@ from .profile import get_connection
 from .utils import read_yaml_file, safe_eval
 
 
+def _parse_expression_config(name: str, config: str | dict, metric_type: str):
+    """Extract expression string, description, and extra kwargs from config."""
+    if isinstance(config, str):
+        return config, None, {}
+    elif isinstance(config, dict):
+        if "expr" not in config:
+            raise ValueError(
+                f"{metric_type.capitalize()} '{name}' must specify 'expr' field when using dict format"
+            )
+        extra_kwargs = {}
+        if metric_type == "dimension":
+            extra_kwargs["is_entity"] = config.get("is_entity", False)
+            extra_kwargs["is_event_timestamp"] = config.get("is_event_timestamp", False)
+            extra_kwargs["is_time_dimension"] = config.get("is_time_dimension", False)
+            extra_kwargs["smallest_time_grain"] = config.get("smallest_time_grain")
+        return config["expr"], config.get("description"), extra_kwargs
+    else:
+        raise ValueError(f"Invalid {metric_type} format for '{name}'. Must be a string or dict")
+
+
 def _parse_dimension_or_measure(
     name: str, config: str | dict, metric_type: str
 ) -> Dimension | Measure:
@@ -30,26 +50,7 @@ def _parse_dimension_or_measure(
           is_time_dimension: true/false (dimensions only)
           smallest_time_grain: "TIME_GRAIN_DAY" (dimensions only)
     """
-    # Parse expression and description
-    if isinstance(config, str):
-        expr_str = config
-        description = None
-        extra_kwargs = {}
-    elif isinstance(config, dict):
-        if "expr" not in config:
-            raise ValueError(
-                f"{metric_type.capitalize()} '{name}' must specify 'expr' field when using dict format"
-            )
-        expr_str = config["expr"]
-        description = config.get("description")
-        extra_kwargs = {}
-        if metric_type == "dimension":
-            extra_kwargs["is_entity"] = config.get("is_entity", False)
-            extra_kwargs["is_event_timestamp"] = config.get("is_event_timestamp", False)
-            extra_kwargs["is_time_dimension"] = config.get("is_time_dimension", False)
-            extra_kwargs["smallest_time_grain"] = config.get("smallest_time_grain")
-    else:
-        raise ValueError(f"Invalid {metric_type} format for '{name}'. Must be a string or dict")
+    expr_str, description, extra_kwargs = _parse_expression_config(name, config, metric_type)
 
     # Create the metric
     deferred = safe_eval(expr_str, context={"_": _}).unwrap()
@@ -59,6 +60,32 @@ def _parse_dimension_or_measure(
         if metric_type == "dimension"
         else Measure(**base_kwargs)
     )
+
+
+def _parse_calc_measure(name: str, config: str | dict) -> Measure:
+    """Parse a calculated measure that references other measures by name.
+
+    Unlike regular measures which use ibis Deferred (``_``), calculated measures
+    are evaluated at runtime against a MeasureScope, allowing them to reference
+    other measures by name and use ``.all()`` for window aggregations.
+
+    Example YAML::
+
+        calculated_measures:
+          fraud_rate:
+            expr: _.fraud_volume / _.transaction_volume
+          pct_of_total:
+            expr: _.distance_sum / _.all(_.distance_sum) * 100
+    """
+    expr_str, description, _ = _parse_expression_config(name, config, "measure")
+
+    def _make_calc_fn(source: str):
+        def calc_fn(scope):
+            return safe_eval(source, context={"_": scope}).unwrap()
+
+        return calc_fn
+
+    return Measure(expr=_make_calc_fn(expr_str), description=description)
 
 
 def _parse_filter(filter_expr: str) -> callable:
@@ -75,6 +102,69 @@ def _parse_filter(filter_expr: str) -> callable:
     return lambda t, d=deferred: d.resolve(t)
 
 
+def _resolve_join_model(
+    alias: str,
+    join_model_name: str,
+    tables: Mapping[str, Any],
+    yaml_configs: Mapping[str, Any],
+    models: dict[str, SemanticModel],
+) -> SemanticModel:
+    """Look up and return the model to join."""
+    if join_model_name in models:
+        return models[join_model_name]
+    elif join_model_name in tables:
+        table = tables[join_model_name]
+        if isinstance(table, SemanticModel | SemanticTable):
+            return table
+        else:
+            raise TypeError(
+                f"Join '{alias}' references '{join_model_name}' which is not a semantic model/table"
+            )
+    elif join_model_name in yaml_configs:
+        raise ValueError(
+            f"Model '{join_model_name}' in join '{alias}' not yet loaded. Check model order."
+        )
+    else:
+        available = sorted(
+            list(models.keys())
+            + [k for k in tables if isinstance(tables.get(k), SemanticModel | SemanticTable)]
+        )
+        raise KeyError(
+            f"Model '{join_model_name}' in join '{alias}' not found. Available: {', '.join(available)}"
+        )
+
+
+def _create_aliased_model(model: SemanticModel, alias: str) -> SemanticModel:
+    """Create an aliased copy of a model with a different name for join prefixing.
+
+    For self-joins (same model joined multiple times), also creates a distinct
+    table reference via ``.view()`` to avoid ambiguous column errors.
+    """
+    base_table = model.op().to_untagged()
+
+    # Create a distinct table reference for self-joins
+    try:
+        aliased_table = base_table.view()
+    except Exception:
+        aliased_table = base_table
+
+    aliased_model = to_semantic_table(aliased_table, name=alias)
+
+    dims = model.get_dimensions()
+    if dims:
+        aliased_model = aliased_model.with_dimensions(**dims)
+
+    measures = model.get_measures()
+    if measures:
+        aliased_model = aliased_model.with_measures(**measures)
+
+    calc_measures = model.get_calculated_measures()
+    if calc_measures:
+        aliased_model = aliased_model.with_measures(**calc_measures)
+
+    return aliased_model
+
+
 def _parse_joins(
     joins_config: dict[str, Mapping[str, Any]],
     tables: Mapping[str, Any],
@@ -85,39 +175,30 @@ def _parse_joins(
     """Parse join configuration and apply joins to a semantic model."""
     result_model = models[current_model_name]
 
+    # Track which models have been joined to detect self-joins
+    joined_model_names: dict[str, int] = {}
+
     # Process each join definition
     for alias, join_config in joins_config.items():
         join_model_name = join_config.get("model")
         if not join_model_name:
             raise ValueError(f"Join '{alias}' must specify 'model' field")
 
-        # Look up the model to join - check in order: models, tables, yaml_configs
-        if join_model_name in models:
-            # Already loaded model from this YAML
-            join_model = models[join_model_name]
-        elif join_model_name in tables:
-            # Table passed via tables parameter
-            table = tables[join_model_name]
-            if isinstance(table, SemanticModel | SemanticTable):
-                join_model = table
-            else:
-                raise TypeError(
-                    f"Join '{alias}' references '{join_model_name}' which is not a semantic model/table"
-                )
-        elif join_model_name in yaml_configs:
-            # Defined in YAML but not yet loaded - wrong order
-            raise ValueError(
-                f"Model '{join_model_name}' in join '{alias}' not yet loaded. Check model order."
-            )
-        else:
-            # Not found anywhere
-            available = sorted(
-                list(models.keys())
-                + [k for k in tables if isinstance(tables.get(k), SemanticModel | SemanticTable)]
-            )
-            raise KeyError(
-                f"Model '{join_model_name}' in join '{alias}' not found. Available: {', '.join(available)}"
-            )
+        join_model = _resolve_join_model(alias, join_model_name, tables, yaml_configs, models)
+
+        # Create an aliased copy when the alias differs from the model name,
+        # or for self-joins (same model joined multiple times).
+        # This ensures dimension prefixes match the YAML alias (e.g., "origin_airport.city")
+        # rather than the underlying model name (e.g., "airports.city").
+        join_count = joined_model_names.get(join_model_name, 0)
+        needs_alias = (
+            alias != join_model_name
+            or join_count > 0
+            or join_model_name == current_model_name
+        )
+        if needs_alias:
+            join_model = _create_aliased_model(join_model, alias)
+        joined_model_names[join_model_name] = join_count + 1
 
         # Apply the join based on type
         join_type = join_config.get("type", "one")  # Default to one-to-one
@@ -319,7 +400,7 @@ def from_config(
         # Load table if needed and verify it exists
         tables, table = _load_table_for_yaml_model(model_config, tables, table_name)
 
-        # Parse dimensions and measures
+        # Parse dimensions, measures, and calculated measures
         dimensions = {
             dim_name: _parse_dimension_or_measure(dim_name, dim_cfg, "dimension")
             for dim_name, dim_cfg in model_config.get("dimensions", {}).items()
@@ -328,6 +409,10 @@ def from_config(
             measure_name: _parse_dimension_or_measure(measure_name, measure_cfg, "measure")
             for measure_name, measure_cfg in model_config.get("measures", {}).items()
         }
+        calc_measures = {
+            cm_name: _parse_calc_measure(cm_name, cm_cfg)
+            for cm_name, cm_cfg in model_config.get("calculated_measures", {}).items()
+        }
 
         # Create the semantic table and add dimensions/measures
         semantic_table = to_semantic_table(table, name=name)
@@ -335,6 +420,8 @@ def from_config(
             semantic_table = semantic_table.with_dimensions(**dimensions)
         if measures:
             semantic_table = semantic_table.with_measures(**measures)
+        if calc_measures:
+            semantic_table = semantic_table.with_measures(**calc_measures)
 
         # Apply filter if specified
         if "filter" in model_config:
@@ -403,6 +490,13 @@ def from_yaml(
             total_distance:
               expr: _.distance.sum()
               description: "Total distance flown"
+          calculated_measures:
+            avg_per_flight:
+              expr: _.total_distance / _.flight_count
+              description: "Average distance per flight"
+            pct_of_total:
+              expr: _.total_distance / _.all(_.total_distance) * 100
+              description: "Percentage of total distance"
           joins:
             carriers:
               model: carriers

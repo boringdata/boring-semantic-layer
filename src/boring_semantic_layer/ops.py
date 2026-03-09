@@ -490,7 +490,12 @@ def _mutate_dimensions_with_dependencies(
         try:
             while True:
                 try:
-                    dim_expr = merged_dimensions[dim_name](current_tbl)
+                    dim_fn = merged_dimensions[dim_name]
+                    dim_expr = (
+                        dim_fn(current_tbl, _dims=merged_dimensions)
+                        if isinstance(dim_fn, Dimension)
+                        else dim_fn(current_tbl)
+                    )
                     return current_tbl.mutate(**{dim_name: dim_expr})
                 except Exception as exc:
                     missing = _extract_missing_column_name(exc)
@@ -844,6 +849,53 @@ def _format_column_error(e: AttributeError, table: ir.Table) -> str:
     return " ".join(parts)
 
 
+class _DimPrefixProxy:
+    """Resolves ``proxy.column`` to ``dims["prefix.column"](table)``."""
+
+    __slots__ = ("_tbl", "_dims", "_prefix")
+
+    def __init__(self, tbl, dims: dict, prefix: str):
+        object.__setattr__(self, "_tbl", tbl)
+        object.__setattr__(self, "_dims", dims)
+        object.__setattr__(self, "_prefix", prefix)
+
+    def __getattr__(self, name: str):
+        full_name = f"{self._prefix}.{name}"
+        if full_name in self._dims:
+            return self._dims[full_name](self._tbl)
+        return getattr(self._tbl, name)
+
+
+class _DimensionTableProxy:
+    """Proxy that wraps an ibis table to support model-prefix navigation.
+
+    Allows dimension lambdas like ``lambda t: t.flights.carrier`` to work on
+    joined tables by resolving ``t.flights.carrier`` through the merged
+    dimension map (``dims["flights.carrier"](table)``).
+    """
+
+    __slots__ = ("_tbl", "_dims")
+
+    def __init__(self, tbl, dims: dict):
+        object.__setattr__(self, "_tbl", tbl)
+        object.__setattr__(self, "_dims", dims)
+
+    def __getattr__(self, name: str):
+        prefix = f"{name}."
+        if any(k.startswith(prefix) for k in self._dims):
+            return _DimPrefixProxy(self._tbl, self._dims, name)
+        return getattr(self._tbl, name)
+
+    def __getitem__(self, name: str):
+        if name in self._dims:
+            return self._dims[name](self._tbl)
+        return self._tbl[name]
+
+    @property
+    def columns(self):
+        return self._tbl.columns
+
+
 @frozen(kw_only=True, slots=True)
 class Dimension:
     expr: Callable[[ir.Table], ir.Value] | Deferred
@@ -853,10 +905,18 @@ class Dimension:
     is_event_timestamp: bool = False
     smallest_time_grain: str | None = None
 
-    def __call__(self, table: ir.Table) -> ir.Value:
+    def __call__(self, table: ir.Table, _dims: dict | None = None) -> ir.Value:
         try:
             return self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
         except AttributeError as e:
+            # Retry with a prefix-aware proxy for joined tables where
+            # model prefixes are used (e.g., lambda t: t.flights.carrier)
+            if _dims and not _is_deferred(self.expr) and callable(self.expr):
+                try:
+                    proxy = _DimensionTableProxy(table, _dims)
+                    return self.expr(proxy)
+                except Exception:
+                    pass
             # Provide helpful error for missing columns
             if "'Table' object has no attribute" in str(
                 e
