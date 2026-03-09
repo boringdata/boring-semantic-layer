@@ -8,19 +8,19 @@ Run the examples in order to learn the key features:
 
 ```bash
 # Example 1: Basic semantic tables and queries
-python examples/01_basic_flights.py
+python examples/basic_flights.py
 
 # Example 2: Market share and percent of total
-python examples/02_percent_of_total.py
+python examples/percent_of_total.py
 
 # Example 3: Window functions (rolling averages, rankings)
-python examples/03_window_functions.py
+python examples/window_functions.py
 
 # Example 4: Joins and foreign sums/averages
-python examples/04_joins.py
+python examples/joins.py
 
 # Example 5: Bucketing with 'Other' (Top N with rollup)
-python examples/05_bucketing_with_other.py
+python examples/bucketing_with_other.py
 ```
 
 ## Examples Overview
@@ -86,8 +86,7 @@ Master the "bucketing with OTHER" pattern for clean reports and visualizations:
 ### Tests
 
 For more advanced examples and patterns, see the test suite:
-- `src/boring_semantic_layer/api/tests/test_real_world_scenarios.py`
-- `src/boring_semantic_layer/api/tests/malloy_equivalence/`
+- `src/boring_semantic_layer/tests/test_real_world_scenarios.py`
 
 ## Data Sources
 

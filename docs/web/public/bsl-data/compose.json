@@ -211,10 +211,10 @@
         ],
         "data": [
           [
-            "Airbus A320",
+            "Boeing 737",
             1,
-            180,
-            200
+            150,
+            180
           ],
           [
             "Boeing 777",
@@ -223,99 +223,12 @@
             350
           ],
           [
-            "Boeing 737",
+            "Airbus A320",
             1,
-            150,
-            180
+            180,
+            200
           ]
         ]
-      },
-      "chart": {
-        "type": "vega",
-        "spec": {
-          "config": {
-            "view": {
-              "continuousWidth": 300,
-              "continuousHeight": 300
-            }
-          },
-          "data": {
-            "name": "data-9e6a135759fa882049de0f8d362d1862"
-          },
-          "mark": {
-            "type": "bar"
-          },
-          "encoding": {
-            "color": {
-              "field": "measure",
-              "type": "nominal"
-            },
-            "tooltip": [
-              {
-                "field": "aircraft_model",
-                "type": "nominal"
-              },
-              {
-                "field": "measure",
-                "type": "nominal"
-              },
-              {
-                "field": "value",
-                "type": "quantitative"
-              }
-            ],
-            "x": {
-              "field": "aircraft_model",
-              "sort": null,
-              "type": "ordinal"
-            },
-            "xOffset": {
-              "field": "measure"
-            },
-            "y": {
-              "field": "value",
-              "type": "quantitative"
-            }
-          },
-          "height": 400,
-          "transform": [
-            {
-              "fold": [
-                "flights_flight_count",
-                "flights_total_passengers",
-                "aircraft_total_capacity"
-              ],
-              "as": [
-                "measure",
-                "value"
-              ]
-            }
-          ],
-          "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
-          "datasets": {
-            "data-9e6a135759fa882049de0f8d362d1862": [
-              {
-                "aircraft_model": "Boeing 777",
-                "flights_flight_count": 1,
-                "flights_total_passengers": 120,
-                "aircraft_total_capacity": 350
-              },
-              {
-                "aircraft_model": "Airbus A320",
-                "flights_flight_count": 1,
-                "flights_total_passengers": 180,
-                "aircraft_total_capacity": 200
-              },
-              {
-                "aircraft_model": "Boeing 737",
-                "flights_flight_count": 1,
-                "flights_total_passengers": 150,
-                "aircraft_total_capacity": 180
-              }
-            ]
-          }
-        }
       }
     }
   },
