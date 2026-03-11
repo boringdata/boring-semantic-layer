@@ -361,6 +361,6 @@ date_range_join = flights_st.join(
 
 ## Next Steps
 
-- Learn about [Composing Models](/examples/compose)
-- Explore [YAML Configuration](/examples/yaml-config)
-- Start [Querying Semantic Tables](/examples/query-methods)
+- Learn about [Composing Models](/building/compose)
+- Explore [YAML Configuration](/building/yaml)
+- Start [Querying Semantic Tables](/querying/methods)

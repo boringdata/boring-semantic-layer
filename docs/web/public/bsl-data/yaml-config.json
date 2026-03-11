@@ -3,7 +3,7 @@
   "queries": {
     "load_yaml_example": {
       "code": "from boring_semantic_layer import from_yaml\n\n# Load models from YAML file with explicit tables\nmodels = from_yaml(\n    \"yaml_example.yaml\",\n    tables={\n        \"flights_tbl\": flights_tbl,\n        \"carriers_tbl\": carriers_tbl\n    }\n)\n\nflights_sm = models[\"flights\"]\ncarriers_sm = models[\"carriers\"]\n\n# Inspect the loaded models\nflights_sm.dimensions, flights_sm.measures",
-      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_dzvbyqk4lrbrzjjqzanojjwt4i\"",
+      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_j2mhogl5vvgy7bhqsygbvs4vpy\"",
       "plan": "SemanticTable: carriers\n  code [dim]\n  name [dim]\n  carrier_count [measure]",
       "table": {
         "columns": [
@@ -28,7 +28,7 @@
     },
     "query_yaml_model": {
       "code": "# Query the YAML-defined model\nresult = (\n    flights_sm\n    .group_by(\"origin\")\n    .aggregate(\"flight_count\", \"avg_distance\")\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"distance\") AS \"avg_distance\"\n  FROM (\n    SELECT\n      \"t1\".\"dest\",\n      \"t1\".\"carrier\",\n      \"t1\".\"year\",\n      \"t1\".\"distance\",\n      \"t1\".\"origin\"\n    FROM (\n      SELECT\n        *\n      FROM \"ibis_pandas_memtable_dsjzjsakybaunn5s2rifyw5f5q\" AS \"t0\"\n      WHERE\n        \"t0\".\"year\" > 2020\n    ) AS \"t1\"\n  ) AS t1\n  GROUP BY\n    \"t1\".\"origin\"\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    AVG(\"t1\".\"distance\") AS \"avg_distance\"\n  FROM (\n    SELECT\n      \"t1\".\"dest\",\n      \"t1\".\"carrier\",\n      \"t1\".\"year\",\n      \"t1\".\"distance\",\n      \"t1\".\"destination\",\n      \"t1\".\"origin\"\n    FROM (\n      SELECT\n        \"t0\".\"origin\",\n        \"t0\".\"dest\",\n        \"t0\".\"carrier\",\n        \"t0\".\"year\",\n        \"t0\".\"distance\",\n        \"t0\".\"dest\" AS \"destination\"\n      FROM \"ibis_pandas_memtable_2rhxc36mlrb2hpy5vpavuy7iye\" AS \"t0\"\n      WHERE\n        \"t0\".\"year\" > 2020\n    ) AS \"t1\"\n  ) AS t1\n  GROUP BY\n    \"t1\".\"origin\"\n) AS \"t2\"",
       "plan": "SemanticTable: flights\n  origin [dim]\n  destination [dim]\n  year [dim]\n  carrier [dim]\n  flight_count [measure]\n  total_distance [measure]\n  avg_distance [measure]\n-> Filter(\u03bb <lambda>)\n-> GroupBy(origin)\n-> Aggregate(flight_count, avg_distance)",
       "table": {
         "columns": [
@@ -53,89 +53,6 @@
             2475.0
           ]
         ]
-      },
-      "chart": {
-        "type": "vega",
-        "spec": {
-          "config": {
-            "view": {
-              "continuousWidth": 300,
-              "continuousHeight": 300
-            }
-          },
-          "data": {
-            "name": "data-6d81a9b72c8565e701a64a16a2225db0"
-          },
-          "mark": {
-            "type": "bar"
-          },
-          "encoding": {
-            "color": {
-              "field": "measure",
-              "type": "nominal"
-            },
-            "tooltip": [
-              {
-                "field": "origin",
-                "type": "nominal"
-              },
-              {
-                "field": "measure",
-                "type": "nominal"
-              },
-              {
-                "field": "value",
-                "type": "quantitative"
-              }
-            ],
-            "x": {
-              "field": "origin",
-              "sort": null,
-              "type": "ordinal"
-            },
-            "xOffset": {
-              "field": "measure"
-            },
-            "y": {
-              "field": "value",
-              "type": "quantitative"
-            }
-          },
-          "height": 400,
-          "transform": [
-            {
-              "fold": [
-                "flight_count",
-                "avg_distance"
-              ],
-              "as": [
-                "measure",
-                "value"
-              ]
-            }
-          ],
-          "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
-          "datasets": {
-            "data-6d81a9b72c8565e701a64a16a2225db0": [
-              {
-                "origin": "JFK",
-                "flight_count": 1,
-                "avg_distance": 2475.0
-              },
-              {
-                "origin": "LAX",
-                "flight_count": 1,
-                "avg_distance": 337.0
-              },
-              {
-                "origin": "SFO",
-                "flight_count": 1,
-                "avg_distance": 382.0
-              }
-            ]
-          }
-        }
       }
     }
   },
