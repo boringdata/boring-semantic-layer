@@ -143,6 +143,7 @@ builds/
 
 # Cached example data
 examples/data/
+examples/*/data/
 examples/*.local.yml
 
 # Eval transcripts

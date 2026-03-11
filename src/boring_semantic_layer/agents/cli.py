@@ -263,6 +263,23 @@ def cmd_render(args):
             observer.join()
 
 
+def cmd_serve(args):
+    """Start the BSL HTTP API server."""
+    try:
+        from boring_semantic_layer.server import main as serve_main
+    except ImportError:
+        print("❌ FastAPI/uvicorn not installed.")
+        print("   Install with: pip install 'boring-semantic-layer[server]'")
+        return
+
+    serve_main(
+        config=getattr(args, "config", None),
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+    )
+
+
 def cmd_chat(args):
     """Start an interactive chat session with the semantic model."""
     import os
@@ -398,6 +415,34 @@ def main():
         help="Exit after running the initial query (non-interactive mode)",
     )
     chat_parser.set_defaults(func=cmd_chat)
+
+    # Serve command
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Start the BSL HTTP API server (requires boring-semantic-layer[server])",
+    )
+    serve_parser.add_argument(
+        "--config",
+        type=str,
+        help="Path to semantic_config.py (default: ./semantic_config.py or BSL_CONFIG_PATH env var)",
+    )
+    serve_parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Host to bind to (default: 0.0.0.0)",
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to listen on (default: 8000)",
+    )
+    serve_parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Enable auto-reload on code changes (development only)",
+    )
+    serve_parser.set_defaults(func=cmd_serve)
 
     # Skill command with subcommands
     skill_parser = subparsers.add_parser(

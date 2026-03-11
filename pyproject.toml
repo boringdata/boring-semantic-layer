@@ -42,8 +42,14 @@ mcp = [
     "fastmcp>=2.12.4",
 ]
 
+# HTTP API server
+server = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+]
+
 dev = [
-    "boring-semantic-layer[agent,mcp,examples,viz-altair,viz-plotly,viz-plotext]",
+    "boring-semantic-layer[agent,mcp,server,examples,viz-altair,viz-plotly,viz-plotext]",
     "openai>=1.0.0",
     "langchain-openai>=0.3.0",
     "langchain-anthropic>=0.3.0",
