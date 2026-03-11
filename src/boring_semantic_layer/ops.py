@@ -919,9 +919,13 @@ class Dimension:
                 try:
                     proxy = _DimensionTableProxy(table, _dims)
                     return self.expr(proxy)
-                except AttributeError:
-                    # Re-raise proxy errors so dependency resolution can detect them
-                    raise
+                except AttributeError as proxy_err:
+                    # Preserve explicit prefix-proxy errors (e.g. missing
+                    # "model.field") to avoid silent fallback to unprefixed
+                    # columns, but keep normal missing-column errors on the
+                    # original table so they get the helpful formatter below.
+                    if str(proxy_err).startswith("No dimension '"):
+                        raise
                 except Exception:
                     pass
             # Provide helpful error for missing columns
