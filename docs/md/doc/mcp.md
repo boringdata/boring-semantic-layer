@@ -3,7 +3,7 @@
 BSL includes built-in support for the [Model Context Protocol (MCP)](https://github.com/modelcontextprotocol/python-sdk), allowing you to expose your semantic models to Large Language Models like Claude.
 
 <note type="info">
-**Pro tip:** Use [descriptions in dimensions and measures](/building/semantic-tables#adding-descriptions) to make your models more AI-friendly. Descriptions help provide context to LLMs, enabling them to understand what each field represents and when to use them.
+**Pro tip:** Use [descriptions in dimensions and measures](/building/semantic-tables#with_dimensions) to make your models more AI-friendly. Descriptions help provide context to LLMs, enabling them to understand what each field represents and when to use them.
 </note>
 
 ## Installation
@@ -20,8 +20,7 @@ Create an MCP server script that exposes your semantic models:
 
 ```python
 import ibis
-from boring_semantic_layer.semantic_api import to_semantic_table
-from boring_semantic_layer.api.mcp import MCPSemanticModel
+from boring_semantic_layer import to_semantic_table, MCPSemanticModel
 
 # Create synthetic flights data
 flights_data = ibis.memtable({
@@ -257,7 +256,7 @@ When exposing models through MCP, you need to explicitly define time dimensions 
 To define a time dimension, set `is_time_dimension=True` and specify the `smallest_time_grain`:
 
 ```python
-from boring_semantic_layer.semantic_api import to_semantic_table
+from boring_semantic_layer import to_semantic_table
 
 flights = (
     to_semantic_table(flights_data, name="flights")

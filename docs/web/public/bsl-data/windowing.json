@@ -467,7 +467,7 @@
     },
     "setup_st": {
       "code": "from boring_semantic_layer import to_semantic_table\n\n# Create semantic table with measures\nsales_st = to_semantic_table(\n    sales_data,\n    name=\"daily_sales\"\n).with_measures(\n    total_revenue=lambda t: t.revenue.sum(),\n    avg_revenue=lambda t: t.revenue.mean(),\n    sale_count=lambda t: t.count(),\n)",
-      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_wf7k4mmyh5hnzewc4s4rec3kg4\"",
+      "sql": "SELECT\n  *\nFROM \"ibis_pandas_memtable_fbuywylsizfijdmqwyxy7yjnfm\"",
       "plan": "SemanticTable: daily_sales\n  total_revenue [measure]\n  avg_revenue [measure]\n  sale_count [measure]",
       "table": {
         "columns": [
@@ -931,7 +931,7 @@
     },
     "query_lag_lead": {
       "code": "from ibis import _\n\n# Aggregate daily revenue\ndaily_revenue = (\n    sales_st\n    .group_by(\"sale_date\")\n    .aggregate(\"total_revenue\")\n    .order_by(\"sale_date\")\n)\n\n# Add window functions for lag/lead\nresult = daily_revenue.mutate(\n    prev_day_revenue=_.total_revenue.lag(),\n    next_day_revenue=_.total_revenue.lead(),\n    day_over_day_change=_.total_revenue - _.total_revenue.lag(),\n    pct_change=((_.total_revenue - _.total_revenue.lag()) / _.total_revenue.lag() * 100).round(2)\n).limit(10)",
-      "sql": "SELECT\n  \"t5\".\"sale_date\",\n  \"t5\".\"total_revenue\",\n  \"t5\".\"prev_day_revenue\",\n  \"t5\".\"next_day_revenue\",\n  \"t5\".\"day_over_day_change\",\n  ROUND(\n    (\n      CAST((\n        \"t5\".\"total_revenue\" - LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n      ) AS DOUBLE PRECISION) / LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n    ) * 100,\n    2\n  ) AS \"pct_change\"\nFROM (\n  SELECT\n    \"t4\".\"sale_date\",\n    \"t4\".\"total_revenue\",\n    \"t4\".\"prev_day_revenue\",\n    \"t4\".\"next_day_revenue\",\n    \"t4\".\"total_revenue\" - LAG(\"t4\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"day_over_day_change\"\n  FROM (\n    SELECT\n      \"t3\".\"sale_date\",\n      \"t3\".\"total_revenue\",\n      \"t3\".\"prev_day_revenue\",\n      LEAD(\"t3\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"next_day_revenue\"\n    FROM (\n      SELECT\n        \"t2\".\"sale_date\",\n        \"t2\".\"total_revenue\",\n        LAG(\"t2\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_day_revenue\"\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            \"t0\".\"sale_date\",\n            SUM(\"t0\".\"revenue\") AS \"total_revenue\"\n          FROM (\n            SELECT\n              \"t0\".\"revenue\",\n              \"t0\".\"product_category\",\n              \"t0\".\"sale_date\"\n            FROM \"ibis_pandas_memtable_wf7k4mmyh5hnzewc4s4rec3kg4\" AS \"t0\"\n          ) AS t0\n          GROUP BY\n            \"t0\".\"sale_date\"\n        ) AS \"t1\"\n        ORDER BY\n          \"t1\".\"sale_date\" ASC\n      ) AS \"t2\"\n    ) AS \"t3\"\n  ) AS \"t4\"\n) AS \"t5\"\nLIMIT 10",
+      "sql": "SELECT\n  \"t5\".\"sale_date\",\n  \"t5\".\"total_revenue\",\n  \"t5\".\"prev_day_revenue\",\n  \"t5\".\"next_day_revenue\",\n  \"t5\".\"day_over_day_change\",\n  ROUND(\n    (\n      CAST((\n        \"t5\".\"total_revenue\" - LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n      ) AS DOUBLE PRECISION) / LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n    ) * 100,\n    2\n  ) AS \"pct_change\"\nFROM (\n  SELECT\n    \"t4\".\"sale_date\",\n    \"t4\".\"total_revenue\",\n    \"t4\".\"prev_day_revenue\",\n    \"t4\".\"next_day_revenue\",\n    \"t4\".\"total_revenue\" - LAG(\"t4\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"day_over_day_change\"\n  FROM (\n    SELECT\n      \"t3\".\"sale_date\",\n      \"t3\".\"total_revenue\",\n      \"t3\".\"prev_day_revenue\",\n      LEAD(\"t3\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"next_day_revenue\"\n    FROM (\n      SELECT\n        \"t2\".\"sale_date\",\n        \"t2\".\"total_revenue\",\n        LAG(\"t2\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_day_revenue\"\n      FROM (\n        SELECT\n          *\n        FROM (\n          SELECT\n            \"t0\".\"sale_date\",\n            SUM(\"t0\".\"revenue\") AS \"total_revenue\"\n          FROM (\n            SELECT\n              \"t0\".\"revenue\",\n              \"t0\".\"product_category\",\n              \"t0\".\"sale_date\"\n            FROM \"ibis_pandas_memtable_fbuywylsizfijdmqwyxy7yjnfm\" AS \"t0\"\n          ) AS t0\n          GROUP BY\n            \"t0\".\"sale_date\"\n        ) AS \"t1\"\n        ORDER BY\n          \"t1\".\"sale_date\" ASC\n      ) AS \"t2\"\n    ) AS \"t3\"\n  ) AS \"t4\"\n) AS \"t5\"\nLIMIT 10",
       "plan": "SemanticTable: daily_sales\n  total_revenue [measure]\n  avg_revenue [measure]\n  sale_count [measure]\n-> GroupBy(sale_date)\n-> Aggregate(total_revenue)\n-> OrderBy(sale_date)\n-> Mutate(prev_day_revenue, next_day_revenue, day_over_day_change, pct_change)\n-> Limit(10)",
       "table": {
         "columns": [
@@ -944,242 +944,91 @@
         ],
         "data": [
           [
-            "2024-01-09",
-            1064.38,
+            "2024-01-19",
+            1241.89,
             null,
-            1188.05,
+            2254.13,
             null,
             null
           ],
           [
-            "2024-01-23",
-            1188.05,
-            1064.38,
-            1474.04,
-            123.66999999999985,
-            11.62
+            "2024-03-16",
+            2254.13,
+            1241.89,
+            974.64,
+            1012.24,
+            81.51
           ],
           [
-            "2024-02-20",
-            1474.04,
-            1188.05,
-            1494.23,
-            285.99,
-            24.07
+            "2024-01-04",
+            974.64,
+            2254.13,
+            1111.07,
+            -1279.4900000000002,
+            -56.76
           ],
           [
-            "2024-02-26",
-            1494.23,
-            1474.04,
-            1512.68,
-            20.190000000000055,
-            1.37
+            "2024-01-12",
+            1111.07,
+            974.64,
+            1365.58,
+            136.42999999999995,
+            14.0
           ],
           [
-            "2024-02-28",
-            1512.68,
-            1494.23,
-            1798.58,
-            18.450000000000045,
-            1.23
+            "2024-02-12",
+            1365.58,
+            1111.07,
+            1451.9,
+            254.51,
+            22.91
           ],
           [
-            "2024-03-12",
-            1798.58,
-            1512.68,
-            1692.94,
-            285.89999999999986,
-            18.9
+            "2024-02-21",
+            1451.9,
+            1365.58,
+            1473.4,
+            86.32000000000016,
+            6.32
           ],
           [
-            "2024-03-14",
-            1692.94,
-            1798.58,
+            "2024-02-22",
+            1473.4,
+            1451.9,
+            1666.92,
+            21.5,
+            1.48
+          ],
+          [
+            "2024-03-04",
+            1666.92,
+            1473.4,
             1771.09,
-            -105.63999999999987,
-            -5.87
+            193.51999999999998,
+            13.13
           ],
           [
-            "2024-03-15",
-            1771.09,
-            1692.94,
-            1762.55,
-            78.14999999999986,
-            4.62
-          ],
-          [
-            "2024-03-22",
-            1762.55,
-            1771.09,
-            2366.42,
-            -8.539999999999964,
-            -0.48
-          ],
-          [
-            "2024-03-30",
-            2366.42,
-            1762.55,
+            "2024-03-29",
+            1798.18,
+            2458.56,
             987.39,
-            603.8700000000001,
-            34.26
+            -660.3799999999999,
+            7.87
+          ],
+          [
+            "2024-01-08",
+            987.39,
+            1798.18,
+            1570.34,
+            -810.7900000000001,
+            -45.09
           ]
         ]
-      },
-      "chart": {
-        "type": "vega",
-        "spec": {
-          "config": {
-            "view": {
-              "continuousWidth": 300,
-              "continuousHeight": 300
-            }
-          },
-          "data": {
-            "name": "data-0bf5ac8bf4e17ca02eb8ea22ddea9201"
-          },
-          "mark": {
-            "type": "bar"
-          },
-          "encoding": {
-            "color": {
-              "field": "measure",
-              "type": "nominal"
-            },
-            "tooltip": [
-              {
-                "field": "sale_date",
-                "type": "nominal"
-              },
-              {
-                "field": "measure",
-                "type": "nominal"
-              },
-              {
-                "field": "value",
-                "type": "quantitative"
-              }
-            ],
-            "x": {
-              "field": "sale_date",
-              "sort": null,
-              "type": "ordinal"
-            },
-            "xOffset": {
-              "field": "measure"
-            },
-            "y": {
-              "field": "value",
-              "type": "quantitative"
-            }
-          },
-          "height": 400,
-          "transform": [
-            {
-              "fold": [
-                "total_revenue",
-                "prev_day_revenue",
-                "next_day_revenue",
-                "day_over_day_change",
-                "pct_change"
-              ],
-              "as": [
-                "measure",
-                "value"
-              ]
-            }
-          ],
-          "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
-          "datasets": {
-            "data-0bf5ac8bf4e17ca02eb8ea22ddea9201": [
-              {
-                "sale_date": "2024-01-09T00:00:00",
-                "total_revenue": 1064.38,
-                "prev_day_revenue": null,
-                "next_day_revenue": 1188.05,
-                "day_over_day_change": null,
-                "pct_change": null
-              },
-              {
-                "sale_date": "2024-01-23T00:00:00",
-                "total_revenue": 1188.05,
-                "prev_day_revenue": 1064.38,
-                "next_day_revenue": 1474.04,
-                "day_over_day_change": 123.66999999999985,
-                "pct_change": 11.62
-              },
-              {
-                "sale_date": "2024-02-20T00:00:00",
-                "total_revenue": 1474.04,
-                "prev_day_revenue": 1188.05,
-                "next_day_revenue": 1494.23,
-                "day_over_day_change": 285.99,
-                "pct_change": 24.07
-              },
-              {
-                "sale_date": "2024-02-26T00:00:00",
-                "total_revenue": 1494.23,
-                "prev_day_revenue": 1474.04,
-                "next_day_revenue": 1512.68,
-                "day_over_day_change": 20.190000000000055,
-                "pct_change": 1.37
-              },
-              {
-                "sale_date": "2024-02-28T00:00:00",
-                "total_revenue": 1512.68,
-                "prev_day_revenue": 1494.23,
-                "next_day_revenue": 1798.58,
-                "day_over_day_change": 18.450000000000045,
-                "pct_change": 1.23
-              },
-              {
-                "sale_date": "2024-03-12T00:00:00",
-                "total_revenue": 1798.58,
-                "prev_day_revenue": 1512.68,
-                "next_day_revenue": 1692.94,
-                "day_over_day_change": 285.89999999999986,
-                "pct_change": 18.9
-              },
-              {
-                "sale_date": "2024-03-14T00:00:00",
-                "total_revenue": 1692.94,
-                "prev_day_revenue": 1798.58,
-                "next_day_revenue": 1771.09,
-                "day_over_day_change": -105.63999999999987,
-                "pct_change": -5.87
-              },
-              {
-                "sale_date": "2024-03-15T00:00:00",
-                "total_revenue": 1771.09,
-                "prev_day_revenue": 1692.94,
-                "next_day_revenue": 1762.55,
-                "day_over_day_change": 78.14999999999986,
-                "pct_change": 4.62
-              },
-              {
-                "sale_date": "2024-03-22T00:00:00",
-                "total_revenue": 1762.55,
-                "prev_day_revenue": 1771.09,
-                "next_day_revenue": 2366.42,
-                "day_over_day_change": -8.539999999999964,
-                "pct_change": -0.48
-              },
-              {
-                "sale_date": "2024-03-30T00:00:00",
-                "total_revenue": 2366.42,
-                "prev_day_revenue": 1762.55,
-                "next_day_revenue": 974.64,
-                "day_over_day_change": 603.8700000000001,
-                "pct_change": 34.26
-              }
-            ]
-          }
-        }
       }
     },
     "query_running_total": {
       "code": "from ibis import _\n\n# Daily revenue with cumulative total\ndaily_revenue = (\n    sales_st\n    .group_by(\"sale_date\")\n    .aggregate(\"total_revenue\")\n    .order_by(\"sale_date\")\n)\n\n# Calculate cumulative sum and running average\nwindow_unbounded = xo.window(rows=(None, 0), order_by=\"sale_date\")\n\nresult = daily_revenue.mutate(\n    cumulative_revenue=_.total_revenue.cumsum(),\n    days_count=lambda t: t.count().over(window_unbounded),\n    avg_daily_so_far=lambda t: (t.cumulative_revenue / t.days_count).round(2)\n).limit(10)",
-      "sql": "SELECT\n  \"t4\".\"sale_date\",\n  \"t4\".\"total_revenue\",\n  \"t4\".\"cumulative_revenue\",\n  \"t4\".\"days_count\",\n  ROUND(CAST(\"t4\".\"cumulative_revenue\" AS DOUBLE PRECISION) / \"t4\".\"days_count\", 2) AS \"avg_daily_so_far\"\nFROM (\n  SELECT\n    \"t3\".\"sale_date\",\n    \"t3\".\"total_revenue\",\n    \"t3\".\"cumulative_revenue\",\n    COUNT(*) OVER (ORDER BY \"t3\".\"sale_date\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"days_count\"\n  FROM (\n    SELECT\n      \"t2\".\"sale_date\",\n      \"t2\".\"total_revenue\",\n      SUM(\"t2\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"cumulative_revenue\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t0\".\"sale_date\",\n          SUM(\"t0\".\"revenue\") AS \"total_revenue\"\n        FROM (\n          SELECT\n            \"t0\".\"revenue\",\n            \"t0\".\"product_category\",\n            \"t0\".\"sale_date\"\n          FROM \"ibis_pandas_memtable_wf7k4mmyh5hnzewc4s4rec3kg4\" AS \"t0\"\n        ) AS t0\n        GROUP BY\n          \"t0\".\"sale_date\"\n      ) AS \"t1\"\n      ORDER BY\n        \"t1\".\"sale_date\" ASC\n    ) AS \"t2\"\n  ) AS \"t3\"\n) AS \"t4\"\nLIMIT 10",
+      "sql": "SELECT\n  \"t4\".\"sale_date\",\n  \"t4\".\"total_revenue\",\n  \"t4\".\"cumulative_revenue\",\n  \"t4\".\"days_count\",\n  ROUND(CAST(\"t4\".\"cumulative_revenue\" AS DOUBLE PRECISION) / \"t4\".\"days_count\", 2) AS \"avg_daily_so_far\"\nFROM (\n  SELECT\n    \"t3\".\"sale_date\",\n    \"t3\".\"total_revenue\",\n    \"t3\".\"cumulative_revenue\",\n    COUNT(*) OVER (ORDER BY \"t3\".\"sale_date\" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"days_count\"\n  FROM (\n    SELECT\n      \"t2\".\"sale_date\",\n      \"t2\".\"total_revenue\",\n      SUM(\"t2\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"cumulative_revenue\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t0\".\"sale_date\",\n          SUM(\"t0\".\"revenue\") AS \"total_revenue\"\n        FROM (\n          SELECT\n            \"t0\".\"revenue\",\n            \"t0\".\"product_category\",\n            \"t0\".\"sale_date\"\n          FROM \"ibis_pandas_memtable_fbuywylsizfijdmqwyxy7yjnfm\" AS \"t0\"\n        ) AS t0\n        GROUP BY\n          \"t0\".\"sale_date\"\n      ) AS \"t1\"\n      ORDER BY\n        \"t1\".\"sale_date\" ASC\n    ) AS \"t2\"\n  ) AS \"t3\"\n) AS \"t4\"\nLIMIT 10",
       "plan": "SemanticTable: daily_sales\n  total_revenue [measure]\n  avg_revenue [measure]\n  sale_count [measure]\n-> GroupBy(sale_date)\n-> Aggregate(total_revenue)\n-> OrderBy(sale_date)\n-> Mutate(cumulative_revenue, days_count, avg_daily_so_far)\n-> Limit(10)",
       "table": {
         "columns": [
@@ -1193,219 +1042,79 @@
           [
             "2024-01-01",
             1027.89,
-            130566.25000000004,
+            99331.94000000002,
             1,
-            130566.25
+            99331.94
           ],
           [
             "2024-01-02",
             915.0,
-            75785.36000000002,
+            16429.45,
             2,
-            37892.68
+            8214.73
           ],
           [
             "2024-01-03",
             975.01,
-            61554.590000000004,
+            13653.54,
             3,
-            20518.2
+            4551.18
           ],
           [
             "2024-01-04",
             974.64,
-            53137.75000000001,
+            118171.70999999999,
             4,
-            13284.44
+            29542.93
           ],
           [
             "2024-01-05",
             1087.29,
-            131653.54000000004,
+            100419.23000000001,
             5,
-            26330.71
+            20083.85
           ],
           [
             "2024-01-06",
             1400.34,
-            26509.030000000002,
+            36737.88,
             6,
-            4418.17
+            6122.98
           ],
           [
             "2024-01-07",
             1456.44,
-            63011.030000000006,
+            32697.350000000002,
             7,
-            9001.58
+            4671.05
           ],
           [
             "2024-01-08",
             987.39,
-            17112.350000000002,
+            53532.499999999985,
             8,
-            2139.04
+            6691.56
           ],
           [
             "2024-01-09",
             1064.38,
-            1064.38,
+            87383.66,
             9,
-            118.26
+            9709.3
           ],
           [
             "2024-01-10",
             995.96,
-            94204.55000000005,
+            128007.62999999999,
             10,
-            9420.46
+            12800.76
           ]
         ]
-      },
-      "chart": {
-        "type": "vega",
-        "spec": {
-          "config": {
-            "view": {
-              "continuousWidth": 300,
-              "continuousHeight": 300
-            }
-          },
-          "data": {
-            "name": "data-173f4021c0a149fd61ff76b6f7254231"
-          },
-          "mark": {
-            "type": "bar"
-          },
-          "encoding": {
-            "color": {
-              "field": "measure",
-              "type": "nominal"
-            },
-            "tooltip": [
-              {
-                "field": "sale_date",
-                "type": "nominal"
-              },
-              {
-                "field": "measure",
-                "type": "nominal"
-              },
-              {
-                "field": "value",
-                "type": "quantitative"
-              }
-            ],
-            "x": {
-              "field": "sale_date",
-              "sort": null,
-              "type": "ordinal"
-            },
-            "xOffset": {
-              "field": "measure"
-            },
-            "y": {
-              "field": "value",
-              "type": "quantitative"
-            }
-          },
-          "height": 400,
-          "transform": [
-            {
-              "fold": [
-                "total_revenue",
-                "cumulative_revenue",
-                "days_count",
-                "avg_daily_so_far"
-              ],
-              "as": [
-                "measure",
-                "value"
-              ]
-            }
-          ],
-          "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
-          "datasets": {
-            "data-173f4021c0a149fd61ff76b6f7254231": [
-              {
-                "sale_date": "2024-01-01T00:00:00",
-                "total_revenue": 1027.89,
-                "cumulative_revenue": 130566.24999999997,
-                "days_count": 1,
-                "avg_daily_so_far": 130566.25
-              },
-              {
-                "sale_date": "2024-01-02T00:00:00",
-                "total_revenue": 915.0,
-                "cumulative_revenue": 110502.07999999996,
-                "days_count": 2,
-                "avg_daily_so_far": 55251.04
-              },
-              {
-                "sale_date": "2024-01-03T00:00:00",
-                "total_revenue": 975.01,
-                "cumulative_revenue": 78370.92999999996,
-                "days_count": 3,
-                "avg_daily_so_far": 26123.64
-              },
-              {
-                "sale_date": "2024-01-04T00:00:00",
-                "total_revenue": 974.64,
-                "cumulative_revenue": 117584.18999999997,
-                "days_count": 4,
-                "avg_daily_so_far": 29396.05
-              },
-              {
-                "sale_date": "2024-01-05T00:00:00",
-                "total_revenue": 1087.29,
-                "cumulative_revenue": 131653.53999999998,
-                "days_count": 5,
-                "avg_daily_so_far": 26330.71
-              },
-              {
-                "sale_date": "2024-01-06T00:00:00",
-                "total_revenue": 1400.34,
-                "cumulative_revenue": 93087.03999999996,
-                "days_count": 6,
-                "avg_daily_so_far": 15514.51
-              },
-              {
-                "sale_date": "2024-01-07T00:00:00",
-                "total_revenue": 1456.44,
-                "cumulative_revenue": 79827.36999999997,
-                "days_count": 7,
-                "avg_daily_so_far": 11403.91
-              },
-              {
-                "sale_date": "2024-01-08T00:00:00",
-                "total_revenue": 987.39,
-                "cumulative_revenue": 49999.64,
-                "days_count": 8,
-                "avg_daily_so_far": 6249.96
-              },
-              {
-                "sale_date": "2024-01-09T00:00:00",
-                "total_revenue": 1064.38,
-                "cumulative_revenue": 1064.38,
-                "days_count": 9,
-                "avg_daily_so_far": 118.26
-              },
-              {
-                "sale_date": "2024-01-10T00:00:00",
-                "total_revenue": 995.96,
-                "cumulative_revenue": 17120.920000000002,
-                "days_count": 10,
-                "avg_daily_so_far": 1712.09
-              }
-            ]
-          }
-        }
       }
     },
     "query_moving_average": {
       "code": "from ibis import _\n\n# Daily revenue\ndaily_revenue = (\n    sales_st\n    .group_by(\"sale_date\")\n    .aggregate(\"total_revenue\")\n    .order_by(\"sale_date\")\n)\n\n# 7-day moving average\nwindow_7d = xo.window(rows=(-6, 0), order_by=\"sale_date\")\n\nresult = daily_revenue.mutate(\n    ma_7day=_.total_revenue.mean().over(window_7d).round(2),\n    ma_7day_sum=_.total_revenue.sum().over(window_7d).round(2),\n).limit(10)",
-      "sql": "SELECT\n  \"t3\".\"sale_date\",\n  \"t3\".\"total_revenue\",\n  \"t3\".\"ma_7day\",\n  ROUND(\n    SUM(\"t3\".\"total_revenue\") OVER (ORDER BY \"t3\".\"sale_date\" ASC ROWS BETWEEN 6 preceding AND CURRENT ROW),\n    2\n  ) AS \"ma_7day_sum\"\nFROM (\n  SELECT\n    \"t2\".\"sale_date\",\n    \"t2\".\"total_revenue\",\n    ROUND(\n      AVG(\"t2\".\"total_revenue\") OVER (ORDER BY \"t2\".\"sale_date\" ASC ROWS BETWEEN 6 preceding AND CURRENT ROW),\n      2\n    ) AS \"ma_7day\"\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        \"t0\".\"sale_date\",\n        SUM(\"t0\".\"revenue\") AS \"total_revenue\"\n      FROM (\n        SELECT\n          \"t0\".\"revenue\",\n          \"t0\".\"product_category\",\n          \"t0\".\"sale_date\"\n        FROM \"ibis_pandas_memtable_wf7k4mmyh5hnzewc4s4rec3kg4\" AS \"t0\"\n      ) AS t0\n      GROUP BY\n        \"t0\".\"sale_date\"\n    ) AS \"t1\"\n    ORDER BY\n      \"t1\".\"sale_date\" ASC\n  ) AS \"t2\"\n) AS \"t3\"\nLIMIT 10",
+      "sql": "SELECT\n  \"t3\".\"sale_date\",\n  \"t3\".\"total_revenue\",\n  \"t3\".\"ma_7day\",\n  ROUND(\n    SUM(\"t3\".\"total_revenue\") OVER (ORDER BY \"t3\".\"sale_date\" ASC ROWS BETWEEN 6 preceding AND CURRENT ROW),\n    2\n  ) AS \"ma_7day_sum\"\nFROM (\n  SELECT\n    \"t2\".\"sale_date\",\n    \"t2\".\"total_revenue\",\n    ROUND(\n      CAST(AVG(\"t2\".\"total_revenue\") OVER (ORDER BY \"t2\".\"sale_date\" ASC ROWS BETWEEN 6 preceding AND CURRENT ROW) AS DECIMAL),\n      2\n    ) AS \"ma_7day\"\n  FROM (\n    SELECT\n      *\n    FROM (\n      SELECT\n        \"t0\".\"sale_date\",\n        SUM(\"t0\".\"revenue\") AS \"total_revenue\"\n      FROM (\n        SELECT\n          \"t0\".\"revenue\",\n          \"t0\".\"product_category\",\n          \"t0\".\"sale_date\"\n        FROM \"ibis_pandas_memtable_fbuywylsizfijdmqwyxy7yjnfm\" AS \"t0\"\n      ) AS t0\n      GROUP BY\n        \"t0\".\"sale_date\"\n    ) AS \"t1\"\n    ORDER BY\n      \"t1\".\"sale_date\" ASC\n  ) AS \"t2\"\n) AS \"t3\"\nLIMIT 10",
       "plan": "SemanticTable: daily_sales\n  total_revenue [measure]\n  avg_revenue [measure]\n  sale_count [measure]\n-> GroupBy(sale_date)\n-> Aggregate(total_revenue)\n-> OrderBy(sale_date)\n-> Mutate(ma_7day, ma_7day_sum)\n-> Limit(10)",
       "table": {
         "columns": [
@@ -1476,140 +1185,11 @@
             7966.44
           ]
         ]
-      },
-      "chart": {
-        "type": "vega",
-        "spec": {
-          "config": {
-            "view": {
-              "continuousWidth": 300,
-              "continuousHeight": 300
-            }
-          },
-          "data": {
-            "name": "data-3d114133558af670c07d20a7e60639fa"
-          },
-          "mark": {
-            "type": "bar"
-          },
-          "encoding": {
-            "color": {
-              "field": "measure",
-              "type": "nominal"
-            },
-            "tooltip": [
-              {
-                "field": "sale_date",
-                "type": "nominal"
-              },
-              {
-                "field": "measure",
-                "type": "nominal"
-              },
-              {
-                "field": "value",
-                "type": "quantitative"
-              }
-            ],
-            "x": {
-              "field": "sale_date",
-              "sort": null,
-              "type": "ordinal"
-            },
-            "xOffset": {
-              "field": "measure"
-            },
-            "y": {
-              "field": "value",
-              "type": "quantitative"
-            }
-          },
-          "height": 400,
-          "transform": [
-            {
-              "fold": [
-                "total_revenue",
-                "ma_7day",
-                "ma_7day_sum"
-              ],
-              "as": [
-                "measure",
-                "value"
-              ]
-            }
-          ],
-          "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
-          "datasets": {
-            "data-3d114133558af670c07d20a7e60639fa": [
-              {
-                "sale_date": "2024-01-01T00:00:00",
-                "total_revenue": 1027.89,
-                "ma_7day": 1027.89,
-                "ma_7day_sum": 1027.89
-              },
-              {
-                "sale_date": "2024-01-02T00:00:00",
-                "total_revenue": 915.0,
-                "ma_7day": 971.45,
-                "ma_7day_sum": 1942.89
-              },
-              {
-                "sale_date": "2024-01-03T00:00:00",
-                "total_revenue": 975.01,
-                "ma_7day": 972.63,
-                "ma_7day_sum": 2917.9
-              },
-              {
-                "sale_date": "2024-01-04T00:00:00",
-                "total_revenue": 974.64,
-                "ma_7day": 973.14,
-                "ma_7day_sum": 3892.54
-              },
-              {
-                "sale_date": "2024-01-05T00:00:00",
-                "total_revenue": 1087.29,
-                "ma_7day": 995.97,
-                "ma_7day_sum": 4979.83
-              },
-              {
-                "sale_date": "2024-01-06T00:00:00",
-                "total_revenue": 1400.34,
-                "ma_7day": 1063.36,
-                "ma_7day_sum": 6380.17
-              },
-              {
-                "sale_date": "2024-01-07T00:00:00",
-                "total_revenue": 1456.44,
-                "ma_7day": 1119.52,
-                "ma_7day_sum": 7836.61
-              },
-              {
-                "sale_date": "2024-01-08T00:00:00",
-                "total_revenue": 987.39,
-                "ma_7day": 1113.73,
-                "ma_7day_sum": 7796.11
-              },
-              {
-                "sale_date": "2024-01-09T00:00:00",
-                "total_revenue": 1064.38,
-                "ma_7day": 1135.07,
-                "ma_7day_sum": 7945.49
-              },
-              {
-                "sale_date": "2024-01-10T00:00:00",
-                "total_revenue": 995.96,
-                "ma_7day": 1138.06,
-                "ma_7day_sum": 7966.44
-              }
-            ]
-          }
-        }
       }
     },
     "query_ranking": {
       "code": "from ibis import _\n\n# Aggregate by product category\ncategory_revenue = (\n    sales_st\n    .group_by(\"product_category\")\n    .aggregate(\"total_revenue\", \"sale_count\")\n    .order_by(_.total_revenue.desc())\n)\n\n# Add rank columns\nresult = category_revenue.mutate(\n    rank=lambda t: xo.rank().over(xo.window(order_by=xo.desc(t.total_revenue))),\n    dense_rank=lambda t: xo.dense_rank().over(xo.window(order_by=xo.desc(t.total_revenue))),\n    row_number=lambda t: xo.row_number().over(xo.window(order_by=xo.desc(t.total_revenue))),\n)",
-      "sql": "SELECT\n  \"t4\".\"product_category\",\n  \"t4\".\"total_revenue\",\n  \"t4\".\"sale_count\",\n  \"t4\".\"rank\",\n  \"t4\".\"dense_rank\",\n  ROW_NUMBER() OVER (ORDER BY \"t4\".\"total_revenue\" DESC NULLS LAST ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) - 1 AS \"row_number\"\nFROM (\n  SELECT\n    \"t3\".\"product_category\",\n    \"t3\".\"total_revenue\",\n    \"t3\".\"sale_count\",\n    \"t3\".\"rank\",\n    DENSE_RANK() OVER (ORDER BY \"t3\".\"total_revenue\" DESC NULLS LAST ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) - 1 AS \"dense_rank\"\n  FROM (\n    SELECT\n      \"t2\".\"product_category\",\n      \"t2\".\"total_revenue\",\n      \"t2\".\"sale_count\",\n      RANK() OVER (ORDER BY \"t2\".\"total_revenue\" DESC NULLS LAST ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) - 1 AS \"rank\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t0\".\"product_category\",\n          SUM(\"t0\".\"revenue\") AS \"total_revenue\",\n          COUNT(*) AS \"sale_count\"\n        FROM (\n          SELECT\n            \"t0\".\"sale_date\",\n            \"t0\".\"revenue\",\n            \"t0\".\"product_category\"\n          FROM \"ibis_pandas_memtable_wf7k4mmyh5hnzewc4s4rec3kg4\" AS \"t0\"\n        ) AS t0\n        GROUP BY\n          \"t0\".\"product_category\"\n      ) AS \"t1\"\n      ORDER BY\n        \"t1\".\"total_revenue\" DESC NULLS LAST\n    ) AS \"t2\"\n  ) AS \"t3\"\n) AS \"t4\"",
+      "sql": "SELECT\n  \"t4\".\"product_category\",\n  \"t4\".\"total_revenue\",\n  \"t4\".\"sale_count\",\n  \"t4\".\"rank\",\n  \"t4\".\"dense_rank\",\n  ROW_NUMBER() OVER (\n    ORDER BY \"t4\".\"total_revenue\" DESC NULLS LAST\n    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING\n  ) - 1 AS \"row_number\"\nFROM (\n  SELECT\n    \"t3\".\"product_category\",\n    \"t3\".\"total_revenue\",\n    \"t3\".\"sale_count\",\n    \"t3\".\"rank\",\n    DENSE_RANK() OVER (\n      ORDER BY \"t3\".\"total_revenue\" DESC NULLS LAST\n      ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING\n    ) - 1 AS \"dense_rank\"\n  FROM (\n    SELECT\n      \"t2\".\"product_category\",\n      \"t2\".\"total_revenue\",\n      \"t2\".\"sale_count\",\n      RANK() OVER (\n        ORDER BY \"t2\".\"total_revenue\" DESC NULLS LAST\n        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING\n      ) - 1 AS \"rank\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t0\".\"product_category\",\n          SUM(\"t0\".\"revenue\") AS \"total_revenue\",\n          COUNT(*) AS \"sale_count\"\n        FROM (\n          SELECT\n            \"t0\".\"sale_date\",\n            \"t0\".\"revenue\",\n            \"t0\".\"product_category\"\n          FROM \"ibis_pandas_memtable_fbuywylsizfijdmqwyxy7yjnfm\" AS \"t0\"\n        ) AS t0\n        GROUP BY\n          \"t0\".\"product_category\"\n      ) AS \"t1\"\n      ORDER BY\n        \"t1\".\"total_revenue\" DESC NULLS LAST\n    ) AS \"t2\"\n  ) AS \"t3\"\n) AS \"t4\"",
       "plan": "SemanticTable: daily_sales\n  total_revenue [measure]\n  avg_revenue [measure]\n  sale_count [measure]\n-> GroupBy(product_category)\n-> Aggregate(total_revenue, sale_count)\n-> OrderBy(_CallableWrapper(_fn=_.total_revenue.desc()))\n-> Mutate(rank, dense_rank, row_number)",
       "table": {
         "columns": [
@@ -1646,106 +1226,11 @@
             2
           ]
         ]
-      },
-      "chart": {
-        "type": "vega",
-        "spec": {
-          "config": {
-            "view": {
-              "continuousWidth": 300,
-              "continuousHeight": 300
-            }
-          },
-          "data": {
-            "name": "data-a4c4adb65d2cd90d069cb567d81f4f29"
-          },
-          "mark": {
-            "type": "bar"
-          },
-          "encoding": {
-            "color": {
-              "field": "measure",
-              "type": "nominal"
-            },
-            "tooltip": [
-              {
-                "field": "product_category",
-                "type": "nominal"
-              },
-              {
-                "field": "measure",
-                "type": "nominal"
-              },
-              {
-                "field": "value",
-                "type": "quantitative"
-              }
-            ],
-            "x": {
-              "field": "product_category",
-              "sort": null,
-              "type": "ordinal"
-            },
-            "xOffset": {
-              "field": "measure"
-            },
-            "y": {
-              "field": "value",
-              "type": "quantitative"
-            }
-          },
-          "height": 400,
-          "transform": [
-            {
-              "fold": [
-                "total_revenue",
-                "sale_count",
-                "rank",
-                "dense_rank",
-                "row_number"
-              ],
-              "as": [
-                "measure",
-                "value"
-              ]
-            }
-          ],
-          "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
-          "datasets": {
-            "data-a4c4adb65d2cd90d069cb567d81f4f29": [
-              {
-                "product_category": "Home",
-                "total_revenue": 47712.26999999998,
-                "sale_count": 30,
-                "rank": 0,
-                "dense_rank": 0,
-                "row_number": 0
-              },
-              {
-                "product_category": "Electronics",
-                "total_revenue": 46555.450000000004,
-                "sale_count": 30,
-                "rank": 1,
-                "dense_rank": 1,
-                "row_number": 1
-              },
-              {
-                "product_category": "Clothing",
-                "total_revenue": 46158.00000000001,
-                "sale_count": 30,
-                "rank": 2,
-                "dense_rank": 2,
-                "row_number": 2
-              }
-            ]
-          }
-        }
       }
     },
     "query_week_over_week": {
       "code": "from ibis import _\n\n# Aggregate by week\nweekly_revenue = (\n    sales_st\n    .mutate(week_start=_.sale_date.truncate(\"W\"))\n    .group_by(\"week_start\")\n    .aggregate(\"total_revenue\")\n    .order_by(\"week_start\")\n)\n\n# Calculate week-over-week changes\nresult = weekly_revenue.mutate(\n    prev_week_revenue=_.total_revenue.lag(),\n    wow_change=_.total_revenue - _.total_revenue.lag(),\n    wow_pct_change=((_.total_revenue - _.total_revenue.lag()) / _.total_revenue.lag() * 100).round(2)\n).limit(10)",
-      "sql": "SELECT\n  \"t5\".\"week_start\",\n  \"t5\".\"total_revenue\",\n  \"t5\".\"prev_week_revenue\",\n  \"t5\".\"wow_change\",\n  ROUND(\n    (\n      CAST((\n        \"t5\".\"total_revenue\" - LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n      ) AS DOUBLE PRECISION) / LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n    ) * 100,\n    2\n  ) AS \"wow_pct_change\"\nFROM (\n  SELECT\n    \"t4\".\"week_start\",\n    \"t4\".\"total_revenue\",\n    \"t4\".\"prev_week_revenue\",\n    \"t4\".\"total_revenue\" - LAG(\"t4\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"wow_change\"\n  FROM (\n    SELECT\n      \"t3\".\"week_start\",\n      \"t3\".\"total_revenue\",\n      LAG(\"t3\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_week_revenue\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t1\".\"week_start\",\n          SUM(\"t1\".\"revenue\") AS \"total_revenue\"\n        FROM (\n          SELECT\n            \"t1\".\"sale_date\",\n            \"t1\".\"revenue\",\n            \"t1\".\"product_category\",\n            \"t1\".\"week_start\"\n          FROM (\n            SELECT\n              \"t0\".\"sale_date\",\n              \"t0\".\"revenue\",\n              \"t0\".\"product_category\",\n              DATE_TRUNC('WEEK', \"t0\".\"sale_date\") AS \"week_start\"\n            FROM \"ibis_pandas_memtable_wf7k4mmyh5hnzewc4s4rec3kg4\" AS \"t0\"\n          ) AS \"t1\"\n        ) AS t1\n        GROUP BY\n          \"t1\".\"week_start\"\n      ) AS \"t2\"\n      ORDER BY\n        \"t2\".\"week_start\" ASC\n    ) AS \"t3\"\n  ) AS \"t4\"\n) AS \"t5\"\nLIMIT 10",
+      "sql": "SELECT\n  \"t5\".\"week_start\",\n  \"t5\".\"total_revenue\",\n  \"t5\".\"prev_week_revenue\",\n  \"t5\".\"wow_change\",\n  ROUND(\n    (\n      CAST((\n        \"t5\".\"total_revenue\" - LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n      ) AS DOUBLE PRECISION) / LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n    ) * 100,\n    2\n  ) AS \"wow_pct_change\"\nFROM (\n  SELECT\n    \"t4\".\"week_start\",\n    \"t4\".\"total_revenue\",\n    \"t4\".\"prev_week_revenue\",\n    \"t4\".\"total_revenue\" - LAG(\"t4\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"wow_change\"\n  FROM (\n    SELECT\n      \"t3\".\"week_start\",\n      \"t3\".\"total_revenue\",\n      LAG(\"t3\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_week_revenue\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t1\".\"week_start\",\n          SUM(\"t1\".\"revenue\") AS \"total_revenue\"\n        FROM (\n          SELECT\n            \"t1\".\"sale_date\",\n            \"t1\".\"revenue\",\n            \"t1\".\"product_category\",\n            \"t1\".\"week_start\"\n          FROM (\n            SELECT\n              \"t0\".\"sale_date\",\n              \"t0\".\"revenue\",\n              \"t0\".\"product_category\",\n              DATE_TRUNC('WEEK', \"t0\".\"sale_date\") AS \"week_start\"\n            FROM \"ibis_pandas_memtable_fbuywylsizfijdmqwyxy7yjnfm\" AS \"t0\"\n          ) AS \"t1\"\n        ) AS t1\n        GROUP BY\n          \"t1\".\"week_start\"\n      ) AS \"t2\"\n      ORDER BY\n        \"t2\".\"week_start\" ASC\n    ) AS \"t3\"\n  ) AS \"t4\"\n) AS \"t5\"\nLIMIT 10",
       "plan": "SemanticTable: daily_sales\n  total_revenue [measure]\n  avg_revenue [measure]\n  sale_count [measure]\n-> Mutate(week_start)\n-> GroupBy(week_start)\n-> Aggregate(total_revenue)\n-> OrderBy(week_start)\n-> Mutate(prev_week_revenue, wow_change, wow_pct_change)\n-> Limit(10)",
       "table": {
         "columns": [
@@ -1757,221 +1242,81 @@
         ],
         "data": [
           [
-            "2024-01-22",
-            9274.43,
+            "2024-02-19",
+            11548.08,
             null,
             null,
             null
           ],
           [
+            "2024-01-22",
+            9274.43,
+            7972.610000000001,
+            1301.8199999999997,
+            -19.69
+          ],
+          [
+            "2024-01-29",
+            10246.21,
+            13325.119999999999,
+            -3078.91,
+            10.48
+          ],
+          [
+            "2024-01-01",
+            7836.610000000001,
+            11548.08,
+            -3711.4699999999993,
+            -23.52
+          ],
+          [
+            "2024-01-15",
+            8932.26,
+            7836.610000000001,
+            1095.6499999999996,
+            13.98
+          ],
+          [
             "2024-01-08",
             7972.610000000001,
+            8932.26,
+            -959.6499999999996,
+            -10.74
+          ],
+          [
+            "2024-02-26",
+            12124.92,
             9274.43,
-            -1301.8199999999997,
-            -14.04
+            2850.49,
+            4.44
           ],
           [
-            "2024-03-11",
-            13325.119999999999,
-            7972.610000000001,
-            5352.509999999998,
-            67.14
-          ],
-          [
-            "2024-02-05",
-            10640.87,
-            13325.119999999999,
-            -2684.249999999998,
-            -20.14
+            "2024-03-18",
+            13650.38,
+            12124.92,
+            1525.4599999999991,
+            12.58
           ],
           [
             "2024-03-25",
             11609.76,
             10640.87,
             968.8899999999994,
-            9.11
+            45.62
           ],
           [
-            "2024-01-29",
-            10246.21,
-            11609.76,
-            -1363.550000000001,
-            -11.74
-          ],
-          [
-            "2024-02-12",
-            10703.909999999998,
-            10246.21,
-            457.6999999999989,
-            4.47
-          ],
-          [
-            "2024-03-04",
-            12560.560000000001,
-            10703.909999999998,
-            1856.6500000000033,
-            17.35
-          ],
-          [
-            "2024-03-18",
+            "2024-02-05",
+            10640.87,
             13650.38,
-            12560.560000000001,
-            1089.819999999998,
-            8.68
-          ],
-          [
-            "2024-01-01",
-            7836.610000000001,
-            13650.38,
-            -5813.769999999999,
-            -42.59
+            -3009.5099999999984,
+            -22.05
           ]
         ]
-      },
-      "chart": {
-        "type": "vega",
-        "spec": {
-          "config": {
-            "view": {
-              "continuousWidth": 300,
-              "continuousHeight": 300
-            }
-          },
-          "data": {
-            "name": "data-69be61ac94b8af4da345c2a61c78dc1e"
-          },
-          "mark": {
-            "type": "bar"
-          },
-          "encoding": {
-            "color": {
-              "field": "measure",
-              "type": "nominal"
-            },
-            "tooltip": [
-              {
-                "field": "week_start",
-                "type": "nominal"
-              },
-              {
-                "field": "measure",
-                "type": "nominal"
-              },
-              {
-                "field": "value",
-                "type": "quantitative"
-              }
-            ],
-            "x": {
-              "field": "week_start",
-              "sort": null,
-              "type": "ordinal"
-            },
-            "xOffset": {
-              "field": "measure"
-            },
-            "y": {
-              "field": "value",
-              "type": "quantitative"
-            }
-          },
-          "height": 400,
-          "transform": [
-            {
-              "fold": [
-                "total_revenue",
-                "prev_week_revenue",
-                "wow_change",
-                "wow_pct_change"
-              ],
-              "as": [
-                "measure",
-                "value"
-              ]
-            }
-          ],
-          "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
-          "datasets": {
-            "data-69be61ac94b8af4da345c2a61c78dc1e": [
-              {
-                "week_start": "2024-01-08T00:00:00",
-                "total_revenue": 7972.610000000001,
-                "prev_week_revenue": 12124.92,
-                "wow_change": -4152.3099999999995,
-                "wow_pct_change": -34.25
-              },
-              {
-                "week_start": "2024-03-11T00:00:00",
-                "total_revenue": 13325.119999999999,
-                "prev_week_revenue": 7972.610000000001,
-                "wow_change": 5352.509999999998,
-                "wow_pct_change": 67.14
-              },
-              {
-                "week_start": "2024-02-26T00:00:00",
-                "total_revenue": 12124.92,
-                "prev_week_revenue": 13650.38,
-                "wow_change": -1525.4599999999991,
-                "wow_pct_change": -11.18
-              },
-              {
-                "week_start": "2024-02-19T00:00:00",
-                "total_revenue": 11548.08,
-                "prev_week_revenue": 13325.119999999999,
-                "wow_change": -1777.039999999999,
-                "wow_pct_change": -13.34
-              },
-              {
-                "week_start": "2024-01-01T00:00:00",
-                "total_revenue": 7836.610000000001,
-                "prev_week_revenue": 11548.08,
-                "wow_change": -3711.4699999999993,
-                "wow_pct_change": -32.14
-              },
-              {
-                "week_start": "2024-01-15T00:00:00",
-                "total_revenue": 8932.26,
-                "prev_week_revenue": 7836.610000000001,
-                "wow_change": 1095.6499999999996,
-                "wow_pct_change": 13.98
-              },
-              {
-                "week_start": "2024-01-29T00:00:00",
-                "total_revenue": 10246.21,
-                "prev_week_revenue": null,
-                "wow_change": null,
-                "wow_pct_change": null
-              },
-              {
-                "week_start": "2024-02-12T00:00:00",
-                "total_revenue": 10703.909999999998,
-                "prev_week_revenue": 10246.21,
-                "wow_change": 457.6999999999989,
-                "wow_pct_change": 4.47
-              },
-              {
-                "week_start": "2024-03-04T00:00:00",
-                "total_revenue": 12560.560000000001,
-                "prev_week_revenue": 10703.909999999998,
-                "wow_change": 1856.6500000000033,
-                "wow_pct_change": 17.35
-              },
-              {
-                "week_start": "2024-03-18T00:00:00",
-                "total_revenue": 13650.38,
-                "prev_week_revenue": 12560.560000000001,
-                "wow_change": 1089.819999999998,
-                "wow_pct_change": 8.68
-              }
-            ]
-          }
-        }
       }
     },
     "query_pct_running": {
       "code": "from ibis import _\n\n# Top 10 days by revenue\ntop_days = (\n    sales_st\n    .group_by(\"sale_date\")\n    .aggregate(\"total_revenue\")\n    .order_by(_.total_revenue.desc())\n    .limit(10)\n)\n\n# Calculate cumulative percentage\nresult = top_days.mutate(\n    cumulative_revenue=_.total_revenue.cumsum(),\n    total_top10=_.total_revenue.sum(),\n    pct_of_top10=(_.total_revenue.cumsum() / _.total_revenue.sum() * 100).round(2)\n)",
-      "sql": "SELECT\n  \"t5\".\"sale_date\",\n  \"t5\".\"total_revenue\",\n  \"t5\".\"cumulative_revenue\",\n  \"t5\".\"total_top10\",\n  ROUND(\n    (\n      CAST(SUM(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS DOUBLE PRECISION) / SUM(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n    ) * 100,\n    2\n  ) AS \"pct_of_top10\"\nFROM (\n  SELECT\n    \"t4\".\"sale_date\",\n    \"t4\".\"total_revenue\",\n    \"t4\".\"cumulative_revenue\",\n    SUM(\"t4\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"total_top10\"\n  FROM (\n    SELECT\n      \"t3\".\"sale_date\",\n      \"t3\".\"total_revenue\",\n      SUM(\"t3\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"cumulative_revenue\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t0\".\"sale_date\",\n          SUM(\"t0\".\"revenue\") AS \"total_revenue\"\n        FROM (\n          SELECT\n            \"t0\".\"revenue\",\n            \"t0\".\"product_category\",\n            \"t0\".\"sale_date\"\n          FROM \"ibis_pandas_memtable_wf7k4mmyh5hnzewc4s4rec3kg4\" AS \"t0\"\n        ) AS t0\n        GROUP BY\n          \"t0\".\"sale_date\"\n      ) AS \"t1\"\n      ORDER BY\n        \"t1\".\"total_revenue\" DESC NULLS LAST\n      LIMIT 10\n    ) AS \"t3\"\n  ) AS \"t4\"\n) AS \"t5\"",
+      "sql": "SELECT\n  \"t5\".\"sale_date\",\n  \"t5\".\"total_revenue\",\n  \"t5\".\"cumulative_revenue\",\n  \"t5\".\"total_top10\",\n  ROUND(\n    (\n      CAST(SUM(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS DOUBLE PRECISION) / SUM(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)\n    ) * 100,\n    2\n  ) AS \"pct_of_top10\"\nFROM (\n  SELECT\n    \"t4\".\"sale_date\",\n    \"t4\".\"total_revenue\",\n    \"t4\".\"cumulative_revenue\",\n    SUM(\"t4\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"total_top10\"\n  FROM (\n    SELECT\n      \"t3\".\"sale_date\",\n      \"t3\".\"total_revenue\",\n      SUM(\"t3\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS \"cumulative_revenue\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t0\".\"sale_date\",\n          SUM(\"t0\".\"revenue\") AS \"total_revenue\"\n        FROM (\n          SELECT\n            \"t0\".\"revenue\",\n            \"t0\".\"product_category\",\n            \"t0\".\"sale_date\"\n          FROM \"ibis_pandas_memtable_fbuywylsizfijdmqwyxy7yjnfm\" AS \"t0\"\n        ) AS t0\n        GROUP BY\n          \"t0\".\"sale_date\"\n      ) AS \"t1\"\n      ORDER BY\n        \"t1\".\"total_revenue\" DESC NULLS LAST\n      LIMIT 10\n    ) AS \"t3\"\n  ) AS \"t4\"\n) AS \"t5\"",
       "plan": "SemanticTable: daily_sales\n  total_revenue [measure]\n  avg_revenue [measure]\n  sale_count [measure]\n-> GroupBy(sale_date)\n-> Aggregate(total_revenue)\n-> OrderBy(_CallableWrapper(_fn=_.total_revenue.desc()))\n-> Limit(10)\n-> Mutate(cumulative_revenue, total_top10, pct_of_top10)",
       "table": {
         "columns": [
@@ -2053,151 +1398,11 @@
             100.0
           ]
         ]
-      },
-      "chart": {
-        "type": "vega",
-        "spec": {
-          "config": {
-            "view": {
-              "continuousWidth": 300,
-              "continuousHeight": 300
-            }
-          },
-          "data": {
-            "name": "data-ccfb8e557a5760f2556855387231ce27"
-          },
-          "mark": {
-            "type": "bar"
-          },
-          "encoding": {
-            "color": {
-              "field": "measure",
-              "type": "nominal"
-            },
-            "tooltip": [
-              {
-                "field": "sale_date",
-                "type": "nominal"
-              },
-              {
-                "field": "measure",
-                "type": "nominal"
-              },
-              {
-                "field": "value",
-                "type": "quantitative"
-              }
-            ],
-            "x": {
-              "field": "sale_date",
-              "sort": null,
-              "type": "ordinal"
-            },
-            "xOffset": {
-              "field": "measure"
-            },
-            "y": {
-              "field": "value",
-              "type": "quantitative"
-            }
-          },
-          "height": 400,
-          "transform": [
-            {
-              "fold": [
-                "total_revenue",
-                "cumulative_revenue",
-                "total_top10",
-                "pct_of_top10"
-              ],
-              "as": [
-                "measure",
-                "value"
-              ]
-            }
-          ],
-          "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
-          "datasets": {
-            "data-ccfb8e557a5760f2556855387231ce27": [
-              {
-                "sale_date": "2024-03-24T00:00:00",
-                "total_revenue": 2458.56,
-                "cumulative_revenue": 2458.56,
-                "total_top10": 22405.800000000003,
-                "pct_of_top10": 10.97
-              },
-              {
-                "sale_date": "2024-03-23T00:00:00",
-                "total_revenue": 2382.92,
-                "cumulative_revenue": 4841.48,
-                "total_top10": 22405.800000000003,
-                "pct_of_top10": 21.61
-              },
-              {
-                "sale_date": "2024-03-17T00:00:00",
-                "total_revenue": 2370.91,
-                "cumulative_revenue": 7212.389999999999,
-                "total_top10": 22405.800000000003,
-                "pct_of_top10": 32.19
-              },
-              {
-                "sale_date": "2024-03-30T00:00:00",
-                "total_revenue": 2366.42,
-                "cumulative_revenue": 9578.81,
-                "total_top10": 22405.800000000003,
-                "pct_of_top10": 42.75
-              },
-              {
-                "sale_date": "2024-03-16T00:00:00",
-                "total_revenue": 2254.13,
-                "cumulative_revenue": 11832.939999999999,
-                "total_top10": 22405.800000000003,
-                "pct_of_top10": 52.81
-              },
-              {
-                "sale_date": "2024-03-10T00:00:00",
-                "total_revenue": 2150.55,
-                "cumulative_revenue": 13983.489999999998,
-                "total_top10": 22405.800000000003,
-                "pct_of_top10": 62.41
-              },
-              {
-                "sale_date": "2024-03-09T00:00:00",
-                "total_revenue": 2147.09,
-                "cumulative_revenue": 16130.579999999998,
-                "total_top10": 22405.800000000003,
-                "pct_of_top10": 71.99
-              },
-              {
-                "sale_date": "2024-03-02T00:00:00",
-                "total_revenue": 2121.0,
-                "cumulative_revenue": 18251.579999999998,
-                "total_top10": 22405.800000000003,
-                "pct_of_top10": 81.46
-              },
-              {
-                "sale_date": "2024-03-03T00:00:00",
-                "total_revenue": 2117.39,
-                "cumulative_revenue": 20368.969999999998,
-                "total_top10": 22405.800000000003,
-                "pct_of_top10": 90.91
-              },
-              {
-                "sale_date": "2024-02-25T00:00:00",
-                "total_revenue": 2036.83,
-                "cumulative_revenue": 22405.799999999996,
-                "total_top10": 22405.800000000003,
-                "pct_of_top10": 100.0
-              }
-            ]
-          }
-        }
       }
     },
     "query_window_filter": {
       "code": "from ibis import _\n\n# Focus on weekends only\nweekend_revenue = (\n    sales_st\n    .mutate(is_weekend=_.sale_date.day_of_week.index().isin([5, 6]))\n    .filter(_.is_weekend)\n    .group_by(\"sale_date\")\n    .aggregate(\"total_revenue\")\n    .order_by(\"sale_date\")\n)\n\n# 3-weekend moving average\nwindow_3 = xo.window(rows=(-2, 0), order_by=\"sale_date\")\n\nresult = weekend_revenue.mutate(\n    ma_3weekend=_.total_revenue.mean().over(window_3).round(2),\n    prev_weekend=_.total_revenue.lag(),\n    weekend_change=_.total_revenue - _.total_revenue.lag()\n).limit(10)",
-      "sql": "SELECT\n  \"t5\".\"sale_date\",\n  \"t5\".\"total_revenue\",\n  \"t5\".\"ma_3weekend\",\n  \"t5\".\"prev_weekend\",\n  \"t5\".\"total_revenue\" - LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"weekend_change\"\nFROM (\n  SELECT\n    \"t4\".\"sale_date\",\n    \"t4\".\"total_revenue\",\n    \"t4\".\"ma_3weekend\",\n    LAG(\"t4\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_weekend\"\n  FROM (\n    SELECT\n      \"t3\".\"sale_date\",\n      \"t3\".\"total_revenue\",\n      ROUND(\n        AVG(\"t3\".\"total_revenue\") OVER (ORDER BY \"t3\".\"sale_date\" ASC ROWS BETWEEN 2 preceding AND CURRENT ROW),\n        2\n      ) AS \"ma_3weekend\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t1\".\"sale_date\",\n          SUM(\"t1\".\"revenue\") AS \"total_revenue\"\n        FROM (\n          SELECT\n            \"t1\".\"revenue\",\n            \"t1\".\"product_category\",\n            \"t1\".\"is_weekend\",\n            \"t1\".\"sale_date\"\n          FROM (\n            SELECT\n              \"t0\".\"sale_date\",\n              \"t0\".\"revenue\",\n              \"t0\".\"product_category\",\n              (\n                DATE_PART('dow', \"t0\".\"sale_date\") + 6\n              ) % 7 IN (5, 6) AS \"is_weekend\"\n            FROM \"ibis_pandas_memtable_wf7k4mmyh5hnzewc4s4rec3kg4\" AS \"t0\"\n            WHERE\n              (\n                DATE_PART('dow', \"t0\".\"sale_date\") + 6\n              ) % 7 IN (5, 6)\n          ) AS \"t1\"\n        ) AS t1\n        GROUP BY\n          \"t1\".\"sale_date\"\n      ) AS \"t2\"\n      ORDER BY\n        \"t2\".\"sale_date\" ASC\n    ) AS \"t3\"\n  ) AS \"t4\"\n) AS \"t5\"\nLIMIT 10",
+      "sql": "SELECT\n  \"t5\".\"sale_date\",\n  \"t5\".\"total_revenue\",\n  \"t5\".\"ma_3weekend\",\n  \"t5\".\"prev_weekend\",\n  \"t5\".\"total_revenue\" - LAG(\"t5\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"weekend_change\"\nFROM (\n  SELECT\n    \"t4\".\"sale_date\",\n    \"t4\".\"total_revenue\",\n    \"t4\".\"ma_3weekend\",\n    LAG(\"t4\".\"total_revenue\") OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS \"prev_weekend\"\n  FROM (\n    SELECT\n      \"t3\".\"sale_date\",\n      \"t3\".\"total_revenue\",\n      ROUND(\n        CAST(AVG(\"t3\".\"total_revenue\") OVER (ORDER BY \"t3\".\"sale_date\" ASC ROWS BETWEEN 2 preceding AND CURRENT ROW) AS DECIMAL),\n        2\n      ) AS \"ma_3weekend\"\n    FROM (\n      SELECT\n        *\n      FROM (\n        SELECT\n          \"t1\".\"sale_date\",\n          SUM(\"t1\".\"revenue\") AS \"total_revenue\"\n        FROM (\n          SELECT\n            \"t1\".\"revenue\",\n            \"t1\".\"product_category\",\n            \"t1\".\"is_weekend\",\n            \"t1\".\"sale_date\"\n          FROM (\n            SELECT\n              \"t0\".\"sale_date\",\n              \"t0\".\"revenue\",\n              \"t0\".\"product_category\",\n              (\n                DATE_PART('dow', \"t0\".\"sale_date\") + 6\n              ) % 7 IN (5, 6) AS \"is_weekend\"\n            FROM \"ibis_pandas_memtable_fbuywylsizfijdmqwyxy7yjnfm\" AS \"t0\"\n            WHERE\n              (\n                DATE_PART('dow', \"t0\".\"sale_date\") + 6\n              ) % 7 IN (5, 6)\n          ) AS \"t1\"\n        ) AS t1\n        GROUP BY\n          \"t1\".\"sale_date\"\n      ) AS \"t2\"\n      ORDER BY\n        \"t2\".\"sale_date\" ASC\n    ) AS \"t3\"\n  ) AS \"t4\"\n) AS \"t5\"\nLIMIT 10",
       "plan": "SemanticTable: daily_sales\n  total_revenue [measure]\n  avg_revenue [measure]\n  sale_count [measure]\n-> Mutate(is_weekend)\n-> Filter(\u03bb <predicate>)\n-> GroupBy(sale_date)\n-> Aggregate(total_revenue)\n-> OrderBy(sale_date)\n-> Mutate(ma_3weekend, prev_weekend, weekend_change)\n-> Limit(10)",
       "table": {
         "columns": [
@@ -2279,146 +1484,6 @@
             -105.90999999999985
           ]
         ]
-      },
-      "chart": {
-        "type": "vega",
-        "spec": {
-          "config": {
-            "view": {
-              "continuousWidth": 300,
-              "continuousHeight": 300
-            }
-          },
-          "data": {
-            "name": "data-3a819d33c9eacd7e65be7b4ec0b9932b"
-          },
-          "mark": {
-            "type": "bar"
-          },
-          "encoding": {
-            "color": {
-              "field": "measure",
-              "type": "nominal"
-            },
-            "tooltip": [
-              {
-                "field": "sale_date",
-                "type": "nominal"
-              },
-              {
-                "field": "measure",
-                "type": "nominal"
-              },
-              {
-                "field": "value",
-                "type": "quantitative"
-              }
-            ],
-            "x": {
-              "field": "sale_date",
-              "sort": null,
-              "type": "ordinal"
-            },
-            "xOffset": {
-              "field": "measure"
-            },
-            "y": {
-              "field": "value",
-              "type": "quantitative"
-            }
-          },
-          "height": 400,
-          "transform": [
-            {
-              "fold": [
-                "total_revenue",
-                "ma_3weekend",
-                "prev_weekend",
-                "weekend_change"
-              ],
-              "as": [
-                "measure",
-                "value"
-              ]
-            }
-          ],
-          "width": 700,
-          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
-          "datasets": {
-            "data-3a819d33c9eacd7e65be7b4ec0b9932b": [
-              {
-                "sale_date": "2024-01-06T00:00:00",
-                "total_revenue": 1400.34,
-                "ma_3weekend": 1400.34,
-                "prev_weekend": null,
-                "weekend_change": null
-              },
-              {
-                "sale_date": "2024-01-07T00:00:00",
-                "total_revenue": 1456.44,
-                "ma_3weekend": 1428.39,
-                "prev_weekend": 1400.34,
-                "weekend_change": 56.100000000000136
-              },
-              {
-                "sale_date": "2024-01-13T00:00:00",
-                "total_revenue": 1361.31,
-                "ma_3weekend": 1406.03,
-                "prev_weekend": 1456.44,
-                "weekend_change": -95.13000000000011
-              },
-              {
-                "sale_date": "2024-01-14T00:00:00",
-                "total_revenue": 1408.77,
-                "ma_3weekend": 1408.84,
-                "prev_weekend": 1361.31,
-                "weekend_change": 47.460000000000036
-              },
-              {
-                "sale_date": "2024-01-20T00:00:00",
-                "total_revenue": 1448.3,
-                "ma_3weekend": 1406.13,
-                "prev_weekend": 1408.77,
-                "weekend_change": 39.52999999999997
-              },
-              {
-                "sale_date": "2024-01-21T00:00:00",
-                "total_revenue": 1621.16,
-                "ma_3weekend": 1492.74,
-                "prev_weekend": 1448.3,
-                "weekend_change": 172.86000000000013
-              },
-              {
-                "sale_date": "2024-01-27T00:00:00",
-                "total_revenue": 1556.55,
-                "ma_3weekend": 1542.0,
-                "prev_weekend": 1621.16,
-                "weekend_change": -64.61000000000013
-              },
-              {
-                "sale_date": "2024-01-28T00:00:00",
-                "total_revenue": 1570.34,
-                "ma_3weekend": 1582.68,
-                "prev_weekend": 1556.55,
-                "weekend_change": 13.789999999999964
-              },
-              {
-                "sale_date": "2024-02-03T00:00:00",
-                "total_revenue": 1823.62,
-                "ma_3weekend": 1650.17,
-                "prev_weekend": 1570.34,
-                "weekend_change": 253.27999999999997
-              },
-              {
-                "sale_date": "2024-02-04T00:00:00",
-                "total_revenue": 1717.71,
-                "ma_3weekend": 1703.89,
-                "prev_weekend": 1823.62,
-                "weekend_change": -105.90999999999985
-              }
-            ]
-          }
-        }
       }
     }
   },

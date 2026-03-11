@@ -388,6 +388,26 @@ def test_aggregation_expr_method_chaining():
     assert df[df.session_id == 2]["duration_seconds"].values[0] == 0
 
 
+def test_nullif_on_aggregation_regression():
+    """Regression test for #169: nullif() on aggregations caused TypeError."""
+    tbl = ibis.memtable({"a": [1, 2, 3], "b": [10, 20, 30]})
+
+    model = (
+        to_semantic_table(tbl, name="test", description="test")
+        .with_dimensions(a={"expr": lambda t: t.a, "description": "dim"})
+        .with_measures(
+            ratio={
+                "expr": lambda t: t.a.sum() / t.b.sum().nullif(0),
+                "description": "ratio",
+            }
+        )
+    )
+
+    df = model.query(dimensions=("a",), measures=("ratio",)).execute()
+    assert len(df) == 3
+    assert "ratio" in df.columns
+
+
 # ---------------------------------------------------------------------------
 # Tests for Deferred support in group_by() and aggregate() positional args
 # ---------------------------------------------------------------------------
