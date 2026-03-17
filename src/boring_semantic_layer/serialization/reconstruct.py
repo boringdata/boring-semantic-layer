@@ -63,6 +63,7 @@ def _reconstruct_semantic_table(
             is_event_timestamp=dim_data.get("is_event_timestamp", False),
             is_time_dimension=dim_data.get("is_time_dimension", False),
             smallest_time_grain=dim_data.get("smallest_time_grain"),
+            derived_dimensions=tuple(dim_data.get("derived_dimensions") or ()),
         )
 
     def _create_measure(name: str, meas_data: dict) -> ops.Measure:

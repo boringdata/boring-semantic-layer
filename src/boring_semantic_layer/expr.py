@@ -330,8 +330,63 @@ def _create_dimension(expr: Dimension | Callable | dict) -> Dimension:
             is_event_timestamp=expr.get("is_event_timestamp", False),
             is_time_dimension=expr.get("is_time_dimension", False),
             smallest_time_grain=expr.get("smallest_time_grain"),
+            derived_dimensions=tuple(expr.get("derived_dimensions") or ()),
         )
     return Dimension(expr=expr, description=None)
+
+
+_SUPPORTED_DERIVED_TIME_DIMENSIONS = frozenset({"year", "month", "day"})
+
+
+def _extract_derived_time_part(value: ir.Value, part: str) -> ir.Value:
+    if part == "year":
+        return value.year()
+    if part == "month":
+        return value.month()
+    if part == "day":
+        return value.day()
+    raise ValueError(
+        f"Unsupported derived dimension part '{part}'. "
+        f"Supported values: {sorted(_SUPPORTED_DERIVED_TIME_DIMENSIONS)}",
+    )
+
+
+def _expand_derived_dimensions(
+    dimensions: Mapping[str, Dimension | Callable | dict] | None,
+) -> FrozenDict[str, Dimension]:
+    base_dimensions = {
+        dim_name: _create_dimension(dim)
+        for dim_name, dim in (dimensions or {}).items()
+    }
+    expanded_dimensions = dict(base_dimensions)
+
+    for dim_name, dim in base_dimensions.items():
+        for part in dim.derived_dimensions:
+            normalized_part = part.strip().lower()
+            if normalized_part not in _SUPPORTED_DERIVED_TIME_DIMENSIONS:
+                raise ValueError(
+                    f"Invalid derived dimension '{part}' for '{dim_name}'. "
+                    f"Supported values: {sorted(_SUPPORTED_DERIVED_TIME_DIMENSIONS)}",
+                )
+
+            derived_name = f"{dim_name}_{normalized_part}"
+            if derived_name in expanded_dimensions:
+                # Keep explicitly defined dimensions and avoid duplicate regeneration.
+                continue
+
+            base_expr = dim.expr
+
+            def derived_expr(
+                table: ir.Table,
+                _base_expr=base_expr,
+                _part=normalized_part,
+            ) -> ir.Value:
+                value = _base_expr.resolve(table) if _is_deferred(_base_expr) else _base_expr(table)
+                return _extract_derived_time_part(value, _part)
+
+            expanded_dimensions[derived_name] = Dimension(expr=derived_expr, description=None)
+
+    return FrozenDict(expanded_dimensions)
 
 
 def _derive_name(table: Any) -> str | None:
@@ -382,9 +437,7 @@ class SemanticModel(SemanticTable):
     ) -> None:
         # Keep tables in regular ibis - only convert to xorq at execution time if needed
 
-        dims = FrozenDict(
-            {dim_name: _create_dimension(dim) for dim_name, dim in (dimensions or {}).items()},
-        )
+        dims = _expand_derived_dimensions(dimensions)
 
         meas = FrozenDict(
             {

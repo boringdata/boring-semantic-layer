@@ -252,6 +252,8 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
                 "is_time_dimension": dim.is_time_dimension,
                 "smallest_time_grain": dim.smallest_time_grain,
             }
+            if dim.derived_dimensions:
+                entry["derived_dimensions"] = list(dim.derived_dimensions)
             col_name = extract_simple_column_name(dim.expr)
             match col_name:
                 case str():

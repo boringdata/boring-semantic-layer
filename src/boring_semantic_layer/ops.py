@@ -908,6 +908,7 @@ class Dimension:
     is_time_dimension: bool = False
     is_event_timestamp: bool = False
     smallest_time_grain: str | None = None
+    derived_dimensions: tuple[str, ...] = ()
 
     def __call__(self, table: ir.Table, _dims: dict | None = None) -> ir.Value:
         try:
@@ -943,6 +944,8 @@ class Dimension:
             base["is_event_timestamp"] = True
         if self.is_time_dimension:
             base["smallest_time_grain"] = self.smallest_time_grain
+        if self.derived_dimensions:
+            base["derived_dimensions"] = list(self.derived_dimensions)
         return base
 
     def __hash__(self) -> int:
@@ -953,6 +956,7 @@ class Dimension:
                 self.is_event_timestamp,
                 self.is_time_dimension,
                 self.smallest_time_grain,
+                self.derived_dimensions,
             ),
         )
 
@@ -4168,6 +4172,7 @@ def _wrap_dimension_for_renamed_column(dimension: Dimension, renamed_column: str
         is_time_dimension=dimension.is_time_dimension,
         is_event_timestamp=dimension.is_event_timestamp,
         smallest_time_grain=dimension.smallest_time_grain,
+        derived_dimensions=dimension.derived_dimensions,
     )
 
 
