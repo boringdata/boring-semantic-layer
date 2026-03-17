@@ -263,6 +263,28 @@ def cmd_render(args):
             observer.join()
 
 
+def cmd_serve(args):
+    """Start the BSL HTTP API server."""
+    try:
+        from boring_semantic_layer.server import main as serve_main
+    except ImportError:
+        print("❌ FastAPI/uvicorn not installed.")
+        print("   Install with: pip install 'boring-semantic-layer[server]'")
+        return
+
+    cors_origins = None
+    if getattr(args, "cors_origins", None):
+        cors_origins = [origin.strip() for origin in args.cors_origins.split(",") if origin.strip()]
+
+    serve_main(
+        config=getattr(args, "config", None),
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        cors_origins=cors_origins,
+    )
+
+
 def cmd_chat(args):
     """Start an interactive chat session with the semantic model."""
     import os
@@ -398,6 +420,37 @@ def main():
         help="Exit after running the initial query (non-interactive mode)",
     )
     chat_parser.set_defaults(func=cmd_chat)
+
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Start the BSL HTTP API server (requires boring-semantic-layer[server])",
+    )
+    serve_parser.add_argument(
+        "--config",
+        type=str,
+        help="Path to semantic_config.py (default: ./semantic_config.py or BSL_CONFIG_PATH)",
+    )
+    serve_parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Host to bind to (default: 0.0.0.0)",
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to listen on (default: 8000)",
+    )
+    serve_parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Enable auto-reload on code changes (development only)",
+    )
+    serve_parser.add_argument(
+        "--cors-origins",
+        help="Comma-separated CORS allowlist. Defaults to BSL_CORS_ORIGINS or '*' if unset.",
+    )
+    serve_parser.set_defaults(func=cmd_serve)
 
     # Skill command with subcommands
     skill_parser = subparsers.add_parser(
