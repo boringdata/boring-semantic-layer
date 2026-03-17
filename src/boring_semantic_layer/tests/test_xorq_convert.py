@@ -182,7 +182,7 @@ def test_from_xorq_with_tagged_table():
     from xorq.api import memtable
 
     # Use nested tuples format (following xorq sklearn pipeline pattern)
-    xorq_table = memtable({"a": [1, 2, 3]}).tag(
+    xorq_table = memtable({"a": [1, 2, 3]}).hashing_tag(
         tag="bsl_test",
         bsl_op_type="SemanticTableOp",
         bsl_version="1.0",
@@ -193,6 +193,70 @@ def test_from_xorq_with_tagged_table():
     bsl_expr = from_tagged(xorq_table)
     assert bsl_expr is not None
     assert hasattr(bsl_expr, "dimensions")
+
+
+@pytest.mark.skipif(not xorq, reason="xorq not available")
+def test_different_measures_produce_different_hashes():
+    """Two SemanticModels on the same table with different measures should hash differently."""
+    import ibis
+
+    from boring_semantic_layer import SemanticModel
+    from xorq.caching.strategy import SnapshotStrategy
+    from xorq.common.utils.node_utils import compute_expr_hash
+
+    table = ibis.table({"a": "int64", "b": "float64"}, name="test_table")
+
+    model_sum = SemanticModel(
+        table=table,
+        dimensions={"a": lambda t: t.a},
+        measures={"agg_b": lambda t: t.b.sum()},
+    )
+    model_mean = SemanticModel(
+        table=table,
+        dimensions={"a": lambda t: t.a},
+        measures={"agg_b": lambda t: t.b.mean()},
+    )
+
+    tagged_sum = to_tagged(model_sum)
+    tagged_mean = to_tagged(model_mean)
+
+    strategy = SnapshotStrategy()
+    hash_sum = compute_expr_hash(tagged_sum, strategy=strategy)
+    hash_mean = compute_expr_hash(tagged_mean, strategy=strategy)
+
+    assert hash_sum != hash_mean, "Same table with different measures should produce different hashes"
+
+
+@pytest.mark.skipif(not xorq, reason="xorq not available")
+def test_same_model_produces_same_hash():
+    """Two identical SemanticModels should produce the same hash."""
+    import ibis
+
+    from boring_semantic_layer import SemanticModel
+    from xorq.caching.strategy import SnapshotStrategy
+    from xorq.common.utils.node_utils import compute_expr_hash
+
+    table = ibis.table({"a": "int64", "b": "float64"}, name="test_table")
+
+    model1 = SemanticModel(
+        table=table,
+        dimensions={"a": lambda t: t.a},
+        measures={"sum_b": lambda t: t.b.sum()},
+    )
+    model2 = SemanticModel(
+        table=table,
+        dimensions={"a": lambda t: t.a},
+        measures={"sum_b": lambda t: t.b.sum()},
+    )
+
+    tagged1 = to_tagged(model1)
+    tagged2 = to_tagged(model2)
+
+    strategy = SnapshotStrategy()
+    hash1 = compute_expr_hash(tagged1, strategy=strategy)
+    hash2 = compute_expr_hash(tagged2, strategy=strategy)
+
+    assert hash1 == hash2, "Identical models should produce the same hash"
 
 
 @pytest.mark.skipif(not xorq, reason="xorq not available")

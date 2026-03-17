@@ -166,7 +166,7 @@ wheels = [
 
 [[package]]
 name = "boring-semantic-layer"
-version = "0.3.8"
+version = "0.3.9"
 source = { editable = "." }
 dependencies = [
     { name = "attrs" },
@@ -266,7 +266,7 @@ requires-dist = [
     { name = "toolz", specifier = ">=1.0.0" },
     { name = "urllib3", marker = "extra == 'dev'", specifier = ">=2.2.3" },
     { name = "vl-convert-python", marker = "extra == 'viz-altair'", specifier = ">=1.0.0" },
-    { name = "xorq", specifier = ">=0.3.11" },
+    { name = "xorq", specifier = ">=0.3.14" },
     { name = "xorq", marker = "extra == 'examples'" },
     { name = "xorq", extras = ["duckdb"], marker = "extra == 'examples'", specifier = ">=0.3.4" },
 ]
@@ -1705,6 +1705,18 @@ wheels = [
 ]
 
 [[package]]
+name = "linkify-it-py"
+version = "2.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "uc-micro-py" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2e/c9/06ea13676ef354f0af6169587ae292d3e2406e212876a413bf9eece4eb23/linkify_it_py-2.1.0.tar.gz", hash = "sha256:43360231720999c10e9328dc3691160e27a718e280673d444c38d7d3aaa3b98b", size = 29158, upload-time = "2026-03-01T07:48:47.683Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b4/de/88b3be5c31b22333b3ca2f6ff1de4e863d8fe45aaea7485f591970ec1d3e/linkify_it_py-2.1.0-py3-none-any.whl", hash = "sha256:0d252c1594ecba2ecedc444053db5d3a9b7ec1b0dd929c8f1d74dce89f86c05e", size = 19878, upload-time = "2026-03-01T07:48:46.098Z" },
+]
+
+[[package]]
 name = "locket"
 version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1747,6 +1759,11 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/5b/f5/4ec618ed16cc4f8fb3b701563655a69816155e79e24a17b651541804721d/markdown_it_py-4.0.0.tar.gz", hash = "sha256:cb0a2b4aa34f932c007117b194e945bd74e0ec24133ceb5bac59009cda1cb9f3", size = 73070, upload-time = "2025-08-11T12:57:52.854Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/94/54/e7d793b573f298e1c9013b8c4dade17d481164aa517d1d7148619c2cedbf/markdown_it_py-4.0.0-py3-none-any.whl", hash = "sha256:87327c59b172c5011896038353a81343b6754500a08cd7a4973bb48c6d578147", size = 87321, upload-time = "2025-08-11T12:57:51.923Z" },
+]
+
+[package.optional-dependencies]
+linkify = [
+    { name = "linkify-it-py" },
 ]
 
 [[package]]
@@ -1867,6 +1884,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f8/22/fae38092e6c2995c03232635028510d77e7decff31b4ae79dfa0ba99c635/mcp-1.20.0.tar.gz", hash = "sha256:9ccc09eaadbfbcbbdab1c9723cfe2e0d1d9e324d7d3ce7e332ef90b09ed35177", size = 451377, upload-time = "2025-10-30T22:14:53.421Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/df/00/76fc92f4892d47fecb37131d0e95ea69259f077d84c68f6793a0d96cfe80/mcp-1.20.0-py3-none-any.whl", hash = "sha256:d0dc06f93653f7432ff89f694721c87f79876b6f93741bf628ad1e48f7ac5e5d", size = 173136, upload-time = "2025-10-30T22:14:51.078Z" },
+]
+
+[[package]]
+name = "mdit-py-plugins"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markdown-it-py" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b2/fd/a756d36c0bfba5f6e39a1cdbdbfdd448dc02692467d83816dff4592a1ebc/mdit_py_plugins-0.5.0.tar.gz", hash = "sha256:f4918cb50119f50446560513a8e311d574ff6aaed72606ddae6d35716fe809c6", size = 44655, upload-time = "2025-08-11T07:25:49.083Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fb/86/dd6e5db36df29e76c7a7699123569a4a18c1623ce68d826ed96c62643cae/mdit_py_plugins-0.5.0-py3-none-any.whl", hash = "sha256:07a08422fc1936a5d26d146759e9155ea466e842f5ab2f7d2266dd084c8dab1f", size = 57205, upload-time = "2025-08-11T07:25:47.597Z" },
 ]
 
 [[package]]
@@ -3752,6 +3781,23 @@ wheels = [
 ]
 
 [[package]]
+name = "textual"
+version = "8.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markdown-it-py", extra = ["linkify"] },
+    { name = "mdit-py-plugins" },
+    { name = "platformdirs" },
+    { name = "pygments" },
+    { name = "rich" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6a/50/d46c43c02e80c67ead6ba72231c1bfa90f3c6105dc26aee92a782c5f10dd/textual-8.1.0.tar.gz", hash = "sha256:4aef2badb7b15db23c9d96002ac0b6307345fac62b6a37935fb9b483414e4071", size = 1842894, upload-time = "2026-03-10T03:01:11.664Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4c/e2/5ba08dc536ece4d0bd250bcf4aea9770c5078f559de15af0ad235a1a9eb2/textual-8.1.0-py3-none-any.whl", hash = "sha256:878c05fe1a1332bcbf1000a9d9fbdecccb52a683645107612ba2c838d803b7ad", size = 719618, upload-time = "2026-03-10T03:05:31.149Z" },
+]
+
+[[package]]
 name = "tiktoken"
 version = "0.12.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3931,6 +3977,15 @@ wheels = [
 ]
 
 [[package]]
+name = "uc-micro-py"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/78/67/9a363818028526e2d4579334460df777115bdec1bb77c08f9db88f6389f2/uc_micro_py-2.0.0.tar.gz", hash = "sha256:c53691e495c8db60e16ffc4861a35469b0ba0821fe409a8a7a0a71864d33a811", size = 6611, upload-time = "2026-03-01T06:31:27.526Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/61/73/d21edf5b204d1467e06500080a50f79d49ef2b997c79123a536d4a17d97c/uc_micro_py-2.0.0-py3-none-any.whl", hash = "sha256:3603a3859af53e5a39bc7677713c78ea6589ff188d70f4fee165db88e22b242c", size = 6383, upload-time = "2026-03-01T06:31:26.257Z" },
+]
+
+[[package]]
 name = "urllib3"
 version = "2.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4077,7 +4132,7 @@ wheels = [
 
 [[package]]
 name = "xorq"
-version = "0.3.11"
+version = "0.3.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "atpublic" },
@@ -4088,6 +4143,7 @@ dependencies = [
     { name = "cryptography" },
     { name = "dask", marker = "python_full_version < '4'" },
     { name = "envyaml" },
+    { name = "filelock" },
     { name = "geoarrow-types", marker = "python_full_version < '4'" },
     { name = "gitpython" },
     { name = "opentelemetry-exporter-otlp" },
@@ -4108,14 +4164,15 @@ dependencies = [
     { name = "sqlglot" },
     { name = "strenum", marker = "python_full_version < '3.11'" },
     { name = "structlog", marker = "python_full_version < '4'" },
+    { name = "textual" },
     { name = "toolz" },
     { name = "typing-extensions" },
     { name = "uv" },
     { name = "xorq-datafusion" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c0/31/84ff558c86200860279a673ff2a3a42df43c73f427e532fa2ce4616b2eb4/xorq-0.3.11.tar.gz", hash = "sha256:7338860b724967d01e78439bc0333c0690efb7d9d83b04e8fa50328515f8dd7c", size = 1522889, upload-time = "2026-02-24T16:24:23.613Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/e4/871448e8423cd6badeef093e010617c373e473782d770ec0cac085573ee4/xorq-0.3.14.tar.gz", hash = "sha256:4abe4ab6209b125cc5e0db0a2e58aa7bbacf418f67c0a955e0b8478499c79337", size = 1551002, upload-time = "2026-03-09T20:35:13.691Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8f/aa/d699f5f373f654f32453a3d2886a7e110e89481dd0c78d3d3ade1a119675/xorq-0.3.11-py3-none-any.whl", hash = "sha256:7876413e9924b5dd800d9f51d7c5a10d2c5c9ec892aa15fa4ee27a5c3b6c4ddf", size = 1757077, upload-time = "2026-02-24T16:24:25.007Z" },
+    { url = "https://files.pythonhosted.org/packages/e9/0d/ececae397e08da8a0684ae50281afe15214891f59386afed7c16375a448e/xorq-0.3.14-py3-none-any.whl", hash = "sha256:9ae8f217f70facf13ecdac6df008788db11dae24326038952db32c42effe7812", size = 1788923, upload-time = "2026-03-09T20:35:16.953Z" },
 ]
 
 [package.optional-dependencies]
