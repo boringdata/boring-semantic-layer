@@ -8,15 +8,7 @@ even though MCP doesn't require langchain. This was because
 agents/backends/__init__.py unconditionally imported LangGraphBackend.
 """
 
-import importlib
 
-import pytest
-
-_has_mcp = importlib.util.find_spec("fastmcp") is not None
-_has_langchain = importlib.util.find_spec("langchain") is not None
-
-
-@pytest.mark.skipif(not _has_mcp, reason="fastmcp not installed")
 class TestLazyImportsIssue145:
     """Test the exact bug from issue #145: MCP import failing without langchain."""
 
@@ -59,7 +51,6 @@ class TestLazyImportsIssue145:
         assert hasattr(backends, "__all__")
 
 
-@pytest.mark.skipif(not _has_mcp, reason="fastmcp not installed")
 class TestLazyImportBehavior:
     """Test that imports are properly lazy."""
 
@@ -69,7 +60,6 @@ class TestLazyImportBehavior:
 
         assert MCPSemanticModel is not None
 
-    @pytest.mark.skipif(not _has_langchain, reason="langchain not installed")
     def test_langgraph_import_works_from_main_module(self):
         """LangGraphBackend can be imported from main module."""
         from boring_semantic_layer import LangGraphBackend
@@ -82,7 +72,6 @@ class TestLazyImportBehavior:
 
         assert MCPSemanticModel is not None
 
-    @pytest.mark.skipif(not _has_langchain, reason="langchain not installed")
     def test_langgraph_import_works_from_backends(self):
         """LangGraphBackend can be imported from backends module via __getattr__."""
         from boring_semantic_layer.agents.backends import LangGraphBackend

@@ -88,7 +88,7 @@ def flatten_nested_malloy_result():
 
 @pytest.fixture
 def malloy_query_runner(malloy_data_path):
-    malloy = pytest.importorskip("malloy", reason="malloy not installed")
+    import malloy
     from malloy.data.duckdb import DuckDbConnection
 
     async def _run_query(query_file: str, query_name: str):
