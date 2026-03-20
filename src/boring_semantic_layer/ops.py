@@ -199,7 +199,11 @@ if TYPE_CHECKING:
 
 
 def _patch_xorq_sortkey_compat():
-    """Register a map_ibis handler so ibis SortKey(arg=…) → xorq SortKey(expr=…)."""
+    """Register a map_ibis handler so ibis SortKey → xorq SortKey.
+
+    ibis 11 uses ``SortKey.expr``, ibis 12 renamed it to ``SortKey.arg``,
+    while xorq's vendored ibis keeps ``SortKey.expr``.  Handle both.
+    """
     from ibis.expr.operations.sortkeys import SortKey as IbisSortKey
     from xorq.common.utils.ibis_utils import map_ibis
     from xorq.vendor.ibis.expr.operations.sortkeys import SortKey as XorqSortKey
@@ -209,8 +213,10 @@ def _patch_xorq_sortkey_compat():
 
     @map_ibis.register(IbisSortKey)
     def _map_sort_key(val, kwargs=None):
+        # ibis 12 uses .arg, ibis 11 uses .expr
+        sort_expr = getattr(val, "arg", None) or getattr(val, "expr")
         return XorqSortKey(
-            expr=map_ibis(val.arg, None),
+            expr=map_ibis(sort_expr, None),
             ascending=val.ascending,
             nulls_first=val.nulls_first,
         )
