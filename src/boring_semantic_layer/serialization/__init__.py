@@ -121,7 +121,7 @@ def to_tagged(semantic_expr, aggregate_cache_storage=None):
         if aggregate_cache_storage is not None and isinstance(op, SemanticAggregateOp):
             xorq_table = xorq_table.cache(storage=aggregate_cache_storage)
 
-        xorq_table = xorq_table.hashing_tag(tag="bsl", **tag_data)
+        xorq_table = xorq_table.tag(tag="bsl", **tag_data)
 
         return xorq_table
 
