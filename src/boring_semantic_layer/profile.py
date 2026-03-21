@@ -113,7 +113,14 @@ def _load_from_file(yaml_file: Path, profile_name: str | None = None) -> BaseBac
 
 
 def _create_connection_from_config(config: dict) -> BaseBackend:
-    """Create xorq connection from config dict with 'type' field."""
+    """Create database connection from config dict with 'type' field.
+
+    Tries xorq first (which handles env var substitution automatically),
+    then falls back to plain ``ibis.<backend>.connect()`` for backends
+    not registered in xorq (e.g. Databricks).
+    """
+    import ibis
+
     config = config.copy()
     conn_type = config.get("type")
     if not conn_type:
@@ -121,10 +128,23 @@ def _create_connection_from_config(config: dict) -> BaseBackend:
 
     parquet_tables = config.pop("tables", None)
 
-    # Use xorq (handles env var substitution automatically)
-    kwargs_tuple = tuple(sorted((k, v) for k, v in config.items() if k != "type"))
-    xorq_profile = XorqProfile(con_name=conn_type, kwargs_tuple=kwargs_tuple)
-    connection = xorq_profile.get_con()
+    # Try xorq first (handles env var substitution automatically)
+    try:
+        kwargs_tuple = tuple(sorted((k, v) for k, v in config.items() if k != "type"))
+        xorq_profile = XorqProfile(con_name=conn_type, kwargs_tuple=kwargs_tuple)
+        connection = xorq_profile.get_con()
+    except AssertionError:
+        # Backend not supported by xorq (e.g. Databricks) — fall back to plain ibis
+        connect_fn = getattr(ibis, conn_type, None)
+        if connect_fn is None or not callable(getattr(connect_fn, "connect", None)):
+            raise ProfileError(f"Unknown backend type: '{conn_type}'")
+        connect_kwargs = {k: v for k, v in config.items() if k != "type"}
+        # Expand env vars in string values (xorq does this automatically)
+        connect_kwargs = {
+            k: os.path.expandvars(v) if isinstance(v, str) else v
+            for k, v in connect_kwargs.items()
+        }
+        connection = connect_fn.connect(**connect_kwargs)
 
     # Load parquet tables if specified
     if parquet_tables:

@@ -13,10 +13,26 @@ from typing import Any, ClassVar, Literal
 import ibis
 from attrs import frozen
 from ibis.common.collections import FrozenDict
-import xorq.api as xo
 from toolz import curry
 
 from .utils import safe_eval
+
+
+def _get_ibis_api():
+    """Return xorq's vendored ibis API if available, else plain ibis.
+
+    Filter expressions built with ``ibis._`` / ``ibis.literal()`` must use the
+    same ibis implementation as the table they will be resolved against.  Since
+    ``_ensure_xorq_table()`` converts tables to xorq when possible, we should
+    build filter expressions with xorq's ibis to match.  For backends that
+    xorq does not support, plain ibis is used as the fallback.
+    """
+    try:
+        import xorq.api as xo
+
+        return xo
+    except Exception:
+        return ibis
 
 # Time grain type alias
 TimeGrain = Literal[
@@ -215,9 +231,10 @@ class Filter:
             return value
 
         # Try parsing as timestamp first (more general), then date
+        _ibis = _get_ibis_api()
         for dtype in ("timestamp", "date"):
             try:
-                return xo.literal(value, type=dtype)
+                return _ibis.literal(value, type=dtype)
             except (ValueError, TypeError):
                 pass
 
@@ -230,12 +247,13 @@ class Filter:
         For prefixed fields (e.g., 'customers.country'), use only the field name
         since joined tables flatten the columns to the top level.
         """
+        _ibis = _get_ibis_api()
         if "." in field:
             # Extract just the field name, ignoring the table prefix
             # e.g., 'customers.country' -> 'country'
             _table_name, field_name = field.split(".", 1)
-            return getattr(xo._, field_name)
-        return getattr(xo._, field)
+            return getattr(_ibis._, field_name)
+        return getattr(_ibis._, field)
 
     def _parse_json_filter(self, filter_obj: FrozenDict) -> Any:
         """Parse JSON filter object into ibis expression."""
@@ -296,9 +314,10 @@ class Filter:
             expr = self._parse_json_filter(self.filter)
             return lambda t: expr.resolve(_ensure_xorq_table(t))
         elif isinstance(self.filter, str):
+            _ibis = _get_ibis_api()
             expr = safe_eval(
                 self.filter,
-                context={"_": xo._, "ibis": xo},
+                context={"_": _ibis._, "ibis": _ibis},
             ).unwrap()
             return lambda t: expr.resolve(_ensure_xorq_table(t))
         elif callable(self.filter):

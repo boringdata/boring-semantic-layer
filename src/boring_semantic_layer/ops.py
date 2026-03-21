@@ -199,11 +199,18 @@ if TYPE_CHECKING:
 
 
 def _ensure_xorq_table(table):
-    """Convert plain ibis Table to xorq-vendored ibis."""
-    from xorq.common.utils.ibis_utils import from_ibis
+    """Convert plain ibis Table to xorq-vendored ibis if possible.
 
+    Falls back to returning the plain ibis table when the backend is not
+    supported by xorq (e.g. Databricks).
+    """
     if "xorq.vendor.ibis" not in type(table).__module__:
-        return from_ibis(table)
+        try:
+            from xorq.common.utils.ibis_utils import from_ibis
+
+            return from_ibis(table)
+        except Exception:
+            return table
     return table
 
 
@@ -215,11 +222,20 @@ def _unify_backends(expr):
     backends.  This function rewrites the tree so every DatabaseTable
     points at the same canonical backend, eliminating "Multiple backends
     found" errors at execution time.
-    """
-    from xorq.common.utils.node_utils import walk_nodes
-    from xorq.vendor.ibis.expr.operations import relations as xorq_rel
 
-    db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), expr))
+    For plain ibis expressions (not xorq-vendored), this is a no-op.
+    """
+    try:
+        from xorq.common.utils.node_utils import walk_nodes
+        from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+    except Exception:
+        return expr
+
+    try:
+        db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), expr))
+    except Exception:
+        return expr
+
     canonical = db_tables[0].source if db_tables else None
 
     if canonical is None:
