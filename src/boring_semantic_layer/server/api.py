@@ -8,7 +8,7 @@ import os
 import re
 from collections.abc import Mapping, Sequence
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
 import ibis
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -22,6 +22,7 @@ from boring_semantic_layer.query import (
     TIME_GRAIN_TRANSFORMATIONS,
     TimeGrain,
     _find_time_dimension,
+    _make_grain_id,
     _validate_time_grain,
 )
 
@@ -40,7 +41,7 @@ class QueryRequest(BaseModel):
     order_by: list[tuple[str, str]] | None = None
     limit: int | None = Field(default=None, ge=1, le=100_000)
     time_grain: TimeGrain | None = None
-    time_grains: dict[str, TimeGrain] | None = None
+    time_grains: dict[str, Literal["year", "quarter", "month", "week", "day", "hour", "minute", "second"]] | None = None
     time_range: dict[str, str] | None = None
     get_records: bool = True
     records_limit: int | None = Field(default=None, ge=1)
@@ -261,7 +262,8 @@ def create_app(
         if payload.time_grains:
             dims_dict = model.get_dimensions()
             transformed: dict[str, Dimension] = {}
-            for dim_name, grain in payload.time_grains.items():
+            for dim_name, short_grain in payload.time_grains.items():
+                grain = _make_grain_id(short_grain)
                 if dim_name not in dims_dict:
                     raise HTTPException(
                         status_code=400,

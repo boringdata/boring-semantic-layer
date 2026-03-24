@@ -214,8 +214,8 @@ def test_query_supports_per_dimension_time_grains(client):
             "dimensions": ["flight_date", "arrival_date"],
             "measures": ["flight_count"],
             "time_grains": {
-                "flight_date": "TIME_GRAIN_MONTH",
-                "arrival_date": "TIME_GRAIN_MONTH",
+                "flight_date": "month",
+                "arrival_date": "month",
             },
             "time_range": {"start": "2024-01-01", "end": "2024-01-31"},
             "get_chart": False,
@@ -238,7 +238,7 @@ def test_query_rejects_both_time_grain_and_time_grains(client):
             "dimensions": ["flight_date"],
             "measures": ["flight_count"],
             "time_grain": "TIME_GRAIN_MONTH",
-            "time_grains": {"flight_date": "TIME_GRAIN_MONTH"},
+            "time_grains": {"flight_date": "month"},
             "get_chart": False,
         },
     )
@@ -255,7 +255,7 @@ def test_query_time_grains_rejects_non_time_dimension(client):
             "model_name": "flights",
             "dimensions": ["carrier"],
             "measures": ["flight_count"],
-            "time_grains": {"carrier": "TIME_GRAIN_MONTH"},
+            "time_grains": {"carrier": "month"},
             "get_chart": False,
         },
     )
