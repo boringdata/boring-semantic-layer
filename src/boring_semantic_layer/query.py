@@ -142,6 +142,20 @@ def _make_grain_id(grain: str) -> str:
     return f"TIME_GRAIN_{grain.upper()}"
 
 
+def _normalize_grain(grain: str) -> str:
+    """Accept both short ("month") and long ("TIME_GRAIN_MONTH") grain names."""
+    if grain in TIME_GRAIN_TRANSFORMATIONS:
+        return grain
+    canonical = _make_grain_id(grain)
+    if canonical in TIME_GRAIN_TRANSFORMATIONS:
+        return canonical
+    raise ValueError(
+        f"Invalid time grain: '{grain}'. "
+        f"Valid values: {list(TIME_GRAIN_TRANSFORMATIONS.keys())} "
+        f"or short forms like 'month', 'quarter', 'year', etc.",
+    )
+
+
 def _validate_time_grain(
     time_grain: TimeGrain,
     smallest_allowed_grain: str | None,
@@ -656,28 +670,20 @@ def query(
 
     # Build per-dimension grain mapping: either from time_grains directly,
     # or by expanding time_grain to all time dimensions in the query.
-    grain_map: dict[str, TimeGrain] = {}
+    grain_map: dict[str, str] = {}
     if time_grains:
-        grain_map = dict(time_grains)
+        grain_map = {dim: _normalize_grain(g) for dim, g in time_grains.items()}
     elif time_grain:
-        if time_grain not in TIME_GRAIN_TRANSFORMATIONS:
-            raise ValueError(
-                f"Invalid time_grain: {time_grain}. Must be one of {list(TIME_GRAIN_TRANSFORMATIONS.keys())}",
-            )
+        normalized = _normalize_grain(time_grain)
         dims_dict = result.get_dimensions()
         for dim_name in dimensions:
             if dim_name in dims_dict and dims_dict[dim_name].is_time_dimension:
-                grain_map[dim_name] = time_grain
+                grain_map[dim_name] = normalized
 
     if grain_map:
         time_dims_to_transform = {}
         dims_dict = result.get_dimensions()
         for dim_name, grain in grain_map.items():
-            if grain not in TIME_GRAIN_TRANSFORMATIONS:
-                raise ValueError(
-                    f"Invalid time_grain '{grain}' for dimension '{dim_name}'. "
-                    f"Must be one of {list(TIME_GRAIN_TRANSFORMATIONS.keys())}",
-                )
             if dim_name not in dims_dict:
                 raise ValueError(
                     f"Dimension '{dim_name}' not found. "

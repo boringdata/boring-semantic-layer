@@ -17,11 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
 from boring_semantic_layer.agents.utils.chart_handler import generate_chart_with_data
-from boring_semantic_layer.query import (
-    TimeGrain,
-    _find_time_dimension,
-    _make_grain_id,
-)
+from boring_semantic_layer.query import TimeGrain, _find_time_dimension
 
 from .loader import load_models
 
@@ -256,13 +252,6 @@ def create_app(
     def query_model(payload: QueryRequest, request: Request) -> dict[str, Any]:
         model = _get_model_or_404(_get_models(request), payload.model_name)
 
-        # Normalize short grain names ("month") to internal IDs ("TIME_GRAIN_MONTH")
-        normalized_grains = (
-            {dim: _make_grain_id(grain) for dim, grain in payload.time_grains.items()}
-            if payload.time_grains
-            else None
-        )
-
         query_result = model.query(
             dimensions=payload.dimensions,
             measures=payload.measures,
@@ -270,7 +259,7 @@ def create_app(
             order_by=payload.order_by,
             limit=payload.limit,
             time_grain=payload.time_grain,
-            time_grains=normalized_grains,
+            time_grains=payload.time_grains,
             time_range=payload.time_range,
         )
         response = json.loads(
