@@ -270,7 +270,7 @@ def cmd_serve(args):
     except ImportError:
         print("❌ FastAPI/uvicorn not installed.")
         print("   Install with: pip install 'boring-semantic-layer[server]'")
-        return
+        sys.exit(1)
 
     cors_origins = None
     if getattr(args, "cors_origins", None):
