@@ -531,6 +531,7 @@ def query(
     order_by: Sequence[tuple[str, str]] | None = None,
     limit: int | None = None,
     time_grain: TimeGrain | None = None,
+    time_grains: Mapping[str, TimeGrain] | None = None,
     time_range: Mapping[str, str] | None = None,
     having: Sequence[dict[str, Any] | str | Callable | Filter] | None = None,
 ) -> Any:  # Returns SemanticModel or SemanticAggregate
@@ -547,7 +548,11 @@ def query(
             always applied before aggregation.
         order_by: List of (field, direction) tuples
         limit: Maximum number of rows to return
-        time_grain: Optional time grain to apply to time dimensions (e.g., "TIME_GRAIN_MONTH")
+        time_grain: Optional time grain to apply to ALL time dimensions (e.g., "TIME_GRAIN_MONTH").
+            Cannot be used together with time_grains.
+        time_grains: Optional per-dimension time grains as a dict mapping dimension names
+            to grain values (e.g., {"order_date": "TIME_GRAIN_MONTH", "ship_date": "TIME_GRAIN_QUARTER"}).
+            Cannot be used together with time_grain.
         time_range: Optional time range filter with 'start' and 'end' keys
         having: Optional list of post-aggregation filters.  These are always
             applied after group-by/aggregate regardless of field type.  Use
@@ -577,11 +582,18 @@ def query(
             having=[lambda t: t.flight_count > 100]
         ).execute()
 
-        # With time grain
+        # With time grain (applies to all time dimensions)
         result = st.query(
             dimensions=["order_date"],
             measures=["total_sales"],
             time_grain="TIME_GRAIN_MONTH"
+        ).execute()
+
+        # With per-dimension time grains
+        result = st.query(
+            dimensions=["order_date", "ship_date"],
+            measures=["total_sales"],
+            time_grains={"order_date": "TIME_GRAIN_MONTH", "ship_date": "TIME_GRAIN_QUARTER"}
         ).execute()
 
         # With time range
@@ -635,40 +647,62 @@ def query(
         filters.append(lambda t, dim=dim_obj, end=end_dt: dim(t) <= end)
 
     # Step 1: Handle time grain transformations
-    if time_grain:
+    if time_grain and time_grains:
+        raise ValueError(
+            "Cannot specify both 'time_grain' and 'time_grains'. "
+            "Use 'time_grain' to apply a single grain to all time dimensions, "
+            "or 'time_grains' to specify per-dimension grains."
+        )
+
+    # Build per-dimension grain mapping: either from time_grains directly,
+    # or by expanding time_grain to all time dimensions in the query.
+    grain_map: dict[str, TimeGrain] = {}
+    if time_grains:
+        grain_map = dict(time_grains)
+    elif time_grain:
         if time_grain not in TIME_GRAIN_TRANSFORMATIONS:
             raise ValueError(
                 f"Invalid time_grain: {time_grain}. Must be one of {list(TIME_GRAIN_TRANSFORMATIONS.keys())}",
             )
-
-        # Find time dimensions and apply grain transformation
-        time_dims_to_transform = {}
         dims_dict = result.get_dimensions()
         for dim_name in dimensions:
-            if dim_name in dims_dict:
-                dim_obj = dims_dict[dim_name]
-                if dim_obj.is_time_dimension:
-                    # Validate grain
-                    _validate_time_grain(
-                        time_grain,
-                        dim_obj.smallest_time_grain,
-                        dim_name,
-                    )
+            if dim_name in dims_dict and dims_dict[dim_name].is_time_dimension:
+                grain_map[dim_name] = time_grain
 
-                    # Create transformed dimension
-                    # NOTE: We capture dim_obj (not dim_obj.expr) and call dim(t) because
-                    # Dimension.__call__ properly resolves Deferred expressions via:
-                    #   self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
-                    # Calling orig_expr(t) directly on a Deferred would cause infinite recursion.
-                    truncate_unit = TIME_GRAIN_TRANSFORMATIONS[time_grain]
-                    time_dims_to_transform[dim_name] = Dimension(
-                        expr=lambda t, dim=dim_obj, unit=truncate_unit: dim(t).truncate(unit),
-                        description=dim_obj.description,
-                        is_time_dimension=dim_obj.is_time_dimension,
-                        smallest_time_grain=dim_obj.smallest_time_grain,
-                    )
+    if grain_map:
+        time_dims_to_transform = {}
+        dims_dict = result.get_dimensions()
+        for dim_name, grain in grain_map.items():
+            if grain not in TIME_GRAIN_TRANSFORMATIONS:
+                raise ValueError(
+                    f"Invalid time_grain '{grain}' for dimension '{dim_name}'. "
+                    f"Must be one of {list(TIME_GRAIN_TRANSFORMATIONS.keys())}",
+                )
+            if dim_name not in dims_dict:
+                raise ValueError(
+                    f"Dimension '{dim_name}' not found. "
+                    f"Available dimensions: {list(dims_dict.keys())}",
+                )
+            dim_obj = dims_dict[dim_name]
+            if not dim_obj.is_time_dimension:
+                raise ValueError(
+                    f"Dimension '{dim_name}' is not a time dimension. "
+                    "time_grains can only be applied to time dimensions.",
+                )
+            _validate_time_grain(grain, dim_obj.smallest_time_grain, dim_name)
 
-        # Apply transformations
+            # NOTE: We capture dim_obj (not dim_obj.expr) and call dim(t) because
+            # Dimension.__call__ properly resolves Deferred expressions via:
+            #   self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
+            # Calling orig_expr(t) directly on a Deferred would cause infinite recursion.
+            truncate_unit = TIME_GRAIN_TRANSFORMATIONS[grain]
+            time_dims_to_transform[dim_name] = Dimension(
+                expr=lambda t, dim=dim_obj, unit=truncate_unit: dim(t).truncate(unit),
+                description=dim_obj.description,
+                is_time_dimension=dim_obj.is_time_dimension,
+                smallest_time_grain=dim_obj.smallest_time_grain,
+            )
+
         if time_dims_to_transform:
             result = result.with_dimensions(**time_dims_to_transform)
 

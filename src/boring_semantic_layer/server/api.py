@@ -17,13 +17,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
 from boring_semantic_layer.agents.utils.chart_handler import generate_chart_with_data
-from boring_semantic_layer.ops import Dimension
 from boring_semantic_layer.query import (
-    TIME_GRAIN_TRANSFORMATIONS,
     TimeGrain,
     _find_time_dimension,
     _make_grain_id,
-    _validate_time_grain,
 )
 
 from .loader import load_models
@@ -214,6 +211,10 @@ def create_app(
         allow_headers=["*"],
     )
 
+    @app.exception_handler(ValueError)
+    async def value_error_handler(_request: Request, exc: ValueError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
         logger.exception("Unhandled HTTP API error")
@@ -255,46 +256,12 @@ def create_app(
     def query_model(payload: QueryRequest, request: Request) -> dict[str, Any]:
         model = _get_model_or_404(_get_models(request), payload.model_name)
 
-        # When per-dimension time_grains are specified, apply grain
-        # transformations at the server layer (the core query() only
-        # supports a single time_grain for all dimensions).
-        effective_time_grain = payload.time_grain
-        if payload.time_grains:
-            dims_dict = model.get_dimensions()
-            transformed: dict[str, Dimension] = {}
-            for dim_name, short_grain in payload.time_grains.items():
-                grain = _make_grain_id(short_grain)
-                if dim_name not in dims_dict:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Dimension '{dim_name}' not found in model '{payload.model_name}'.",
-                    )
-                dim_obj = dims_dict[dim_name]
-                if not dim_obj.is_time_dimension:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Dimension '{dim_name}' is not a time dimension.",
-                    )
-                if grain not in TIME_GRAIN_TRANSFORMATIONS:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            f"Invalid time grain '{grain}' for dimension '{dim_name}'. "
-                            f"Must be one of {list(TIME_GRAIN_TRANSFORMATIONS.keys())}."
-                        ),
-                    )
-                _validate_time_grain(grain, dim_obj.smallest_time_grain, dim_name)
-                truncate_unit = TIME_GRAIN_TRANSFORMATIONS[grain]
-                transformed[dim_name] = Dimension(
-                    expr=lambda t, dim=dim_obj, unit=truncate_unit: dim(t).truncate(unit),
-                    description=dim_obj.description,
-                    is_time_dimension=dim_obj.is_time_dimension,
-                    smallest_time_grain=dim_obj.smallest_time_grain,
-                )
-            if transformed:
-                model = model.with_dimensions(**transformed)
-            # Grain already applied; don't pass time_grain to query()
-            effective_time_grain = None
+        # Normalize short grain names ("month") to internal IDs ("TIME_GRAIN_MONTH")
+        normalized_grains = (
+            {dim: _make_grain_id(grain) for dim, grain in payload.time_grains.items()}
+            if payload.time_grains
+            else None
+        )
 
         query_result = model.query(
             dimensions=payload.dimensions,
@@ -302,7 +269,8 @@ def create_app(
             filters=payload.filters or [],
             order_by=payload.order_by,
             limit=payload.limit,
-            time_grain=effective_time_grain,
+            time_grain=payload.time_grain,
+            time_grains=normalized_grains,
             time_range=payload.time_range,
         )
         response = json.loads(
