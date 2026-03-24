@@ -14,10 +14,16 @@ import ibis
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from boring_semantic_layer.agents.utils.chart_handler import generate_chart_with_data
-from boring_semantic_layer.query import TimeGrain, _find_time_dimension
+from boring_semantic_layer.ops import Dimension
+from boring_semantic_layer.query import (
+    TIME_GRAIN_TRANSFORMATIONS,
+    TimeGrain,
+    _find_time_dimension,
+    _validate_time_grain,
+)
 
 from .loader import load_models
 
@@ -34,6 +40,7 @@ class QueryRequest(BaseModel):
     order_by: list[tuple[str, str]] | None = None
     limit: int | None = Field(default=None, ge=1, le=100_000)
     time_grain: TimeGrain | None = None
+    time_grains: dict[str, TimeGrain] | None = None
     time_range: dict[str, str] | None = None
     get_records: bool = True
     records_limit: int | None = Field(default=None, ge=1)
@@ -41,6 +48,16 @@ class QueryRequest(BaseModel):
     chart_backend: str | None = None
     chart_format: str | None = None
     chart_spec: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _check_grain_fields(self) -> "QueryRequest":
+        if self.time_grain is not None and self.time_grains is not None:
+            raise ValueError(
+                "Cannot specify both 'time_grain' and 'time_grains'. "
+                "Use 'time_grain' to apply a single grain to all time dimensions, "
+                "or 'time_grains' to specify per-dimension grains."
+            )
+        return self
 
 
 def _default_cors_origins() -> list[str]:
@@ -236,13 +253,54 @@ def create_app(
     @app.post("/query")
     def query_model(payload: QueryRequest, request: Request) -> dict[str, Any]:
         model = _get_model_or_404(_get_models(request), payload.model_name)
+
+        # When per-dimension time_grains are specified, apply grain
+        # transformations at the server layer (the core query() only
+        # supports a single time_grain for all dimensions).
+        effective_time_grain = payload.time_grain
+        if payload.time_grains:
+            dims_dict = model.get_dimensions()
+            transformed: dict[str, Dimension] = {}
+            for dim_name, grain in payload.time_grains.items():
+                if dim_name not in dims_dict:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Dimension '{dim_name}' not found in model '{payload.model_name}'.",
+                    )
+                dim_obj = dims_dict[dim_name]
+                if not dim_obj.is_time_dimension:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Dimension '{dim_name}' is not a time dimension.",
+                    )
+                if grain not in TIME_GRAIN_TRANSFORMATIONS:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Invalid time grain '{grain}' for dimension '{dim_name}'. "
+                            f"Must be one of {list(TIME_GRAIN_TRANSFORMATIONS.keys())}."
+                        ),
+                    )
+                _validate_time_grain(grain, dim_obj.smallest_time_grain, dim_name)
+                truncate_unit = TIME_GRAIN_TRANSFORMATIONS[grain]
+                transformed[dim_name] = Dimension(
+                    expr=lambda t, dim=dim_obj, unit=truncate_unit: dim(t).truncate(unit),
+                    description=dim_obj.description,
+                    is_time_dimension=dim_obj.is_time_dimension,
+                    smallest_time_grain=dim_obj.smallest_time_grain,
+                )
+            if transformed:
+                model = model.with_dimensions(**transformed)
+            # Grain already applied; don't pass time_grain to query()
+            effective_time_grain = None
+
         query_result = model.query(
             dimensions=payload.dimensions,
             measures=payload.measures,
             filters=payload.filters or [],
             order_by=payload.order_by,
             limit=payload.limit,
-            time_grain=payload.time_grain,
+            time_grain=effective_time_grain,
             time_range=payload.time_range,
         )
         response = json.loads(

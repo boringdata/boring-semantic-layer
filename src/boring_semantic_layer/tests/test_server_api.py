@@ -23,6 +23,7 @@ def sample_models():
             "destination": ["LAX", "JFK", "DEN"] * 10,
             "carrier": ["AA", "UA", "DL"] * 10,
             "flight_date": pd.date_range("2024-01-01", periods=30, freq="D"),
+            "arrival_date": pd.date_range("2024-01-02", periods=30, freq="D"),
             "dep_delay": [5.2, 8.1, 3.5] * 10,
         },
     )
@@ -49,6 +50,12 @@ def sample_models():
             flight_date={
                 "expr": lambda t: t.flight_date,
                 "description": "Flight departure date",
+                "is_time_dimension": True,
+                "smallest_time_grain": "day",
+            },
+            arrival_date={
+                "expr": lambda t: t.arrival_date,
+                "description": "Flight arrival date",
                 "is_time_dimension": True,
                 "smallest_time_grain": "day",
             },
@@ -196,6 +203,65 @@ def test_query_supports_time_grain_and_time_range(client):
     data = response.json()
     assert data["total_rows"] == 1
     assert data["records"][0]["flight_count"] == 30
+
+
+def test_query_supports_per_dimension_time_grains(client):
+    """Per-dimension grains let each time dim use a different truncation."""
+    response = client.post(
+        "/query",
+        json={
+            "model_name": "flights",
+            "dimensions": ["flight_date", "arrival_date"],
+            "measures": ["flight_count"],
+            "time_grains": {
+                "flight_date": "TIME_GRAIN_MONTH",
+                "arrival_date": "TIME_GRAIN_MONTH",
+            },
+            "time_range": {"start": "2024-01-01", "end": "2024-01-31"},
+            "get_chart": False,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    # All 30 days should collapse into 1 (Jan) or 2 (Jan+Feb) rows per dimension combo
+    assert data["total_rows"] <= 2
+    assert data["records"][0]["flight_count"] > 0
+
+
+def test_query_rejects_both_time_grain_and_time_grains(client):
+    """Specifying both time_grain and time_grains is an error."""
+    response = client.post(
+        "/query",
+        json={
+            "model_name": "flights",
+            "dimensions": ["flight_date"],
+            "measures": ["flight_count"],
+            "time_grain": "TIME_GRAIN_MONTH",
+            "time_grains": {"flight_date": "TIME_GRAIN_MONTH"},
+            "get_chart": False,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Cannot specify both" in response.json()["detail"][0]["msg"]
+
+
+def test_query_time_grains_rejects_non_time_dimension(client):
+    """time_grains with a non-time dimension should return 400."""
+    response = client.post(
+        "/query",
+        json={
+            "model_name": "flights",
+            "dimensions": ["carrier"],
+            "measures": ["flight_count"],
+            "time_grains": {"carrier": "TIME_GRAIN_MONTH"},
+            "get_chart": False,
+        },
+    )
+
+    assert response.status_code == 400
+    assert "not a time dimension" in response.json()["detail"]
 
 
 def test_missing_model_returns_404(client):
