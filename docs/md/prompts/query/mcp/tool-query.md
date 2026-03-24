@@ -9,8 +9,8 @@ Query a semantic model with support for filters and time dimensions.
    - For joined models, names MUST include table prefix (e.g., "orders.created_at")
    - Check get_model() output - if you see dots in names, the model is joined
 3. **When using time_grain, MUST include the time dimension in dimensions list**:
-    CORRECT: dimensions=["orders.created_at"], time_grain="TIME_GRAIN_YEAR"
-   L WRONG: dimensions=[], time_grain="TIME_GRAIN_YEAR"  # Missing time dimension!
+    CORRECT: dimensions=["orders.created_at"], time_grain="year"
+   L WRONG: dimensions=[], time_grain="year"  # Missing time dimension!
 4. **For filters with lists, use "values" (plural), not "value"**:
     CORRECT: {"field": "status", "operator": "in", "values": ["active", "pending"]}
    L WRONG: {"field": "status", "operator": "in", "value": ["active", "pending"]}
@@ -23,7 +23,8 @@ Query a semantic model with support for filters and time dimensions.
 - **filters** (list[dict], optional): List of JSON filter objects (see Filter Structure below)
 - **order_by** (list[list[string]], optional): List of [field, direction] pairs for sorting (e.g., [['orders.total_sales', 'desc']])
 - **limit** (integer, optional): Maximum number of rows to return
-- **time_grain** (string, optional): Time grain for aggregating time-based dimensions (e.g., "TIME_GRAIN_DAY", "TIME_GRAIN_MONTH")
+- **time_grain** (string, optional): Time grain for aggregating ALL time dimensions (e.g., "month", "year", or "TIME_GRAIN_MONTH")
+- **time_grains** (dict, optional): Per-dimension time grains (e.g., {"order_date": "month", "ship_date": "quarter"}). Cannot be used with time_grain.
 - **time_range** (dict, optional): Time range filter with 'start' and 'end' keys (ISO 8601 format)
 - **chart_spec** (dict, optional): Chart specification for generating visualizations (see Chart Specification below)
 
@@ -137,25 +138,39 @@ Complex nested filter with time ranges:
 Time grain for aggregating time-based dimensions.
 
 IMPORTANT: Instead of trying to use .month(), .year(), .quarter() etc. in filters,
-use this time_grain parameter to aggregate by time periods. The system will
+use time_grain or time_grains parameter to aggregate by time periods. The system will
 automatically handle time dimension transformations.
 
 ### Available Time Grains
 
-- TIME_GRAIN_YEAR
-- TIME_GRAIN_QUARTER
-- TIME_GRAIN_MONTH
-- TIME_GRAIN_WEEK
-- TIME_GRAIN_DAY
-- TIME_GRAIN_HOUR
-- TIME_GRAIN_MINUTE
-- TIME_GRAIN_SECOND
+Both short and long forms are accepted: "month" or "TIME_GRAIN_MONTH"
+
+- year / TIME_GRAIN_YEAR
+- quarter / TIME_GRAIN_QUARTER
+- month / TIME_GRAIN_MONTH
+- week / TIME_GRAIN_WEEK
+- day / TIME_GRAIN_DAY
+- hour / TIME_GRAIN_HOUR
+- minute / TIME_GRAIN_MINUTE
+- second / TIME_GRAIN_SECOND
 
 ### Examples
 
-- For monthly data: time_grain="TIME_GRAIN_MONTH"
-- For yearly data: time_grain="TIME_GRAIN_YEAR"
-- For daily data: time_grain="TIME_GRAIN_DAY"
+- For monthly data: time_grain="month"
+- For yearly data: time_grain="year"
+- For daily data: time_grain="day"
+
+### Per-Dimension Grains
+
+Use time_grains (dict) when different time dimensions need different grains:
+```python
+query_model(
+    model_name="orders",
+    dimensions=["orders.order_date", "orders.ship_date"],
+    measures=["orders.total_sales"],
+    time_grains={"orders.order_date": "month", "orders.ship_date": "quarter"}
+)
+```
 
 Then filter using the time_range parameter or regular date filters like:
 ```json
@@ -237,7 +252,7 @@ query_model(
     model_name="orders",
     dimensions=["orders.created_at"],  #  REQUIRED when using time_grain
     measures=["orders.total_sales"],
-    time_grain="TIME_GRAIN_YEAR",
+    time_grain="year",
     order_by=[["orders.created_at", "asc"]]
 )
 ```

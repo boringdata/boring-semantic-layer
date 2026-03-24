@@ -8,7 +8,7 @@ import os
 import re
 from collections.abc import Mapping, Sequence
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Any
 
 import ibis
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
 from boring_semantic_layer.agents.utils.chart_handler import generate_chart_with_data
-from boring_semantic_layer.query import TimeGrain, _find_time_dimension
+from boring_semantic_layer.query import _find_time_dimension
 
 from .loader import load_models
 
@@ -33,8 +33,8 @@ class QueryRequest(BaseModel):
     filters: list[dict[str, Any]] | None = None
     order_by: list[tuple[str, str]] | None = None
     limit: int | None = Field(default=None, ge=1, le=100_000)
-    time_grain: TimeGrain | None = None
-    time_grains: dict[str, Literal["year", "quarter", "month", "week", "day", "hour", "minute", "second"]] | None = None
+    time_grain: str | None = None
+    time_grains: dict[str, str] | None = None
     time_range: dict[str, str] | None = None
     get_records: bool = True
     records_limit: int | None = Field(default=None, ge=1)

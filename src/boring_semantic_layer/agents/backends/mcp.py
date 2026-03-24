@@ -183,6 +183,14 @@ class MCPSemanticModel(FastMCP):
                     description=load_prompt(PROMPTS_DIR, "tool-query-param-time_grain.md"),
                 ),
             ] = None,
+            time_grains: Annotated[
+                dict[str, str] | None,
+                BeforeValidator(_parse_json_string),
+                Field(
+                    default=None,
+                    description="Per-dimension time grains as a dict mapping dimension names to grain values (e.g., {\"order_date\": \"month\", \"ship_date\": \"quarter\"}). Cannot be used with time_grain.",
+                ),
+            ] = None,
             time_range: Annotated[
                 dict[str, str] | None,
                 BeforeValidator(_parse_json_string),
@@ -246,6 +254,7 @@ class MCPSemanticModel(FastMCP):
                 order_by=order_by,
                 limit=limit,
                 time_grain=time_grain,
+                time_grains=time_grains,
                 time_range=time_range,
             )
 
