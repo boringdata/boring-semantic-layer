@@ -114,7 +114,7 @@ class TestJSONStringParsing:
 
     async def test_claude_desktop_json_dimensions(self, mcp_server):
         """Test that Claude Desktop's JSON-stringified dimensions work (Issue #97)."""
-        tool = mcp_server._tool_manager._tools["query_model"]
+        tool = await mcp_server.get_tool("query_model")
 
         # Claude Desktop sends JSON-stringified arrays
         result = await tool.run(
@@ -131,7 +131,7 @@ class TestJSONStringParsing:
 
     async def test_claude_desktop_json_order_by(self, mcp_server):
         """Test that Claude Desktop's JSON-stringified order_by works (Issue #97)."""
-        tool = mcp_server._tool_manager._tools["query_model"]
+        tool = await mcp_server.get_tool("query_model")
 
         # Test nested array JSON string
         result = await tool.run(
@@ -148,7 +148,7 @@ class TestJSONStringParsing:
 
     async def test_backward_compatibility_actual_arrays(self, mcp_server):
         """Test that actual arrays still work (backward compatibility)."""
-        tool = mcp_server._tool_manager._tools["query_model"]
+        tool = await mcp_server.get_tool("query_model")
 
         # Regular MCP clients send actual arrays
         result = await tool.run(
@@ -165,7 +165,7 @@ class TestJSONStringParsing:
 
     async def test_json_filters(self, mcp_server):
         """Test that JSON-stringified filters work."""
-        tool = mcp_server._tool_manager._tools["query_model"]
+        tool = await mcp_server.get_tool("query_model")
 
         result = await tool.run(
             {
@@ -184,9 +184,9 @@ class TestJSONStringParsing:
 class TestSchemaGeneration:
     """Test that schema generation includes proper 'items' definitions."""
 
-    def test_order_by_has_items_in_schema(self, mcp_server):
+    async def test_order_by_has_items_in_schema(self, mcp_server):
         """Test that order_by has proper 'items' key for Azure OpenAI compatibility."""
-        tool = mcp_server._tool_manager._tools["query_model"]
+        tool = await mcp_server.get_tool("query_model")
         schema = tool.model_dump()["parameters"]
 
         order_by_schema = schema["properties"]["order_by"]
@@ -209,9 +209,9 @@ class TestSchemaGeneration:
         assert "items" in items
         assert items["items"].get("type") == "string"
 
-    def test_all_array_parameters_have_items(self, mcp_server):
+    async def test_all_array_parameters_have_items(self, mcp_server):
         """Test that all array parameters have 'items' in their schema."""
-        tool = mcp_server._tool_manager._tools["query_model"]
+        tool = await mcp_server.get_tool("query_model")
         schema = tool.model_dump()["parameters"]
 
         array_params = ["dimensions", "measures", "filters", "order_by"]
@@ -224,9 +224,9 @@ class TestSchemaGeneration:
                     if option.get("type") == "array":
                         assert "items" in option, f"{param} array must have 'items' key"
 
-    def test_all_parameters_have_descriptions(self, mcp_server):
+    async def test_all_parameters_have_descriptions(self, mcp_server):
         """Test that all parameters have descriptions for better UX."""
-        tool = mcp_server._tool_manager._tools["query_model"]
+        tool = await mcp_server.get_tool("query_model")
         schema = tool.model_dump()["parameters"]
 
         params = [
@@ -245,9 +245,9 @@ class TestSchemaGeneration:
             assert "description" in param_schema, f"{param} should have description"
             assert len(param_schema["description"]) > 0
 
-    def test_schema_structure_compatible_with_azure_openai(self, mcp_server):
+    async def test_schema_structure_compatible_with_azure_openai(self, mcp_server):
         """Test that schema structure meets Azure OpenAI requirements."""
-        tool = mcp_server._tool_manager._tools["query_model"]
+        tool = await mcp_server.get_tool("query_model")
         schema = tool.model_dump()["parameters"]
 
         # Azure OpenAI requires these fields
@@ -295,9 +295,9 @@ class TestTypeHintImprovements:
 class TestIntegration:
     """Integration tests to verify the complete fix works."""
 
-    def test_schema_has_all_required_fields(self, mcp_server):
+    async def test_schema_has_all_required_fields(self, mcp_server):
         """Test that the generated schema has all required fields for MCP clients."""
-        tool = mcp_server._tool_manager._tools["query_model"]
+        tool = await mcp_server.get_tool("query_model")
         schema = tool.model_dump()["parameters"]
 
         # Verify structure
@@ -344,7 +344,7 @@ class TestIntegration:
 
     async def test_end_to_end_claude_desktop_query(self, mcp_server):
         """Test a complete end-to-end query simulating Claude Desktop behavior."""
-        tool = mcp_server._tool_manager._tools["query_model"]
+        tool = await mcp_server.get_tool("query_model")
 
         # Simulate what Claude Desktop actually sends
         result = await tool.run(
@@ -368,7 +368,7 @@ class TestIntegration:
 
     async def test_error_handling_invalid_json(self, mcp_server):
         """Test that invalid JSON strings are properly rejected."""
-        tool = mcp_server._tool_manager._tools["query_model"]
+        tool = await mcp_server.get_tool("query_model")
 
         with pytest.raises(ValidationError):  # Should raise validation error
             await tool.run(
@@ -380,7 +380,7 @@ class TestIntegration:
 
     async def test_mixed_json_and_native_params(self, mcp_server):
         """Test that JSON strings and native types can be mixed."""
-        tool = mcp_server._tool_manager._tools["query_model"]
+        tool = await mcp_server.get_tool("query_model")
 
         result = await tool.run(
             {

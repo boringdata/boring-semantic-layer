@@ -29,6 +29,7 @@ def _parse_expression_config(name: str, config: str | dict, metric_type: str):
             extra_kwargs["is_event_timestamp"] = config.get("is_event_timestamp", False)
             extra_kwargs["is_time_dimension"] = config.get("is_time_dimension", False)
             extra_kwargs["smallest_time_grain"] = config.get("smallest_time_grain")
+            extra_kwargs["derived_dimensions"] = tuple(config.get("derived_dimensions") or ())
         return config["expr"], config.get("description"), extra_kwargs
     else:
         raise ValueError(f"Invalid {metric_type} format for '{name}'. Must be a string or dict")
@@ -49,6 +50,7 @@ def _parse_dimension_or_measure(
           is_event_timestamp: true/false (dimensions only)
           is_time_dimension: true/false (dimensions only)
           smallest_time_grain: "TIME_GRAIN_DAY" (dimensions only)
+          derived_dimensions: ["year", "month", "day"] (dimensions only)
     """
     expr_str, description, extra_kwargs = _parse_expression_config(name, config, metric_type)
     deferred = safe_eval(expr_str, context={"_": _}).unwrap()

@@ -241,6 +241,7 @@ def time_dimension(
     expr: Callable[[ir.Table], ir.Value],
     description: str | None = None,
     smallest_time_grain: str | None = None,
+    derived_dimensions: tuple[str, ...] | list[str] = (),
 ) -> Dimension:
     """Create an event timestamp dimension for point-in-time correctness.
 
@@ -253,6 +254,8 @@ def time_dimension(
         expr: Lambda function that extracts the timestamp column from a table
         description: Optional description of the time dimension
         smallest_time_grain: Optional time granularity (e.g., "TIME_GRAIN_DAY", "TIME_GRAIN_HOUR")
+        derived_dimensions: Optional derived dimension parts to auto-generate from this
+            dimension when added to a model (supported: year, month, day).
 
     Returns:
         Dimension marked as an event timestamp
@@ -266,6 +269,7 @@ def time_dimension(
         ...             lambda t: t.statement_date,
         ...             "Statement date for balance features",
         ...             smallest_time_grain="TIME_GRAIN_DAY",
+        ...             derived_dimensions=("year", "month", "day"),
         ...         ),
         ...     )
         ... )
@@ -276,4 +280,5 @@ def time_dimension(
         is_event_timestamp=True,
         is_time_dimension=bool(smallest_time_grain),
         smallest_time_grain=smallest_time_grain,
+        derived_dimensions=tuple(derived_dimensions or ()),
     )
