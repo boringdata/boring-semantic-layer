@@ -1675,17 +1675,6 @@ def _build_aggregation_plan(
 
 
 @frozen
-class _DeferrableJoinOne:
-    """Info about a join_one right-side table that may be deferred."""
-
-    table_name: str
-    on: Any  # join predicate callable
-    table_op: Any  # SemanticTableOp
-    left_join_cols: frozenset  # columns from left side used in join predicate
-    right_join_cols: frozenset  # columns from right side used in join predicate
-
-
-@frozen
 class _JoinTreeInfo:
     """Information collected from the join tree for pre-aggregation decisions."""
 
@@ -1693,45 +1682,18 @@ class _JoinTreeInfo:
     table_cardinalities: dict  # table_name → "one"|"many"|"root"
     table_join_keys: dict  # table_name → {raw_col_names}
     table_ops: dict  # table_name → SemanticTableOp
-    join_one_info: tuple  # tuple of _DeferrableJoinOne for join_one right-side tables
 
 
 def _collect_join_tree_info(join_op: SemanticJoinOp) -> _JoinTreeInfo:
     """Walk the join tree to collect cardinality and join key information."""
     table_cardinalities: dict[str, str] = {}
     table_ops: dict[str, SemanticTableOp] = {}
-    join_one_entries: list[_DeferrableJoinOne] = []
 
     def walk(node, is_right_of_many=False):
         if isinstance(node, SemanticJoinOp):
             this_is_many = node.cardinality in ("many", "cross")
             walk(node.left, is_right_of_many=is_right_of_many)
             walk(node.right, is_right_of_many=is_right_of_many or this_is_many)
-            # Collect join_one info for right-side leaf tables
-            if node.cardinality == "one" and isinstance(node.right, SemanticTableOp):
-                right_name = node.right.name
-                if right_name and node.on is not None:
-                    # Extract join key columns from the predicate
-                    try:
-                        left_tbl = (
-                            node.left.to_untagged(parent_requirements=None)
-                            if isinstance(node.left, SemanticJoinOp)
-                            else _to_untagged(node.left)
-                        )
-                        right_tbl = _to_untagged(node.right)
-                        jk = _extract_join_key_columns(node.on, left_tbl, right_tbl)
-                        if jk.is_success():
-                            join_one_entries.append(
-                                _DeferrableJoinOne(
-                                    table_name=right_name,
-                                    on=node.on,
-                                    table_op=node.right,
-                                    left_join_cols=jk.left_columns,
-                                    right_join_cols=jk.right_columns,
-                                )
-                            )
-                    except Exception:
-                        pass  # If extraction fails, don't track for deferral
         elif isinstance(node, SemanticTableOp):
             name = node.name
             if name:
@@ -1754,18 +1716,120 @@ def _collect_join_tree_info(join_op: SemanticJoinOp) -> _JoinTreeInfo:
         table_cardinalities[root_name] = "root"
 
     has_join_many = any(c == "many" for c in table_cardinalities.values())
-    # table_join_keys is only used by the pre-aggregation path
-    # (has_join_many=True).  Skip the potentially expensive call when
-    # all joins are join_one.
-    table_join_keys = join_op._collect_join_keys_for_leaves() if has_join_many else {}
+    # table_join_keys is used by the pre-aggregation path and by
+    # deferred join detection.  Collect for all join trees.
+    table_join_keys = join_op._collect_join_keys_for_leaves()
 
     return _JoinTreeInfo(
         has_join_many=has_join_many,
         table_cardinalities=table_cardinalities,
         table_join_keys=table_join_keys,
         table_ops=table_ops,
-        join_one_info=tuple(join_one_entries),
     )
+
+
+@frozen
+class _DeferrableJoin:
+    """A join_one that can be deferred until after aggregation."""
+
+    table_name: str  # Name of the right (dimension) table
+    table_op: Any  # SemanticTableOp of the right table
+    join_keys_left: tuple  # Column names on the left side of the join
+    join_keys_right: tuple  # Column names on the right side of the join
+    deferred_dims: tuple  # Prefixed dimension names to add post-agg
+
+
+def _find_deferrable_joins(
+    join_op,
+    group_by_keys: tuple[str, ...],
+    agg_names: dict,
+    all_roots: list,
+    join_tree_info: "_JoinTreeInfo",
+) -> list[_DeferrableJoin]:
+    """Identify join_one ops that can be deferred until after aggregation.
+
+    A join is deferrable when:
+    - cardinality == "one"
+    - Right table has is_entity dims matching the join key
+    - No measures from right table are used in the aggregation
+    """
+    deferrable: list[_DeferrableJoin] = []
+
+    def walk(node):
+        if not isinstance(node, SemanticJoinOp):
+            return
+        # Recurse into left side (may have nested joins)
+        walk(node.left)
+
+        if node.cardinality != "one":
+            return
+
+        right = node.right
+        if not isinstance(right, SemanticTableOp):
+            return
+
+        right_name = right.name
+        if not right_name:
+            return
+
+        # Check: right table has is_entity dims
+        right_dims = right.get_dimensions()
+        entity_dims = frozenset(
+            name for name, dim in right_dims.items()
+            if getattr(dim, "is_entity", False)
+        )
+        if not entity_dims:
+            return
+
+        # Check: no measures from right table are used in aggregation
+        for agg_name in agg_names:
+            if agg_name.startswith(f"{right_name}."):
+                return  # Right table has measures in agg → can't defer
+
+        # Get join keys for the right table
+        right_join_keys = join_tree_info.table_join_keys.get(right_name, set())
+        if not right_join_keys:
+            return
+
+        # Check: entity dims match join keys (PK = join key)
+        if entity_dims != frozenset(right_join_keys):
+            return
+
+        # Get left-side join keys by extracting from the predicate
+        try:
+            left_tbl = (
+                node.left.to_untagged(parent_requirements=None)
+                if isinstance(node.left, SemanticJoinOp)
+                else _to_untagged(node.left)
+            )
+            right_tbl = _to_untagged(right)
+            join_keys_result = _extract_join_key_columns(node.on, left_tbl, right_tbl)
+            if not join_keys_result.is_success():
+                return
+            left_cols = tuple(sorted(join_keys_result.left_columns))
+        except Exception:
+            return
+
+        # Identify which group-by dimensions from the right table will be deferred
+        deferred_dims = tuple(
+            k for k in group_by_keys
+            if k.startswith(f"{right_name}.")
+        )
+
+        # Only deferrable if there are dims to add post-agg
+        if not deferred_dims:
+            return
+
+        deferrable.append(_DeferrableJoin(
+            table_name=right_name,
+            table_op=right,
+            join_keys_left=left_cols,
+            join_keys_right=tuple(sorted(right_join_keys)),
+            deferred_dims=deferred_dims,
+        ))
+
+    walk(join_op)
+    return deferrable
 
 
 def _left_join_bridge(left, bridge, common_keys):
@@ -2152,57 +2216,20 @@ class SemanticAggregateOp(Relation):
                     mutates=collected_mutates,
                 )
 
-            # Deferred join_one path: when all joins are join_one, check
-            # if any right-side tables can be deferred to post-aggregation.
-            # A join_one right table is deferrable when:
-            #   - None of its prefixed dimensions appear in the GROUP BY keys
-            #   - None of its prefixed measures appear in the aggregation specs
-            #   - The left-side join keys survive aggregation (are in GROUP BY)
-            if join_tree_info.join_one_info and not collected_filters:
-                merged_dimensions = _get_merged_fields(all_roots, "dimensions")
-                merged_base_measures = _get_merged_fields(all_roots, "measures")
-                merged_calc_measures = _get_merged_fields(all_roots, "calc_measures")
-                gb_set = frozenset(self.keys)
-                agg_measure_names = frozenset(self.aggs.keys())
-
-                deferrable: list[_DeferrableJoinOne] = []
-                for entry in join_tree_info.join_one_info:
-                    prefix = entry.table_name
-                    # Collect all prefixed dimension names for this table
-                    table_dim_names = frozenset(
-                        k for k in merged_dimensions if k.startswith(f"{prefix}.")
-                    )
-                    # Collect all prefixed measure names for this table
-                    table_measure_names = frozenset(
-                        k for k in merged_base_measures if k.startswith(f"{prefix}.")
-                    )
-                    table_calc_measure_names = frozenset(
-                        k for k in merged_calc_measures if k.startswith(f"{prefix}.")
-                    )
-
-                    # Check if any of this table's fields are used in GROUP BY or aggs
-                    dims_in_gb = table_dim_names & gb_set
-                    measures_in_agg = (
-                        table_measure_names | table_calc_measure_names
-                    ) & agg_measure_names
-
-                    if dims_in_gb or measures_in_agg:
-                        continue  # This table is needed before aggregation
-
-                    # Check that the left-side join keys survive aggregation
-                    # (they must be in the GROUP BY columns)
-                    if not entry.left_join_cols <= gb_set:
-                        continue  # Join keys won't survive aggregation
-
-                    deferrable.append(entry)
-
-                if deferrable:
-                    return self._to_untagged_with_deferred_joins(
-                        all_roots,
-                        join_op,
-                        join_tree_info,
-                        deferrable,
-                    )
+            # Deferred join path: when join_one dimension tables can be
+            # joined AFTER aggregation for better performance.
+            deferrable = _find_deferrable_joins(
+                join_op, self.keys, self.aggs, all_roots, join_tree_info,
+                filters=collected_filters,
+            )
+            if deferrable:
+                return self._to_untagged_with_deferred_joins(
+                    all_roots,
+                    join_op,
+                    join_tree_info,
+                    deferrable,
+                    filters=collected_filters,
+                )
 
         # Only use the join optimization if there are no filters after the join
         # Otherwise we'd skip the filter operations
@@ -2646,169 +2673,190 @@ class SemanticAggregateOp(Relation):
     def _to_untagged_with_deferred_joins(
         self,
         all_roots: list,
-        join_op: SemanticJoinOp,
-        join_tree_info: _JoinTreeInfo,
-        deferrable: list,
+        join_op: "SemanticJoinOp",
+        join_tree_info: "_JoinTreeInfo",
+        deferrable: list["_DeferrableJoin"],
+        filters: list | None = None,
     ):
-        """Aggregate on a reduced join tree, then LEFT JOIN deferred tables.
+        """Aggregate first, then LEFT JOIN deferred dimension tables.
 
-        When a ``join_one`` right-side table's dimensions are only in SELECT
-        (not GROUP BY) and its measures are not aggregated, we can:
-        1. Strip it from the join tree before aggregation
-        2. Aggregate on the smaller tree (fewer GROUP BY columns)
-        3. LEFT JOIN the deferred tables back using the original join keys
+        For ``join_one`` dimension lookups where the right table's PK matches
+        the join key and no measures from the right table are used, we can:
+        1. Strip deferred tables from the join tree
+        2. Add join keys to GROUP BY so they survive aggregation
+        3. Aggregate on the core (non-deferred) tables
+        4. LEFT JOIN deferred dimension tables onto the aggregated result
         """
-        from .convert import _Resolver
+        filters = filters or []
+        deferred_names = {d.table_name for d in deferrable}
 
-        deferred_names = frozenset(d.table_name for d in deferrable)
+        merged_dimensions = _get_merged_fields(all_roots, "dimensions")
+        merged_base_measures = _get_merged_fields(all_roots, "measures")
+        merged_calc_measures = _get_merged_fields(all_roots, "calc_measures")
 
-        # --- 1. Build reduced join tree (strip deferred tables) ---
+        # --- 1. Rebuild join tree without deferred tables ---
         def strip_deferred(node):
-            """Recursively remove deferred right-side tables from the join tree."""
+            """Remove deferred right-side tables from the join tree."""
             if not isinstance(node, SemanticJoinOp):
                 return node
-            # First, recursively strip from left subtree
-            stripped_left = strip_deferred(node.left)
-            # If the right side is a deferred leaf, return the left subtree
+            # Recurse left
+            new_left = strip_deferred(node.left)
+            # If right side is a deferred table, return just the left
             if (
                 isinstance(node.right, SemanticTableOp)
                 and node.right.name in deferred_names
             ):
-                return stripped_left
-            # Otherwise, keep this join with the stripped left
-            stripped_right = strip_deferred(node.right)
+                return new_left
             return SemanticJoinOp(
-                left=stripped_left,
-                right=stripped_right,
+                left=new_left,
+                right=node.right,
                 how=node.how,
                 on=node.on,
                 cardinality=node.cardinality,
             )
 
-        reduced_source = strip_deferred(join_op)
+        core_join = strip_deferred(join_op)
 
-        # --- 2. Build ibis table from the reduced source ---
-        if isinstance(reduced_source, SemanticJoinOp):
-            reduced_tbl = reduced_source.to_untagged(parent_requirements=None)
+        # --- 2. Build core table and aggregate ---
+        if isinstance(core_join, SemanticJoinOp):
+            core_tbl = core_join.to_untagged(parent_requirements=None)
         else:
-            reduced_tbl = _to_untagged(reduced_source)
+            core_tbl = _to_untagged(core_join)
 
-        # --- 3. Compute merged fields from non-deferred roots only ---
-        non_deferred_roots = [
-            r for r in all_roots if r.name not in deferred_names
-        ]
-        merged_dimensions = _get_merged_fields(non_deferred_roots, "dimensions")
-        merged_base_measures = _get_merged_fields(non_deferred_roots, "measures")
-        merged_calc_measures = _get_merged_fields(non_deferred_roots, "calc_measures")
+        # Resolve group-by dimensions on the core table
+        core_group_keys = []
+        for k in self.keys:
+            if k in deferred_names or any(k.startswith(f"{dn}.") for dn in deferred_names):
+                # Skip deferred table's own dimensions from group-by
+                # (they'll be added via post-agg join)
+                continue
+            core_group_keys.append(k)
 
-        # Mutate dimensions needed for GROUP BY onto the reduced table
-        reduced_tbl = _mutate_dimensions_with_dependencies(
-            reduced_tbl,
-            [k for k in self.keys if k in merged_dimensions],
+        # Add left-side join keys to group-by so they survive aggregation
+        for d in deferrable:
+            for jk in d.join_keys_left:
+                if jk not in core_group_keys and jk in core_tbl.columns:
+                    core_group_keys.append(jk)
+
+        # Resolve dimensions for group-by on the core table
+        core_tbl = _mutate_dimensions_with_dependencies(
+            core_tbl,
+            [k for k in core_group_keys if k in merged_dimensions],
             merged_dimensions,
         )
 
-        # --- 4. Build aggregation plan and aggregate ---
+        # Apply filters
+        if filters:
+            from .convert import _Resolver
+
+            for pred in filters:
+                pred_fn = _unwrap(pred)
+                try:
+                    resolver = _Resolver(core_tbl, merged_dimensions)
+                    pred_expr = _resolve_expr(pred_fn, resolver)
+                    core_tbl = core_tbl.filter(pred_expr)
+                except Exception:
+                    pass
+
+        # Build aggregation expressions
         scope = MeasureScope(
-            _tbl=reduced_tbl,
+            _tbl=core_tbl,
             _known=list(merged_base_measures.keys()) + list(merged_calc_measures.keys()),
         )
-
         plan = _build_aggregation_plan(
             aggs=self.aggs,
-            keys=self.keys,
+            keys=tuple(core_group_keys),
             scope=scope,
             is_post_agg=False,
             merged_base_measures=merged_base_measures,
             merged_calc_measures=merged_calc_measures,
-            tbl=reduced_tbl,
+            tbl=core_tbl,
         )
 
-        if plan.calc_specs or plan.group_by_cols:
-            result = compile_grouped_with_all(
-                reduced_tbl,
-                list(plan.group_by_cols),
-                dict(plan.agg_specs),
-                dict(plan.calc_specs),
-                requested_measures=list(plan.requested_measures),
-            )
+        # Execute aggregation on core table
+        if plan.group_by_cols:
+            gb_exprs = []
+            for col in plan.group_by_cols:
+                if col in core_tbl.columns:
+                    gb_exprs.append(core_tbl[col])
+                elif col in merged_dimensions:
+                    dim_fn = merged_dimensions[col]
+                    gb_exprs.append(dim_fn(core_tbl).name(col))
+
+            agg_exprs = {name: fn(core_tbl) for name, fn in plan.agg_specs.items()}
+            result = core_tbl.group_by(gb_exprs).aggregate(**agg_exprs)
         else:
-            result = reduced_tbl.aggregate(
-                {name: fn(reduced_tbl) for name, fn in plan.agg_specs.items()}
-            )
+            agg_exprs = {name: fn(core_tbl) for name, fn in plan.agg_specs.items()}
+            result = core_tbl.aggregate(**agg_exprs)
 
-        # --- 5. LEFT JOIN deferred tables back ---
-        # Collect the full set of deferred dimension names we need to SELECT
-        all_merged_dims = _get_merged_fields(all_roots, "dimensions")
-        deferred_dim_cols = []
-        for entry in deferrable:
-            prefix = entry.table_name
-            for dim_name in all_merged_dims:
-                if dim_name.startswith(f"{prefix}."):
-                    deferred_dim_cols.append(dim_name)
+        # Handle calculated measures
+        if plan.calc_specs:
+            from .compile_all import compile_calc_measures
 
-        for entry in deferrable:
-            # Build the deferred table with its dimensions materialized
-            deferred_tbl = _to_untagged(entry.table_op)
-            deferred_dims = _get_field_dict(entry.table_op, "dimensions")
+            result = compile_calc_measures(result, plan.calc_specs)
 
-            # Determine which dimensions from this deferred table we need
-            prefix = entry.table_name
-            needed_dims = [
-                d for d in deferred_dim_cols if d.startswith(f"{prefix}.")
+        # --- 3. LEFT JOIN deferred dimension tables ---
+        for d in deferrable:
+            dim_tbl = _to_untagged(d.table_op)
+
+            # Build join predicate: result.left_key == dim_tbl.right_key
+            join_preds = [
+                result[lk] == dim_tbl[rk]
+                for lk, rk in zip(d.join_keys_left, d.join_keys_right)
             ]
 
-            # Mutate dimensions onto the deferred table
-            if needed_dims:
-                deferred_tbl = _mutate_dimensions_with_dependencies(
-                    deferred_tbl,
-                    needed_dims,
-                    all_merged_dims,
-                )
+            # Compute deferred dimension columns on the dimension table.
+            # For direct columns (e.g., cc_name) this is a no-op rename.
+            # For derived expressions (e.g., cc_name.upper()) this materializes
+            # the computed column so it's available after the join.
+            dim_cols_to_add = []
+            right_dims = d.table_op.get_dimensions()
+            for dim_name in d.deferred_dims:
+                short = dim_name.split(".", 1)[1] if "." in dim_name else dim_name
+                if short in right_dims:
+                    dim_fn = right_dims[short]
+                    if callable(dim_fn):
+                        try:
+                            expr = dim_fn(dim_tbl)
+                            col_name = expr.get_name()
+                            if col_name in dim_tbl.columns:
+                                # Direct column — use as-is
+                                dim_cols_to_add.append((dim_name, col_name))
+                            else:
+                                # Derived expression — mutate onto dim table
+                                # Use a temp name to avoid collisions
+                                temp_name = f"__deferred_{short}"
+                                dim_tbl = dim_tbl.mutate(**{temp_name: expr})
+                                dim_cols_to_add.append((dim_name, temp_name))
+                        except Exception:
+                            pass
 
-            # Build join predicate using the original on function
-            # The left_join_cols are the aggregated result's columns (GROUP BY keys)
-            # The right_join_cols are the deferred table's columns
-            left_keys = sorted(entry.left_join_cols)
-            right_keys = sorted(entry.right_join_cols)
+            if dim_cols_to_add:
+                # Perform the LEFT JOIN
+                joined = result.left_join(dim_tbl, join_preds)
+                # Select: all from result + deferred dim columns renamed to prefixed names
+                select_exprs = [result]
+                for prefixed_name, raw_col in dim_cols_to_add:
+                    select_exprs.append(dim_tbl[raw_col].name(prefixed_name))
+                result = joined.select(select_exprs)
 
-            if not left_keys or not right_keys:
-                continue
+        # --- 4. Select only originally requested columns ---
+        original_cols = list(self.keys) + list(self.aggs.keys())
+        # Add deferred dim names (they were requested)
+        for d in deferrable:
+            for dd in d.deferred_dims:
+                if dd not in original_cols:
+                    original_cols.append(dd)
+        # Also keep calc measure names
+        if plan.calc_specs:
+            for cm in plan.calc_specs:
+                if cm not in original_cols:
+                    original_cols.append(cm)
 
-            # Select only the columns we need from the deferred table:
-            # join keys + needed dimensions
-            deferred_select_cols = []
-            for col in right_keys:
-                if col in deferred_tbl.columns:
-                    deferred_select_cols.append(col)
-            for dim_name in needed_dims:
-                if dim_name in deferred_tbl.columns:
-                    deferred_select_cols.append(dim_name)
-
-            if not deferred_select_cols:
-                continue
-
-            # Deduplicate while preserving order
-            deferred_select_cols = list(dict.fromkeys(deferred_select_cols))
-            deferred_bridge = deferred_tbl.select(
-                [deferred_tbl[c] for c in deferred_select_cols]
-            ).distinct()
-
-            # Build join predicates
-            preds = [
-                result[lk] == deferred_bridge[rk]
-                for lk, rk in zip(left_keys, right_keys)
-            ]
-
-            # Select: all from result + new dimension columns from deferred
-            new_cols = [
-                c for c in deferred_select_cols
-                if c not in frozenset(right_keys) and c not in result.columns
-            ]
-
-            result = result.left_join(deferred_bridge, preds).select(
-                [result] + [deferred_bridge[c] for c in new_cols]
-            )
+        available = frozenset(result.columns)
+        select_cols = [c for c in original_cols if c in available]
+        if select_cols and set(select_cols) != available:
+            result = result.select([result[c] for c in select_cols])
 
         return result
 
