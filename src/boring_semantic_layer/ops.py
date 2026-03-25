@@ -1735,7 +1735,7 @@ class _DeferrableJoin:
     table_name: str  # Name of the right (dimension) table
     table_op: Any  # SemanticTableOp of the right table
     join_keys_left: tuple  # Column names on the left side of the join
-    join_keys_right: tuple  # Column names on the right side of the join
+    on_predicate: Any  # Original join predicate (preserves key pairing)
     deferred_dims: tuple  # Prefixed dimension names to add post-agg
 
 
@@ -1847,7 +1847,7 @@ def _find_deferrable_joins(
             table_name=right_name,
             table_op=right,
             join_keys_left=left_cols,
-            join_keys_right=tuple(sorted(right_join_keys)),
+            on_predicate=node.on,
             deferred_dims=deferred_dims,
         ))
 
@@ -2822,11 +2822,9 @@ class SemanticAggregateOp(Relation):
         for d in deferrable:
             dim_tbl = _to_untagged(d.table_op)
 
-            # Build join predicate: result.left_key == dim_tbl.right_key
-            join_preds = [
-                result[lk] == dim_tbl[rk]
-                for lk, rk in zip(d.join_keys_left, d.join_keys_right)
-            ]
+            # Reuse the original join predicate to preserve key pairing
+            # (avoids mismatch from independently sorting left/right keys)
+            join_preds = d.on_predicate(result, dim_tbl)
 
             # Compute deferred dimension columns on the dimension table.
             # For direct columns (e.g., cc_name) this is a no-op rename.
