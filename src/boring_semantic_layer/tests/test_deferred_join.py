@@ -250,3 +250,73 @@ class TestDeferredJoinCorrectness:
         assert list(result["users.user_id"]) == [1, 3]
         assert list(result["users.login_count"]) == [2, 1]
         assert list(result["cost_centers.cc_name"]) == ["Engineering", "Engineering"]
+
+
+class TestJoinCardinalitySerialization:
+    """Test that join cardinality is included in hashing_tag metadata."""
+
+    def test_cardinality_in_join_metadata(self, lookup_tables):
+        """Cardinality is serialized so join_one and join_many get different hashes."""
+        from boring_semantic_layer.serialization.extract import extract_op_tree
+        from boring_semantic_layer.serialization.context import BSLSerializationContext
+
+        users = _make_users_model(lookup_tables["users"])
+        cc = _make_cost_centers_model(lookup_tables["cost_centers"])
+
+        joined = users.join_one(
+            cc, on=lambda u, c: u.cost_center_id == c.cc_id
+        )
+
+        ctx = BSLSerializationContext()
+        agg_op = joined.group_by("users.user_id").aggregate("users.login_count").op()
+        metadata = extract_op_tree(agg_op, ctx)
+
+        # Walk to find the join metadata
+        def find_cardinality(d):
+            if isinstance(d, dict):
+                if "cardinality" in d:
+                    return d["cardinality"]
+                for v in d.values():
+                    result = find_cardinality(v)
+                    if result is not None:
+                        return result
+            return None
+
+        cardinality = find_cardinality(metadata)
+        assert cardinality == "one"
+
+    def test_join_many_cardinality_serialized(self, lookup_tables):
+        """join_many cardinality is serialized as 'many'."""
+        from boring_semantic_layer.serialization.extract import extract_op_tree
+        from boring_semantic_layer.serialization.context import BSLSerializationContext
+
+        users = _make_users_model(lookup_tables["users"])
+        cc_with_measures = (
+            to_semantic_table(lookup_tables["cost_centers"], name="cost_centers")
+            .with_dimensions(
+                cc_id=Dimension(expr=lambda t: t.cc_id, is_entity=True),
+                cc_name=lambda t: t.cc_name,
+            )
+            .with_measures(cc_count=lambda t: t.count())
+        )
+
+        joined = users.join_many(
+            cc_with_measures, on=lambda u, c: u.cost_center_id == c.cc_id
+        )
+
+        ctx = BSLSerializationContext()
+        agg_op = joined.group_by("users.user_id").aggregate("users.login_count").op()
+        metadata = extract_op_tree(agg_op, ctx)
+
+        def find_cardinality(d):
+            if isinstance(d, dict):
+                if "cardinality" in d:
+                    return d["cardinality"]
+                for v in d.values():
+                    result = find_cardinality(v)
+                    if result is not None:
+                        return result
+            return None
+
+        cardinality = find_cardinality(metadata)
+        assert cardinality == "many"
