@@ -226,3 +226,27 @@ class TestDeferredJoinCorrectness:
 
         result = joined.aggregate("users.login_count").execute()
         assert result["users.login_count"].iloc[0] == 5
+
+    def test_no_deferral_when_filter_on_deferred_table(self, lookup_tables):
+        """Joins must NOT be deferred if a filter references the dimension table."""
+        users = _make_users_model(lookup_tables["users"])
+        cc = _make_cost_centers_model(lookup_tables["cost_centers"])
+
+        joined = users.join_one(
+            cc, on=lambda u, c: u.cost_center_id == c.cc_id
+        )
+
+        # Filter on the dimension table's column — must not defer
+        result = (
+            joined.filter(lambda t: t.cc_name == "Engineering")
+            .group_by("users.user_id", "cost_centers.cc_name")
+            .aggregate("users.login_count")
+            .execute()
+            .sort_values("users.user_id")
+            .reset_index(drop=True)
+        )
+
+        # Only Engineering users: user_id 1 (2 logins) and user_id 3 (1 login)
+        assert list(result["users.user_id"]) == [1, 3]
+        assert list(result["users.login_count"]) == [2, 1]
+        assert list(result["cost_centers.cc_name"]) == ["Engineering", "Engineering"]

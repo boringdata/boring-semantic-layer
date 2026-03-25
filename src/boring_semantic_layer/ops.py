@@ -1745,6 +1745,7 @@ def _find_deferrable_joins(
     agg_names: dict,
     all_roots: list,
     join_tree_info: "_JoinTreeInfo",
+    filters: list | None = None,
 ) -> list[_DeferrableJoin]:
     """Identify join_one ops that can be deferred until after aggregation.
 
@@ -1752,8 +1753,26 @@ def _find_deferrable_joins(
     - cardinality == "one"
     - Right table has is_entity dims matching the join key
     - No measures from right table are used in the aggregation
+    - No filters reference the right table's columns
     """
+    filters = filters or []
     deferrable: list[_DeferrableJoin] = []
+
+    def _filter_references_table(table_name, table_op):
+        """Check if any filter predicate references columns from this table."""
+        if not filters:
+            return False
+        raw_tbl = _to_untagged(table_op)
+        for pred in filters:
+            pred_fn = _unwrap(pred)
+            try:
+                # If the predicate can be resolved against this table,
+                # it references its columns → can't defer
+                pred_fn(raw_tbl)
+                return True
+            except Exception:
+                pass
+        return False
 
     def walk(node):
         if not isinstance(node, SemanticJoinOp):
@@ -1770,6 +1789,10 @@ def _find_deferrable_joins(
 
         right_name = right.name
         if not right_name:
+            return
+
+        # Check: no filters reference the right table
+        if _filter_references_table(right_name, right):
             return
 
         # Check: right table has is_entity dims
