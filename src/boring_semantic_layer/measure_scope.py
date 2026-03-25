@@ -171,7 +171,22 @@ class AggregationExpr(_Node):
         )
 
 
-MeasureExpr = MeasureRef | AllOf | BinOp | MethodCall | AggregationExpr | float | int
+@frozen
+class PostAggCallable:
+    """A callable evaluated against the post-aggregation table.
+
+    Used for expressions like standalone window functions (e.g. ``xo.rank()``)
+    that bypass ``MeasureScope`` and produce ibis Deferred expressions
+    referencing columns that only exist after aggregation.
+    """
+
+    fn: Any = field(eq=False, hash=False)
+
+    def __hash__(self):
+        return hash(("PostAggCallable", id(self.fn)))
+
+
+MeasureExpr = MeasureRef | AllOf | BinOp | MethodCall | AggregationExpr | PostAggCallable | float | int
 
 
 class DeferredColumn:

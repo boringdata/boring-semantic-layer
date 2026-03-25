@@ -55,6 +55,7 @@ from .measure_scope import (
     MeasureRef,
     MeasureScope,
     MethodCall,
+    PostAggCallable,
 )
 from .nested_access import NestedAccessMarker
 
@@ -629,7 +630,7 @@ def _is_calculated_measure(val: Any) -> bool:
         and isinstance(val.receiver, MeasureRef)
     ):
         return False
-    return isinstance(val, MeasureRef | AllOf | BinOp | MethodCall | int | float)
+    return isinstance(val, MeasureRef | AllOf | BinOp | MethodCall | PostAggCallable | int | float)
 
 
 def _matches_aggregation_pattern(measure_expr, agg_expr, tbl):
@@ -792,12 +793,23 @@ def _classify_measure(fn_or_expr: Any, scope: Any) -> tuple[str, Any]:
     """Classify measure as 'calc' or 'base' with appropriate handling."""
     expr, description, requires_unnest = _extract_measure_metadata(fn_or_expr)
 
-    resolved = safe(lambda: _resolve_expr(expr, scope))().map(
-        lambda val: ("calc", val) if _is_calculated_measure(val) else None
-    )
+    resolved_result = safe(lambda: _resolve_expr(expr, scope))()
 
-    if isinstance(resolved, Success) and resolved.unwrap() is not None:
-        return resolved.unwrap()
+    if isinstance(resolved_result, Success):
+        val = resolved_result.unwrap()
+        if _is_calculated_measure(val):
+            return ("calc", val)
+
+        # Detect ibis Deferred expressions (e.g. standalone window functions
+        # like xo.rank().over(...)) that reference post-aggregation columns.
+        # If the Deferred can't resolve against the raw table, it must
+        # reference columns that only exist after aggregation.
+        if _is_deferred(val):
+            raw_tbl = getattr(scope, "tbl", None)
+            if raw_tbl is not None:
+                can_resolve = safe(lambda: val.resolve(raw_tbl))()
+                if not isinstance(can_resolve, Success):
+                    return ("calc", PostAggCallable(fn=expr))
 
     if not requires_unnest and callable(expr):
         # All scopes (MeasureScope, ColumnScope) have tbl attribute
@@ -1473,7 +1485,7 @@ def _create_measure_spec(
         else:
             return _MeasureSpec(name=name, kind="calc", value=val)
 
-    if isinstance(val, AllOf | BinOp | MethodCall | int | float):
+    if isinstance(val, AllOf | BinOp | MethodCall | PostAggCallable | int | float):
         return _MeasureSpec(name=name, kind="calc", value=val)
 
     return _MeasureSpec(name=name, kind="agg", value=fn)

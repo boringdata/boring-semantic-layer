@@ -8,7 +8,7 @@ import ibis
 from attrs import frozen
 from toolz import curry, pipe
 
-from .measure_scope import AllOf, BinOp, MeasureExpr, MeasureRef, MethodCall
+from .measure_scope import AllOf, BinOp, MeasureExpr, MeasureRef, MethodCall, PostAggCallable
 
 
 @curry
@@ -208,6 +208,11 @@ def _compile_formula(expr: MeasureExpr, by_tbl, all_tbl, base_tbl):
         for method_name, args, kwargs_tuple in expr.post_ops:
             result = getattr(result, method_name)(*args, **dict(kwargs_tuple))
 
+        return result
+    if isinstance(expr, PostAggCallable):
+        result = expr.fn(by_tbl)
+        if hasattr(result, "resolve"):
+            return result.resolve(by_tbl)
         return result
     if isinstance(expr, MethodCall):
         compiled = _compile_formula(expr.receiver, by_tbl, all_tbl, base_tbl)
