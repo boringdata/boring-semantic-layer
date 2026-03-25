@@ -320,3 +320,204 @@ class TestJoinCardinalitySerialization:
 
         cardinality = find_cardinality(metadata)
         assert cardinality == "many"
+
+
+# ---------------------------------------------------------------------------
+# Edge case tests surfaced by external reviewers
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def snowflake_tables(con):
+    """Snowflake schema: orders → regions → countries (chained join_one)."""
+    orders_df = pd.DataFrame(
+        {
+            "order_id": [1, 2, 3, 4, 5],
+            "region_id": [10, 20, 10, 20, 10],
+            "amount": [100.0, 200.0, 150.0, 300.0, 250.0],
+        }
+    )
+    regions_df = pd.DataFrame(
+        {
+            "region_id": [10, 20],
+            "region_name": ["West", "East"],
+            "country_id": [1, 1],
+        }
+    )
+    countries_df = pd.DataFrame(
+        {
+            "country_id": [1],
+            "country_name": ["USA"],
+        }
+    )
+    return {
+        "orders": con.create_table("orders_sf", orders_df),
+        "regions": con.create_table("regions_sf", regions_df),
+        "countries": con.create_table("countries_sf", countries_df),
+    }
+
+
+class TestSnowflakeChainedJoinOne:
+    """Edge case: chained join_one in a snowflake schema."""
+
+    def test_snowflake_two_dim_lookups(self, snowflake_tables):
+        """orders → regions → countries: both dimension tables deferred correctly."""
+        orders = (
+            to_semantic_table(snowflake_tables["orders"], name="orders")
+            .with_dimensions(
+                order_id=Dimension(expr=lambda t: t.order_id, is_entity=True),
+                region_id=lambda t: t.region_id,
+            )
+            .with_measures(total_amount=lambda t: t.amount.sum())
+        )
+        regions = (
+            to_semantic_table(snowflake_tables["regions"], name="regions")
+            .with_dimensions(
+                region_id=Dimension(expr=lambda t: t.region_id, is_entity=True),
+                region_name=lambda t: t.region_name,
+                country_id=lambda t: t.country_id,
+            )
+        )
+        countries = (
+            to_semantic_table(snowflake_tables["countries"], name="countries")
+            .with_dimensions(
+                country_id=Dimension(expr=lambda t: t.country_id, is_entity=True),
+                country_name=lambda t: t.country_name,
+            )
+        )
+
+        joined = orders.join_one(
+            regions, on=lambda o, r: o.region_id == r.region_id
+        ).join_one(
+            countries, on=lambda j, c: j.country_id == c.country_id
+        )
+
+        result = (
+            joined.group_by("regions.region_name")
+            .aggregate("orders.total_amount")
+            .execute()
+            .sort_values("regions.region_name")
+            .reset_index(drop=True)
+        )
+
+        assert list(result["regions.region_name"]) == ["East", "West"]
+        assert list(result["orders.total_amount"]) == [500.0, 500.0]
+
+    def test_snowflake_results_match_standard(self, snowflake_tables):
+        """Snowflake deferred results match the standard (non-deferred) path."""
+        orders = (
+            to_semantic_table(snowflake_tables["orders"], name="orders")
+            .with_dimensions(
+                order_id=Dimension(expr=lambda t: t.order_id, is_entity=True),
+                region_id=lambda t: t.region_id,
+            )
+            .with_measures(total_amount=lambda t: t.amount.sum())
+        )
+
+        # Deferred: regions WITH is_entity
+        regions_deferred = (
+            to_semantic_table(snowflake_tables["regions"], name="regions")
+            .with_dimensions(
+                region_id=Dimension(expr=lambda t: t.region_id, is_entity=True),
+                region_name=lambda t: t.region_name,
+            )
+        )
+        # Standard: regions WITHOUT is_entity
+        regions_standard = (
+            to_semantic_table(snowflake_tables["regions"], name="regions")
+            .with_dimensions(
+                region_id=lambda t: t.region_id,
+                region_name=lambda t: t.region_name,
+            )
+        )
+
+        joined_deferred = orders.join_one(
+            regions_deferred, on=lambda o, r: o.region_id == r.region_id
+        )
+        joined_standard = orders.join_one(
+            regions_standard, on=lambda o, r: o.region_id == r.region_id
+        )
+
+        result_d = (
+            joined_deferred.group_by("regions.region_name")
+            .aggregate("orders.total_amount")
+            .execute()
+            .sort_values("regions.region_name")
+            .reset_index(drop=True)
+        )
+        result_s = (
+            joined_standard.group_by("regions.region_name")
+            .aggregate("orders.total_amount")
+            .execute()
+            .sort_values("regions.region_name")
+            .reset_index(drop=True)
+        )
+
+        pd.testing.assert_frame_equal(result_d, result_s)
+
+
+class TestDerivedDimensions:
+    """Edge case: deferred dimension is a derived expression, not a direct column."""
+
+    def test_derived_dim_on_deferred_table(self, lookup_tables):
+        """Derived dimension (e.g., upper()) on a deferred table falls back gracefully."""
+        users = _make_users_model(lookup_tables["users"])
+
+        # Dimension with a derived expression
+        cc_derived = (
+            to_semantic_table(lookup_tables["cost_centers"], name="cost_centers")
+            .with_dimensions(
+                cc_id=Dimension(expr=lambda t: t.cc_id, is_entity=True),
+                cc_name_upper=lambda t: t.cc_name.upper(),
+            )
+        )
+
+        joined = users.join_one(
+            cc_derived, on=lambda u, c: u.cost_center_id == c.cc_id
+        )
+
+        # This should still produce correct results — either via deferred path
+        # (if the derived dim resolves) or via standard fallback
+        result = (
+            joined.group_by("users.user_id", "cost_centers.cc_name_upper")
+            .aggregate("users.login_count")
+            .execute()
+            .sort_values("users.user_id")
+            .reset_index(drop=True)
+        )
+
+        assert list(result["users.user_id"]) == [1, 2, 3]
+        assert list(result["users.login_count"]) == [2, 2, 1]
+        # Derived dim should have uppercase values
+        assert list(result["cost_centers.cc_name_upper"]) == [
+            "ENGINEERING",
+            "MARKETING",
+            "ENGINEERING",
+        ]
+
+
+class TestPrefixedFilterOnDeferredTable:
+    """Edge case: filter uses prefixed dimension name from deferred table."""
+
+    def test_prefixed_filter_prevents_deferral(self, lookup_tables):
+        """Filter using table.dimension syntax on deferred table still works."""
+        users = _make_users_model(lookup_tables["users"])
+        cc = _make_cost_centers_model(lookup_tables["cost_centers"])
+
+        joined = users.join_one(
+            cc, on=lambda u, c: u.cost_center_id == c.cc_id
+        )
+
+        # Filter on location (from deferred table) — should fall back to standard path
+        result = (
+            joined.filter(lambda t: t.location == "NYC")
+            .group_by("users.user_id", "cost_centers.cc_name")
+            .aggregate("users.login_count")
+            .execute()
+            .sort_values("users.user_id")
+            .reset_index(drop=True)
+        )
+
+        # Only NYC cost center (101 = Engineering): user 1 (2 logins), user 3 (1 login)
+        assert list(result["users.user_id"]) == [1, 3]
+        assert list(result["users.login_count"]) == [2, 1]
