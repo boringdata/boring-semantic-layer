@@ -15,15 +15,15 @@ This server provides a semantic layer for querying structured data with support 
 2. ALWAYS call get_model(model_name) to understand dimensions and measures before querying
 3. When using joined models (multiple tables), ALWAYS prefix dimension/measure names with table name
    Example: "orders.created_at" not just "created_at"
-4. For time-based queries, use time_grain parameter (e.g., "TIME_GRAIN_YEAR", "TIME_GRAIN_MONTH")
-5. Time dimensions must be explicitly included in dimensions parameter when using time_grain
+4. For time-based queries, use time_grain (e.g., "month", "year") to apply one grain to all time dimensions,
+   or time_grains (e.g., {"order_date": "month", "ship_date": "quarter"}) for per-dimension grains
+5. Time dimensions must be explicitly included in dimensions parameter when using time_grain/time_grains
 
 ## Common Mistakes to Avoid
 
 - Using unprefixed names in joined models (will cause errors)
 - Forgetting to include time dimension in dimensions list when using time_grain
-- Using invalid time grain values (must be one of: TIME_GRAIN_SECOND, TIME_GRAIN_MINUTE,
-  TIME_GRAIN_HOUR, TIME_GRAIN_DAY, TIME_GRAIN_WEEK, TIME_GRAIN_MONTH, TIME_GRAIN_QUARTER, TIME_GRAIN_YEAR)
+- Using invalid time grain values (valid: second, minute, hour, day, week, month, quarter, year)
 
 ## Available Tools
 

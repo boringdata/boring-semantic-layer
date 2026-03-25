@@ -281,18 +281,18 @@ flights = (
 )
 ```
 
-**Available time grains:**
-- `TIME_GRAIN_SECOND` - For second-level precision
-- `TIME_GRAIN_MINUTE` - For minute-level precision
-- `TIME_GRAIN_HOUR` - For hourly data
-- `TIME_GRAIN_DAY` - For daily data
-- `TIME_GRAIN_WEEK` - For weekly data
-- `TIME_GRAIN_MONTH` - For monthly data
-- `TIME_GRAIN_QUARTER` - For quarterly data
-- `TIME_GRAIN_YEAR` - For yearly data
+**Available time grains** (short form preferred, long form also accepted):
+- `second` / `TIME_GRAIN_SECOND` - For second-level precision
+- `minute` / `TIME_GRAIN_MINUTE` - For minute-level precision
+- `hour` / `TIME_GRAIN_HOUR` - For hourly data
+- `day` / `TIME_GRAIN_DAY` - For daily data
+- `week` / `TIME_GRAIN_WEEK` - For weekly data
+- `month` / `TIME_GRAIN_MONTH` - For monthly data
+- `quarter` / `TIME_GRAIN_QUARTER` - For quarterly data
+- `year` / `TIME_GRAIN_YEAR` - For yearly data
 
 <note type="info">
-If you define multiple time dimensions in your model, the `.query()` method and MCP tools will use the first time dimension that appears in your query's dimensions list.
+Use `time_grain` to apply one grain to all time dimensions, or `time_grains` (dict) to set different grains per dimension.
 </note>
 
 **Example time-based queries:**
@@ -307,11 +307,18 @@ result = flights.query(
     time_range={"start": "2024-01-01", "end": "2024-12-31"}
 )
 
-# Query with time grain aggregation
+# Query with time grain aggregation (same grain for all time dims)
 result = flights.query(
     dimensions=["arr_time"],
     measures=["flight_count"],
-    time_grain="TIME_GRAIN_MONTH"
+    time_grain="month"
+)
+
+# Per-dimension grains (different grain per time dimension)
+result = orders.query(
+    dimensions=["order_date", "ship_date"],
+    measures=["total_sales"],
+    time_grains={"order_date": "month", "ship_date": "quarter"}
 )
 ```
 

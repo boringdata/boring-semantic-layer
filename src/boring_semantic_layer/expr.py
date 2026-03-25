@@ -689,6 +689,7 @@ class SemanticModel(SemanticTable):
         order_by: Sequence[tuple[str, str]] | None = None,
         limit: int | None = None,
         time_grain: str | None = None,
+        time_grains: dict[str, str] | None = None,
         time_range: dict[str, str] | None = None,
         having: list | None = None,
     ):
@@ -700,6 +701,7 @@ class SemanticModel(SemanticTable):
             order_by=order_by,
             limit=limit,
             time_grain=time_grain,
+            time_grains=time_grains,
             time_range=time_range,
             having=having,
         )
@@ -848,6 +850,7 @@ class SemanticJoin(SemanticTable):
         order_by: list[str] | None = None,
         limit: int | None = None,
         time_grain: str | None = None,
+        time_grains: dict[str, str] | None = None,
         time_range: dict[str, str] | None = None,
         having: list | None = None,
     ):
@@ -859,6 +862,7 @@ class SemanticJoin(SemanticTable):
             order_by=order_by,
             limit=limit,
             time_grain=time_grain,
+            time_grains=time_grains,
             time_range=time_range,
             having=having,
         )
