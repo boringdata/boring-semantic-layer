@@ -3748,12 +3748,25 @@ class SemanticJoinOp(Relation):
         backends found" unless all tables in a join share the same instance.
         Uses ``op.replace()`` (ibis graph rewriting) to swap out the
         ``source`` field on every ``DatabaseTable`` node in the right tree.
+
+        For plain ibis backends (e.g. Snowflake, Databricks) that are not
+        wrapped by xorq, the walk_nodes utility cannot traverse the
+        expression tree.  In that case we skip rebinding — it is only
+        needed for xorq-vendored backends.
         """
-        from xorq.common.utils.node_utils import walk_nodes
-        from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+        try:
+            from xorq.common.utils.node_utils import walk_nodes
+            from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+        except ImportError:
+            return left_tbl, right_tbl
 
         # Find a canonical backend from the left tree.
-        db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), left_tbl))
+        try:
+            db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), left_tbl))
+        except (ValueError, TypeError):
+            # Plain ibis Table objects cannot be traversed by xorq's
+            # walk_nodes — rebinding is not needed for these backends.
+            return left_tbl, right_tbl
         canonical = db_tables[0].source if db_tables else None
 
         if canonical is None:

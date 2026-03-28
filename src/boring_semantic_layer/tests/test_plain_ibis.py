@@ -171,6 +171,76 @@ class TestPlainIbisJoins:
         assert len(result) == 3
         assert "name" in result.columns
 
+    def test_yaml_join_on_plain_ibis(self, plain_ibis_con):
+        """YAML-defined joins work on plain ibis backends (GH-221).
+
+        Reproduces the ValueError from _rebind_join_backends when xorq's
+        walk_nodes encounters a plain ibis Table.
+        """
+        from boring_semantic_layer import from_yaml
+
+        users_df = pd.DataFrame(
+            {
+                "USER_KEY": [1, 2, 3, 4, 5],
+                "PROGRAM_KEY": [10, 10, 20, 20, 30],
+            }
+        )
+        programs_df = pd.DataFrame(
+            {
+                "PROGRAM_KEY": [10, 20, 30],
+                "PROGRAM": ["Alpha", "Beta", "Gamma"],
+            }
+        )
+        plain_ibis_con.create_table("users_fact", users_df)
+        plain_ibis_con.create_table("programs_dim", programs_df)
+
+        yaml_str = """
+users:
+  table: users_fact
+  dimensions:
+    user_key: _.USER_KEY
+    program_key: _.PROGRAM_KEY
+  measures:
+    user_count: _.USER_KEY.nunique()
+  joins:
+    programs:
+      model: programs
+      type: one
+      left_on: PROGRAM_KEY
+      right_on: PROGRAM_KEY
+
+programs:
+  table: programs_dim
+  dimensions:
+    program_key: _.PROGRAM_KEY
+    program: _.PROGRAM
+"""
+        import tempfile, os
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False
+        ) as f:
+            f.write(yaml_str)
+            yaml_path = f.name
+
+        try:
+            tables = {
+                "users_fact": plain_ibis_con.table("users_fact"),
+                "programs_dim": plain_ibis_con.table("programs_dim"),
+            }
+            models = from_yaml(yaml_path, tables=tables)
+            users_model = models["users"]
+            result = (
+                users_model.group_by("programs.program")
+                .aggregate("users.user_count")
+                .execute()
+            )
+            assert len(result) == 3
+            assert "programs.program" in result.columns or "program" in result.columns
+            assert result.iloc[:, 1].sum() == 5
+        finally:
+            os.unlink(yaml_path)
+
 
 class TestPlainIbisSerializationGating:
     """Serialization features raise clear errors for non-xorq backends."""
