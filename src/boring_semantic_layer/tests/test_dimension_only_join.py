@@ -160,6 +160,173 @@ class TestDimensionOnlyQueryReturnsAllMembers:
         assert "stores.store_name" in result.columns
 
 
+class TestDimensionOnlyWithFilters:
+    """Dimension-only shortcut should handle filters correctly."""
+
+    def test_filter_on_target_dim_table(self, star_schema):
+        """Filter referencing only the target dim table should still use shortcut."""
+        joined, *_ = star_schema
+        result = (
+            joined.query(
+                dimensions=["stores.store_name"],
+                filters=[lambda t: t.store_name != "Delta"],
+                order_by=[("stores.store_name", "asc")],
+            )
+            .execute()
+        )
+        store_names = sorted(result["stores.store_name"].tolist())
+        # All stores except Delta — Gamma still present despite zero fact rows
+        assert store_names == ["Alpha", "Beta", "Gamma"]
+
+    def test_filter_on_other_table_disables_shortcut(self, star_schema):
+        """Filter referencing another table should disable the shortcut."""
+        joined, *_ = star_schema
+        result = (
+            joined.query(
+                dimensions=["stores.store_name"],
+                filters=[lambda t: t.amount > 0],
+            )
+            .execute()
+        )
+        # Falls back to standard join path — only fact-present stores
+        store_names = sorted(result["stores.store_name"].tolist())
+        assert store_names == ["Alpha", "Beta"]
+
+
+class TestDimensionOnlyDerived:
+    """Shortcut handles derived dimensions within the same table."""
+
+    def test_derived_dimension_on_same_table(self):
+        """Derived dim (depends on another dim in same table) should work."""
+        con = ibis.duckdb.connect(":memory:")
+
+        regions_df = pd.DataFrame(
+            {
+                "region_id": [1, 2, 3],
+                "region_name": ["North", "South", "East"],
+            }
+        )
+        sales_df = pd.DataFrame(
+            {
+                "sale_id": [1, 2],
+                "region_id": [1, 2],
+                "revenue": [100.0, 200.0],
+            }
+        )
+
+        region_tbl = con.create_table("regions", regions_df)
+        sales_tbl = con.create_table("sales", sales_df)
+
+        region_st = (
+            to_semantic_table(region_tbl, "regions")
+            .with_dimensions(
+                region_name=lambda t: t.region_name,
+                region_upper=lambda t: t.region_name.upper(),
+            )
+        )
+        sales_st = (
+            to_semantic_table(sales_tbl, "sales")
+            .with_measures(total_revenue=lambda t: t.revenue.sum())
+        )
+
+        joined = sales_st.join_one(
+            region_st, lambda l, r: l.region_id == r.region_id
+        )
+
+        result = joined.query(dimensions=["regions.region_upper"]).execute()
+        names = sorted(result["regions.region_upper"].tolist())
+        # All 3 regions including East (no matching sales)
+        assert names == ["EAST", "NORTH", "SOUTH"]
+
+
+class TestDimensionOnlySqlVerification:
+    """Verify the shortcut actually queries the dimension table directly."""
+
+    def test_sql_does_not_contain_fact_table(self, star_schema):
+        """Generated SQL should reference only the dim table, not the fact."""
+        joined, *_ = star_schema
+        sql = joined.query(dimensions=["stores.store_name"]).sql()
+        sql_lower = sql.lower()
+        # Should reference the stores table
+        assert "stores" in sql_lower
+        # Should NOT reference the transactions fact table
+        assert "transactions" not in sql_lower
+
+    def test_sql_uses_distinct(self, star_schema):
+        """Generated SQL should produce distinct dimension values."""
+        joined, *_ = star_schema
+        sql = joined.query(dimensions=["stores.store_name"]).sql()
+        assert "DISTINCT" in sql.upper()
+
+
+class TestDimensionOnlyFactTableDims:
+    """Shortcut should work when querying dims from the fact (left) table."""
+
+    def test_fact_table_dimension_returns_all_members(self, star_schema):
+        """Querying a fact-table dimension via shortcut returns all its values."""
+        joined, *_ = star_schema
+        result = (
+            joined.query(dimensions=["transactions.store_sk"]).execute()
+        )
+        sks = sorted(result["transactions.store_sk"].tolist())
+        # Only fact-table SKs (1, 2) — the fact table only has those rows
+        assert sks == [1, 2]
+
+
+class TestDimensionOnlyJsonFilter:
+    """JSON dict filters with the shortcut."""
+
+    def test_json_filter_falls_back_to_standard_path(self, star_schema):
+        """JSON dict filters use deferred resolution that prevents column
+        extraction, so the shortcut disables and falls back to the standard
+        join path.  Only fact-present dimension values are returned."""
+        joined, *_ = star_schema
+        result = (
+            joined.query(
+                dimensions=["stores.city"],
+                filters=[{"field": "stores.city", "operator": "!=", "value": "Bern"}],
+                order_by=[("stores.city", "asc")],
+            )
+            .execute()
+        )
+        cities = sorted(result["stores.city"].tolist())
+        # Standard path: only fact-present cities minus the filtered one
+        assert cities == ["Geneva", "Zurich"]
+
+
+class TestDimensionOnlyWithLimit:
+    """Limit composes correctly with the shortcut."""
+
+    def test_limit_with_shortcut(self, star_schema):
+        """Limit applied after shortcut aggregate should restrict rows."""
+        joined, *_ = star_schema
+        result = (
+            joined.query(
+                dimensions=["stores.store_name"],
+                order_by=[("stores.store_name", "asc")],
+                limit=2,
+            )
+            .execute()
+        )
+        assert len(result) == 2
+        assert result["stores.store_name"].tolist() == ["Alpha", "Beta"]
+
+
+class TestDimensionOnlyMethodChaining:
+    """Method-chaining API (group_by/aggregate) shares the same shortcut."""
+
+    def test_group_by_aggregate_returns_all_members(self, star_schema):
+        """group_by().aggregate() with no measures uses the shortcut."""
+        joined, *_ = star_schema
+        result = (
+            joined.group_by("stores.store_name")
+            .aggregate()
+            .execute()
+        )
+        store_names = sorted(result["stores.store_name"].tolist())
+        assert store_names == ["Alpha", "Beta", "Delta", "Gamma"]
+
+
 class TestDimensionOnlyJoinMany:
     """Dimension-only shortcut should work with join_many too."""
 

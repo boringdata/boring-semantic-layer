@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from difflib import get_close_matches
@@ -57,6 +58,8 @@ from .measure_scope import (
     MethodCall,
 )
 from .nested_access import NestedAccessMarker
+
+logger = logging.getLogger(__name__)
 
 _JOIN_REMOVED_MESSAGE = (
     "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
@@ -2110,13 +2113,17 @@ class SemanticAggregateOp(Relation):
                 self.keys, all_roots, collected_filters,
             )
             if shortcut is not None:
-                root_op, unprefixed_keys = shortcut
+                root_op, unprefixed_keys, dim_filters = shortcut
                 try:
                     tbl = _to_untagged(root_op)
                     root_dims = root_op.get_dimensions()
                     tbl = _mutate_dimensions_with_dependencies(
                         tbl, unprefixed_keys, root_dims,
                     )
+                    # Apply pre-aggregation filters on the dimension table.
+                    for flt in dim_filters:
+                        fn = _unwrap(flt) if hasattr(flt, "unwrap") else flt
+                        tbl = tbl.filter(fn(tbl))
                     result = tbl.select(unprefixed_keys).distinct()
                     # Rename columns to their prefixed (dotted) names so that
                     # downstream consumers see the expected column names.
@@ -2124,7 +2131,12 @@ class SemanticAggregateOp(Relation):
                     rename_map = {f"{prefix}.{uk}": uk for uk in unprefixed_keys}
                     return result.rename(rename_map)
                 except Exception:
-                    pass  # Fall through to the standard path
+                    logger.debug(
+                        "dimension-only shortcut failed for keys=%s; "
+                        "falling back to standard path",
+                        self.keys,
+                        exc_info=True,
+                    )
 
         # Pre-aggregation path: when join_many is present, aggregate each
         # source table's measures at its own grain before joining.
@@ -4219,9 +4231,9 @@ def _find_all_root_models(node: Any) -> tuple[SemanticTableOp, ...]:
 
 def _dimension_only_source_table(
     keys: tuple[str, ...],
-    all_roots: list,
+    all_roots: Sequence[SemanticTableOp],
     filters: tuple,
-) -> tuple | None:
+) -> tuple[SemanticTableOp, list[str], tuple] | None:
     """Check if a dimension-only query can be routed to a single source table.
 
     When all requested dimension keys share a single table prefix and that
@@ -4229,9 +4241,14 @@ def _dimension_only_source_table(
     bypass the join and query the dimension table directly.  This ensures
     dimension members with no matching fact rows are still returned.
 
-    Returns ``(root_op, unprefixed_keys)`` or ``None``.
+    *filters* are the ``_CallableWrapper`` predicates collected between the
+    aggregate and the underlying join.  Filters whose column references all
+    belong to the target table are forwarded; if any filter references columns
+    outside the target table the shortcut is disabled.
+
+    Returns ``(root_op, unprefixed_keys, applicable_filters)`` or ``None``.
     """
-    if not keys or filters:
+    if not keys:
         return None
 
     prefixes: set[str] = set()
@@ -4252,7 +4269,20 @@ def _dimension_only_source_table(
         if root.name == target_prefix:
             root_dims = root.get_dimensions()
             if all(k in root_dims for k in unprefixed):
-                return root, unprefixed
+                # Validate that every filter only touches columns present
+                # on the target dimension table.  If any filter references
+                # columns from other tables we cannot use the shortcut.
+                if filters:
+                    tbl = _to_untagged(root)
+                    tbl_cols = frozenset(tbl.columns) | frozenset(root_dims)
+                    for flt in filters:
+                        fn = _unwrap(flt) if hasattr(flt, "unwrap") else flt
+                        extraction = _extract_columns_from_callable(fn, tbl)
+                        if extraction.extraction_failed:
+                            return None  # Can't determine — bail out
+                        if not extraction.columns <= tbl_cols:
+                            return None  # References columns outside target
+                return root, unprefixed, filters
 
     return None
 
