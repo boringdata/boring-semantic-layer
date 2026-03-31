@@ -2101,6 +2101,31 @@ class SemanticAggregateOp(Relation):
                         break
             return tuple(mutates)
 
+        # Dimension-only shortcut: when no measures are requested and all
+        # dimensions originate from a single joined table, query that table
+        # directly so that dimension members with no matching fact rows are
+        # still returned.  (Fixes #224.)
+        if join_op is not None and not is_post_agg and not self.aggs:
+            shortcut = _dimension_only_source_table(
+                self.keys, all_roots, collected_filters,
+            )
+            if shortcut is not None:
+                root_op, unprefixed_keys = shortcut
+                try:
+                    tbl = _to_untagged(root_op)
+                    root_dims = root_op.get_dimensions()
+                    tbl = _mutate_dimensions_with_dependencies(
+                        tbl, unprefixed_keys, root_dims,
+                    )
+                    result = tbl.select(unprefixed_keys).distinct()
+                    # Rename columns to their prefixed (dotted) names so that
+                    # downstream consumers see the expected column names.
+                    prefix = root_op.name
+                    rename_map = {f"{prefix}.{uk}": uk for uk in unprefixed_keys}
+                    return result.rename(rename_map)
+                except Exception:
+                    pass  # Fall through to the standard path
+
         # Pre-aggregation path: when join_many is present, aggregate each
         # source table's measures at its own grain before joining.
         if join_op is not None and not is_post_agg:
@@ -4190,6 +4215,46 @@ def _find_all_root_models(node: Any) -> tuple[SemanticTableOp, ...]:
         roots.extend(_find_all_root_models(node.source))
 
     return roots
+
+
+def _dimension_only_source_table(
+    keys: tuple[str, ...],
+    all_roots: list,
+    filters: tuple,
+) -> tuple | None:
+    """Check if a dimension-only query can be routed to a single source table.
+
+    When all requested dimension keys share a single table prefix and that
+    prefix maps to a root model whose dimensions cover every key, we can
+    bypass the join and query the dimension table directly.  This ensures
+    dimension members with no matching fact rows are still returned.
+
+    Returns ``(root_op, unprefixed_keys)`` or ``None``.
+    """
+    if not keys or filters:
+        return None
+
+    prefixes: set[str] = set()
+    unprefixed: list[str] = []
+    for key in keys:
+        if "." not in key:
+            return None  # Non-prefixed key — can't determine source
+        prefix, name = key.split(".", 1)
+        prefixes.add(prefix)
+        unprefixed.append(name)
+
+    if len(prefixes) != 1:
+        return None  # Keys span multiple tables
+
+    target_prefix = next(iter(prefixes))
+
+    for root in all_roots:
+        if root.name == target_prefix:
+            root_dims = root.get_dimensions()
+            if all(k in root_dims for k in unprefixed):
+                return root, unprefixed
+
+    return None
 
 
 def _build_join_depth_map(node: Any) -> dict[str, int]:
