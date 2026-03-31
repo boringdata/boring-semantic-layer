@@ -189,6 +189,117 @@ class TestPlainIbisJoins:
         assert result_l is t1
         assert result_r is t2
 
+    def test_rebind_mixed_xorq_left_plain_ibis_right(self, plain_ibis_con):
+        """Mixed scenario: xorq-wrapped left + plain ibis right (GH-221).
+
+        When the left table is xorq-wrapped (walk_nodes succeeds) but the
+        right is plain ibis, the replacer should be a no-op on the right
+        side since plain ibis ops are not xorq DatabaseTable instances.
+        """
+        from boring_semantic_layer.ops import SemanticJoinOp
+
+        try:
+            from xorq.common.utils.ibis_utils import from_ibis
+        except ImportError:
+            pytest.skip("xorq not available")
+
+        con = ibis.duckdb.connect()
+        plain_right = con.create_table(
+            "mixed_r", pd.DataFrame({"id": [1, 2]})
+        )
+        xorq_left = from_ibis(
+            con.create_table("mixed_l", pd.DataFrame({"id": [1, 2]}))
+        )
+        # Should not raise — replacer is no-op on plain ibis ops
+        result_l, result_r = SemanticJoinOp._rebind_join_backends(
+            xorq_left, plain_right
+        )
+        assert result_l is not None
+        assert result_r is not None
+
+    def test_rebind_with_xorq_wrapped_tables(self):
+        """Happy path: xorq-wrapped tables still rebind correctly (GH-221).
+
+        Ensures the fix doesn't regress the normal xorq code path.
+        """
+        from boring_semantic_layer.ops import SemanticJoinOp
+
+        try:
+            from xorq.common.utils.ibis_utils import from_ibis
+        except ImportError:
+            pytest.skip("xorq not available")
+
+        con = ibis.duckdb.connect()
+        t1 = from_ibis(con.create_table("xorq_l", pd.DataFrame({"a": [1]})))
+        t2 = from_ibis(con.create_table("xorq_r", pd.DataFrame({"b": [2]})))
+        result_l, result_r = SemanticJoinOp._rebind_join_backends(t1, t2)
+        assert result_l is not None
+        assert result_r is not None
+        # Both should still be executable after rebinding
+        assert result_l.execute() is not None
+        assert result_r.execute() is not None
+
+    def test_chained_joins_plain_ibis(self, plain_ibis_con):
+        """Multi-table chained joins work on plain ibis backends (GH-221)."""
+        orders_tbl = plain_ibis_con.create_table(
+            "orders_pi", pd.DataFrame({
+                "order_id": [1, 2, 3],
+                "customer_id": [10, 20, 10],
+                "product_id": [100, 100, 200],
+            })
+        )
+        customers_tbl = plain_ibis_con.create_table(
+            "customers_pi", pd.DataFrame({
+                "customer_id": [10, 20],
+                "name": ["Alice", "Bob"],
+            })
+        )
+        products_tbl = plain_ibis_con.create_table(
+            "products_pi", pd.DataFrame({
+                "product_id": [100, 200],
+                "product_name": ["Widget", "Gadget"],
+            })
+        )
+
+        orders = (
+            to_semantic_table(orders_tbl, name="orders")
+            .with_dimensions(
+                order_id=lambda t: t.order_id,
+                customer_id=lambda t: t.customer_id,
+                product_id=lambda t: t.product_id,
+            )
+            .with_measures(order_count=lambda t: t.count())
+        )
+        customers = (
+            to_semantic_table(customers_tbl, name="customers")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                name=lambda t: t.name,
+            )
+        )
+        products = (
+            to_semantic_table(products_tbl, name="products")
+            .with_dimensions(
+                product_id=lambda t: t.product_id,
+                product_name=lambda t: t.product_name,
+            )
+        )
+
+        joined = orders.join_one(
+            customers, on=lambda o, c: o.customer_id == c.customer_id
+        ).join_one(
+            products, on=lambda o, p: o.product_id == p.product_id
+        )
+        result = (
+            joined.group_by("name", "product_name")
+            .aggregate("order_count")
+            .execute()
+        )
+        assert len(result) >= 2
+        assert "name" in result.columns
+        assert "product_name" in result.columns
+        assert result.order_count.sum() == 3
+
 
 class TestPlainIbisSerializationGating:
     """Serialization features raise clear errors for non-xorq backends."""
