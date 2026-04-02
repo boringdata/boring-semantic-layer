@@ -2291,8 +2291,9 @@ class SemanticAggregateOp(Relation):
         )
 
         # --- 1. Try to build the full joined table (for scope / dim bridge) ---
+        # Pre-agg needs all tables for dimension bridges — no pruning here.
         try:
-            tbl = join_op.to_untagged(parent_requirements=self.required_columns)
+            tbl = join_op.to_untagged(parent_requirements=None)
             tbl = _mutate_dimensions_with_dependencies(
                 tbl,
                 [k for k in self.keys if k in merged_dimensions],
