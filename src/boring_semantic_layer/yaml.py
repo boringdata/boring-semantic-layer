@@ -272,11 +272,8 @@ def _from_osi_config(
             ds_measures: dict[str, Measure] = {}
             for metric in metrics:
                 sql_expr = _parse_osi_expression(metric["expression"])
-                if f"{ds_name}." in sql_expr or not any(
-                    f"{other}." in sql_expr
-                    for other in dataset_names
-                    if other != ds_name
-                ):
+                # Explicitly references this dataset
+                if f"{ds_name}." in sql_expr:
                     meas_name, meas = _osi_metric_to_measure(metric)
                     ds_measures[meas_name] = meas
             if ds_measures:
@@ -284,7 +281,27 @@ def _from_osi_config(
 
             result[ds_name] = model
 
-        # Relationships -> Joins (supports multi-column keys)
+        # Second pass: assign unqualified metrics (no dataset. prefix) to the
+        # first dataset only, to avoid duplicating them across all datasets.
+        if datasets and metrics:
+            first_ds_name = datasets[0]["name"]
+            if first_ds_name in result:
+                unqualified: dict[str, Measure] = {}
+                for metric in metrics:
+                    sql_expr = _parse_osi_expression(metric["expression"])
+                    # Skip if it explicitly references any dataset
+                    if any(f"{dn}." in sql_expr for dn in dataset_names):
+                        continue
+                    meas_name, meas = _osi_metric_to_measure(metric)
+                    # Only add if not already present on this model
+                    if meas_name not in result[first_ds_name].op().get_measures():
+                        unqualified[meas_name] = meas
+                if unqualified:
+                    result[first_ds_name] = result[first_ds_name].with_measures(
+                        **unqualified
+                    )
+
+        # Relationships -> Joins (supports multi-column keys + cardinality)
         if tables and relationships:
             for rel in relationships:
                 from_ds = rel.get("from", "")
@@ -305,17 +322,33 @@ def _from_osi_config(
                                     getattr(left, lc) == getattr(right, rc)
                                     for lc, rc in zip(lcols, rcols)
                                 ]
-                                result = pairs[0]
+                                res = pairs[0]
                                 for p in pairs[1:]:
-                                    result = result & p
-                                return result
+                                    res = res & p
+                                return res
 
                             return cond
 
-                        result[from_ds] = result[from_ds].join_one(
-                            result[to_ds],
-                            on=_make_join_cond(from_cols, to_cols),
-                        )
+                        # Detect cardinality from custom_extensions
+                        cardinality = "one"
+                        for ext in rel.get("custom_extensions", []):
+                            if ext.get("vendor_name") == "COMMON":
+                                try:
+                                    data = json.loads(ext["data"])
+                                    if data.get("cardinality") in ("one", "many"):
+                                        cardinality = data["cardinality"]
+                                except (json.JSONDecodeError, KeyError):
+                                    pass
+
+                        on_cond = _make_join_cond(from_cols, to_cols)
+                        if cardinality == "many":
+                            result[from_ds] = result[from_ds].join_many(
+                                result[to_ds], on=on_cond
+                            )
+                        else:
+                            result[from_ds] = result[from_ds].join_one(
+                                result[to_ds], on=on_cond
+                            )
 
     return result
 
@@ -368,11 +401,14 @@ def _parse_dimension_or_measure(
     expr_str, description, extra_kwargs = _parse_expression_config(name, config, metric_type)
     deferred = safe_eval(expr_str, context={"_": _}).unwrap()
     base_kwargs = {"expr": deferred, "description": description}
-    return (
-        Dimension(**base_kwargs, **extra_kwargs)
-        if metric_type == "dimension"
-        else Measure(**base_kwargs)
-    )
+    if metric_type == "dimension":
+        return Dimension(**base_kwargs, **extra_kwargs)
+    else:
+        # Pass through ai_context for measures too
+        meas_kwargs = base_kwargs
+        if "ai_context" in extra_kwargs:
+            meas_kwargs["ai_context"] = extra_kwargs["ai_context"]
+        return Measure(**meas_kwargs)
 
 
 def _parse_calc_measure(name: str, config: str | dict) -> Measure:

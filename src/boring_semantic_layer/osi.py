@@ -55,9 +55,10 @@ def _ibis_string_to_sql(s: str) -> str:
     if m:
         return m.group(1)
 
-    if s.startswith("_."):
-        return s[2:]
-    return s
+    # For non-trivial expressions (concat, case, etc.) that don't match
+    # known patterns, return None to signal the caller that we can't produce
+    # valid SQL. Stripping "_." would leak Ibis method syntax.
+    return None
 
 
 def _expr_to_sql_string(expr: Any) -> str | None:
@@ -160,6 +161,43 @@ def _measure_to_osi_metric(name: str, measure: Measure, dataset_name: str | None
     return metric
 
 
+def _walk_predicate_for_columns(
+    op_node, left_cols: set[str], right_cols: set[str]
+) -> tuple[list[str], list[str]]:
+    """Extract (from_columns, to_columns) from an ibis Equals expression tree."""
+    from_list: list[str] = []
+    to_list: list[str] = []
+
+    def _extract_eq(node):
+        """Handle Equals(Field, Field) nodes."""
+        cls_name = type(node).__name__
+        if cls_name == "Equals":
+            args = node.args
+            names = []
+            for arg in args:
+                if hasattr(arg, "name") and isinstance(arg.name, str):
+                    names.append(arg.name)
+            if len(names) == 2:
+                a, b = names
+                if a in left_cols and b in right_cols:
+                    from_list.append(a)
+                    to_list.append(b)
+                elif b in left_cols and a in right_cols:
+                    from_list.append(b)
+                    to_list.append(a)
+        elif cls_name == "And":
+            for arg in node.args:
+                _extract_eq(arg)
+        # Recurse into args that are ops
+        if not from_list:
+            for arg in getattr(node, "args", []):
+                if hasattr(arg, "args"):
+                    _extract_eq(arg)
+
+    _extract_eq(op_node)
+    return from_list, to_list
+
+
 def _extract_join_info(model: SemanticModel) -> list[dict]:
     """Extract relationship info from a model's join chain."""
     from .ops import SemanticJoinOp
@@ -177,14 +215,37 @@ def _extract_join_info(model: SemanticModel) -> list[dict]:
             return _name(inner)
         return "unnamed"
 
+    def _extract_join_cols(node) -> tuple[list[str], list[str]]:
+        """Try to extract join column names from a SemanticJoinOp predicate."""
+        if node.on is None:
+            return [], []
+        try:
+            # Build mock tables from left/right schemas
+            import ibis
+            left_tbl = node.left.to_expr() if hasattr(node.left, "to_expr") else None
+            right_tbl = node.right.to_expr() if hasattr(node.right, "to_expr") else None
+            if left_tbl is None or right_tbl is None:
+                return [], []
+            # Evaluate the predicate to get an ibis expression
+            pred = node.on(left_tbl, right_tbl)
+            # Walk the expression tree to find Equals(field, field) patterns
+            op_node = pred.op()
+            from_cols, to_cols = _walk_predicate_for_columns(
+                op_node, set(left_tbl.columns), set(right_tbl.columns)
+            )
+            return from_cols, to_cols
+        except Exception:
+            return [], []
+
     def _walk(node):
         if isinstance(node, SemanticJoinOp):
+            from_cols, to_cols = _extract_join_cols(node)
             rel: dict[str, Any] = {
                 "name": f"{_name(node.left)}_{_name(node.right)}",
                 "from": _name(node.left),
                 "to": _name(node.right),
-                "from_columns": ["unknown"],
-                "to_columns": ["unknown"],
+                "from_columns": from_cols or ["unknown"],
+                "to_columns": to_cols or ["unknown"],
             }
             if hasattr(node, "cardinality"):
                 rel["custom_extensions"] = [
@@ -280,9 +341,27 @@ def to_osi(
             all_metrics.append(_measure_to_osi_metric(meas_name, meas, model_name))
 
         for cm_name, cm_fn in op.get_calculated_measures().items():
+            # Try to extract the formula from the calculated measure
+            cm_expr_str = None
+            if isinstance(cm_fn, Measure) and cm_fn.original_expr is not None:
+                cm_expr_str = _expr_to_sql_string(cm_fn.original_expr)
+            if cm_expr_str is None and isinstance(cm_fn, Measure):
+                cm_expr_str = _expr_to_sql_string(cm_fn.expr)
+            # Try inspecting closure for the source expression string
+            if cm_expr_str is None and callable(cm_fn):
+                import inspect
+                try:
+                    closure = inspect.getclosurevars(cm_fn)
+                    if "source" in closure.nonlocals:
+                        src = closure.nonlocals["source"]
+                        # Convert _.meas_a / _.meas_b style to readable form
+                        cm_expr_str = src.replace("_.", "")
+                except Exception:
+                    pass
+
             metric: dict[str, Any] = {
                 "name": cm_name,
-                "expression": _make_osi_expression(cm_name),
+                "expression": _make_osi_expression(cm_expr_str or cm_name),
             }
             if isinstance(cm_fn, Measure) and cm_fn.description:
                 metric["description"] = cm_fn.description
