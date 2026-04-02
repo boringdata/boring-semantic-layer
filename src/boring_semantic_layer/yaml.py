@@ -30,6 +30,8 @@ def _parse_expression_config(name: str, config: str | dict, metric_type: str):
             extra_kwargs["is_time_dimension"] = config.get("is_time_dimension", False)
             extra_kwargs["smallest_time_grain"] = config.get("smallest_time_grain")
             extra_kwargs["derived_dimensions"] = tuple(config.get("derived_dimensions") or ())
+        if "ai_context" in config:
+            extra_kwargs["ai_context"] = config["ai_context"]
         return config["expr"], config.get("description"), extra_kwargs
     else:
         raise ValueError(f"Invalid {metric_type} format for '{name}'. Must be a string or dict")

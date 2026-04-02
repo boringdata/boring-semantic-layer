@@ -626,22 +626,24 @@ def _infer_unnest(fn: Callable, table: Any) -> tuple[str, ...]:
     return ()
 
 
-def _extract_measure_metadata(fn_or_expr: Any) -> tuple[Any, str | None, tuple]:
+def _extract_measure_metadata(fn_or_expr: Any) -> tuple[Any, str | None, tuple, Any]:
     """Extract metadata from various measure representations."""
     if isinstance(fn_or_expr, dict):
         return (
             fn_or_expr["expr"],
             fn_or_expr.get("description"),
             tuple(fn_or_expr.get("requires_unnest", [])),
+            fn_or_expr.get("ai_context"),
         )
     elif isinstance(fn_or_expr, Measure):
         return (
             fn_or_expr.expr,
             fn_or_expr.description,
             fn_or_expr.requires_unnest,
+            fn_or_expr.ai_context,
         )
     else:
-        return (fn_or_expr, None, ())
+        return (fn_or_expr, None, (), None)
 
 
 _AGG_METHODS = frozenset({"sum", "mean", "avg", "count", "min", "max"})
@@ -733,6 +735,7 @@ def _make_base_measure(
     expr: Any,
     description: str | None,
     requires_unnest: tuple,
+    ai_context: Any = None,
 ) -> Measure:
     """Create a base measure with proper callable wrapping using functional patterns."""
 
@@ -788,6 +791,7 @@ def _make_base_measure(
             description=description,
             requires_unnest=requires_unnest,
             original_expr=raw_expr,
+            ai_context=ai_context,
         )
 
     if callable(expr):
@@ -806,6 +810,7 @@ def _make_base_measure(
             description=description,
             requires_unnest=requires_unnest,
             original_expr=raw_expr,
+            ai_context=ai_context,
         )
     else:
         return Measure(
@@ -813,12 +818,13 @@ def _make_base_measure(
             description=description,
             requires_unnest=requires_unnest,
             original_expr=raw_expr,
+            ai_context=ai_context,
         )
 
 
 def _classify_measure(fn_or_expr: Any, scope: Any) -> tuple[str, Any]:
     """Classify measure as 'calc' or 'base' with appropriate handling."""
-    expr, description, requires_unnest = _extract_measure_metadata(fn_or_expr)
+    expr, description, requires_unnest, ai_context = _extract_measure_metadata(fn_or_expr)
 
     resolved = safe(lambda: _resolve_expr(expr, scope))().map(
         lambda val: ("calc", val) if _is_calculated_measure(val) else None
@@ -833,7 +839,7 @@ def _classify_measure(fn_or_expr: Any, scope: Any) -> tuple[str, Any]:
         inferred_unnest = _infer_unnest(expr, table)
         requires_unnest = requires_unnest or inferred_unnest
 
-    return ("base", _make_base_measure(expr, description, requires_unnest))
+    return ("base", _make_base_measure(expr, description, requires_unnest, ai_context))
 
 
 def _build_json_definition(
@@ -953,6 +959,7 @@ class Dimension:
     is_event_timestamp: bool = False
     smallest_time_grain: str | None = None
     derived_dimensions: tuple[str, ...] = ()
+    ai_context: str | dict | None = None
 
     def __call__(self, table: ir.Table, _dims: dict | None = None) -> ir.Value:
         try:
@@ -990,6 +997,8 @@ class Dimension:
             base["smallest_time_grain"] = self.smallest_time_grain
         if self.derived_dimensions:
             base["derived_dimensions"] = list(self.derived_dimensions)
+        if self.ai_context:
+            base["ai_context"] = self.ai_context
         return base
 
     def __hash__(self) -> int:
@@ -1011,6 +1020,7 @@ class Measure:
     description: str | None = None
     requires_unnest: tuple[str, ...] = ()  # Internal: Arrays that must be unnested
     original_expr: Any = field(default=None, eq=False, hash=False)
+    ai_context: str | dict | None = None
 
     def __call__(self, table: ir.Table) -> ir.Value:
         return self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
@@ -1026,6 +1036,8 @@ class Measure:
             base["locality"] = self.locality
         if self.requires_unnest:
             base["requires_unnest"] = list(self.requires_unnest)
+        if self.ai_context:
+            base["ai_context"] = self.ai_context
         return base
 
     def __hash__(self) -> int:
