@@ -112,8 +112,17 @@ def _strip_dataset_prefix(sql: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _osi_field_to_dimension(field: dict) -> tuple[str, Dimension]:
-    """Convert an OSI field dict to a ``(name, Dimension)`` pair."""
+def _osi_field_to_dimension(
+    field: dict, primary_key_cols: set[str] | None = None
+) -> tuple[str, Dimension]:
+    """Convert an OSI field dict to a ``(name, Dimension)`` pair.
+
+    Args:
+        field: OSI field definition.
+        primary_key_cols: Column names from the dataset's ``primary_key``.
+            If the field's expression matches one of these, the dimension
+            is marked ``is_entity=True``.
+    """
     name = field["name"]
     sql_expr = _parse_osi_expression(field["expression"])
     deferred = _sql_to_deferred(sql_expr)
@@ -129,6 +138,13 @@ def _osi_field_to_dimension(field: dict) -> tuple[str, Dimension]:
 
     if "ai_context" in field:
         kwargs["ai_context"] = field["ai_context"]
+
+    if field.get("label"):
+        kwargs["label"] = field["label"]
+
+    # Mark as entity if the field appears in the dataset's primary_key
+    if primary_key_cols and (sql_expr in primary_key_cols or name in primary_key_cols):
+        kwargs["is_entity"] = True
 
     # Recover BSL-specific metadata stored in custom_extensions
     for ext in field.get("custom_extensions", []):
@@ -235,13 +251,19 @@ def _from_osi_config(
                     continue
 
             model = to_semantic_table(
-                table, name=ds_name, description=ds.get("description")
+                table,
+                name=ds_name,
+                description=ds.get("description"),
+                ai_context=ds.get("ai_context"),
             )
+
+            # primary_key column names for is_entity detection
+            pk_cols = set(ds.get("primary_key") or [])
 
             # Fields -> Dimensions
             dimensions: dict[str, Dimension] = {}
             for field in ds.get("fields", []):
-                dim_name, dim = _osi_field_to_dimension(field)
+                dim_name, dim = _osi_field_to_dimension(field, pk_cols)
                 dimensions[dim_name] = dim
             if dimensions:
                 model = model.with_dimensions(**dimensions)
@@ -262,7 +284,7 @@ def _from_osi_config(
 
             result[ds_name] = model
 
-        # Relationships -> Joins
+        # Relationships -> Joins (supports multi-column keys)
         if tables and relationships:
             for rel in relationships:
                 from_ds = rel.get("from", "")
@@ -270,16 +292,29 @@ def _from_osi_config(
                 if from_ds in result and to_ds in result:
                     from_cols = rel.get("from_columns", [])
                     to_cols = rel.get("to_columns", [])
-                    if from_cols and to_cols and from_cols[0] != "unknown":
+                    if (
+                        from_cols
+                        and to_cols
+                        and len(from_cols) == len(to_cols)
+                        and from_cols[0] != "unknown"
+                    ):
 
-                        def _make_join_cond(lc, rc):
-                            return lambda left, right: getattr(left, lc) == getattr(
-                                right, rc
-                            )
+                        def _make_join_cond(lcols, rcols):
+                            def cond(left, right):
+                                pairs = [
+                                    getattr(left, lc) == getattr(right, rc)
+                                    for lc, rc in zip(lcols, rcols)
+                                ]
+                                result = pairs[0]
+                                for p in pairs[1:]:
+                                    result = result & p
+                                return result
+
+                            return cond
 
                         result[from_ds] = result[from_ds].join_one(
                             result[to_ds],
-                            on=_make_join_cond(from_cols[0], to_cols[0]),
+                            on=_make_join_cond(from_cols, to_cols),
                         )
 
     return result

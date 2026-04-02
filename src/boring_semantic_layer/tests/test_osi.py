@@ -403,6 +403,94 @@ class TestFromConfig_OSI:
         assert dims["item_id"].ai_context == {"synonyms": ["SKU", "product_id"]}
 
 
+    def test_primary_key_sets_is_entity(self):
+        """primary_key field names should become is_entity=True dimensions."""
+        config = {
+            "version": "0.1.1",
+            "semantic_model": [{
+                "name": "test",
+                "datasets": [{
+                    "name": "users",
+                    "source": "users",
+                    "primary_key": ["user_id"],
+                    "fields": [
+                        {
+                            "name": "user_id",
+                            "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "user_id"}]},
+                        },
+                        {
+                            "name": "email",
+                            "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "email"}]},
+                        },
+                    ],
+                }],
+            }],
+        }
+        dims = from_config(config)["users"].op().get_dimensions()
+        assert dims["user_id"].is_entity is True
+        assert dims["email"].is_entity is False
+
+    def test_dataset_ai_context(self):
+        """Dataset-level ai_context should be stored on the model."""
+        config = {
+            "version": "0.1.1",
+            "semantic_model": [{
+                "name": "test",
+                "datasets": [{
+                    "name": "products",
+                    "source": "products",
+                    "ai_context": {"synonyms": ["items", "SKUs"]},
+                    "fields": [{
+                        "name": "id",
+                        "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "id"}]},
+                    }],
+                }],
+            }],
+        }
+        op = from_config(config)["products"].op()
+        assert op.get_ai_context() == {"synonyms": ["items", "SKUs"]}
+
+    def test_field_label(self):
+        """Field label should be stored on the Dimension."""
+        config = {
+            "version": "0.1.1",
+            "semantic_model": [{
+                "name": "test",
+                "datasets": [{
+                    "name": "events",
+                    "source": "events",
+                    "fields": [{
+                        "name": "status",
+                        "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "status"}]},
+                        "label": "filter",
+                    }],
+                }],
+            }],
+        }
+        dims = from_config(config)["events"].op().get_dimensions()
+        assert dims["status"].label == "filter"
+
+    def test_label_round_trip(self):
+        """label survives BSL -> OSI -> BSL."""
+        import ibis
+        t = ibis.table({"status": "string"}, name="events")
+        m = to_semantic_table(t, name="events")
+        m = m.with_dimensions(status=Dimension(expr=ibis._.status, label="filter"))
+        osi = to_osi(m)
+        models = from_config(osi)
+        assert models["events"].op().get_dimensions()["status"].label == "filter"
+
+    def test_dataset_ai_context_round_trip(self):
+        """Dataset ai_context survives BSL -> OSI -> BSL."""
+        import ibis
+        t = ibis.table({"id": "int64"}, name="items")
+        m = to_semantic_table(t, name="items", ai_context={"synonyms": ["products"]})
+        m = m.with_dimensions(id=Dimension(expr=ibis._.id))
+        osi = to_osi(m)
+        op = from_config(osi)["items"].op()
+        assert op.get_ai_context() == {"synonyms": ["products"]}
+
+
 # ---------------------------------------------------------------------------
 # Round-trip tests
 # ---------------------------------------------------------------------------

@@ -102,6 +102,8 @@ def _dimension_to_osi_field(name: str, dim: Dimension) -> dict:
 
     if dim.description:
         field["description"] = dim.description
+    if dim.label:
+        field["label"] = dim.label
     if dim.ai_context:
         field["ai_context"] = dim.ai_context
 
@@ -264,6 +266,9 @@ def to_osi(
 
         if op.description:
             dataset["description"] = op.description
+        ds_ai_ctx = op.get_ai_context()
+        if ds_ai_ctx:
+            dataset["ai_context"] = ds_ai_ctx
 
         fields = [_dimension_to_osi_field(n, d) for n, d in dims.items()]
         if fields:

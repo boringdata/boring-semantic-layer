@@ -433,6 +433,7 @@ class SemanticModel(SemanticTable):
         calc_measures: Mapping[str, Any] | None = None,
         name: str | None = None,
         description: str | None = None,
+        ai_context: str | dict | None = None,
         _source_join: Any | None = None,
     ) -> None:
         # Keep tables in regular ibis - only convert to xorq at execution time if needed
@@ -452,6 +453,11 @@ class SemanticModel(SemanticTable):
 
         derived_name = name or _derive_name(table)
 
+        # Serialize dict ai_context to JSON string for ibis hashability
+        import json as _json
+
+        _ai_ctx = _json.dumps(ai_context, sort_keys=True) if isinstance(ai_context, dict) else ai_context
+
         op = SemanticTableOp(
             table=table,
             dimensions=dims,
@@ -459,6 +465,7 @@ class SemanticModel(SemanticTable):
             calc_measures=calc_meas,
             name=derived_name,
             description=description,
+            ai_context=_ai_ctx,
             _source_join=_source_join,
         )
 
@@ -525,6 +532,7 @@ class SemanticModel(SemanticTable):
             calc_measures=self.get_calculated_measures(),
             name=self.name,
             description=self.description,
+            ai_context=self.op().ai_context,
         )
 
     def with_measures(self, **meas) -> SemanticModel:
@@ -548,6 +556,7 @@ class SemanticModel(SemanticTable):
             calc_measures=new_calc_meas,
             name=self.name,
             description=self.description,
+            ai_context=self.op().ai_context,
         )
 
     def join_one(

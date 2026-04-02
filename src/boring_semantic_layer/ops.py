@@ -960,6 +960,7 @@ class Dimension:
     smallest_time_grain: str | None = None
     derived_dimensions: tuple[str, ...] = ()
     ai_context: str | dict | None = None
+    label: str | None = None
 
     def __call__(self, table: ir.Table, _dims: dict | None = None) -> ir.Value:
         try:
@@ -999,6 +1000,8 @@ class Dimension:
             base["derived_dimensions"] = list(self.derived_dimensions)
         if self.ai_context:
             base["ai_context"] = self.ai_context
+        if self.label:
+            base["label"] = self.label
         return base
 
     def __hash__(self) -> int:
@@ -1059,9 +1062,24 @@ class SemanticTableOp(Relation):
     calc_measures: FrozenDict[str, Any]
     name: str | None = None
     description: str | None = None
+    ai_context: str | None = None  # JSON string when dict; plain string otherwise
     _source_join: Any = field(
         default=None, repr=False
     )  # Track if this wraps a join (SemanticJoinOp) for optimization
+
+    def get_ai_context(self) -> str | dict | None:
+        """Return ai_context, deserializing JSON-encoded dicts."""
+        val = self.ai_context
+        if val is None:
+            return None
+        try:
+            import json
+            parsed = json.loads(val)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+        return val
 
     def __init__(
         self,
@@ -1071,6 +1089,7 @@ class SemanticTableOp(Relation):
         calc_measures: dict[str, Any] | FrozenDict[str, Any],
         name: str | None = None,
         description: str | None = None,
+        ai_context: str | dict | None = None,
         _source_join: Any = None,
     ) -> None:
         # Accept both regular ibis and xorq tables without conversion
@@ -1086,6 +1105,7 @@ class SemanticTableOp(Relation):
             else calc_measures,
             name=name,
             description=description,
+            ai_context=ai_context,
             _source_join=_source_join,
         )
 
