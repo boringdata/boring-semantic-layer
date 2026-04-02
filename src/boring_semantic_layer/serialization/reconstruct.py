@@ -261,7 +261,10 @@ def _reconstruct_join(
     right_model = reconstruct_bsl_operation(right_metadata, right_xorq_expr, context)
 
     how = metadata.get("how", "inner")
-    cardinality = metadata.get("cardinality", "one")
+    # Default to "many" for payloads serialized before cardinality was
+    # emitted — join_many is a safe superset of join_one behaviour, while
+    # the reverse silently skips pre-aggregation.  (Fixes #223.)
+    cardinality = metadata.get("cardinality", "many")
     on_struct = metadata.get("on_struct")
 
     if on_struct is None:

@@ -320,6 +320,7 @@ class TestJoinCardinalitySerialization:
 
         cardinality = find_cardinality(metadata)
         assert cardinality == "many"
+<<<<<<< HEAD
 
 
 # ---------------------------------------------------------------------------
