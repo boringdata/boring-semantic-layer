@@ -2207,7 +2207,14 @@ class SemanticAggregateOp(Relation):
         # Only use the join optimization if there are no filters after the join
         # Otherwise we'd skip the filter operations
         if join_op is not None and not collected_filters:
-            tbl = join_op.to_untagged(parent_requirements=self.required_columns)
+            # Build table-level requirements from prefixed keys and measure
+            # names so the join can prune tables that the query never touches.
+            needed_tables: dict[str, set[str]] = {}
+            for name in (*self.keys, *self.aggs.keys()):
+                if "." in name:
+                    tbl_prefix = name.split(".", 1)[0]
+                    needed_tables.setdefault(tbl_prefix, set()).add(name)
+            tbl = join_op.to_untagged(parent_requirements=needed_tables or None)
         else:
             tbl = _to_untagged(self.source)
 
@@ -3667,30 +3674,46 @@ class SemanticJoinOp(Relation):
         return "{name}_right" if depth <= 1 else f"{{name}}_right{depth}"
 
     def to_untagged(self, parent_requirements: dict[str, set[str]] | None = None):
-        """Convert join to Ibis expression.
+        """Convert join to Ibis expression, pruning unnecessary joins.
 
-        Note: Projection pushdown has been disabled for compatibility with xorq's
-        vendored ibis, which has stricter column access after joins. Without projection
-        pushdown, all columns from both tables are available after the join.
+        When *parent_requirements* is provided (a dict mapping table names to
+        sets of needed columns), right-side leaf tables that contribute no
+        required columns are skipped entirely.  This avoids expensive joins
+        to dimension tables whose columns are never referenced by the query.
 
         Args:
-            parent_requirements: Ignored. Kept for API compatibility.
+            parent_requirements: Optional mapping of ``{table_name: {col, …}}``.
+                When provided, joins to tables absent from this dict are elided.
 
         Returns:
-            Ibis join expression with all columns from both tables
+            Ibis join expression (potentially simplified).
         """
         from .convert import _Resolver
 
-        # Simply convert both sides without any projection pushdown
+        # --- Join pruning: skip right-side tables not needed by the query ---
+        if parent_requirements is not None:
+            needed = frozenset(parent_requirements.keys())
+            right_tables = (
+                self.right._collect_leaf_table_names()
+                if isinstance(self.right, SemanticJoinOp)
+                else {getattr(self.right, "name", None)} - {None}
+            )
+            if right_tables and not (right_tables & needed):
+                # Right side contributes nothing the parent needs — skip it.
+                if isinstance(self.left, SemanticJoinOp):
+                    return self.left.to_untagged(parent_requirements=parent_requirements)
+                return _to_untagged(self.left)
+
+        # Build both sides, passing requirements down for recursive pruning.
         left_tbl = (
             _to_untagged(self.left)
             if not isinstance(self.left, SemanticJoinOp)
-            else self.left.to_untagged()
+            else self.left.to_untagged(parent_requirements=parent_requirements)
         )
         right_tbl = (
             _to_untagged(self.right)
             if not isinstance(self.right, SemanticJoinOp)
-            else self.right.to_untagged()
+            else self.right.to_untagged(parent_requirements=parent_requirements)
         )
 
         # Rebind right side's DatabaseTable ops to use the same backend as
