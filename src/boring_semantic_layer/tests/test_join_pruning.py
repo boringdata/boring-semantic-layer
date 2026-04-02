@@ -66,7 +66,13 @@ def star_schema(con):
 
 
 def _build_star_model(star_schema):
-    """Build a joined model with fact + 3 dimension tables."""
+    """Build a joined model with fact + 3 dimension tables using LEFT joins.
+
+    Left joins are safe for pruning — they don't filter unmatched left rows.
+    Chained .join_one() defaults to how="inner" which cannot be pruned
+    since inner joins act as filters on unmatched rows, so we pass
+    how="left" explicitly.
+    """
     facts = (
         to_semantic_table(star_schema["facts"], name="facts")
         .with_dimensions(
@@ -106,8 +112,8 @@ def _build_star_model(star_schema):
 
     return (
         facts.join_one(dates, on=lambda f, d: f.date_id == d.date_id)
-        .join_one(stores, on=lambda f, s: f.store_id == s.store_id)
-        .join_one(items, on=lambda f, i: f.item_id == i.item_id)
+        .join_one(stores, on=lambda f, s: f.store_id == s.store_id, how="left")
+        .join_one(items, on=lambda f, i: f.item_id == i.item_id, how="left")
     )
 
 
@@ -252,3 +258,68 @@ class TestJoinPruningCorrectness:
         )
 
         assert list(result["facts.total_sales"]) == list(manual["total_sales"])
+
+
+class TestJoinPruningEdgeCases:
+    """Edge cases: inner joins, orphan rows, filters, join_many."""
+
+    def test_inner_join_not_pruned(self, con):
+        """Inner joins must NOT be pruned — they filter unmatched left rows."""
+        facts_with_orphan = con.create_table(
+            "facts_orphan",
+            pd.DataFrame(
+                {
+                    "date_id": [1, 999],  # 999 has no match in dates
+                    "sale_amount": [10.0, 100.0],
+                }
+            ),
+        )
+        dates_inner = con.create_table(
+            "dates_inner",
+            pd.DataFrame({"date_id": [1], "date_name": ["Jan"]}),
+        )
+
+        f = (
+            to_semantic_table(facts_with_orphan, name="facts_o")
+            .with_dimensions(date_id=lambda t: t.date_id)
+            .with_measures(total_sales=lambda t: t.sale_amount.sum())
+        )
+        d = to_semantic_table(dates_inner, name="dates_i").with_dimensions(
+            date_id=lambda t: t.date_id, date_name=lambda t: t.date_name
+        )
+
+        # Inner join: the orphan row (date_id=999) should be excluded.
+        # Use how="inner" — pruning must NOT remove this join.
+        model = f.join_one(d, on=lambda l, r: l.date_id == r.date_id, how="inner")
+        result = model.aggregate("facts_o.total_sales").execute()
+
+        # Inner join filters out the orphan row — total should be 10, not 110
+        assert result["facts_o.total_sales"].iloc[0] == 10.0
+
+    def test_filter_prevents_pruning(self, star_schema):
+        """Filters between join and aggregate disable pruning (safe fallback)."""
+        model = _build_star_model(star_schema)
+        result = (
+            model.filter(lambda t: t["stores.city"] == "NYC")
+            .aggregate("facts.total_sales")
+            .execute()
+        )
+        # Downtown store (NYC, store_id=10): rows with store_id=10 => 10+30+50=90
+        assert result["facts.total_sales"].iloc[0] == 90.0
+
+    def test_sql_single_dim_prunes_others(self, star_schema):
+        """When grouping by one dim, other dim tables should be absent from SQL."""
+        model = _build_star_model(star_schema)
+        ibis_expr = (
+            model.group_by("stores.store_name")
+            .aggregate("facts.total_sales")
+            .op()
+            .to_untagged()
+        )
+        sql = str(ibis.to_sql(ibis_expr)).lower()
+
+        # stores and facts should be present
+        assert "stores" in sql
+        # dates and items should be pruned
+        assert "dates" not in sql
+        assert "items" not in sql

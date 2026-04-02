@@ -2209,6 +2209,9 @@ class SemanticAggregateOp(Relation):
         if join_op is not None and not collected_filters:
             # Build table-level requirements from prefixed keys and measure
             # names so the join can prune tables that the query never touches.
+            # When all names are unprefixed (single-table or post-agg), the
+            # dict is empty and `or None` disables pruning — correct since
+            # there's nothing to prune in that case.
             needed_tables: dict[str, set[str]] = {}
             for name in (*self.keys, *self.aggs.keys()):
                 if "." in name:
@@ -3692,7 +3695,15 @@ class SemanticJoinOp(Relation):
         from .convert import _Resolver
 
         # --- Join pruning: skip right-side tables not needed by the query ---
-        if parent_requirements is not None:
+        # Only prune join_one with LEFT join semantics.  Inner joins act as
+        # a filter (excluding unmatched left rows) and must not be removed.
+        # join_many / join_cross affect row counts and are never pruned here
+        # (join_many is intercepted by the pre-aggregation path earlier).
+        if (
+            parent_requirements is not None
+            and self.cardinality == "one"
+            and self.how == "left"
+        ):
             needed = frozenset(parent_requirements.keys())
             right_tables = (
                 self.right._collect_leaf_table_names()
