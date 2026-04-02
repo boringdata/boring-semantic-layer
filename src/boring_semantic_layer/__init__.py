@@ -44,8 +44,6 @@ from .yaml import (
     from_yaml,
 )
 from .osi import (
-    from_osi,
-    from_osi_yaml,
     to_osi,
     to_osi_yaml,
 )
@@ -65,8 +63,6 @@ __all__ = [
     "from_yaml",
     "to_osi",
     "to_osi_yaml",
-    "from_osi",
-    "from_osi_yaml",
     "MCPSemanticModel",
     "LangGraphBackend",
     "options",
