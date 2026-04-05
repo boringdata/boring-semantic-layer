@@ -2575,9 +2575,18 @@ class SemanticAggregateOp(Relation):
                     if prefix == table_name and short in table_dims:
                         dim_fn = table_dims[short]
                         if callable(dim_fn):
-                            col_name = dim_fn(raw_tbl).get_name()
-                            if col_name in raw_columns and col_name not in _local_dims:
-                                _local_dims.append(col_name)
+                            dim_expr = dim_fn(raw_tbl)
+                            col_name = dim_expr.get_name()
+                            if col_name == short and col_name in raw_columns:
+                                # Simple column reference — use directly
+                                if col_name not in _local_dims:
+                                    _local_dims.append(col_name)
+                            elif col_name in raw_columns or short not in raw_columns:
+                                # Derived dimension — materialize on raw_tbl
+                                raw_tbl = raw_tbl.mutate(**{short: dim_expr})
+                                raw_columns = set(raw_tbl.columns)
+                                if short not in _local_dims:
+                                    _local_dims.append(short)
                     elif prefix != table_name:
                         has_cross_table_gb = True
 
