@@ -175,7 +175,7 @@ def _extract_limit(op, context: BSLSerializationContext) -> dict[str, Any]:
 def _extract_join(op, context: BSLSerializationContext) -> dict[str, Any]:
     from ..utils import join_predicate_to_structured
 
-    metadata: dict[str, Any] = {"how": op.how}
+    metadata: dict[str, Any] = {"how": op.how, "cardinality": op.cardinality}
     if op.on is not None:
         struct_result = join_predicate_to_structured(op.on)
         match struct_result:
