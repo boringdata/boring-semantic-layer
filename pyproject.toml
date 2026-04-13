@@ -22,6 +22,9 @@ license-files = [
 [project.scripts]
 bsl = "boring_semantic_layer.agents.cli:main"
 
+[project.entry-points."xorq.from_tag_node"]
+bsl = "boring_semantic_layer.xorq_integration:bsl_tag_handler"
+
 [project.optional-dependencies]
 examples = ["xorq[duckdb]>=0.3.4", "xorq", "duckdb<1.4"]
 
@@ -118,3 +121,9 @@ known-first-party = ["boring_semantic_layer"]
 dev = [
     "ipython>=8.38.0",
 ]
+
+# Pin xorq to a specific revision that ships the xorq.expr.builders
+# TagHandler registry (required by boring_semantic_layer.xorq_integration).
+# TODO: drop this pin once xorq publishes a release containing commit 4b3d8033.
+[tool.uv.sources]
+xorq = { git = "https://github.com/xorq-labs/xorq.git", rev = "4b3d8033" }
