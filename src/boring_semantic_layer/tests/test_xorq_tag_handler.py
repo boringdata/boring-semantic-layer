@@ -19,7 +19,7 @@ import pytest
 
 from boring_semantic_layer import SemanticModel
 from boring_semantic_layer.serialization import to_tagged
-from boring_semantic_layer.xorq_integration import (
+from boring_semantic_layer.serialization.tag_handler import (
     bsl_tag_handler,
     extract_metadata,
     from_tag_node,

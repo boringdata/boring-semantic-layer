@@ -23,7 +23,7 @@ license-files = [
 bsl = "boring_semantic_layer.agents.cli:main"
 
 [project.entry-points."xorq.from_tag_node"]
-bsl = "boring_semantic_layer.xorq_integration:bsl_tag_handler"
+bsl = "boring_semantic_layer.serialization.tag_handler:bsl_tag_handler"
 
 [project.optional-dependencies]
 examples = ["xorq[duckdb]>=0.3.4", "xorq", "duckdb<1.4"]

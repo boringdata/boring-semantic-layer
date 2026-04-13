@@ -18,12 +18,12 @@ from typing import Any
 
 from xorq.expr.builders import TagHandler
 
-from .serialization import (
+from . import (
     BSLSerializationContext,
     extract_xorq_metadata,
     reconstruct_bsl_operation,
 )
-from .serialization.freeze import thaw
+from .freeze import thaw
 
 
 def extract_metadata(tag_node) -> dict[str, Any]:
