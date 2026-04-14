@@ -183,6 +183,23 @@ Execute queries against a semantic model with dimensions, measures, filters, and
 - When `chart_spec` is provided: `{"records": [...], "chart": {...}}`
 - When `chart_spec` is not provided: `{"records": [...]}`
 
+### compare_periods
+
+Compare two explicit time ranges and return `{measure}_current`, `{measure}_previous`, `{measure}_delta`, and `{measure}_pct_change` columns in a single response. This is the recommended MCP pattern for period-over-period chat questions.
+
+**Parameters:**
+- `model_name` (str): Name of the model to query
+- `measures` (list[str]): Measures to compare
+- `current_time_range` (dict): Current period with `start` and `end`
+- `previous_time_range` (dict): Comparison period with `start` and `end`
+- `dimensions` (list[str], optional): Optional grouping dimensions like `carrier` or `store`
+- `filters` (list[dict], optional): Optional filters applied to both periods
+- `time_dimension` (str, optional): Explicit time dimension when a model has more than one
+
+**Example usage in Claude:**
+> "Compare the last 10 days to the prior 10 days by carrier"
+> "Show revenue this month vs last month by store"
+
 ### Example Interactions
 
 Here are some example questions you can ask Claude when the MCP server is configured:

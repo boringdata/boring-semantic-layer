@@ -39,6 +39,7 @@ from .ops import (
     _normalize_join_predicate,
     _normalize_to_name,
 )
+from .query import compare_periods as build_compare_periods
 from .query import query as build_query
 
 _JOIN_REMOVED_MESSAGE = (
@@ -755,6 +756,33 @@ class SemanticModel(SemanticTable):
             time_grains=time_grains,
             time_range=time_range,
             having=having,
+        )
+
+    def compare_periods(
+        self,
+        dimensions: Sequence[str] | None = None,
+        measures: Sequence[str] | None = None,
+        current_time_range: dict[str, str] | None = None,
+        previous_time_range: dict[str, str] | None = None,
+        filters: list | None = None,
+        time_dimension: str | None = None,
+        time_grain: str | None = None,
+        time_grains: dict[str, str] | None = None,
+        order_by: Sequence[tuple[str, str]] | None = None,
+        limit: int | None = None,
+    ):
+        return build_compare_periods(
+            semantic_table=self,
+            dimensions=dimensions,
+            measures=measures,
+            current_time_range=current_time_range,
+            previous_time_range=previous_time_range,
+            filters=filters,
+            time_dimension=time_dimension,
+            time_grain=time_grain,
+            time_grains=time_grains,
+            order_by=order_by,
+            limit=limit,
         )
 
 
