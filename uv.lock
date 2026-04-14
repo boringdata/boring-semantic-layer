@@ -283,9 +283,9 @@ requires-dist = [
     { name = "urllib3", marker = "extra == 'dev'", specifier = ">=2.2.3" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.30.0" },
     { name = "vl-convert-python", marker = "extra == 'viz-altair'", specifier = ">=1.0.0" },
-    { name = "xorq", git = "https://github.com/xorq-labs/xorq.git?rev=4b3d8033" },
-    { name = "xorq", marker = "extra == 'examples'", git = "https://github.com/xorq-labs/xorq.git?rev=4b3d8033" },
-    { name = "xorq", extras = ["duckdb"], marker = "extra == 'examples'", git = "https://github.com/xorq-labs/xorq.git?rev=4b3d8033" },
+    { name = "xorq", specifier = ">=0.3.19" },
+    { name = "xorq", marker = "extra == 'examples'" },
+    { name = "xorq", extras = ["duckdb"], marker = "extra == 'examples'", specifier = ">=0.3.4" },
 ]
 provides-extras = ["examples", "viz-altair", "viz-plotly", "viz-plotext", "agent", "mcp", "server", "dev"]
 
@@ -4391,8 +4391,8 @@ wheels = [
 
 [[package]]
 name = "xorq"
-version = "0.3.18"
-source = { git = "https://github.com/xorq-labs/xorq.git?rev=4b3d8033#4b3d8033337c2171c545f2e7034c97031ac0063d" }
+version = "0.3.19"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "atpublic" },
     { name = "attrs", marker = "python_full_version < '4'" },
@@ -4429,6 +4429,10 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "uv" },
     { name = "xorq-datafusion" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d4/5f/17f6fe75773c313c688728a5273e818890a3307a009e54a69f0565a76079/xorq-0.3.19.tar.gz", hash = "sha256:3e0c46246db2bcd7653c0f581b7264fe49d48bfcda1ae40dcbea050581145726", size = 1964477, upload-time = "2026-04-14T13:14:23.58Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/38/04/aa60dc5f4fb30e12debbac2354b534c3f336467cc93db6769902f68ab312/xorq-0.3.19-py3-none-any.whl", hash = "sha256:eb55e59202c70f471be295882828f09e6728f43c7b04291c8013ca89b2ca5e69", size = 1898204, upload-time = "2026-04-14T13:14:21.966Z" },
 ]
 
 [package.optional-dependencies]
