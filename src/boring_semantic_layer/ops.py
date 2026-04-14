@@ -2256,14 +2256,40 @@ class SemanticAggregateOp(Relation):
 
         # Only use the join optimization if there are no filters after the join
         # Otherwise we'd skip the filter operations
+        needed_tables: dict[str, set[str]] = {}
         if join_op is not None and not collected_filters:
-            tbl = join_op.to_untagged(parent_requirements=self.required_columns)
+            # Build table-level requirements from prefixed keys and measure
+            # names so the join can prune tables that the query never touches.
+            # When all names are unprefixed (single-table or post-agg), the
+            # dict is empty and `or None` disables pruning — correct since
+            # there's nothing to prune in that case.
+            for name in (*self.keys, *self.aggs.keys()):
+                if "." in name:
+                    tbl_prefix = name.split(".", 1)[0]
+                    needed_tables.setdefault(tbl_prefix, set()).add(name)
+            tbl = join_op.to_untagged(parent_requirements=needed_tables or None)
         else:
             tbl = _to_untagged(self.source)
 
         merged_dimensions = _get_merged_fields(all_roots, "dimensions")
         merged_base_measures = _get_merged_fields(all_roots, "measures")
         merged_calc_measures = _get_merged_fields(all_roots, "calc_measures")
+
+        if needed_tables:
+            # Keep validation behavior for queried tables even when join pruning
+            # removes unrelated siblings. Validate each referenced root table
+            # against its own leaf schema so wrapped join aliases do not affect
+            # the error surface for local dimensions.
+            for root in all_roots:
+                if root.name not in needed_tables:
+                    continue
+                root_dimensions = _get_field_dict(root, "dimensions")
+                if root_dimensions:
+                    _mutate_dimensions_with_dependencies(
+                        _to_untagged(root),
+                        root_dimensions.keys(),
+                        root_dimensions,
+                    )
 
         tbl = _mutate_dimensions_with_dependencies(
             tbl,
@@ -2334,8 +2360,9 @@ class SemanticAggregateOp(Relation):
         )
 
         # --- 1. Try to build the full joined table (for scope / dim bridge) ---
+        # Pre-agg needs all tables for dimension bridges — no pruning here.
         try:
-            tbl = join_op.to_untagged(parent_requirements=self.required_columns)
+            tbl = join_op.to_untagged(parent_requirements=None)
             tbl = _mutate_dimensions_with_dependencies(
                 tbl,
                 [k for k in self.keys if k in merged_dimensions],
@@ -3714,6 +3741,146 @@ class SemanticJoinOp(Relation):
 
         return join_columns
 
+    def _augment_parent_requirements_for_pruning(
+        self,
+        parent_requirements: dict[str, set[str]] | None,
+    ) -> dict[str, set[str]] | None:
+        """Expand table requirements with bridge tables needed by descendant joins."""
+        if parent_requirements is None:
+            return None
+
+        augmented = {table: set(cols) for table, cols in parent_requirements.items()}
+
+        right_tables = (
+            self.right._collect_leaf_table_names()
+            if isinstance(self.right, SemanticJoinOp)
+            else {getattr(self.right, "name", None)} - {None}
+        )
+        if augmented.keys() & right_tables and self.on is not None:
+            temp_left = (
+                self.left.to_untagged(parent_requirements=None)
+                if isinstance(self.left, SemanticJoinOp)
+                else _to_untagged(self.left)
+            )
+            temp_right = (
+                self.right.to_untagged(parent_requirements=None)
+                if isinstance(self.right, SemanticJoinOp)
+                else _to_untagged(self.right)
+            )
+            join_keys = _extract_join_key_columns(self.on, temp_left, temp_right)
+            if join_keys.is_success():
+                join_key_columns = join_keys.left_columns | join_keys.right_columns
+                if isinstance(self.left, SemanticJoinOp):
+                    for col in join_keys.left_columns:
+                        for leaf_name in self.left._collect_leaf_table_names():
+                            leaf_table = self._get_leaf_table_by_name(self.left, leaf_name)
+                            if leaf_table is not None and col in _to_untagged(leaf_table).columns:
+                                augmented.setdefault(leaf_name, set())
+                else:
+                    left_name = getattr(self.left, "name", None)
+                    if left_name:
+                        augmented.setdefault(left_name, set())
+
+                right_needed_tables = right_tables & augmented.keys()
+                if isinstance(self.left, SemanticJoinOp) and right_needed_tables:
+                    left_leaf_names = self.left._collect_leaf_table_names()
+                    right_needed_leaf_names = [
+                        leaf_name for leaf_name in right_needed_tables
+                        if self._get_leaf_table_by_name(self, leaf_name) is not None
+                    ]
+                    for left_leaf_name in left_leaf_names:
+                        left_leaf = self._get_leaf_table_by_name(self.left, left_leaf_name)
+                        if left_leaf is None:
+                            continue
+                        left_columns = set(_to_untagged(left_leaf).columns) - join_key_columns
+                        if not left_columns:
+                            continue
+                        for right_leaf_name in right_needed_leaf_names:
+                            right_leaf = self._get_leaf_table_by_name(self, right_leaf_name)
+                            if right_leaf is None:
+                                continue
+                            right_columns = set(_to_untagged(right_leaf).columns) - join_key_columns
+                            if left_columns & right_columns:
+                                augmented.setdefault(left_leaf_name, set())
+                                break
+
+        if isinstance(self.left, SemanticJoinOp):
+            augmented = self.left._augment_parent_requirements_for_pruning(augmented) or augmented
+        if isinstance(self.right, SemanticJoinOp):
+            augmented = self.right._augment_parent_requirements_for_pruning(augmented) or augmented
+
+        return augmented
+
+    def _should_prune_right(self, parent_requirements: dict[str, set[str]] | None) -> bool:
+        """Return whether the right side can be skipped for the given requirements."""
+        if (
+            parent_requirements is None
+            or self.cardinality != "one"
+            or self.how != "left"
+        ):
+            return False
+
+        needed_tables = frozenset(parent_requirements.keys())
+        right_tables = (
+            self.right._collect_leaf_table_names()
+            if isinstance(self.right, SemanticJoinOp)
+            else {getattr(self.right, "name", None)} - {None}
+        )
+        if not right_tables or right_tables & needed_tables:
+            return False
+
+        # If an earlier sibling shares non-join columns with a still-needed
+        # table, pruning it changes the later table's rname-based aliases
+        # (e.g. ``state_right2`` vs ``state_right``). Keep the sibling so
+        # wrapped dimensions keep resolving to the expected columns.
+        remaining_tables = needed_tables - right_tables
+        if remaining_tables:
+            temp_left = (
+                self.left.to_untagged(parent_requirements=None)
+                if isinstance(self.left, SemanticJoinOp)
+                else _to_untagged(self.left)
+            )
+            temp_right = (
+                self.right.to_untagged(parent_requirements=None)
+                if isinstance(self.right, SemanticJoinOp)
+                else _to_untagged(self.right)
+            )
+            join_keys = _extract_join_key_columns(self.on, temp_left, temp_right)
+            join_key_columns = (
+                (join_keys.left_columns | join_keys.right_columns)
+                if self.on is not None and join_keys.is_success()
+                else set()
+            )
+
+            for right_name in right_tables:
+                right_leaf = self._get_leaf_table_by_name(self, right_name)
+                if right_leaf is None:
+                    continue
+                right_columns = set(_to_untagged(right_leaf).columns) - join_key_columns
+                if not right_columns:
+                    continue
+                for needed_name in remaining_tables:
+                    needed_leaf = self._get_leaf_table_by_name(self, needed_name)
+                    if needed_leaf is None:
+                        continue
+                    needed_columns = set(_to_untagged(needed_leaf).columns) - join_key_columns
+                    if right_columns & needed_columns:
+                        return False
+
+        return True
+
+    def _effective_join_depth(self, parent_requirements: dict[str, set[str]] | None) -> int:
+        """Count the surviving left-spine joins after pruning."""
+        augmented = self._augment_parent_requirements_for_pruning(parent_requirements)
+        left_depth = (
+            self.left._effective_join_depth(augmented)
+            if isinstance(self.left, SemanticJoinOp)
+            else 0
+        )
+        if self._should_prune_right(augmented):
+            return left_depth
+        return left_depth + 1
+
     @staticmethod
     def _join_depth(op) -> int:
         """Count nested left SemanticJoinOps to determine join depth."""
@@ -3736,30 +3903,45 @@ class SemanticJoinOp(Relation):
         return "{name}_right" if depth <= 1 else f"{{name}}_right{depth}"
 
     def to_untagged(self, parent_requirements: dict[str, set[str]] | None = None):
-        """Convert join to Ibis expression.
+        """Convert join to Ibis expression, pruning unnecessary joins.
 
-        Note: Projection pushdown has been disabled for compatibility with xorq's
-        vendored ibis, which has stricter column access after joins. Without projection
-        pushdown, all columns from both tables are available after the join.
+        When *parent_requirements* is provided (a dict mapping table names to
+        sets of needed columns), right-side leaf tables that contribute no
+        required columns are skipped entirely.  This avoids expensive joins
+        to dimension tables whose columns are never referenced by the query.
 
         Args:
-            parent_requirements: Ignored. Kept for API compatibility.
+            parent_requirements: Optional mapping of ``{table_name: {col, …}}``.
+                When provided, joins to tables absent from this dict are elided.
 
         Returns:
-            Ibis join expression with all columns from both tables
+            Ibis join expression (potentially simplified).
         """
         from .convert import _Resolver
 
-        # Simply convert both sides without any projection pushdown
+        augmented_requirements = self._augment_parent_requirements_for_pruning(parent_requirements)
+
+        # --- Join pruning: skip right-side tables not needed by the query ---
+        # Only prune join_one with LEFT join semantics.  Inner joins act as
+        # a filter (excluding unmatched left rows) and must not be removed.
+        # join_many / join_cross affect row counts and are never pruned here
+        # (join_many is intercepted by the pre-aggregation path earlier).
+        if self._should_prune_right(augmented_requirements):
+            # Right side contributes nothing the parent needs — skip it.
+            if isinstance(self.left, SemanticJoinOp):
+                return self.left.to_untagged(parent_requirements=augmented_requirements)
+            return _to_untagged(self.left)
+
+        # Build both sides, passing requirements down for recursive pruning.
         left_tbl = (
             _to_untagged(self.left)
             if not isinstance(self.left, SemanticJoinOp)
-            else self.left.to_untagged()
+            else self.left.to_untagged(parent_requirements=augmented_requirements)
         )
         right_tbl = (
             _to_untagged(self.right)
             if not isinstance(self.right, SemanticJoinOp)
-            else self.right.to_untagged()
+            else self.right.to_untagged(parent_requirements=augmented_requirements)
         )
 
         # Rebind right side's DatabaseTable ops to use the same backend as
@@ -3768,7 +3950,11 @@ class SemanticJoinOp(Relation):
         # tables in a join share the same backend instance.
         left_tbl, right_tbl = self._rebind_join_backends(left_tbl, right_tbl)
 
-        depth = self._join_depth(self)
+        depth = (
+            self._effective_join_depth(augmented_requirements)
+            if augmented_requirements is not None
+            else self._join_depth(self)
+        )
         rname = self._rname_for_depth(depth)
 
         if self.on is None:
