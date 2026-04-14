@@ -10,8 +10,14 @@ This script showcases:
   - Rolling-window calculations
 """
 
+from pathlib import Path
+import sys
+
 import ibis
-import pandas as pd
+import xorq.api as xo
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from boring_semantic_layer import to_semantic_table
 
@@ -22,13 +28,13 @@ def main():
 
     # ------------------------------------------------------------------------
     # Example 1: Basic SemanticTable definition and simple aggregation
-    flights_df = pd.DataFrame(
+    flights_data = ibis.memtable(
         {
             "origin": ["A", "B", "A", "C", "B", "A"],
             "distance": [100, 200, 150, 120, 180, 130],
         }
     )
-    flights_tbl = con.create_table("flights", flights_df)
+    flights_tbl = con.create_table("flights", flights_data)
 
     flights_st = (
         to_semantic_table(flights_tbl, name="flights")
@@ -51,22 +57,22 @@ def main():
 
     # ------------------------------------------------------------------------
     # Example 3: Composing semantic tables via join_one
-    marketing_df = pd.DataFrame(
+    marketing_data = ibis.memtable(
         {
             "customer_id": [1, 2, 3],
             "segment": ["A", "B", "A"],
             "monthly_spend": [100, 200, 150],
         }
     )
-    support_df = pd.DataFrame(
+    support_data = ibis.memtable(
         {
             "case_id": [10, 11, 12],
             "customer_id": [1, 2, 3],
             "priority": ["high", "low", "high"],
         }
     )
-    marketing_tbl = con.create_table("marketing", marketing_df)
-    support_tbl = con.create_table("support", support_df)
+    marketing_tbl = con.create_table("marketing", marketing_data)
+    support_tbl = con.create_table("support", support_data)
 
     marketing_st = (
         to_semantic_table(marketing_tbl, name="marketing")
@@ -83,28 +89,35 @@ def main():
         .with_measures(case_count=lambda t: t.count())
     )
 
-    cross_team = marketing_st.join_one(support_st, "customer_id", "customer_id").with_measures(
-        cases_per_spend=lambda t: t.case_count / t.avg_spend
-    )
+    cross_team = marketing_st.join_one(
+        support_st, lambda marketing, support: marketing.customer_id == support.customer_id
+    ).with_measures(cases_per_spend=lambda t: t.case_count / t.avg_spend)
     df3 = cross_team.group_by("segment").aggregate("cases_per_spend").execute()
     print("\nCases per spend by segment:\n", df3)
 
     # ------------------------------------------------------------------------
     # Example 4: Rolling-window calculation
-    ts_df = pd.DataFrame(
+    ts_data = ibis.memtable(
         {
-            "date": pd.date_range("2023-01-01", periods=6, freq="D"),
+            "date": [
+                "2023-01-01",
+                "2023-01-02",
+                "2023-01-03",
+                "2023-01-04",
+                "2023-01-05",
+                "2023-01-06",
+            ],
             "value": [10, 20, 30, 40, 50, 60],
         }
-    )
-    ts_tbl = con.create_table("ts", ts_df)
+    ).mutate(date=lambda t: ibis.date(t.date))
+    ts_tbl = con.create_table("ts", ts_data)
     ts_st = (
         to_semantic_table(ts_tbl, name="timeseries")
         .with_dimensions(date=lambda t: t.date)
         .with_measures(sum_val=lambda t: t.value.sum())
     )
 
-    rolling_window = ibis.window(order_by="date", rows=(1, 1))
+    rolling_window = xo.window(order_by="date", preceding=1, following=1)
     expr4 = (
         ts_st.group_by("date")
         .aggregate("sum_val")
