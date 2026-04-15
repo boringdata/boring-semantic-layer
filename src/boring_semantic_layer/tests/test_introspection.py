@@ -5,6 +5,10 @@ Tests the .dimensions and .measures properties that allow inspecting
 what dimensions and measures are available on a semantic table.
 """
 
+from pathlib import Path
+import tempfile
+
+import duckdb
 import ibis
 import pandas as pd
 
@@ -183,6 +187,34 @@ def test_measures_after_aggregate():
     # After aggregation, measures are materialized as columns
     aggregated = st.group_by("carrier").aggregate("flight_count")
     assert aggregated.measures == ()  # No semantic measures anymore
+
+
+def test_dims_after_join_duckdb_read_only():
+    """Regression test for issue #232 on read-only DuckDB joins."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        lake = Path(tmpdir) / "lake.duckdb"
+        rw = duckdb.connect(str(lake))
+        rw.execute("CREATE TABLE raw_a AS SELECT 'x' AS key")
+        rw.execute("CREATE TABLE raw_b AS SELECT 'x' AS key")
+        rw.close()
+
+        con = ibis.duckdb.connect(str(lake), read_only=True)
+        a = to_semantic_table(con.table("raw_a"), name="a").with_dimensions(
+            key=lambda t: t.key,
+        ).with_measures(row_count=lambda t: t.count())
+        b = to_semantic_table(con.table("raw_b"), name="b").with_dimensions(
+            key=lambda t: t.key,
+        )
+
+        joined = a.join_one(b, lambda l, r: l.key == r.key)
+
+        # Issue #232: joined dimension introspection used to raise
+        # `duckdb.CatalogException: Cannot launch in-memory database in read-only mode!`
+        assert set(joined.dimensions) == {"a.key", "b.key"}
+        assert set(joined.get_dimensions()) == {"a.key", "b.key"}
+
+        result = joined.group_by("a.key").aggregate("a.row_count").execute()
+        assert result.iloc[0].to_dict() == {"a.key": "x", "a.row_count": 1}
 
 
 def test_chaining_maintains_introspection():
