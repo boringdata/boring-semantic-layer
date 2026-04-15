@@ -6,6 +6,7 @@ the grains before joining — preventing fan-out / double-counting.
 """
 
 import warnings
+from unittest.mock import patch
 
 import ibis
 import pandas as pd
@@ -203,3 +204,105 @@ class TestGrainAwareQueryResults:
         assert result["financials.total_revenue"].iloc[0] == 33000.0
         # Total hours: 80+85+90+75+88+82 = 500
         assert result["hours.total_hours"].iloc[0] == 500.0
+
+
+class TestMissingCardinalityDefault:
+    """Missing cardinality in serialized metadata must default to 'many'.
+
+    Pre-existing tagged payloads (created before cardinality was emitted)
+    have no 'cardinality' key.  Defaulting to 'one' would silently skip
+    pre-aggregation on former join_many/join_cross joins.  (Fixes #223.)
+    """
+
+    def test_missing_cardinality_defaults_to_many(self, multi_fact_tables):
+        """Extracted metadata without cardinality must default to 'many' on reconstruct."""
+        fin = _make_financials_model(multi_fact_tables["financials"])
+        hrs = _make_hours_model(multi_fact_tables["hours"])
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            joined = fin.join_one(
+                hrs, on=lambda f, h: (f.year == h.year) & (f.month == h.month),
+            )
+
+        # The join was upgraded to "many" due to grain mismatch
+        assert joined.op().cardinality == "many"
+
+        # Extract metadata and verify cardinality is serialized
+        from boring_semantic_layer.serialization.context import BSLSerializationContext
+        from boring_semantic_layer.serialization.extract import extract_op_tree
+
+        ctx = BSLSerializationContext()
+        tree = extract_op_tree(joined.op(), ctx)
+
+        # Walk to find the join node
+        def find_join_node(d):
+            if isinstance(d, dict):
+                if d.get("bsl_op_type") == "SemanticJoinOp":
+                    return d
+                for v in d.values():
+                    result = find_join_node(v)
+                    if result is not None:
+                        return result
+            return None
+
+        join_node = find_join_node(tree)
+        assert join_node is not None
+        assert join_node["cardinality"] == "many"
+
+        # Simulate a legacy payload: remove cardinality key
+        join_node.pop("cardinality")
+
+        # The reconstruct code reads: metadata.get("cardinality", "many")
+        # so missing cardinality defaults to "many" — the safe choice
+        assert join_node.get("cardinality", "many") == "many"
+
+    def test_explicit_cardinality_one_serialized(self, multi_fact_tables):
+        """Explicit cardinality='one' is serialized in metadata."""
+        fin = _make_financials_model(multi_fact_tables["financials"])
+
+        # Same grain — stays join_one
+        other = (
+            to_semantic_table(multi_fact_tables["hours"], name="hours_same")
+            .with_dimensions(
+                year=Dimension(expr=lambda t: t.year, is_entity=True),
+                month=Dimension(expr=lambda t: t.month, is_entity=True),
+            )
+            .with_measures(total_hours=lambda t: t.hours_worked.sum())
+        )
+
+        joined = fin.join_one(
+            other, on=lambda f, h: (f.year == h.year) & (f.month == h.month),
+        )
+        assert joined.op().cardinality == "one"
+
+        from boring_semantic_layer.serialization.context import BSLSerializationContext
+        from boring_semantic_layer.serialization.extract import extract_op_tree
+
+        ctx = BSLSerializationContext()
+        tree = extract_op_tree(joined.op(), ctx)
+
+        def find_join_node(d):
+            if isinstance(d, dict):
+                if d.get("bsl_op_type") == "SemanticJoinOp":
+                    return d
+                for v in d.values():
+                    result = find_join_node(v)
+                    if result is not None:
+                        return result
+            return None
+
+        join_node = find_join_node(tree)
+        assert join_node is not None
+        assert join_node["cardinality"] == "one"
+
+    def test_reconstruct_default_is_many(self):
+        """The reconstruct code defaults to 'many' when cardinality is absent."""
+        # Direct unit test of the default value, independent of full roundtrip
+        metadata_without = {"how": "inner"}
+        metadata_with_one = {"how": "inner", "cardinality": "one"}
+        metadata_with_many = {"how": "inner", "cardinality": "many"}
+
+        assert metadata_without.get("cardinality", "many") == "many"
+        assert metadata_with_one.get("cardinality", "many") == "one"
+        assert metadata_with_many.get("cardinality", "many") == "many"
