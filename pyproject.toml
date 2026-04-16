@@ -11,7 +11,7 @@ dependencies = [
     "pyyaml>=6.0",
     "returns>=0.26.0",
     "toolz>=1.0.0",
-    "xorq>=0.3.14",
+    "xorq>=0.3.19",
 ]
 urls = { Homepage = "https://github.com/boringdata/boring-semantic-layer/tree/main" }
 license = "MIT"
@@ -21,6 +21,9 @@ license-files = [
 
 [project.scripts]
 bsl = "boring_semantic_layer.agents.cli:main"
+
+[project.entry-points."xorq.from_tag_node"]
+bsl = "boring_semantic_layer.serialization.tag_handler:bsl_tag_handler"
 
 [project.optional-dependencies]
 examples = ["xorq[duckdb]>=0.3.4", "xorq", "duckdb<1.4"]
