@@ -44,7 +44,39 @@ class QueryRequest(BaseModel):
     chart_spec: dict[str, Any] | None = None
 
     @model_validator(mode="after")
-    def _check_grain_fields(self) -> "QueryRequest":
+    def _check_grain_fields(self) -> QueryRequest:
+        if self.time_grain is not None and self.time_grains is not None:
+            raise ValueError(
+                "Cannot specify both 'time_grain' and 'time_grains'. "
+                "Use 'time_grain' to apply a single grain to all time dimensions, "
+                "or 'time_grains' to specify per-dimension grains."
+            )
+        return self
+
+
+class ComparePeriodsRequest(BaseModel):
+    """HTTP request body for the compare-periods endpoint."""
+
+    model_name: str
+    dimensions: list[str] | None = None
+    measures: list[str]
+    current_time_range: dict[str, str]
+    previous_time_range: dict[str, str]
+    filters: list[dict[str, Any]] | None = None
+    time_dimension: str | None = None
+    time_grain: str | None = None
+    time_grains: dict[str, str] | None = None
+    order_by: list[tuple[str, str]] | None = None
+    limit: int | None = Field(default=None, ge=1, le=100_000)
+    get_records: bool = True
+    records_limit: int | None = Field(default=None, ge=1)
+    get_chart: bool = True
+    chart_backend: str | None = None
+    chart_format: str | None = None
+    chart_spec: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _check_grain_fields(self) -> ComparePeriodsRequest:
         if self.time_grain is not None and self.time_grains is not None:
             raise ValueError(
                 "Cannot specify both 'time_grain' and 'time_grains'. "
@@ -261,6 +293,38 @@ def create_app(
             time_grain=payload.time_grain,
             time_grains=payload.time_grains,
             time_range=payload.time_range,
+        )
+        response = json.loads(
+            generate_chart_with_data(
+                query_result,
+                get_records=payload.get_records,
+                records_limit=payload.records_limit,
+                get_chart=payload.get_chart,
+                chart_backend=payload.chart_backend,
+                chart_format=payload.chart_format,
+                chart_spec=payload.chart_spec,
+                default_backend="altair",
+            )
+        )
+        if "error" in response:
+            raise HTTPException(status_code=400, detail=response["error"])
+        return response
+
+    @app.post("/compare-periods")
+    def compare_periods(payload: ComparePeriodsRequest, request: Request) -> dict[str, Any]:
+        model = _get_model_or_404(_get_models(request), payload.model_name)
+
+        query_result = model.compare_periods(
+            dimensions=payload.dimensions,
+            measures=payload.measures,
+            current_time_range=payload.current_time_range,
+            previous_time_range=payload.previous_time_range,
+            filters=payload.filters or [],
+            time_dimension=payload.time_dimension,
+            time_grain=payload.time_grain,
+            time_grains=payload.time_grains,
+            order_by=payload.order_by,
+            limit=payload.limit,
         )
         response = json.loads(
             generate_chart_with_data(

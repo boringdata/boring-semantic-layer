@@ -200,6 +200,34 @@ class TestGetTimeRange:
                 await client.call_tool("get_time_range", {"model_name": "nonexistent"})
 
 
+class TestComparePeriods:
+    """Test compare_periods tool."""
+
+    @pytest.mark.asyncio
+    async def test_compare_periods_grouped(self, sample_models):
+        mcp = MCPSemanticModel(models=sample_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "compare_periods",
+                {
+                    "model_name": "flights",
+                    "dimensions": ["carrier"],
+                    "measures": ["flight_count"],
+                    "current_time_range": {"start": "2024-01-11", "end": "2024-01-20"},
+                    "previous_time_range": {"start": "2024-01-01", "end": "2024-01-10"},
+                    "get_chart": False,
+                },
+            )
+
+            data = json.loads(result.content[0].text)
+            assert "records" in data
+            aa_row = next(row for row in data["records"] if row["carrier"] == "AA")
+            assert aa_row["flight_count_current"] == 3
+            assert aa_row["flight_count_previous"] == 4
+            assert aa_row["flight_count_delta"] == -1
+
+
 class TestQueryModel:
     """Test query_model tool."""
 

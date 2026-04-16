@@ -965,6 +965,98 @@ class TestTimeDimensions:
         assert "order_date" in result.columns
         assert "total_amount" in result.columns
 
+    def test_compare_periods_without_grouping(self, sales_data):
+        """compare_periods should work without grouping on the time dimension."""
+        st = (
+            to_semantic_table(sales_data, "sales")
+            .with_dimensions(
+                order_date={
+                    "expr": lambda t: t.order_date,
+                    "is_time_dimension": True,
+                    "smallest_time_grain": "day",
+                },
+            )
+            .with_measures(total_amount=lambda t: t.amount.sum())
+        )
+
+        result = st.compare_periods(
+            measures=["total_amount"],
+            current_time_range={"start": "2024-02-01", "end": "2024-02-29"},
+            previous_time_range={"start": "2024-01-01", "end": "2024-01-29"},
+            time_dimension="order_date",
+        ).execute()
+
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row["total_amount_current"] == 15950
+        assert row["total_amount_previous"] == 6960
+        assert row["total_amount_delta"] == 8990
+        assert pytest.approx(row["total_amount_pct_change"], rel=1e-9) == 8990 / 6960
+
+    def test_compare_periods_grouped_by_dimension(self, con):
+        """compare_periods should full-outer join grouped dimensions."""
+        revenue_tbl = con.create_table(
+            "period_compare_revenue",
+            pd.DataFrame(
+                {
+                    "order_date": pd.to_datetime(
+                        [
+                            "2024-01-05",
+                            "2024-01-06",
+                            "2024-01-07",
+                            "2024-01-08",
+                            "2024-02-05",
+                            "2024-02-06",
+                            "2024-02-07",
+                        ]
+                    ),
+                    "category": ["A", "A", "B", "D", "A", "B", "C"],
+                    "amount": [10, 20, 30, 70, 40, 50, 60],
+                }
+            ),
+            overwrite=True,
+        )
+        st = (
+            to_semantic_table(revenue_tbl, "revenue")
+            .with_dimensions(
+                order_date={
+                    "expr": lambda t: t.order_date,
+                    "is_time_dimension": True,
+                    "smallest_time_grain": "day",
+                },
+                category=lambda t: t.category,
+            )
+            .with_measures(total_amount=lambda t: t.amount.sum())
+        )
+
+        result = st.compare_periods(
+            dimensions=["category"],
+            measures=["total_amount"],
+            current_time_range={"start": "2024-02-01", "end": "2024-02-29"},
+            previous_time_range={"start": "2024-01-01", "end": "2024-01-31"},
+            order_by=[("total_amount_delta", "desc")],
+            limit=3,
+        ).execute()
+
+        assert list(result["category"]) == ["C", "B", "A"]
+        assert list(result["total_amount_current"].fillna(0)) == [60, 50, 40]
+        assert list(result["total_amount_previous"].fillna(0)) == [0, 30, 30]
+        assert list(result["total_amount_delta"].fillna(0)) == [60, 20, 10]
+        assert pd.isna(result.loc[result["category"] == "C", "total_amount_pct_change"]).iloc[0]
+
+        full_result = st.compare_periods(
+            dimensions=["category"],
+            measures=["total_amount"],
+            current_time_range={"start": "2024-02-01", "end": "2024-02-29"},
+            previous_time_range={"start": "2024-01-01", "end": "2024-01-31"},
+            order_by=[("category", "asc")],
+        ).execute()
+        assert "D" in set(full_result["category"])
+        d_row = full_result.loc[full_result["category"] == "D"].iloc[0]
+        assert pd.isna(d_row["total_amount_current"])
+        assert d_row["total_amount_previous"] == 70
+        assert d_row["total_amount_delta"] == -70
+
 
 class TestFilterErrorHandling:
     """Test error handling in filter validation."""

@@ -270,6 +270,142 @@ class MCPSemanticModel(FastMCP):
             )
 
         @self.tool(
+            name="compare_periods",
+            description=(
+                "Compare two explicit time ranges for one model and return current, previous, "
+                "delta, and pct_change columns. Use this for WoW, MoM, QoQ, YoY, or custom "
+                "period-vs-period analysis in LLM chat workflows."
+            ),
+        )
+        def compare_periods(
+            model_name: str,
+            measures: Annotated[
+                list[str],
+                BeforeValidator(_parse_json_string),
+                Field(
+                    description="Measure names to compare across the two periods.",
+                ),
+            ],
+            current_time_range: Annotated[
+                dict[str, str],
+                BeforeValidator(_parse_json_string),
+                Field(
+                    description="Current period time range with ISO start/end keys.",
+                ),
+            ],
+            previous_time_range: Annotated[
+                dict[str, str],
+                BeforeValidator(_parse_json_string),
+                Field(
+                    description="Previous comparison period time range with ISO start/end keys.",
+                ),
+            ],
+            dimensions: Annotated[
+                list[str] | None,
+                BeforeValidator(_parse_json_string),
+                Field(
+                    default=None,
+                    description="Optional grouping dimensions such as ['carrier'] or ['store'].",
+                ),
+            ] = None,
+            filters: Annotated[
+                list[dict[str, Any]] | None,
+                BeforeValidator(_parse_json_string),
+                Field(
+                    default=None,
+                    description="Optional filters applied to both periods before comparison.",
+                ),
+            ] = None,
+            time_dimension: Annotated[
+                str | None,
+                Field(
+                    default=None,
+                    description="Optional explicit time dimension if the model has multiple time dimensions.",
+                ),
+            ] = None,
+            time_grain: Annotated[
+                str | None,
+                Field(
+                    default=None,
+                    description="Optional shared time grain when the comparison also groups by a time dimension.",
+                ),
+            ] = None,
+            time_grains: Annotated[
+                dict[str, str] | None,
+                BeforeValidator(_parse_json_string),
+                Field(
+                    default=None,
+                    description="Optional per-dimension time grains. Cannot be used with time_grain.",
+                ),
+            ] = None,
+            order_by: Annotated[
+                list[list[str]] | None,
+                BeforeValidator(_parse_json_string),
+                Field(
+                    default=None,
+                    description="Optional sort order for the comparison result, e.g. [['flight_count_delta', 'desc']].",
+                    json_schema_extra={"items": {"type": "array", "items": {"type": "string"}}},
+                ),
+            ] = None,
+            limit: Annotated[
+                int | None,
+                Field(default=None, description="Optional row limit after comparison."),
+            ] = None,
+            get_records: Annotated[
+                bool,
+                Field(default=True, description=load_prompt(PROMPTS_DIR, "tool-query-param-get_records.md")),
+            ] = True,
+            records_limit: Annotated[
+                int | None,
+                Field(default=None, description=load_prompt(PROMPTS_DIR, "tool-query-param-records_limit.md")),
+            ] = None,
+            get_chart: Annotated[
+                bool,
+                Field(default=True, description=load_prompt(PROMPTS_DIR, "tool-query-param-get_chart.md")),
+            ] = True,
+            chart_backend: Annotated[
+                str | None,
+                Field(default=None, description=load_prompt(PROMPTS_DIR, "tool-query-param-chart_backend.md")),
+            ] = None,
+            chart_format: Annotated[
+                str | None,
+                Field(default=None, description=load_prompt(PROMPTS_DIR, "tool-query-param-chart_format.md")),
+            ] = None,
+            chart_spec: Annotated[
+                dict[str, Any] | None,
+                BeforeValidator(_parse_json_string),
+                Field(default=None, description=load_prompt(PROMPTS_DIR, "tool-query-param-chart_spec.md")),
+            ] = None,
+        ) -> str:
+            if model_name not in self.models:
+                raise ValueError(f"Model {model_name} not found")
+
+            model = self.models[model_name]
+            query_result = model.compare_periods(
+                dimensions=dimensions,
+                measures=measures,
+                current_time_range=current_time_range,
+                previous_time_range=previous_time_range,
+                filters=filters or [],
+                time_dimension=time_dimension,
+                time_grain=time_grain,
+                time_grains=time_grains,
+                order_by=order_by,
+                limit=limit,
+            )
+
+            return generate_chart_with_data(
+                query_result,
+                get_records=get_records,
+                records_limit=records_limit,
+                get_chart=get_chart,
+                chart_backend=chart_backend,
+                chart_format=chart_format,
+                chart_spec=chart_spec,
+                default_backend="altair",
+            )
+
+        @self.tool(
             name="search_dimension_values",
             description=load_prompt(PROMPTS_DIR, "tool-search-dimension-values-desc.md"),
         )
