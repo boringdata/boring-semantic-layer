@@ -95,9 +95,13 @@ def _reconstruct_semantic_table(
         read_ops = list(walk_nodes((Read,), unwrapped_expr))
         in_memory_tables = list(walk_nodes((xorq_rel.InMemoryTable,), unwrapped_expr))
         db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), unwrapped_expr))
+        unbound_tables = list(walk_nodes((xorq_rel.UnboundTable,), unwrapped_expr))
 
         total_leaf_tables = (
-            len(read_ops) + len(in_memory_tables) + (len(db_tables) if not read_ops else 0)
+            len(read_ops)
+            + len(in_memory_tables)
+            + (len(db_tables) if not read_ops else 0)
+            + len(unbound_tables)
         )
         if total_leaf_tables > 1:
             expr = (
@@ -115,6 +119,10 @@ def _reconstruct_semantic_table(
 
         if db_tables:
             base = db_tables[0].to_expr()
+            return base.view() if is_self_ref else base
+
+        if unbound_tables:
+            base = unbound_tables[0].to_expr()
             return base.view() if is_self_ref else base
 
         return xorq_expr.to_expr()

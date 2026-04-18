@@ -1817,3 +1817,26 @@ def test_tagged_roundtrip_join_chain_shared_column_names(n_joins):
     assert len(result) == len(baseline)
     assert list(result["carriers.nickname"]) == list(baseline["carriers.nickname"])
     assert list(result["flights.flight_count"]) == list(baseline["flights.flight_count"])
+
+
+def test_tagged_roundtrip_unbound_table():
+    """Round-trip serialization works for tables backed by an UnboundTable (no concrete data source)."""
+    from xorq.vendor import ibis
+
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
+
+    t = ibis.table(
+        {"origin": "string", "destination": "string", "distance": "int64"},
+        name="flights",
+    )
+    flights = (
+        to_semantic_table(t, name="flights")
+        .with_dimensions(origin=lambda t: t.origin)
+        .with_measures(total_distance=lambda t: t.distance.sum())
+    )
+
+    tagged = to_tagged(flights)
+    reconstructed = from_tagged(tagged)
+
+    assert set(reconstructed.op().get_dimensions().keys()) == {"origin"}
+    assert set(reconstructed.op().get_measures().keys()) == {"total_distance"}
