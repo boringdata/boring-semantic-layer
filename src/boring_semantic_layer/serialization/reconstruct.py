@@ -125,7 +125,7 @@ def _reconstruct_semantic_table(
             base = unbound_tables[0].to_expr()
             return base.view() if is_self_ref else base
 
-        return xorq_expr.to_expr()
+        return xorq_expr
 
     dim_meta = context.parse_field(metadata, "dimensions")
     meas_meta = context.parse_field(metadata, "measures")
