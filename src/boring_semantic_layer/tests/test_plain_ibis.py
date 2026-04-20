@@ -4,11 +4,15 @@ This validates support for ibis backends that xorq doesn't register (e.g. Databr
 See: https://github.com/boringdata/boring-semantic-layer/issues/216
 """
 
+import os
+import tempfile
+import textwrap
+
 import ibis
 import pandas as pd
 import pytest
 
-from boring_semantic_layer import to_semantic_table
+from boring_semantic_layer import from_yaml, to_semantic_table
 
 
 @pytest.fixture(scope="module")
@@ -170,6 +174,221 @@ class TestPlainIbisJoins:
         result = joined.group_by("name").aggregate("flight_count").execute()
         assert len(result) == 3
         assert "name" in result.columns
+
+    def test_rebind_join_backends_with_plain_ibis_table(self, plain_ibis_con):
+        """_rebind_join_backends gracefully skips plain ibis tables (GH-221).
+
+        Directly tests the guarded code path: xorq's walk_nodes cannot
+        traverse plain ibis Table objects, so rebinding should be a no-op.
+        """
+        from boring_semantic_layer.ops import SemanticJoinOp
+
+        t1 = plain_ibis_con.create_table(
+            "rebind_l", pd.DataFrame({"a": [1]})
+        )
+        t2 = plain_ibis_con.create_table(
+            "rebind_r", pd.DataFrame({"a": [2]})
+        )
+        result_l, result_r = SemanticJoinOp._rebind_join_backends(t1, t2)
+        assert result_l is t1
+        assert result_r is t2
+
+    def test_rebind_mixed_xorq_left_plain_ibis_right(self, plain_ibis_con):
+        """Mixed scenario: xorq-wrapped left + plain ibis right (GH-221).
+
+        When the left table is xorq-wrapped (walk_nodes succeeds) but the
+        right is plain ibis, the replacer should be a no-op on the right
+        side since plain ibis ops are not xorq DatabaseTable instances.
+        """
+        from boring_semantic_layer.ops import SemanticJoinOp
+
+        try:
+            from xorq.common.utils.ibis_utils import from_ibis
+        except ImportError:
+            pytest.skip("xorq not available")
+
+        con = ibis.duckdb.connect()
+        plain_right = con.create_table(
+            "mixed_r", pd.DataFrame({"id": [1, 2]})
+        )
+        xorq_left = from_ibis(
+            con.create_table("mixed_l", pd.DataFrame({"id": [1, 2]}))
+        )
+        # Should not raise — replacer is no-op on plain ibis ops
+        result_l, result_r = SemanticJoinOp._rebind_join_backends(
+            xorq_left, plain_right
+        )
+        assert result_l is not None
+        assert result_r is not None
+
+    def test_rebind_with_xorq_wrapped_tables(self):
+        """Happy path: xorq-wrapped tables still rebind correctly (GH-221).
+
+        Ensures the fix doesn't regress the normal xorq code path.
+        """
+        from boring_semantic_layer.ops import SemanticJoinOp
+
+        try:
+            from xorq.common.utils.ibis_utils import from_ibis
+        except ImportError:
+            pytest.skip("xorq not available")
+
+        con = ibis.duckdb.connect()
+        t1 = from_ibis(con.create_table("xorq_l", pd.DataFrame({"a": [1]})))
+        t2 = from_ibis(con.create_table("xorq_r", pd.DataFrame({"b": [2]})))
+        result_l, result_r = SemanticJoinOp._rebind_join_backends(t1, t2)
+        assert result_l is not None
+        assert result_r is not None
+        # Both should still be executable after rebinding
+        assert result_l.execute() is not None
+        assert result_r.execute() is not None
+
+    def test_yaml_join_unsupported_backend(self, plain_ibis_con, monkeypatch):
+        """Regression test for issue #221 using the YAML join flow.
+
+        The reported failure came from `from_yaml(...)` models running on a
+        plain ibis backend (e.g. Snowflake) where `_rebind_join_backends`
+        would call xorq's `walk_nodes` on an ibis Table and raise
+        `ValueError: Don't know how to handle type ...`.
+        """
+        from boring_semantic_layer import ops
+
+        monkeypatch.setattr(ops, "_ensure_xorq_table", lambda table: table)
+
+        users_tbl = plain_ibis_con.create_table(
+            "users_fact_yaml_221",
+            pd.DataFrame(
+                {
+                    "USER_KEY": [1, 2, 3],
+                    "PROGRAM_KEY": [10, 10, 20],
+                }
+            ),
+            overwrite=True,
+        )
+        programs_tbl = plain_ibis_con.create_table(
+            "programs_table_yaml_221",
+            pd.DataFrame(
+                {
+                    "PROGRAM_KEY": [10, 20],
+                    "PROGRAM": ["A", "B"],
+                }
+            ),
+            overwrite=True,
+        )
+
+        yaml_text = textwrap.dedent(
+            """
+            users:
+              table: users__fact
+              description: "users fact table"
+              dimensions:
+                user_key: _.USER_KEY
+                program_key: _.PROGRAM_KEY
+              measures:
+                user_count: _.USER_KEY.nunique()
+              joins:
+                programs:
+                  model: programs
+                  type: one
+                  left_on: PROGRAM_KEY
+                  right_on: PROGRAM_KEY
+
+            programs:
+              table: programs_table
+              dimensions:
+                program_key: _.PROGRAM_KEY
+                program: _.PROGRAM
+            """
+        )
+
+        fd, yaml_path = tempfile.mkstemp(suffix=".yaml")
+        os.close(fd)
+        try:
+            with open(yaml_path, "w", encoding="utf-8") as f:
+                f.write(yaml_text)
+
+            models = from_yaml(
+                yaml_path,
+                tables={
+                    "users__fact": users_tbl,
+                    "programs_table": programs_tbl,
+                },
+            )
+            result = (
+                models["users"]
+                .group_by("programs.program")
+                .aggregate("users.user_count")
+                .execute()
+            )
+        finally:
+            os.unlink(yaml_path)
+
+        records = result.sort_values("programs.program").reset_index(drop=True).to_dict("records")
+        assert records == [
+            {"programs.program": "A", "users.user_count": 2},
+            {"programs.program": "B", "users.user_count": 1},
+        ]
+
+    def test_chained_joins_plain_ibis(self, plain_ibis_con):
+        """Multi-table chained joins work on plain ibis backends (GH-221)."""
+        orders_tbl = plain_ibis_con.create_table(
+            "orders_pi", pd.DataFrame({
+                "order_id": [1, 2, 3],
+                "customer_id": [10, 20, 10],
+                "product_id": [100, 100, 200],
+            })
+        )
+        customers_tbl = plain_ibis_con.create_table(
+            "customers_pi", pd.DataFrame({
+                "customer_id": [10, 20],
+                "name": ["Alice", "Bob"],
+            })
+        )
+        products_tbl = plain_ibis_con.create_table(
+            "products_pi", pd.DataFrame({
+                "product_id": [100, 200],
+                "product_name": ["Widget", "Gadget"],
+            })
+        )
+
+        orders = (
+            to_semantic_table(orders_tbl, name="orders")
+            .with_dimensions(
+                order_id=lambda t: t.order_id,
+                customer_id=lambda t: t.customer_id,
+                product_id=lambda t: t.product_id,
+            )
+            .with_measures(order_count=lambda t: t.count())
+        )
+        customers = (
+            to_semantic_table(customers_tbl, name="customers")
+            .with_dimensions(
+                customer_id=lambda t: t.customer_id,
+                name=lambda t: t.name,
+            )
+        )
+        products = (
+            to_semantic_table(products_tbl, name="products")
+            .with_dimensions(
+                product_id=lambda t: t.product_id,
+                product_name=lambda t: t.product_name,
+            )
+        )
+
+        joined = orders.join_one(
+            customers, on=lambda o, c: o.customer_id == c.customer_id
+        ).join_one(
+            products, on=lambda o, p: o.product_id == p.product_id
+        )
+        result = (
+            joined.group_by("name", "product_name")
+            .aggregate("order_count")
+            .execute()
+        )
+        assert len(result) >= 2
+        assert "name" in result.columns
+        assert "product_name" in result.columns
+        assert result.order_count.sum() == 3
 
 
 class TestPlainIbisSerializationGating:
