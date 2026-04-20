@@ -4,11 +4,15 @@ This validates support for ibis backends that xorq doesn't register (e.g. Databr
 See: https://github.com/boringdata/boring-semantic-layer/issues/216
 """
 
+import os
+import tempfile
+import textwrap
+
 import ibis
 import pandas as pd
 import pytest
 
-from boring_semantic_layer import to_semantic_table
+from boring_semantic_layer import from_yaml, to_semantic_table
 
 
 @pytest.fixture(scope="module")
@@ -238,6 +242,92 @@ class TestPlainIbisJoins:
         # Both should still be executable after rebinding
         assert result_l.execute() is not None
         assert result_r.execute() is not None
+
+    def test_yaml_join_unsupported_backend(self, plain_ibis_con, monkeypatch):
+        """Regression test for issue #221 using the YAML join flow.
+
+        The reported failure came from `from_yaml(...)` models running on a
+        plain ibis backend (e.g. Snowflake) where `_rebind_join_backends`
+        would call xorq's `walk_nodes` on an ibis Table and raise
+        `ValueError: Don't know how to handle type ...`.
+        """
+        from boring_semantic_layer import ops
+
+        monkeypatch.setattr(ops, "_ensure_xorq_table", lambda table: table)
+
+        users_tbl = plain_ibis_con.create_table(
+            "users_fact_yaml_221",
+            pd.DataFrame(
+                {
+                    "USER_KEY": [1, 2, 3],
+                    "PROGRAM_KEY": [10, 10, 20],
+                }
+            ),
+            overwrite=True,
+        )
+        programs_tbl = plain_ibis_con.create_table(
+            "programs_table_yaml_221",
+            pd.DataFrame(
+                {
+                    "PROGRAM_KEY": [10, 20],
+                    "PROGRAM": ["A", "B"],
+                }
+            ),
+            overwrite=True,
+        )
+
+        yaml_text = textwrap.dedent(
+            """
+            users:
+              table: users__fact
+              description: "users fact table"
+              dimensions:
+                user_key: _.USER_KEY
+                program_key: _.PROGRAM_KEY
+              measures:
+                user_count: _.USER_KEY.nunique()
+              joins:
+                programs:
+                  model: programs
+                  type: one
+                  left_on: PROGRAM_KEY
+                  right_on: PROGRAM_KEY
+
+            programs:
+              table: programs_table
+              dimensions:
+                program_key: _.PROGRAM_KEY
+                program: _.PROGRAM
+            """
+        )
+
+        fd, yaml_path = tempfile.mkstemp(suffix=".yaml")
+        os.close(fd)
+        try:
+            with open(yaml_path, "w", encoding="utf-8") as f:
+                f.write(yaml_text)
+
+            models = from_yaml(
+                yaml_path,
+                tables={
+                    "users__fact": users_tbl,
+                    "programs_table": programs_tbl,
+                },
+            )
+            result = (
+                models["users"]
+                .group_by("programs.program")
+                .aggregate("users.user_count")
+                .execute()
+            )
+        finally:
+            os.unlink(yaml_path)
+
+        records = result.sort_values("programs.program").reset_index(drop=True).to_dict("records")
+        assert records == [
+            {"programs.program": "A", "users.user_count": 2},
+            {"programs.program": "B", "users.user_count": 1},
+        ]
 
     def test_chained_joins_plain_ibis(self, plain_ibis_con):
         """Multi-table chained joins work on plain ibis backends (GH-221)."""
