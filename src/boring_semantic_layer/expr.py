@@ -424,6 +424,58 @@ def _build_semantic_model_from_roots(
     )
 
 
+def _get_entity_dims(op) -> frozenset[str]:
+    """Return the set of dimension names marked ``is_entity=True`` on an op."""
+    from .ops import SemanticTableOp
+
+    if isinstance(op, SemanticTableOp):
+        return frozenset(
+            name for name, dim in op.get_dimensions().items() if getattr(dim, "is_entity", False)
+        )
+    return frozenset()
+
+
+def _has_measure_fields(op) -> bool:
+    """Return whether an op defines base or calculated measures."""
+    from .ops import SemanticTableOp
+
+    if isinstance(op, SemanticTableOp):
+        return bool(op.get_measures()) or bool(op.get_calculated_measures())
+    return False
+
+
+def _detect_grain_cardinality(left_op, right_op) -> str:
+    """Compare entity dimensions to detect grain mismatch.
+
+    If both sides declare ``is_entity`` dimensions and the sets differ,
+    returns ``"many"`` only for multi-fact joins where both sides define
+    measures. Pure dimension lookups should stay ``join_one`` so they can
+    use deferred dimension joins.
+    """
+    import warnings
+
+    left_entities = _get_entity_dims(left_op)
+    right_entities = _get_entity_dims(right_op)
+
+    if (
+        left_entities
+        and right_entities
+        and left_entities != right_entities
+        and _has_measure_fields(left_op)
+        and _has_measure_fields(right_op)
+    ):
+        left_name = getattr(left_op, "name", None) or "left"
+        right_name = getattr(right_op, "name", None) or "right"
+        warnings.warn(
+            f"Grain mismatch detected: {left_name} entity dims {sorted(left_entities)} "
+            f"!= {right_name} entity dims {sorted(right_entities)}. "
+            f"Upgrading join_one to join_many for automatic pre-aggregation.",
+            stacklevel=2,
+        )
+        return "many"
+    return "one"
+
+
 class SemanticModel(SemanticTable):
     def __init__(
         self,
@@ -558,6 +610,11 @@ class SemanticModel(SemanticTable):
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics.
 
+        When both models have ``is_entity`` dimensions declared and their entity
+        sets differ, the join is automatically upgraded to ``join_many`` semantics
+        so that BSL's pre-aggregation logic can align the grains before joining.
+        This prevents fan-out / double-counting in multi-fact star schemas.
+
         Args:
             other: The semantic model to join with
             on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
@@ -574,7 +631,8 @@ class SemanticModel(SemanticTable):
             >>> orders.join_one(customers, on=lambda o, c: o.customer_id == c.customer_id)
         """
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how, cardinality="one")
+        cardinality = _detect_grain_cardinality(self.op(), other_op)
+        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how, cardinality=cardinality)
 
     def join_many(
         self,
