@@ -65,10 +65,26 @@ def from_tag_node(tag_node):
     return reconstruct_bsl_operation(metadata, expr, ctx)
 
 
+def reemit(tag_node, rebuild_subexpr):
+    """Re-emit a BSL-tagged subtree with a translated source.
+
+    ``from_tag_node`` returns the base SemanticModel (discarding the query
+    chain), so it cannot be used for rebuild — rebuild needs the full tag
+    metadata to reproduce the original query.  This function works from the
+    tag node directly: it rebuilds the source subtree and re-stamps the
+    original tag metadata on top.
+    """
+    new_source = rebuild_subexpr(tag_node.parent.to_expr())
+    meta = dict(tag_node.metadata)
+    tag_name = meta.pop("tag")
+    return new_source.tag(tag=tag_name, **meta)
+
+
 bsl_tag_handler = TagHandler(
     tag_names=("bsl",),
     extract_metadata=extract_metadata,
     from_tag_node=from_tag_node,
+    reemit=reemit,
 )
 
 
@@ -76,4 +92,5 @@ __all__ = [
     "bsl_tag_handler",
     "extract_metadata",
     "from_tag_node",
+    "reemit",
 ]
