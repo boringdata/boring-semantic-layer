@@ -80,12 +80,15 @@ def reemit(tag_node, rebuild_subexpr):
     return new_source.tag(tag=tag_name, **meta)
 
 
-bsl_tag_handler = TagHandler(
+_handler_kwargs = dict(
     tag_names=("bsl",),
     extract_metadata=extract_metadata,
     from_tag_node=from_tag_node,
-    reemit=reemit,
 )
+if "reemit" in {a.name for a in TagHandler.__attrs_attrs__}:
+    _handler_kwargs["reemit"] = reemit
+
+bsl_tag_handler = TagHandler(**_handler_kwargs)
 
 
 __all__ = [

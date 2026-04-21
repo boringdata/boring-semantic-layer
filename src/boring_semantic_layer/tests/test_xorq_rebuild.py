@@ -25,6 +25,13 @@ from boring_semantic_layer.serialization.tag_handler import (
 
 xorq = pytest.importorskip("xorq", reason="xorq not installed")
 
+from xorq.expr.builders import TagHandler as _TagHandler
+
+_has_reemit = "reemit" in {a.name for a in _TagHandler.__attrs_attrs__}
+requires_reemit = pytest.mark.skipif(
+    not _has_reemit, reason="xorq TagHandler does not have reemit field"
+)
+
 
 def _tag_node(tagged_expr):
     return tagged_expr.op()
@@ -35,10 +42,12 @@ def _tag_node(tagged_expr):
 # ---------------------------------------------------------------------------
 
 
+@requires_reemit
 def test_reemit_registered_on_handler():
     assert bsl_tag_handler.reemit is reemit
 
 
+@requires_reemit
 def test_reemit_is_callable():
     assert callable(bsl_tag_handler.reemit)
 
@@ -59,6 +68,7 @@ def simple_model():
     )
 
 
+@requires_reemit
 def test_identity_reemit_preserves_metadata(simple_model):
     tagged = to_tagged(simple_model)
     original_meta = dict(_tag_node(tagged).metadata)
@@ -69,6 +79,7 @@ def test_identity_reemit_preserves_metadata(simple_model):
     assert original_meta == rebuilt_meta
 
 
+@requires_reemit
 def test_identity_reemit_on_query_chain(simple_model):
     query = simple_model.query(dimensions=("a",), measures=("sum_b",))
     tagged = to_tagged(query)
@@ -85,6 +96,7 @@ def test_identity_reemit_on_query_chain(simple_model):
 # ---------------------------------------------------------------------------
 
 
+@requires_reemit
 def test_get_rebuild_dispatch_returns_callable_for_bsl(simple_model):
     from xorq.expr.builders import get_rebuild_dispatch
 
@@ -93,6 +105,7 @@ def test_get_rebuild_dispatch_returns_callable_for_bsl(simple_model):
     assert callable(dispatch)
 
 
+@requires_reemit
 def test_get_rebuild_dispatch_invokes_handler_reemit(simple_model):
     from xorq.expr.builders import get_rebuild_dispatch
 
@@ -176,6 +189,7 @@ def catalog_with_bsl_query(tmpdir):
     return catalog, source_entry, bsl_entry
 
 
+@requires_reemit
 def test_catalog_rebuild_produces_consistent_target(catalog_with_bsl_query, tmpdir):
     catalog, _, _ = catalog_with_bsl_query
     target = _replay_rebuild(catalog, Path(tmpdir).joinpath("tgt"))
@@ -184,6 +198,7 @@ def test_catalog_rebuild_produces_consistent_target(catalog_with_bsl_query, tmpd
     target.assert_consistency()
 
 
+@requires_reemit
 def test_catalog_rebuild_bsl_entry_exists(catalog_with_bsl_query, tmpdir):
     catalog, _, _ = catalog_with_bsl_query
     target = _replay_rebuild(catalog, Path(tmpdir).joinpath("tgt"))
@@ -191,6 +206,7 @@ def test_catalog_rebuild_bsl_entry_exists(catalog_with_bsl_query, tmpdir):
     assert entry is not None
 
 
+@requires_reemit
 def test_catalog_rebuild_bsl_entry_executes(catalog_with_bsl_query, tmpdir):
     catalog, _, _ = catalog_with_bsl_query
     target = _replay_rebuild(catalog, Path(tmpdir).joinpath("tgt"))
@@ -233,6 +249,7 @@ def catalog_with_base_model(tmpdir):
     return catalog, source_entry, bsl_entry
 
 
+@requires_reemit
 def test_catalog_rebuild_base_model(catalog_with_base_model, tmpdir):
     catalog, _, _ = catalog_with_base_model
     target = _replay_rebuild(catalog, Path(tmpdir).joinpath("tgt"))
@@ -240,6 +257,7 @@ def test_catalog_rebuild_base_model(catalog_with_base_model, tmpdir):
     target.assert_consistency()
 
 
+@requires_reemit
 def test_catalog_rebuild_base_model_executes(catalog_with_base_model, tmpdir):
     catalog, _, _ = catalog_with_base_model
     target = _replay_rebuild(catalog, Path(tmpdir).joinpath("tgt"))
