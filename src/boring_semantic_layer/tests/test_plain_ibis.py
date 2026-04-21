@@ -171,6 +171,26 @@ class TestPlainIbisJoins:
         assert len(result) == 3
         assert "name" in result.columns
 
+    def test_join_one_unsupported_backend(
+        self, flights_model, carriers_model, monkeypatch
+    ):
+        """Simulate a backend xorq cannot wrap (e.g. BigQuery) by forcing
+        ``_ensure_xorq_table`` to return the plain ibis table. The join
+        must still execute natively rather than crashing inside
+        ``_rebind_join_backends``. See issue #242.
+        """
+        from boring_semantic_layer import ops
+
+        monkeypatch.setattr(ops, "_ensure_xorq_table", lambda table: table)
+
+        joined = flights_model.join_one(
+            carriers_model,
+            on=lambda f, c: f.carrier == c.code,
+        )
+        result = joined.group_by("name").aggregate("flight_count").execute()
+        assert len(result) == 3
+        assert "name" in result.columns
+
 
 class TestPlainIbisSerializationGating:
     """Serialization features raise clear errors for non-xorq backends."""
