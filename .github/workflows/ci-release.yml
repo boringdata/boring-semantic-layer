@@ -45,7 +45,6 @@ jobs:
       - name: Install dependencies
         run: |
           uv sync --all-extras
-          uv pip install "xorq[duckdb] @ git+https://github.com/xorq-labs/xorq@feat/catalog/replay-rebuild"
           cd docs/web && npm ci
 
       - name: Run all checks (tests + examples + docs build)
