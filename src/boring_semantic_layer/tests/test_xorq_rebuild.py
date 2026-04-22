@@ -91,6 +91,35 @@ def test_identity_reemit_on_query_chain(simple_model):
     assert original_meta == rebuilt_meta
 
 
+@requires_reemit
+def test_reemit_with_source_transform(simple_model):
+    tagged = to_tagged(simple_model)
+    original_meta = dict(_tag_node(tagged).metadata)
+
+    def rename_column(expr):
+        return expr.rename(a_renamed="a")
+
+    rebuilt = reemit(_tag_node(tagged), rebuild_subexpr=rename_column)
+    rebuilt_meta = dict(_tag_node(rebuilt).metadata)
+    assert original_meta == rebuilt_meta
+    assert "a_renamed" in rebuilt.columns
+
+
+@requires_reemit
+def test_reemit_query_chain_with_source_transform(simple_model):
+    query = simple_model.query(dimensions=("a",), measures=("sum_b",))
+    tagged = to_tagged(query)
+    original_meta = dict(_tag_node(tagged).metadata)
+
+    def add_column(expr):
+        return expr.mutate(extra=ibis.literal(1))
+
+    rebuilt = reemit(_tag_node(tagged), rebuild_subexpr=add_column)
+    rebuilt_meta = dict(_tag_node(rebuilt).metadata)
+    assert original_meta == rebuilt_meta
+    assert "extra" in rebuilt.columns
+
+
 # ---------------------------------------------------------------------------
 # get_rebuild_dispatch returns handler-level reemit for BSL
 # ---------------------------------------------------------------------------
@@ -264,3 +293,21 @@ def test_catalog_rebuild_base_model_executes(catalog_with_base_model, tmpdir):
     entry = target.get_catalog_entry("city-stats", maybe_alias=True)
     result = entry.lazy_expr.execute()
     assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# Edge cases
+# ---------------------------------------------------------------------------
+
+
+@requires_reemit
+def test_reemit_raises_on_missing_parent(simple_model):
+    tagged = to_tagged(simple_model)
+    node = _tag_node(tagged)
+    original_parent = node.parent
+    try:
+        node.parent = None
+        with pytest.raises(ValueError, match="no parent"):
+            reemit(node, rebuild_subexpr=lambda e: e)
+    finally:
+        node.parent = original_parent

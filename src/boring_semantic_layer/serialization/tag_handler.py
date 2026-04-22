@@ -74,6 +74,8 @@ def reemit(tag_node, rebuild_subexpr):
     tag node directly: it rebuilds the source subtree and re-stamps the
     original tag metadata on top.
     """
+    if tag_node.parent is None:
+        raise ValueError("tag_node has no parent; cannot rebuild a root tag node")
     new_source = rebuild_subexpr(tag_node.parent.to_expr())
     meta = dict(tag_node.metadata)
     tag_name = meta.pop("tag")
