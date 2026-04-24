@@ -332,6 +332,7 @@ def _create_dimension(expr: Dimension | Callable | dict) -> Dimension:
             is_time_dimension=expr.get("is_time_dimension", False),
             smallest_time_grain=expr.get("smallest_time_grain"),
             derived_dimensions=tuple(expr.get("derived_dimensions") or ()),
+            metadata=dict(expr.get("metadata") or {}),
         )
     return Dimension(expr=expr, description=None)
 
