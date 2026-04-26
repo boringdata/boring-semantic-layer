@@ -18,7 +18,10 @@ from .ops import Dimension
 
 
 def to_semantic_table(
-    ibis_table: ir.Table, name: str | None = None, description: str | None = None
+    ibis_table: ir.Table,
+    name: str | None = None,
+    description: str | None = None,
+    ai_context: str | dict | None = None,
 ) -> SemanticModel:
     """Create a SemanticModel from an Ibis table.
 
@@ -26,6 +29,8 @@ def to_semantic_table(
         ibis_table: An Ibis table expression (can be regular ibis or xorq vendored ibis)
         name: Optional name for the semantic table
         description: Optional description for the semantic table
+        ai_context: Optional AI context (string or structured object with
+            instructions, synonyms, examples) per the OSI specification
 
     Returns:
         A new SemanticModel wrapping the table
@@ -41,6 +46,7 @@ def to_semantic_table(
         calc_measures=None,
         name=name,
         description=description,
+        ai_context=ai_context,
     )
 
 

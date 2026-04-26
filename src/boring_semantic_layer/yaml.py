@@ -1,7 +1,13 @@
 """
 YAML loader for Boring Semantic Layer models using the semantic API.
+
+Supports both BSL native YAML format and OSI (Open Semantic Interchange)
+v0.1.1 format. The format is auto-detected based on the presence of
+``version`` and ``semantic_model`` keys.
 """
 
+import json
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -12,6 +18,344 @@ from .expr import SemanticModel, SemanticTable
 from .ops import Dimension, Measure
 from .profile import get_connection
 from .utils import read_yaml_file, safe_eval
+
+
+# ---------------------------------------------------------------------------
+# Format detection
+# ---------------------------------------------------------------------------
+
+
+def _is_osi_config(config: Mapping[str, Any]) -> bool:
+    """Return True if *config* looks like an OSI YAML document."""
+    return "semantic_model" in config and "version" in config
+
+
+# ---------------------------------------------------------------------------
+# OSI expression helpers (SQL <-> Ibis Deferred)
+# ---------------------------------------------------------------------------
+
+
+def _sql_to_deferred(sql: str):
+    """Convert a simple SQL expression to an Ibis Deferred.
+
+    Handles:
+      "column_name"                -> _.column_name
+      "SUM(column)"                -> _.column.sum()
+      "AVG(column)"                -> _.column.mean()
+      "COUNT(*)"                   -> _.count()
+      "COUNT(DISTINCT column)"     -> _.column.nunique()
+    """
+    sql = sql.strip()
+
+    if sql == "COUNT(*)":
+        return safe_eval("_.count()", context={"_": _}).unwrap()
+
+    # COUNT(DISTINCT col)
+    m = re.match(r"^COUNT\(DISTINCT\s+(\w+)\)$", sql, re.IGNORECASE)
+    if m:
+        return safe_eval(f"_.{m.group(1)}.nunique()", context={"_": _}).unwrap()
+
+    # AGG(col) patterns
+    sql_to_ibis = {"SUM": "sum", "AVG": "mean", "MAX": "max", "MIN": "min"}
+    for sql_fn, ibis_fn in sql_to_ibis.items():
+        m = re.match(rf"^{sql_fn}\((\w+)\)$", sql, re.IGNORECASE)
+        if m:
+            return safe_eval(f"_.{m.group(1)}.{ibis_fn}()", context={"_": _}).unwrap()
+
+    # Simple column reference
+    if re.match(r"^\w+$", sql):
+        return safe_eval(f"_.{sql}", context={"_": _}).unwrap()
+
+    # Fallback: try eval as-is with underscore prefix
+    try:
+        return safe_eval(f"_.{sql}", context={"_": _}).unwrap()
+    except Exception:
+        return safe_eval(
+            f"_.{sql.split('.')[0] if '.' in sql else sql}", context={"_": _}
+        ).unwrap()
+
+
+def _parse_osi_expression(expr_obj: dict, prefer_dialect: str = "ANSI_SQL") -> str:
+    """Extract the SQL expression string from an OSI expression object."""
+    dialects = expr_obj.get("dialects", [])
+    if not dialects:
+        raise ValueError("OSI expression has no dialects")
+    for d in dialects:
+        if d.get("dialect") == prefer_dialect:
+            return d["expression"]
+    return dialects[0]["expression"]
+
+
+def _strip_dataset_prefix(sql: str) -> str:
+    """Remove dataset.column prefixes from SQL aggregates.
+
+    ``SUM(flights.distance)`` -> ``SUM(distance)``
+    """
+
+    def _strip_match(m: re.Match) -> str:
+        fn = m.group(1)
+        inner = m.group(2).strip()
+        if inner.upper().startswith("DISTINCT "):
+            rest = inner[9:].strip()
+            if "." in rest:
+                return f"{fn}(DISTINCT {rest.split('.')[-1]})"
+            return m.group(0)
+        if "." in inner and inner != "*":
+            return f"{fn}({inner.split('.')[-1]})"
+        return m.group(0)
+
+    return re.sub(r"(\w+)\(([^)]+)\)", _strip_match, sql)
+
+
+# ---------------------------------------------------------------------------
+# OSI field / metric -> BSL Dimension / Measure
+# ---------------------------------------------------------------------------
+
+
+def _osi_field_to_dimension(
+    field: dict, primary_key_cols: set[str] | None = None
+) -> tuple[str, Dimension]:
+    """Convert an OSI field dict to a ``(name, Dimension)`` pair.
+
+    Args:
+        field: OSI field definition.
+        primary_key_cols: Column names from the dataset's ``primary_key``.
+            If the field's expression matches one of these, the dimension
+            is marked ``is_entity=True``.
+    """
+    name = field["name"]
+    sql_expr = _parse_osi_expression(field["expression"])
+    deferred = _sql_to_deferred(sql_expr)
+
+    kwargs: dict[str, Any] = {
+        "expr": deferred,
+        "description": field.get("description"),
+    }
+
+    dim_meta = field.get("dimension", {})
+    if dim_meta.get("is_time"):
+        kwargs["is_time_dimension"] = True
+
+    if "ai_context" in field:
+        kwargs["ai_context"] = field["ai_context"]
+
+    if field.get("label"):
+        kwargs["label"] = field["label"]
+
+    # Mark as entity if the field appears in the dataset's primary_key
+    if primary_key_cols and (sql_expr in primary_key_cols or name in primary_key_cols):
+        kwargs["is_entity"] = True
+
+    # Recover BSL-specific metadata stored in custom_extensions
+    for ext in field.get("custom_extensions", []):
+        if ext.get("vendor_name") == "COMMON":
+            try:
+                data = json.loads(ext["data"])
+                if data.get("is_entity"):
+                    kwargs["is_entity"] = True
+                if data.get("is_event_timestamp"):
+                    kwargs["is_event_timestamp"] = True
+                if data.get("smallest_time_grain"):
+                    kwargs["smallest_time_grain"] = data["smallest_time_grain"]
+                if data.get("derived_dimensions"):
+                    kwargs["derived_dimensions"] = tuple(data["derived_dimensions"])
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+    return name, Dimension(**kwargs)
+
+
+def _osi_metric_to_measure(metric: dict) -> tuple[str, Measure]:
+    """Convert an OSI metric dict to a ``(name, Measure)`` pair."""
+    name = metric["name"]
+    sql_expr = _parse_osi_expression(metric["expression"])
+    sql_expr = _strip_dataset_prefix(sql_expr)
+    deferred = _sql_to_deferred(sql_expr)
+
+    kwargs: dict[str, Any] = {
+        "expr": deferred,
+        "description": metric.get("description"),
+    }
+    if "ai_context" in metric:
+        kwargs["ai_context"] = metric["ai_context"]
+
+    return name, Measure(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# OSI config -> BSL models  (called from from_config when OSI is detected)
+# ---------------------------------------------------------------------------
+
+
+def _create_placeholder_table(dataset: dict):
+    """Create a placeholder ibis table from OSI field definitions."""
+    import ibis
+
+    fields = dataset.get("fields", [])
+    if not fields:
+        return None
+    schema = {f["name"]: "string" for f in fields}
+    try:
+        return ibis.table(schema, name=dataset["name"])
+    except Exception:
+        return None
+
+
+def _from_osi_config(
+    config: Mapping[str, Any],
+    tables: Mapping[str, Any] | None = None,
+    profile: str | None = None,
+    profile_path: str | None = None,
+) -> dict[str, SemanticModel]:
+    """Parse an OSI config dict into BSL SemanticModel instances.
+
+    This is an internal entry-point invoked by :func:`from_config` when it
+    detects OSI format.  Users should call ``from_config`` / ``from_yaml``
+    directly — those work for *both* BSL and OSI files.
+    """
+    tables = dict(tables) if tables else {}
+
+    # Load tables from profile if not provided
+    if not tables:
+        profile_config = profile or config.get("profile")
+        if profile_config or profile_path:
+            connection = get_connection(
+                profile_config or profile_path,
+                profile_file=profile_path if profile_config else None,
+            )
+            tables = {name: connection.table(name) for name in connection.list_tables()}
+
+    semantic_models = config.get("semantic_model", [])
+    if not semantic_models:
+        raise ValueError("No semantic_model found in OSI config")
+
+    result: dict[str, SemanticModel] = {}
+
+    for sm in semantic_models:
+        datasets = sm.get("datasets", [])
+        metrics = sm.get("metrics", [])
+        relationships = sm.get("relationships", [])
+        dataset_names = {ds["name"] for ds in datasets}
+
+        for ds in datasets:
+            ds_name = ds["name"]
+
+            # Resolve backing table
+            if ds_name in tables:
+                table = tables[ds_name]
+            elif ds.get("source") and ds["source"] in tables:
+                table = tables[ds["source"]]
+            else:
+                table = _create_placeholder_table(ds)
+                if table is None:
+                    continue
+
+            model = to_semantic_table(
+                table,
+                name=ds_name,
+                description=ds.get("description"),
+                ai_context=ds.get("ai_context"),
+            )
+
+            # primary_key column names for is_entity detection
+            pk_cols = set(ds.get("primary_key") or [])
+
+            # Fields -> Dimensions
+            dimensions: dict[str, Dimension] = {}
+            for field in ds.get("fields", []):
+                dim_name, dim = _osi_field_to_dimension(field, pk_cols)
+                dimensions[dim_name] = dim
+            if dimensions:
+                model = model.with_dimensions(**dimensions)
+
+            # Metrics -> Measures (assign to the dataset they reference)
+            ds_measures: dict[str, Measure] = {}
+            for metric in metrics:
+                sql_expr = _parse_osi_expression(metric["expression"])
+                # Explicitly references this dataset
+                if f"{ds_name}." in sql_expr:
+                    meas_name, meas = _osi_metric_to_measure(metric)
+                    ds_measures[meas_name] = meas
+            if ds_measures:
+                model = model.with_measures(**ds_measures)
+
+            result[ds_name] = model
+
+        # Second pass: assign unqualified metrics (no dataset. prefix) to the
+        # first dataset only, to avoid duplicating them across all datasets.
+        if datasets and metrics:
+            first_ds_name = datasets[0]["name"]
+            if first_ds_name in result:
+                unqualified: dict[str, Measure] = {}
+                for metric in metrics:
+                    sql_expr = _parse_osi_expression(metric["expression"])
+                    # Skip if it explicitly references any dataset
+                    if any(f"{dn}." in sql_expr for dn in dataset_names):
+                        continue
+                    meas_name, meas = _osi_metric_to_measure(metric)
+                    # Only add if not already present on this model
+                    if meas_name not in result[first_ds_name].op().get_measures():
+                        unqualified[meas_name] = meas
+                if unqualified:
+                    result[first_ds_name] = result[first_ds_name].with_measures(
+                        **unqualified
+                    )
+
+        # Relationships -> Joins (supports multi-column keys + cardinality)
+        if tables and relationships:
+            for rel in relationships:
+                from_ds = rel.get("from", "")
+                to_ds = rel.get("to", "")
+                if from_ds in result and to_ds in result:
+                    from_cols = rel.get("from_columns", [])
+                    to_cols = rel.get("to_columns", [])
+                    if (
+                        from_cols
+                        and to_cols
+                        and len(from_cols) == len(to_cols)
+                        and from_cols[0] != "unknown"
+                    ):
+
+                        def _make_join_cond(lcols, rcols):
+                            def cond(left, right):
+                                pairs = [
+                                    getattr(left, lc) == getattr(right, rc)
+                                    for lc, rc in zip(lcols, rcols)
+                                ]
+                                res = pairs[0]
+                                for p in pairs[1:]:
+                                    res = res & p
+                                return res
+
+                            return cond
+
+                        # Detect cardinality from custom_extensions
+                        cardinality = "one"
+                        for ext in rel.get("custom_extensions", []):
+                            if ext.get("vendor_name") == "COMMON":
+                                try:
+                                    data = json.loads(ext["data"])
+                                    if data.get("cardinality") in ("one", "many"):
+                                        cardinality = data["cardinality"]
+                                except (json.JSONDecodeError, KeyError):
+                                    pass
+
+                        on_cond = _make_join_cond(from_cols, to_cols)
+                        if cardinality == "many":
+                            result[from_ds] = result[from_ds].join_many(
+                                result[to_ds], on=on_cond
+                            )
+                        else:
+                            result[from_ds] = result[from_ds].join_one(
+                                result[to_ds], on=on_cond
+                            )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# BSL native YAML helpers
+# ---------------------------------------------------------------------------
 
 
 def _parse_expression_config(name: str, config: str | dict, metric_type: str):
@@ -30,6 +374,8 @@ def _parse_expression_config(name: str, config: str | dict, metric_type: str):
             extra_kwargs["is_time_dimension"] = config.get("is_time_dimension", False)
             extra_kwargs["smallest_time_grain"] = config.get("smallest_time_grain")
             extra_kwargs["derived_dimensions"] = tuple(config.get("derived_dimensions") or ())
+        if "ai_context" in config:
+            extra_kwargs["ai_context"] = config["ai_context"]
         return config["expr"], config.get("description"), extra_kwargs
     else:
         raise ValueError(f"Invalid {metric_type} format for '{name}'. Must be a string or dict")
@@ -55,11 +401,14 @@ def _parse_dimension_or_measure(
     expr_str, description, extra_kwargs = _parse_expression_config(name, config, metric_type)
     deferred = safe_eval(expr_str, context={"_": _}).unwrap()
     base_kwargs = {"expr": deferred, "description": description}
-    return (
-        Dimension(**base_kwargs, **extra_kwargs)
-        if metric_type == "dimension"
-        else Measure(**base_kwargs)
-    )
+    if metric_type == "dimension":
+        return Dimension(**base_kwargs, **extra_kwargs)
+    else:
+        # Pass through ai_context for measures too
+        meas_kwargs = base_kwargs
+        if "ai_context" in extra_kwargs:
+            meas_kwargs["ai_context"] = extra_kwargs["ai_context"]
+        return Measure(**meas_kwargs)
 
 
 def _parse_calc_measure(name: str, config: str | dict) -> Measure:
@@ -320,6 +669,11 @@ def _load_table_for_yaml_model(
     return tables, tables[table_name]
 
 
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
 def from_config(
     config: Mapping[str, Any],
     tables: Mapping[str, Any] | None = None,
@@ -329,48 +683,27 @@ def from_config(
     """
     Load semantic tables from a configuration dictionary.
 
-    This is useful when you have already loaded your configuration through
-    custom logic (e.g., Kedro catalog, external config management) and want
-    to construct SemanticTable objects without going through YAML file loading.
+    Accepts **both** BSL native YAML format and OSI (Open Semantic Interchange)
+    v0.1.1 format.  The format is auto-detected: if the dict contains
+    ``version`` and ``semantic_model`` keys it is treated as OSI, otherwise
+    as BSL native.
 
     Args:
-        config: Configuration dictionary with model definitions
+        config: Configuration dictionary (BSL or OSI format)
         tables: Optional mapping of table names to ibis table expressions
         profile: Optional profile name to load tables from
         profile_path: Optional path to profile file
 
     Returns:
         Dict mapping model names to SemanticModel instances
-
-    Example config format:
-        {
-            "flights": {
-                "table": "flights_tbl",
-                "description": "Flight data model",
-                "database": ["analytics", "prod"],  # optional: catalog.schema
-                "dimensions": {
-                    "origin": {"expr": "_.origin", "description": "Origin airport"},
-                    "destination": "_.destination",
-                },
-                "measures": {
-                    "flight_count": "_.count()",
-                    "avg_distance": "_.distance.mean()",
-                },
-            }
-        }
-
-    The optional 'database' field can be a string or list for multi-part identifiers
-    (e.g., ["catalog", "schema"] for catalog.schema.table). This is passed to
-    ibis connection.table() and is useful for loading tables from different
-    databases/schemas under the same connection.
-
-    Example usage with pre-loaded tables:
-        >>> import ibis
-        >>> con = ibis.duckdb.connect()
-        >>> flights_tbl = con.table("flights")
-        >>> config = {"flights": {"table": "flights_tbl", "dimensions": {...}}}
-        >>> models = from_config(config, tables={"flights_tbl": flights_tbl})
     """
+    # ---- Auto-detect OSI format ----
+    if _is_osi_config(config):
+        return _from_osi_config(
+            config, tables=tables, profile=profile, profile_path=profile_path
+        )
+
+    # ---- BSL native format ----
     tables = _load_tables_from_references(dict(tables) if tables else {})
 
     # Load tables from profile if not provided
@@ -451,12 +784,13 @@ def from_yaml(
     profile_path: str | None = None,
 ) -> dict[str, SemanticModel]:
     """
-    Load semantic tables from a YAML file with optional profile-based table loading.
+    Load semantic tables from a YAML file.
 
-    This is a convenience wrapper around from_config() that loads the YAML file first.
+    Accepts **both** BSL native YAML format and OSI (Open Semantic Interchange)
+    v0.1.1 format.  The format is auto-detected.
 
     Args:
-        yaml_path: Path to the YAML configuration file
+        yaml_path: Path to the YAML configuration file (BSL or OSI format)
         tables: Optional mapping of table names to ibis table expressions
         profile: Optional profile name to load tables from
         profile_path: Optional path to profile file
@@ -464,45 +798,14 @@ def from_yaml(
     Returns:
         Dict mapping model names to SemanticModel instances
 
-    Example YAML format:
-        flights:
-          table: flights_tbl
-          description: "Flight data model"
-          database:  # optional: for loading from specific database/schema
-            - analytics
-            - prod
-          dimensions:
-            origin:
-              expr: _.origin
-              description: "Origin airport code"
-              is_entity: true
-            destination: _.destination
-            carrier: _.carrier
-            arr_time:
-              expr: _.arr_time
-              description: "Arrival time"
-              is_event_timestamp: true
-              is_time_dimension: true
-              smallest_time_grain: "TIME_GRAIN_DAY"
-          measures:
-            flight_count: _.count()
-            avg_distance: _.distance.mean()
-            total_distance:
-              expr: _.distance.sum()
-              description: "Total distance flown"
-          calculated_measures:
-            avg_per_flight:
-              expr: _.total_distance / _.flight_count
-              description: "Average distance per flight"
-            pct_of_total:
-              expr: _.total_distance / _.all(_.total_distance) * 100
-              description: "Percentage of total distance"
-          joins:
-            carriers:
-              model: carriers
-              type: one
-              left_on: carrier
-              right_on: code
+    Examples:
+        Load a BSL native YAML file::
+
+            models = from_yaml("flights.yml")
+
+        Load an OSI YAML file::
+
+            models = from_yaml("flights_osi.yaml", tables=tables)
     """
     yaml_configs = read_yaml_file(yaml_path)
     return from_config(yaml_configs, tables=tables, profile=profile, profile_path=profile_path)

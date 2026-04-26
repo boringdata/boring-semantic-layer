@@ -43,6 +43,10 @@ from .yaml import (
     from_config,
     from_yaml,
 )
+from .osi import (
+    to_osi,
+    to_osi_yaml,
+)
 
 __all__ = [
     "to_semantic_table",
@@ -57,6 +61,8 @@ __all__ = [
     "Measure",
     "from_config",
     "from_yaml",
+    "to_osi",
+    "to_osi_yaml",
     "MCPSemanticModel",
     "LangGraphBackend",
     "options",
