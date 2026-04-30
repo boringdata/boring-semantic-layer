@@ -39,6 +39,7 @@ from .ops import (
     _normalize_join_predicate,
     _normalize_to_name,
 )
+from .query import compare_periods as build_compare_periods
 from .query import query as build_query
 
 _JOIN_REMOVED_MESSAGE = (
@@ -330,8 +331,64 @@ def _create_dimension(expr: Dimension | Callable | dict) -> Dimension:
             is_event_timestamp=expr.get("is_event_timestamp", False),
             is_time_dimension=expr.get("is_time_dimension", False),
             smallest_time_grain=expr.get("smallest_time_grain"),
+            derived_dimensions=tuple(expr.get("derived_dimensions") or ()),
+            metadata=dict(expr.get("metadata") or {}),
         )
     return Dimension(expr=expr, description=None)
+
+
+_SUPPORTED_DERIVED_TIME_DIMENSIONS = frozenset({"year", "month", "day"})
+
+
+def _extract_derived_time_part(value: ir.Value, part: str) -> ir.Value:
+    if part == "year":
+        return value.year()
+    if part == "month":
+        return value.month()
+    if part == "day":
+        return value.day()
+    raise ValueError(
+        f"Unsupported derived dimension part '{part}'. "
+        f"Supported values: {sorted(_SUPPORTED_DERIVED_TIME_DIMENSIONS)}",
+    )
+
+
+def _expand_derived_dimensions(
+    dimensions: Mapping[str, Dimension | Callable | dict] | None,
+) -> FrozenDict[str, Dimension]:
+    base_dimensions = {
+        dim_name: _create_dimension(dim)
+        for dim_name, dim in (dimensions or {}).items()
+    }
+    expanded_dimensions = dict(base_dimensions)
+
+    for dim_name, dim in base_dimensions.items():
+        for part in dim.derived_dimensions:
+            normalized_part = part.strip().lower()
+            if normalized_part not in _SUPPORTED_DERIVED_TIME_DIMENSIONS:
+                raise ValueError(
+                    f"Invalid derived dimension '{part}' for '{dim_name}'. "
+                    f"Supported values: {sorted(_SUPPORTED_DERIVED_TIME_DIMENSIONS)}",
+                )
+
+            derived_name = f"{dim_name}_{normalized_part}"
+            if derived_name in expanded_dimensions:
+                # Keep explicitly defined dimensions and avoid duplicate regeneration.
+                continue
+
+            base_expr = dim.expr
+
+            def derived_expr(
+                table: ir.Table,
+                _base_expr=base_expr,
+                _part=normalized_part,
+            ) -> ir.Value:
+                value = _base_expr.resolve(table) if _is_deferred(_base_expr) else _base_expr(table)
+                return _extract_derived_time_part(value, _part)
+
+            expanded_dimensions[derived_name] = Dimension(expr=derived_expr, description=None)
+
+    return FrozenDict(expanded_dimensions)
 
 
 def _derive_name(table: Any) -> str | None:
@@ -369,6 +426,58 @@ def _build_semantic_model_from_roots(
     )
 
 
+def _get_entity_dims(op) -> frozenset[str]:
+    """Return the set of dimension names marked ``is_entity=True`` on an op."""
+    from .ops import SemanticTableOp
+
+    if isinstance(op, SemanticTableOp):
+        return frozenset(
+            name for name, dim in op.get_dimensions().items() if getattr(dim, "is_entity", False)
+        )
+    return frozenset()
+
+
+def _has_measure_fields(op) -> bool:
+    """Return whether an op defines base or calculated measures."""
+    from .ops import SemanticTableOp
+
+    if isinstance(op, SemanticTableOp):
+        return bool(op.get_measures()) or bool(op.get_calculated_measures())
+    return False
+
+
+def _detect_grain_cardinality(left_op, right_op) -> str:
+    """Compare entity dimensions to detect grain mismatch.
+
+    If both sides declare ``is_entity`` dimensions and the sets differ,
+    returns ``"many"`` only for multi-fact joins where both sides define
+    measures. Pure dimension lookups should stay ``join_one`` so they can
+    use deferred dimension joins.
+    """
+    import warnings
+
+    left_entities = _get_entity_dims(left_op)
+    right_entities = _get_entity_dims(right_op)
+
+    if (
+        left_entities
+        and right_entities
+        and left_entities != right_entities
+        and _has_measure_fields(left_op)
+        and _has_measure_fields(right_op)
+    ):
+        left_name = getattr(left_op, "name", None) or "left"
+        right_name = getattr(right_op, "name", None) or "right"
+        warnings.warn(
+            f"Grain mismatch detected: {left_name} entity dims {sorted(left_entities)} "
+            f"!= {right_name} entity dims {sorted(right_entities)}. "
+            f"Upgrading join_one to join_many for automatic pre-aggregation.",
+            stacklevel=2,
+        )
+        return "many"
+    return "one"
+
+
 class SemanticModel(SemanticTable):
     def __init__(
         self,
@@ -382,9 +491,7 @@ class SemanticModel(SemanticTable):
     ) -> None:
         # Keep tables in regular ibis - only convert to xorq at execution time if needed
 
-        dims = FrozenDict(
-            {dim_name: _create_dimension(dim) for dim_name, dim in (dimensions or {}).items()},
-        )
+        dims = _expand_derived_dimensions(dimensions)
 
         meas = FrozenDict(
             {
@@ -505,6 +612,11 @@ class SemanticModel(SemanticTable):
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics.
 
+        When both models have ``is_entity`` dimensions declared and their entity
+        sets differ, the join is automatically upgraded to ``join_many`` semantics
+        so that BSL's pre-aggregation logic can align the grains before joining.
+        This prevents fan-out / double-counting in multi-fact star schemas.
+
         Args:
             other: The semantic model to join with
             on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
@@ -521,7 +633,8 @@ class SemanticModel(SemanticTable):
             >>> orders.join_one(customers, on=lambda o, c: o.customer_id == c.customer_id)
         """
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how, cardinality="one")
+        cardinality = _detect_grain_cardinality(self.op(), other_op)
+        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how, cardinality=cardinality)
 
     def join_many(
         self,
@@ -636,6 +749,7 @@ class SemanticModel(SemanticTable):
         order_by: Sequence[tuple[str, str]] | None = None,
         limit: int | None = None,
         time_grain: str | None = None,
+        time_grains: dict[str, str] | None = None,
         time_range: dict[str, str] | None = None,
         having: list | None = None,
     ):
@@ -647,8 +761,36 @@ class SemanticModel(SemanticTable):
             order_by=order_by,
             limit=limit,
             time_grain=time_grain,
+            time_grains=time_grains,
             time_range=time_range,
             having=having,
+        )
+
+    def compare_periods(
+        self,
+        dimensions: Sequence[str] | None = None,
+        measures: Sequence[str] | None = None,
+        current_time_range: dict[str, str] | None = None,
+        previous_time_range: dict[str, str] | None = None,
+        filters: list | None = None,
+        time_dimension: str | None = None,
+        time_grain: str | None = None,
+        time_grains: dict[str, str] | None = None,
+        order_by: Sequence[tuple[str, str]] | None = None,
+        limit: int | None = None,
+    ):
+        return build_compare_periods(
+            semantic_table=self,
+            dimensions=dimensions,
+            measures=measures,
+            current_time_range=current_time_range,
+            previous_time_range=previous_time_range,
+            filters=filters,
+            time_dimension=time_dimension,
+            time_grain=time_grain,
+            time_grains=time_grains,
+            order_by=order_by,
+            limit=limit,
         )
 
 
@@ -795,6 +937,7 @@ class SemanticJoin(SemanticTable):
         order_by: list[str] | None = None,
         limit: int | None = None,
         time_grain: str | None = None,
+        time_grains: dict[str, str] | None = None,
         time_range: dict[str, str] | None = None,
         having: list | None = None,
     ):
@@ -806,6 +949,7 @@ class SemanticJoin(SemanticTable):
             order_by=order_by,
             limit=limit,
             time_grain=time_grain,
+            time_grains=time_grains,
             time_range=time_range,
             having=having,
         )

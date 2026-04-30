@@ -175,7 +175,7 @@ def _extract_limit(op, context: BSLSerializationContext) -> dict[str, Any]:
 def _extract_join(op, context: BSLSerializationContext) -> dict[str, Any]:
     from ..utils import join_predicate_to_structured
 
-    metadata: dict[str, Any] = {"how": op.how}
+    metadata: dict[str, Any] = {"how": op.how, "cardinality": op.cardinality}
     if op.on is not None:
         struct_result = join_predicate_to_structured(op.on)
         match struct_result:
@@ -252,6 +252,8 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
                 "is_time_dimension": dim.is_time_dimension,
                 "smallest_time_grain": dim.smallest_time_grain,
             }
+            if dim.derived_dimensions:
+                entry["derived_dimensions"] = list(dim.derived_dimensions)
             col_name = extract_simple_column_name(dim.expr)
             match col_name:
                 case str():

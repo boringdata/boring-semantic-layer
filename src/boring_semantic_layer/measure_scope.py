@@ -8,6 +8,47 @@ from returns.maybe import Maybe, Some
 from toolz import curry
 
 
+def _has_prefixed_columns(tbl, name: str) -> bool:
+    """Check if table has columns with the given prefix (e.g., 'flights.' prefix)."""
+    if not hasattr(tbl, "columns"):
+        return False
+    prefix = f"{name}."
+    return any(c.startswith(prefix) for c in tbl.columns)
+
+
+class _ColumnPrefixProxy:
+    """Proxy for navigating prefixed column names on joined ibis tables.
+
+    Supports chained attribute access like ``t.flights.carrier`` which resolves
+    to ``table["flights.carrier"]`` when the table has columns with the
+    ``"flights."`` prefix (typical after joins).
+    """
+
+    __slots__ = ("_tbl", "_prefix")
+
+    def __init__(self, tbl, prefix: str):
+        object.__setattr__(self, "_tbl", tbl)
+        object.__setattr__(self, "_prefix", prefix)
+
+    def __getattr__(self, name: str):
+        full_name = f"{self._prefix}.{name}"
+        if hasattr(self._tbl, "columns") and full_name in self._tbl.columns:
+            return self._tbl[full_name]
+        raise AttributeError(
+            f"No column '{full_name}' found on the table. "
+            f"Available columns with prefix '{self._prefix}.': "
+            f"{[c for c in (self._tbl.columns if hasattr(self._tbl, 'columns') else []) if c.startswith(self._prefix + '.')]}"
+        )
+
+    def __getitem__(self, name: str):
+        full_name = f"{self._prefix}.{name}"
+        if hasattr(self._tbl, "columns") and full_name in self._tbl.columns:
+            return self._tbl[full_name]
+        raise KeyError(
+            f"No column '{full_name}' found on the table."
+        )
+
+
 class _PendingMethodCall:
     """Captures a method access on a calc-measure AST node, waiting for ``()``."""
 
@@ -268,6 +309,8 @@ class MeasureScope:
             )
 
         if self.post_agg:
+            if _has_prefixed_columns(self.tbl, name):
+                return _ColumnPrefixProxy(self.tbl, name)
             return _resolve_column_short_name(self.tbl, name)
 
         maybe_measure = _resolve_measure_name(name, self.known, self.known_set).map(MeasureRef)
@@ -276,6 +319,10 @@ class MeasureScope:
 
         if hasattr(self.tbl, "columns") and name in self.tbl.columns:
             return DeferredColumn(name, self.tbl)
+
+        # Support prefix navigation for joined tables (e.g., t.flights.carrier)
+        if _has_prefixed_columns(self.tbl, name):
+            return _ColumnPrefixProxy(self.tbl, name)
 
         return _resolve_column_short_name(self.tbl, name)
 
@@ -336,6 +383,10 @@ class ColumnScope:
         if is_array_column(self.tbl, name):
             proxy = create_table_proxy(self.tbl)
             return getattr(proxy, name)
+
+        # Support prefix navigation for joined tables (e.g., t.flights.carrier)
+        if _has_prefixed_columns(self.tbl, name):
+            return _ColumnPrefixProxy(self.tbl, name)
 
         return getattr(self.tbl, name)
 

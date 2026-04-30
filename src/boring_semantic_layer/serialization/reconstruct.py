@@ -63,6 +63,7 @@ def _reconstruct_semantic_table(
             is_event_timestamp=dim_data.get("is_event_timestamp", False),
             is_time_dimension=dim_data.get("is_time_dimension", False),
             smallest_time_grain=dim_data.get("smallest_time_grain"),
+            derived_dimensions=tuple(dim_data.get("derived_dimensions") or ()),
         )
 
     def _create_measure(name: str, meas_data: dict) -> ops.Measure:
@@ -94,9 +95,13 @@ def _reconstruct_semantic_table(
         read_ops = list(walk_nodes((Read,), unwrapped_expr))
         in_memory_tables = list(walk_nodes((xorq_rel.InMemoryTable,), unwrapped_expr))
         db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), unwrapped_expr))
+        unbound_tables = list(walk_nodes((xorq_rel.UnboundTable,), unwrapped_expr))
 
         total_leaf_tables = (
-            len(read_ops) + len(in_memory_tables) + (len(db_tables) if not read_ops else 0)
+            len(read_ops)
+            + len(in_memory_tables)
+            + (len(db_tables) if not read_ops else 0)
+            + len(unbound_tables)
         )
         if total_leaf_tables > 1:
             expr = (
@@ -114,6 +119,10 @@ def _reconstruct_semantic_table(
 
         if db_tables:
             base = db_tables[0].to_expr()
+            return base.view() if is_self_ref else base
+
+        if unbound_tables:
+            base = unbound_tables[0].to_expr()
             return base.view() if is_self_ref else base
 
         return xorq_expr.to_expr()
@@ -260,6 +269,10 @@ def _reconstruct_join(
     right_model = reconstruct_bsl_operation(right_metadata, right_xorq_expr, context)
 
     how = metadata.get("how", "inner")
+    # Default to "many" for payloads serialized before cardinality was
+    # emitted — join_many is a safe superset of join_one behaviour, while
+    # the reverse silently skips pre-aggregation.  (Fixes #223.)
+    cardinality = metadata.get("cardinality", "many")
     on_struct = metadata.get("on_struct")
 
     if on_struct is None:
@@ -268,10 +281,18 @@ def _reconstruct_join(
             right=right_model.op() if hasattr(right_model, "op") else right_model,
             on=None,
             how=how,
+            cardinality=cardinality,
         )
 
     predicate = context.deserialize_join_predicate(on_struct)
-    return left_model.join_many(right_model, on=predicate, how=how)
+    join_method = {
+        "one": "join_one",
+        "many": "join_many",
+        "cross": "join_cross",
+    }.get(cardinality, "join_many")
+    if join_method == "join_cross":
+        return left_model.join_cross(right_model)
+    return getattr(left_model, join_method)(right_model, on=predicate, how=how)
 
 
 # ---------------------------------------------------------------------------

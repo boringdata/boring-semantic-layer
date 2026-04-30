@@ -37,7 +37,7 @@ def test_basic_unnest():
     assert len(result) == 6
 
     # Check that values were properly unnested
-    assert result["values"].tolist() == [10, 20, 30, 40, 50, 60]
+    assert sorted(result["values"].tolist()) == [10, 20, 30, 40, 50, 60]
 
     # Each row should still have its id
     assert sorted(result["id"].tolist()) == [1, 1, 2, 3, 3, 3]

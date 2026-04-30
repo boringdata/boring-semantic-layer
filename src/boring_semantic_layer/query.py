@@ -13,10 +13,26 @@ from typing import Any, ClassVar, Literal
 import ibis
 from attrs import frozen
 from ibis.common.collections import FrozenDict
-import xorq.api as xo
 from toolz import curry
 
 from .utils import safe_eval
+
+
+def _get_ibis_api():
+    """Return xorq's vendored ibis API if available, else plain ibis.
+
+    Filter expressions built with ``ibis._`` / ``ibis.literal()`` must use the
+    same ibis implementation as the table they will be resolved against.  Since
+    ``_ensure_xorq_table()`` converts tables to xorq when possible, we should
+    build filter expressions with xorq's ibis to match.  For backends that
+    xorq does not support, plain ibis is used as the fallback.
+    """
+    try:
+        import xorq.api as xo
+
+        return xo
+    except Exception:
+        return ibis
 
 # Time grain type alias
 TimeGrain = Literal[
@@ -136,10 +152,30 @@ def _find_time_dimension(semantic_table: Any, dimensions: list[str]) -> str | No
     return next((dim for dim in dimensions if is_time_dim(dim)), None)
 
 
+def _find_any_time_dimension(semantic_table: Any) -> str | None:
+    """Find the first declared time dimension on a semantic table."""
+    dims_dict = semantic_table.get_dimensions()
+    return next((name for name, dim in dims_dict.items() if dim.is_time_dimension), None)
+
+
 @curry
 def _make_grain_id(grain: str) -> str:
     """Convert grain name to TIME_GRAIN_ identifier (curried)."""
     return f"TIME_GRAIN_{grain.upper()}"
+
+
+def _normalize_grain(grain: str) -> str:
+    """Accept both short ("month") and long ("TIME_GRAIN_MONTH") grain names."""
+    if grain in TIME_GRAIN_TRANSFORMATIONS:
+        return grain
+    canonical = _make_grain_id(grain)
+    if canonical in TIME_GRAIN_TRANSFORMATIONS:
+        return canonical
+    raise ValueError(
+        f"Invalid time grain: '{grain}'. "
+        f"Valid values: {list(TIME_GRAIN_TRANSFORMATIONS.keys())} "
+        f"or short forms like 'month', 'quarter', 'year', etc.",
+    )
 
 
 def _validate_time_grain(
@@ -223,9 +259,10 @@ class Filter:
             return value
 
         # Try parsing as timestamp first (more general), then date
+        _ibis = _get_ibis_api()
         for dtype in ("timestamp", "date"):
             try:
-                return xo.literal(value, type=dtype)
+                return _ibis.literal(value, type=dtype)
             except (ValueError, TypeError):
                 pass
 
@@ -238,12 +275,13 @@ class Filter:
         For prefixed fields (e.g., 'customers.country'), use only the field name
         since joined tables flatten the columns to the top level.
         """
+        _ibis = _get_ibis_api()
         if "." in field:
             # Extract just the field name, ignoring the table prefix
             # e.g., 'customers.country' -> 'country'
             _table_name, field_name = field.split(".", 1)
-            return getattr(xo._, field_name)
-        return getattr(xo._, field)
+            return getattr(_ibis._, field_name)
+        return getattr(_ibis._, field)
 
     def _parse_json_filter(self, filter_obj: FrozenDict) -> Any:
         """Parse JSON filter object into ibis expression."""
@@ -304,9 +342,10 @@ class Filter:
             expr = self._parse_json_filter(self.filter)
             return lambda t: expr.resolve(_ensure_xorq_table(t))
         elif isinstance(self.filter, str):
+            _ibis = _get_ibis_api()
             expr = safe_eval(
                 self.filter,
-                context={"_": xo._, "ibis": xo},
+                context={"_": _ibis._, "ibis": _ibis},
             ).unwrap()
             return lambda t: expr.resolve(_ensure_xorq_table(t))
         elif callable(self.filter):
@@ -535,6 +574,156 @@ def _split_filter(
         pre_agg.append(filter_spec)
 
 
+def _build_time_range_filters(semantic_table: Any, time_dimension: str, time_range: Mapping[str, str]) -> list[Callable]:
+    """Build reusable filters for a specific time dimension and range."""
+    if not isinstance(time_range, dict) or "start" not in time_range or "end" not in time_range:
+        raise ValueError("time_range must be a dict with 'start' and 'end' keys")
+
+    from datetime import datetime
+
+    dim_obj = semantic_table.get_dimensions().get(time_dimension)
+    if dim_obj is None:
+        raise ValueError(
+            f"Dimension '{time_dimension}' not found. "
+            f"Available dimensions: {list(semantic_table.get_dimensions().keys())}"
+        )
+    if not dim_obj.is_time_dimension:
+        raise ValueError(
+            f"Dimension '{time_dimension}' is not a time dimension. "
+            "compare_periods and time ranges require a time dimension."
+        )
+
+    start_dt = datetime.fromisoformat(time_range["start"])
+    end_dt = datetime.fromisoformat(time_range["end"])
+    if end_dt < start_dt:
+        raise ValueError("time_range end must be greater than or equal to start")
+    return [
+        lambda t, dim=dim_obj, start=start_dt: dim(t) >= start,
+        lambda t, dim=dim_obj, end=end_dt: dim(t) <= end,
+    ]
+
+
+def compare_periods(
+    semantic_table: Any,
+    dimensions: Sequence[str] | None = None,
+    measures: Sequence[str] | None = None,
+    current_time_range: Mapping[str, str] | None = None,
+    previous_time_range: Mapping[str, str] | None = None,
+    filters: Sequence[dict[str, Any] | str | Callable | Filter] | None = None,
+    time_dimension: str | None = None,
+    time_grain: TimeGrain | None = None,
+    time_grains: Mapping[str, TimeGrain] | None = None,
+    order_by: Sequence[tuple[str, str]] | None = None,
+    limit: int | None = None,
+) -> Any:
+    """Compare two time ranges and return current/previous/delta columns."""
+    from .api import to_semantic_table
+
+    dimensions = list(dimensions or [])
+    measures = list(measures or [])
+    filters = list(filters or [])
+
+    if not measures:
+        raise ValueError("compare_periods requires at least one measure")
+    if current_time_range is None or previous_time_range is None:
+        raise ValueError(
+            "compare_periods requires both 'current_time_range' and 'previous_time_range'"
+        )
+
+    dims_dict = semantic_table.get_dimensions()
+    known_dimensions = set(dims_dict)
+    known_measures = set(semantic_table.get_measures()) | set(semantic_table.get_calculated_measures())
+    model_name = getattr(semantic_table, "name", None)
+
+    dimensions = _normalize_fields(dimensions, known_dimensions, expected_prefix=model_name)
+    measures = _normalize_fields(measures, known_measures, expected_prefix=model_name)
+
+    resolved_time_dimension = time_dimension
+    if resolved_time_dimension is not None:
+        resolved_time_dimension = _normalize_fields(
+            [resolved_time_dimension], known_dimensions, expected_prefix=model_name
+        )[0]
+    else:
+        resolved_time_dimension = _find_time_dimension(semantic_table, dimensions) or _find_any_time_dimension(
+            semantic_table
+        )
+
+    if resolved_time_dimension is None:
+        raise ValueError(
+            "compare_periods requires a time dimension. Mark one with "
+            ".with_dimensions(dim_name={'expr': ..., 'is_time_dimension': True}) "
+            "or pass time_dimension explicitly."
+        )
+
+    current_result = query(
+        semantic_table=semantic_table,
+        dimensions=dimensions,
+        measures=measures,
+        filters=[*filters, *_build_time_range_filters(semantic_table, resolved_time_dimension, current_time_range)],
+        time_grain=time_grain,
+        time_grains=time_grains,
+    )
+    previous_result = query(
+        semantic_table=semantic_table,
+        dimensions=dimensions,
+        measures=measures,
+        filters=[*filters, *_build_time_range_filters(semantic_table, resolved_time_dimension, previous_time_range)],
+        time_grain=time_grain,
+        time_grains=time_grains,
+    )
+
+    current_tbl = current_result.as_table().table.rename(
+        {f"{measure}_current": measure for measure in measures}
+    )
+    previous_tbl = previous_result.as_table().table.rename(
+        {
+            **{f"{measure}_previous": measure for measure in measures},
+            **{f"__previous_{dim}": dim for dim in dimensions},
+        }
+    )
+
+    if dimensions:
+        join_predicates = [current_tbl[dim] == previous_tbl[f"__previous_{dim}"] for dim in dimensions]
+        joined = current_tbl.join(previous_tbl, join_predicates, how="outer")
+        result_tbl = joined.select(
+            *[
+                joined[dim].coalesce(joined[f"__previous_{dim}"]).name(dim)
+                for dim in dimensions
+            ],
+            *[joined[f"{measure}_current"] for measure in measures],
+            *[joined[f"{measure}_previous"] for measure in measures],
+        )
+    else:
+        joined = current_tbl.join(previous_tbl, how="cross")
+        result_tbl = joined.select(
+            *[joined[f"{measure}_current"] for measure in measures],
+            *[joined[f"{measure}_previous"] for measure in measures],
+        )
+
+    pct_mutations = {}
+    delta_mutations = {}
+    for measure in measures:
+        current_col = result_tbl[f"{measure}_current"]
+        previous_col = result_tbl[f"{measure}_previous"]
+        delta_expr = current_col.fill_null(0) - previous_col.fill_null(0)
+        delta_mutations[f"{measure}_delta"] = delta_expr
+        pct_mutations[f"{measure}_pct_change"] = delta_expr / previous_col.nullif(0)
+
+    result_tbl = result_tbl.mutate(**delta_mutations, **pct_mutations)
+
+    if order_by:
+        result_tbl = result_tbl.order_by(
+            [
+                result_tbl[field].desc() if direction.lower() == "desc" else result_tbl[field]
+                for field, direction in order_by
+            ]
+        )
+    if limit is not None:
+        result_tbl = result_tbl.limit(limit)
+
+    return to_semantic_table(result_tbl, name=f"{model_name or 'model'}_period_comparison")
+
+
 def query(
     semantic_table: Any,  # SemanticModel, but avoiding circular import
     dimensions: Sequence[str] | None = None,
@@ -543,6 +732,7 @@ def query(
     order_by: Sequence[tuple[str, str]] | None = None,
     limit: int | None = None,
     time_grain: TimeGrain | None = None,
+    time_grains: Mapping[str, TimeGrain] | None = None,
     time_range: Mapping[str, str] | None = None,
     having: Sequence[dict[str, Any] | str | Callable | Filter] | None = None,
 ) -> Any:  # Returns SemanticModel or SemanticAggregate
@@ -559,7 +749,11 @@ def query(
             always applied before aggregation.
         order_by: List of (field, direction) tuples
         limit: Maximum number of rows to return
-        time_grain: Optional time grain to apply to time dimensions (e.g., "TIME_GRAIN_MONTH")
+        time_grain: Optional time grain to apply to ALL time dimensions (e.g., "TIME_GRAIN_MONTH").
+            Cannot be used together with time_grains.
+        time_grains: Optional per-dimension time grains as a dict mapping dimension names
+            to grain values (e.g., {"order_date": "TIME_GRAIN_MONTH", "ship_date": "TIME_GRAIN_QUARTER"}).
+            Cannot be used together with time_grain.
         time_range: Optional time range filter with 'start' and 'end' keys
         having: Optional list of post-aggregation filters.  These are always
             applied after group-by/aggregate regardless of field type.  Use
@@ -589,11 +783,18 @@ def query(
             having=[lambda t: t.flight_count > 100]
         ).execute()
 
-        # With time grain
+        # With time grain (applies to all time dimensions)
         result = st.query(
             dimensions=["order_date"],
             measures=["total_sales"],
             time_grain="TIME_GRAIN_MONTH"
+        ).execute()
+
+        # With per-dimension time grains
+        result = st.query(
+            dimensions=["order_date", "ship_date"],
+            measures=["total_sales"],
+            time_grains={"order_date": "TIME_GRAIN_MONTH", "ship_date": "TIME_GRAIN_QUARTER"}
         ).execute()
 
         # With time range
@@ -622,9 +823,6 @@ def query(
 
     # Step 0: Add time_range as a filter if specified
     if time_range:
-        if not isinstance(time_range, dict) or "start" not in time_range or "end" not in time_range:
-            raise ValueError("time_range must be a dict with 'start' and 'end' keys")
-
         time_dim_name = _find_time_dimension(result, dimensions)
         if not time_dim_name:
             raise ValueError(
@@ -634,53 +832,57 @@ def query(
                 ".with_dimensions(dim_name={'expr': lambda t: t.column, 'is_time_dimension': True})"
             )
 
-        # Apply time range filters using the Dimension object directly.
-        # This uses dim(t) which calls Dimension.__call__ and properly resolves
-        # Deferred expressions (ibis._) via: self.expr.resolve(table) if _is_deferred(...)
-        # This is the same pattern used for time_grain transformations.
-        from datetime import datetime
-
-        dim_obj = result.get_dimensions().get(time_dim_name)
-        start_dt = datetime.fromisoformat(time_range["start"])
-        end_dt = datetime.fromisoformat(time_range["end"])
-        filters.append(lambda t, dim=dim_obj, start=start_dt: dim(t) >= start)
-        filters.append(lambda t, dim=dim_obj, end=end_dt: dim(t) <= end)
+        filters.extend(_build_time_range_filters(result, time_dim_name, time_range))
 
     # Step 1: Handle time grain transformations
-    if time_grain:
-        if time_grain not in TIME_GRAIN_TRANSFORMATIONS:
-            raise ValueError(
-                f"Invalid time_grain: {time_grain}. Must be one of {list(TIME_GRAIN_TRANSFORMATIONS.keys())}",
-            )
+    if time_grain and time_grains:
+        raise ValueError(
+            "Cannot specify both 'time_grain' and 'time_grains'. "
+            "Use 'time_grain' to apply a single grain to all time dimensions, "
+            "or 'time_grains' to specify per-dimension grains."
+        )
 
-        # Find time dimensions and apply grain transformation
-        time_dims_to_transform = {}
+    # Build per-dimension grain mapping: either from time_grains directly,
+    # or by expanding time_grain to all time dimensions in the query.
+    grain_map: dict[str, str] = {}
+    if time_grains:
+        grain_map = {dim: _normalize_grain(g) for dim, g in time_grains.items()}
+    elif time_grain:
+        normalized = _normalize_grain(time_grain)
         dims_dict = result.get_dimensions()
         for dim_name in dimensions:
-            if dim_name in dims_dict:
-                dim_obj = dims_dict[dim_name]
-                if dim_obj.is_time_dimension:
-                    # Validate grain
-                    _validate_time_grain(
-                        time_grain,
-                        dim_obj.smallest_time_grain,
-                        dim_name,
-                    )
+            if dim_name in dims_dict and dims_dict[dim_name].is_time_dimension:
+                grain_map[dim_name] = normalized
 
-                    # Create transformed dimension
-                    # NOTE: We capture dim_obj (not dim_obj.expr) and call dim(t) because
-                    # Dimension.__call__ properly resolves Deferred expressions via:
-                    #   self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
-                    # Calling orig_expr(t) directly on a Deferred would cause infinite recursion.
-                    truncate_unit = TIME_GRAIN_TRANSFORMATIONS[time_grain]
-                    time_dims_to_transform[dim_name] = Dimension(
-                        expr=lambda t, dim=dim_obj, unit=truncate_unit: dim(t).truncate(unit),
-                        description=dim_obj.description,
-                        is_time_dimension=dim_obj.is_time_dimension,
-                        smallest_time_grain=dim_obj.smallest_time_grain,
-                    )
+    if grain_map:
+        time_dims_to_transform = {}
+        dims_dict = result.get_dimensions()
+        for dim_name, grain in grain_map.items():
+            if dim_name not in dims_dict:
+                raise ValueError(
+                    f"Dimension '{dim_name}' not found. "
+                    f"Available dimensions: {list(dims_dict.keys())}",
+                )
+            dim_obj = dims_dict[dim_name]
+            if not dim_obj.is_time_dimension:
+                raise ValueError(
+                    f"Dimension '{dim_name}' is not a time dimension. "
+                    "time_grains can only be applied to time dimensions.",
+                )
+            _validate_time_grain(grain, dim_obj.smallest_time_grain, dim_name)
 
-        # Apply transformations
+            # NOTE: We capture dim_obj (not dim_obj.expr) and call dim(t) because
+            # Dimension.__call__ properly resolves Deferred expressions via:
+            #   self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
+            # Calling orig_expr(t) directly on a Deferred would cause infinite recursion.
+            truncate_unit = TIME_GRAIN_TRANSFORMATIONS[grain]
+            time_dims_to_transform[dim_name] = Dimension(
+                expr=lambda t, dim=dim_obj, unit=truncate_unit: dim(t).truncate(unit),
+                description=dim_obj.description,
+                is_time_dimension=dim_obj.is_time_dimension,
+                smallest_time_grain=dim_obj.smallest_time_grain,
+            )
+
         if time_dims_to_transform:
             result = result.with_dimensions(**time_dims_to_transform)
 

@@ -227,12 +227,22 @@ def _extract_requirement_for_key(
             if cols:
                 return apply_requirements_to_tables(current_reqs, table_names, cols)
         elif isinstance(result, Failure):
-            # If the failure is about a dimension validation error, raise it immediately
+            # If the failure is about a dimension validation error, re-raise
+            # unless the dimension uses model-prefixed access (e.g., t.flights.carrier)
+            # which legitimately fails on the raw table but works with a proxy
             exc = result.failure()
             if isinstance(
                 exc, AttributeError
             ) and "Dimension expression references non-existent column" in str(exc):
-                raise exc
+                # Check if the missing column could be a model prefix
+                err_str = str(exc)
+                is_prefix = False
+                for tname in table_names:
+                    if f"'{tname}'" in err_str:
+                        is_prefix = True
+                        break
+                if not is_prefix:
+                    raise exc
         return current_reqs
 
     # If not a dimension and we have a table prefix, assume col_name is a direct column reference

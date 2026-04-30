@@ -1,6 +1,7 @@
 """Tests for entity_dimension and time_dimension helper functions."""
 
 import ibis
+import pytest
 
 from boring_semantic_layer import entity_dimension, time_dimension, to_semantic_table
 
@@ -189,3 +190,85 @@ def test_regular_dimension_vs_entity_dimension():
     assert "category" in json_def["dimensions"]
     assert "is_entity" not in json_def["dimensions"]["category"]
     assert "category" not in json_def["entity_dimensions"]
+
+
+def test_time_dimension_auto_generates_derived_dimensions():
+    """time_dimension should auto-generate derived dimensions when requested."""
+    con = ibis.duckdb.connect(":memory:")
+    data = ibis.memtable(
+        {
+            "statement_date": ["2024-01-01", "2024-02-15", "2024-02-16"],
+            "value": [100, 200, 300],
+        }
+    )
+    tbl = con.create_table("test", data)
+
+    st = (
+        to_semantic_table(tbl, name="test_table")
+        .with_dimensions(
+            statement_date=time_dimension(
+                lambda t: t.statement_date.cast("timestamp"),
+                smallest_time_grain="TIME_GRAIN_DAY",
+                derived_dimensions=("year", "month", "day"),
+            ),
+        )
+        .with_measures(total=lambda t: t.value.sum())
+    )
+
+    json_def = st.json_definition
+    assert "statement_date_year" in json_def["dimensions"]
+    assert "statement_date_month" in json_def["dimensions"]
+    assert "statement_date_day" in json_def["dimensions"]
+    assert "statement_date" in json_def["time_dimensions"]
+
+    result = (
+        st.group_by("statement_date_year", "statement_date_month", "statement_date_day")
+        .aggregate("total")
+        .execute()
+    )
+    assert "statement_date_year" in result.columns
+    assert "statement_date_month" in result.columns
+    assert "statement_date_day" in result.columns
+
+
+def test_time_dimension_derived_dimensions_do_not_overwrite_explicit_dimensions():
+    """Explicit dimensions should win if they collide with generated names."""
+    con = ibis.duckdb.connect(":memory:")
+    data = ibis.memtable(
+        {
+            "statement_date": ["2024-01-01", "2024-02-15"],
+            "value": [1, 1],
+        }
+    )
+    tbl = con.create_table("test_collision", data)
+
+    st = to_semantic_table(tbl, name="test_table").with_dimensions(
+        statement_date_year={
+            "expr": lambda t: t.statement_date.cast("timestamp").year() + 1000,
+            "description": "custom derived year",
+        },
+        statement_date=time_dimension(
+            lambda t: t.statement_date.cast("timestamp"),
+            smallest_time_grain="TIME_GRAIN_DAY",
+            derived_dimensions=("year",),
+        ),
+    )
+
+    json_def = st.json_definition
+    assert json_def["dimensions"]["statement_date_year"]["description"] == "custom derived year"
+
+
+def test_time_dimension_derived_dimensions_invalid_part_raises():
+    """Invalid derived dimension names should raise a clear error."""
+    con = ibis.duckdb.connect(":memory:")
+    data = ibis.memtable({"statement_date": ["2024-01-01"], "value": [100]})
+    tbl = con.create_table("test_invalid", data)
+
+    with pytest.raises(ValueError, match="Invalid derived dimension"):
+        to_semantic_table(tbl, name="test_table").with_dimensions(
+            statement_date=time_dimension(
+                lambda t: t.statement_date.cast("timestamp"),
+                smallest_time_grain="TIME_GRAIN_DAY",
+                derived_dimensions=("quarter",),
+            ),
+        )
