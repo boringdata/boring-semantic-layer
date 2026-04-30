@@ -57,7 +57,7 @@ server = [
 ]
 
 dev = [
-    "boring-semantic-layer[agent,mcp,server,examples,viz-altair,viz-plotly,viz-plotext]",
+    "boring-semantic-layer[agent,mcp,mcp-code-mode,server,examples,viz-altair,viz-plotly,viz-plotext]",
     "openai>=1.0.0",
     "langchain-openai>=0.3.0",
     "langchain-anthropic>=0.3.0",
