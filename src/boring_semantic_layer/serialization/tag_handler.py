@@ -29,22 +29,49 @@ from .freeze import thaw
 def extract_metadata(tag_node) -> dict[str, Any]:
     """Return sidecar metadata (dimension/measure names) for a BSL-tagged node.
 
-    Walks nested metadata (the ``source`` chain) down to the innermost
-    ``SemanticTableOp`` and extracts the dimension/measure name tuples.
+    Walks nested metadata down to every ``SemanticTableOp`` leaf and unions
+    their dimension / measure / calc-measure names. ``source`` chains are
+    descended through; ``SemanticJoinOp`` nodes branch into ``left`` and
+    ``right``. Names from a joined leaf are prefixed with the leaf's table
+    name (matching how a joined ``SemanticTable`` exposes its fields, e.g.
+    ``flights.flight_count``); a non-joined model returns flat names.
     """
-    table_meta: Any = tag_node.metadata
-    while table_meta.get("bsl_op_type") != "SemanticTableOp" and (
-        src := table_meta.get("source")
-    ):
-        table_meta = dict(src) if isinstance(src, tuple) else src
-    dims = tuple(d[0] for d in table_meta.get("dimensions", ()))
-    measures = tuple(m[0] for m in table_meta.get("measures", ()))
-    return {
+
+    def as_dict(meta: Any) -> dict[str, Any]:
+        return dict(meta) if isinstance(meta, tuple) else meta
+
+    def collect(meta: Any, *, in_join: bool) -> tuple[list[str], list[str], list[str]]:
+        meta = as_dict(meta)
+        op_type = meta.get("bsl_op_type")
+
+        if (src := meta.get("source")) is not None:
+            return collect(src, in_join=in_join)
+
+        if op_type == "SemanticJoinOp":
+            ld, lm, lc = collect(meta.get("left", {}), in_join=True)
+            rd, rm, rc = collect(meta.get("right", {}), in_join=True)
+            return ld + rd, lm + rm, lc + rc
+
+        if op_type == "SemanticTableOp":
+            name = meta.get("name")
+            prefix = f"{name}." if (in_join and name) else ""
+            dims = [prefix + d[0] for d in meta.get("dimensions", ())]
+            meas = [prefix + m[0] for m in meta.get("measures", ())]
+            calc = [prefix + c[0] for c in meta.get("calc_measures", ())]
+            return dims, meas, calc
+
+        return [], [], []
+
+    dims, measures, calc = collect(tag_node.metadata, in_join=False)
+    result: dict[str, Any] = {
         "type": "semantic_model",
         "description": f"{len(dims)} dims, {len(measures)} measures",
-        "dimensions": dims,
-        "measures": measures,
+        "dimensions": tuple(dims),
+        "measures": tuple(measures),
     }
+    if calc:
+        result["calc_measures"] = tuple(calc)
+    return result
 
 
 def from_tag_node(tag_node):
