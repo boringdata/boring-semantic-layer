@@ -14,8 +14,19 @@ from pydantic import Field
 from pydantic.functional_validators import BeforeValidator
 
 from ...query import _find_time_dimension as find_time_dimension
+from ...skills import SkillMetadata
+from ...yaml import SemanticModelBundle
 from ..utils.chart_handler import generate_chart_with_data
 from ..utils.prompts import load_prompt
+from ._skill_mcp import (
+    WRITE_ANNOTATIONS,
+    build_domain_context,
+    register_all_skill_resources,
+    register_skill_resources,
+    resolve_add_skill_target,
+    validate_skill_name,
+    write_skill,
+)
 
 load_dotenv()
 
@@ -152,20 +163,55 @@ _resolve_model = resolve_model  # backwards-compat alias
 class MCPSemanticModel(FastMCP):
     def __init__(
         self,
-        models: Mapping[str, Any],
+        models: Mapping[str, Any] | SemanticModelBundle,
         name: str = "Semantic Layer MCP Server",
         instructions: str = SYSTEM_INSTRUCTIONS,
         code_mode: bool = False,
+        include_domain_context_tool: bool = True,
+        include_add_skill_tool: bool = True,
         **kwargs,
     ):
         transforms = kwargs.pop("transforms", [])
         if code_mode:
             transforms = [*transforms, *_build_code_mode_transforms()]
         super().__init__(name=name, instructions=instructions, transforms=transforms, **kwargs)
-        self.models = models
+
+        # Extract skills metadata if a bundle was passed; otherwise treat as
+        # a plain mapping for backward compatibility.
+        if isinstance(models, SemanticModelBundle):
+            self.models = models
+            self._parent_skills: list[SkillMetadata] = list(models.parent_skills)
+            self._model_skills: dict[str, list[SkillMetadata]] = {
+                k: list(v) for k, v in models.model_skills.items()
+            }
+            self._parent_skills_dir: Path | None = models.parent_skills_dir
+            self._model_skills_dirs: dict[str, Path] = dict(models.model_skills_dirs)
+        else:
+            self.models = models
+            self._parent_skills = []
+            self._model_skills = {}
+            self._parent_skills_dir = None
+            self._model_skills_dirs = {}
+
+        # "Has skills" means at least one skill was discovered OR at least one
+        # skills_dir is configured (so add_skill can write into an empty dir).
+        self._has_skills = (
+            bool(self._parent_skills)
+            or any(self._model_skills.values())
+            or self._parent_skills_dir is not None
+            or bool(self._model_skills_dirs)
+        )
+
         self._register_tools()
         self._register_resources()
         self._register_prompts()
+
+        if self._has_skills:
+            register_all_skill_resources(self, self._parent_skills, self._model_skills)
+            if include_domain_context_tool:
+                self._register_domain_context_tool()
+            if include_add_skill_tool:
+                self._register_add_skill_tool()
 
     def _register_tools(self):
         @self.tool(
@@ -263,7 +309,7 @@ class MCPSemanticModel(FastMCP):
                 BeforeValidator(_parse_json_string),
                 Field(
                     default=None,
-                    description="Per-dimension time grains as a dict mapping dimension names to grain values (e.g., {\"order_date\": \"month\", \"ship_date\": \"quarter\"}). Cannot be used with time_grain.",
+                    description='Per-dimension time grains as a dict mapping dimension names to grain values (e.g., {"order_date": "month", "ship_date": "quarter"}). Cannot be used with time_grain.',
                 ),
             ] = None,
             time_range: Annotated[
@@ -633,6 +679,104 @@ class MCPSemanticModel(FastMCP):
                     "end": end_val.isoformat() if hasattr(end_val, "isoformat") else str(end_val),
                 }
             )
+
+    def _register_domain_context_tool(self):
+        @self.tool(
+            name="get_domain_context",
+            description=(
+                load_prompt(PROMPTS_DIR, "tool-get-domain-context-desc.md")
+                or "Aggregated Level-1 metadata for every available skill plus a model summary."
+            ),
+            tags={"discovery"},
+            annotations=READONLY_ANNOTATIONS,
+        )
+        def get_domain_context() -> Mapping[str, Any]:
+            parent_dirs: list[Path] = (
+                [self._parent_skills_dir] if self._parent_skills_dir is not None else []
+            )
+            return build_domain_context(parent_dirs, self._model_skills_dirs, self.models)
+
+    def _register_add_skill_tool(self):
+        @self.tool(
+            name="add_skill",
+            description=(
+                load_prompt(PROMPTS_DIR, "tool-add-skill-desc.md")
+                or "Create a new skill by writing SKILL.md to the configured skills_dir."
+            ),
+            tags={"metadata"},
+            annotations=WRITE_ANNOTATIONS,
+        )
+        def add_skill(
+            name: Annotated[
+                str,
+                Field(
+                    description=(
+                        "Skill name in kebab-case (lowercase letters, digits, hyphens; "
+                        "must start with a letter). Becomes the directory name."
+                    ),
+                ),
+            ],
+            description: Annotated[
+                str,
+                Field(
+                    description=(
+                        "Trigger phrase for the skill. Goes into the SKILL.md frontmatter; "
+                        "should describe when an agent should invoke it."
+                    ),
+                ),
+            ],
+            steps: Annotated[
+                str,
+                Field(
+                    description=(
+                        "Markdown body of the SKILL.md (everything below the frontmatter). "
+                        "Should be runnable instructions, not a description of the skill."
+                    ),
+                ),
+            ],
+            model_name: Annotated[
+                str | None,
+                Field(
+                    default=None,
+                    description=(
+                        "Optional model to scope this skill to. Falls back to the parent "
+                        "skills_dir if the named model has no skills_dir."
+                    ),
+                ),
+            ] = None,
+            reference: Annotated[
+                str | None,
+                Field(
+                    default=None,
+                    description="Optional REFERENCE.md content (longer reference docs).",
+                ),
+            ] = None,
+        ) -> Mapping[str, Any]:
+            validate_skill_name(name)
+            target_dir, scope = resolve_add_skill_target(
+                name,
+                model_name,
+                self._parent_skills_dir,
+                self._model_skills_dirs,
+            )
+            skill_dir = write_skill(target_dir, name, description, steps, reference)
+
+            new_skill = SkillMetadata(
+                name=name,
+                description=description.strip(),
+                dir_path=skill_dir,
+                scope=scope,
+            )
+            register_skill_resources(self, new_skill)
+
+            uri_prefix = f"skill://{name}/" if scope == "parent" else f"skill://{scope}/{name}/"
+            return {
+                "status": "created",
+                "name": name,
+                "scope": scope,
+                "dir_path": str(skill_dir),
+                "uri_prefix": uri_prefix,
+            }
 
     def _register_prompts(self):
         @self.prompt(

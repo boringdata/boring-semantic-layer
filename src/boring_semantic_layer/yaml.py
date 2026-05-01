@@ -2,7 +2,8 @@
 YAML loader for Boring Semantic Layer models using the semantic API.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from pathlib import Path
 from typing import Any
 
 from ibis import _
@@ -11,7 +12,70 @@ from .api import to_semantic_table
 from .expr import SemanticModel, SemanticTable
 from .ops import Dimension, Measure
 from .profile import get_connection
+from .skills import SkillMetadata, discover_skills
 from .utils import read_yaml_file, safe_eval
+
+
+class SemanticModelBundle(Mapping):
+    """Dict-like container for models loaded from YAML, with optional skill metadata.
+
+    Backward-compatible: code that does ``models["foo"]``, ``for name in models``,
+    ``len(models)``, or iterates ``.items()`` continues to work. Bundles are returned
+    by :func:`from_yaml` and :func:`from_config` regardless of whether the YAML
+    declared any ``skills_dir`` keys — when no skills are configured,
+    ``parent_skills`` is empty and ``model_skills`` maps every model name to ``[]``.
+
+    The MCP server uses :attr:`parent_skills` and :attr:`model_skills` to register
+    skill resources and tools. Other consumers can ignore them entirely.
+    """
+
+    __slots__ = (
+        "_models",
+        "parent_skills",
+        "model_skills",
+        "parent_skills_dir",
+        "model_skills_dirs",
+        "yaml_dir",
+    )
+
+    def __init__(
+        self,
+        models: Mapping[str, SemanticModel],
+        *,
+        parent_skills: list[SkillMetadata] | None = None,
+        model_skills: Mapping[str, list[SkillMetadata]] | None = None,
+        parent_skills_dir: Path | None = None,
+        model_skills_dirs: Mapping[str, Path] | None = None,
+        yaml_dir: Path | None = None,
+    ):
+        self._models = dict(models)
+        self.parent_skills: list[SkillMetadata] = list(parent_skills or [])
+        self.model_skills: dict[str, list[SkillMetadata]] = {
+            name: list(skills) for name, skills in (model_skills or {}).items()
+        }
+        self.parent_skills_dir: Path | None = parent_skills_dir
+        self.model_skills_dirs: dict[str, Path] = dict(model_skills_dirs or {})
+        self.yaml_dir = yaml_dir
+
+    def __getitem__(self, key: str) -> SemanticModel:
+        return self._models[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._models)
+
+    def __len__(self) -> int:
+        return len(self._models)
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._models
+
+    def __repr__(self) -> str:
+        skill_count = len(self.parent_skills) + sum(len(s) for s in self.model_skills.values())
+        return f"SemanticModelBundle(models={list(self._models)}, skills={skill_count})"
+
+    @property
+    def has_skills(self) -> bool:
+        return bool(self.parent_skills) or any(self.model_skills.values())
 
 
 def _parse_expression_config(name: str, config: str | dict, metric_type: str):
@@ -84,6 +148,7 @@ def _parse_calc_measure(name: str, config: str | dict) -> Measure:
     def _make_calc_fn(source: str):
         def calc_fn(scope):
             return safe_eval(source, context={"_": scope}).unwrap()
+
         return calc_fn
 
     measure_kwargs = {"metadata": extra_kwargs["metadata"]} if "metadata" in extra_kwargs else {}
@@ -194,9 +259,7 @@ def _parse_joins(
         # rather than the underlying model name (e.g., "airports.city").
         join_count = joined_model_names.get(join_model_name, 0)
         needs_alias = (
-            alias != join_model_name
-            or join_count > 0
-            or join_model_name == current_model_name
+            alias != join_model_name or join_count > 0 or join_model_name == current_model_name
         )
         if needs_alias:
             join_model = _create_aliased_model(join_model, alias)
@@ -328,7 +391,8 @@ def from_config(
     tables: Mapping[str, Any] | None = None,
     profile: str | None = None,
     profile_path: str | None = None,
-) -> dict[str, SemanticModel]:
+    yaml_dir: Path | str | None = None,
+) -> SemanticModelBundle:
     """
     Load semantic tables from a configuration dictionary.
 
@@ -386,15 +450,33 @@ def from_config(
             )
             tables = {name: connection.table(name) for name in connection.list_tables()}
 
-    # Filter to only model definitions (exclude 'profile' key and non-dict values)
+    yaml_dir_path = Path(yaml_dir).resolve() if yaml_dir is not None else None
+    parent_skills_dir_raw = config.get("skills_dir")
+    parent_skills_dir = (
+        _resolve_skills_dir(parent_skills_dir_raw, yaml_dir_path) if parent_skills_dir_raw else None
+    )
+
+    # Filter to only model definitions. Top-level 'profile' and 'skills_dir'
+    # keys are reserved for loader configuration and not models.
     model_configs = {
-        name: cfg for name, cfg in config.items() if name != "profile" and isinstance(cfg, dict)
+        name: cfg
+        for name, cfg in config.items()
+        if name not in {"profile", "skills_dir"} and isinstance(cfg, dict)
     }
 
     models: dict[str, SemanticModel] = {}
+    model_skills_dirs: dict[str, Path] = {}
 
     # First pass: create models
     for name, model_config in model_configs.items():
+        # Extract skills_dir before any other processing so it is never
+        # interpreted as a dimension/measure/join.
+        model_skills_dir_raw = model_config.get("skills_dir")
+        if model_skills_dir_raw:
+            resolved = _resolve_skills_dir(model_skills_dir_raw, yaml_dir_path)
+            if resolved is not None:
+                model_skills_dirs[name] = resolved
+
         table_name = model_config.get("table")
         if not table_name:
             raise ValueError(f"Model '{name}' must specify 'table' field")
@@ -444,7 +526,42 @@ def from_config(
                 models,
             )
 
-    return models
+    # Discover skills. Per-model skills_dir paths take precedence over the
+    # parent skills_dir for any overlapping subdirectories.
+    model_skills: dict[str, list[SkillMetadata]] = {}
+    for model_name, model_skills_dir in model_skills_dirs.items():
+        model_skills[model_name] = discover_skills(model_skills_dir, scope=model_name)
+
+    parent_skills: list[SkillMetadata] = []
+    if parent_skills_dir is not None:
+        parent_skills = discover_skills(
+            parent_skills_dir,
+            scope="parent",
+            exclude_dirs=set(model_skills_dirs.values()),
+        )
+
+    return SemanticModelBundle(
+        models,
+        parent_skills=parent_skills,
+        model_skills=model_skills,
+        parent_skills_dir=parent_skills_dir,
+        model_skills_dirs=model_skills_dirs,
+        yaml_dir=yaml_dir_path,
+    )
+
+
+def _resolve_skills_dir(raw: Any, yaml_dir: Path | None) -> Path | None:
+    """Resolve a YAML ``skills_dir`` value to an absolute path.
+
+    Relative paths are anchored to the YAML file's parent directory if
+    available, otherwise to the current working directory.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute() and yaml_dir is not None:
+        candidate = yaml_dir / candidate
+    return candidate.resolve()
 
 
 def from_yaml(
@@ -452,7 +569,7 @@ def from_yaml(
     tables: Mapping[str, Any] | None = None,
     profile: str | None = None,
     profile_path: str | None = None,
-) -> dict[str, SemanticModel]:
+) -> SemanticModelBundle:
     """
     Load semantic tables from a YAML file with optional profile-based table loading.
 
@@ -508,4 +625,11 @@ def from_yaml(
               right_on: code
     """
     yaml_configs = read_yaml_file(yaml_path)
-    return from_config(yaml_configs, tables=tables, profile=profile, profile_path=profile_path)
+    yaml_dir = Path(yaml_path).expanduser().resolve().parent
+    return from_config(
+        yaml_configs,
+        tables=tables,
+        profile=profile,
+        profile_path=profile_path,
+        yaml_dir=yaml_dir,
+    )

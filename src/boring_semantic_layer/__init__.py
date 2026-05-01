@@ -23,7 +23,6 @@ from .expr import (
     to_tagged,
     to_untagged,
 )
-from .serialization import from_tagged
 from .graph_utils import (
     graph_bfs,
     graph_invert,
@@ -39,7 +38,10 @@ from .profile import (
     ProfileError,
     get_connection,
 )
+from .serialization import from_tagged
+from .skills import SkillMetadata
 from .yaml import (
+    SemanticModelBundle,
     from_config,
     from_yaml,
 )
@@ -57,6 +59,8 @@ __all__ = [
     "Measure",
     "from_config",
     "from_yaml",
+    "SemanticModelBundle",
+    "SkillMetadata",
     "MCPSemanticModel",
     "LangGraphBackend",
     "options",
