@@ -540,3 +540,112 @@ def test_calc_dtype_inference_with_inline_aggregation():
     # Before infer_calc_dtype handled the rewrite path, this was silently
     # dropped from values and the dtype was unknown.
     assert "pct_of_total" in st.schema.names
+
+
+# ---------------------------------------------------------------------------
+# Broader base-measure recognition (#1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "method, expected_kind",
+    [
+        ("var", "base"),
+        ("std", "base"),
+        ("median", "base"),
+        ("nunique", "base"),
+        ("approx_nunique", "base"),
+        ("first", "base"),
+        ("last", "base"),
+    ],
+)
+def test_extra_reductions_classified_as_base(method, expected_kind):
+    """Measures named the same as a column then aggregated with a non-sum/mean
+    reduction should still be classified as base, not silently routed through
+    the calc compiler.
+    """
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+    tbl = con.create_table(f"flights_{method}", data)
+
+    # Define a measure named ``distance`` (matching the column name) so that
+    # ``t.distance.<method>()`` resolves through the MeasureRef path that
+    # ``_AGG_METHODS`` guards.
+    st = to_semantic_table(tbl, f"flights_{method}").with_measures(
+        distance=lambda t: t.distance.sum(),
+    )
+    st = st.with_measures(
+        derived=lambda t, _m=method: getattr(t.distance, _m)(),
+    )
+
+    op = st.op()
+    base_names = set(op.get_measures().keys())
+    calc_names = set(op.get_calculated_measures().keys())
+    assert "derived" in base_names, (
+        f"{method!r} measure should classify as base, got calc"
+    )
+    assert "derived" not in calc_names
+
+
+# ---------------------------------------------------------------------------
+# Typo'd measure references (#2)
+# ---------------------------------------------------------------------------
+
+
+def test_typo_measure_ref_raises_with_suggestion():
+    """A calc-measure lambda referencing a misspelled measure name should
+    fail loudly at construction with a "did you mean?" suggestion."""
+    from boring_semantic_layer.measure_scope import UnknownMeasureRefError
+
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame({"carrier": ["AA"], "distance": [100]})
+    tbl = con.create_table("flights_typo", data)
+
+    st = to_semantic_table(tbl, "flights_typo").with_measures(
+        flight_count=lambda t: t.count(),
+        total_distance=lambda t: t.distance.sum(),
+    )
+
+    with pytest.raises(UnknownMeasureRefError, match="flight_count"):
+        st.with_measures(
+            # ``flight_konut`` typo of ``flight_count``
+            ratio=lambda t: t.flight_konut / t.total_distance,
+        )
+
+
+def test_typo_in_t_all_raises():
+    """Same loud-fail behavior when the typo is the argument to ``t.all``."""
+    from boring_semantic_layer.measure_scope import UnknownMeasureRefError
+
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame({"carrier": ["AA"], "distance": [100]})
+    tbl = con.create_table("flights_typo_all", data)
+
+    st = to_semantic_table(tbl, "flights_typo_all").with_measures(
+        flight_count=lambda t: t.count(),
+    )
+
+    with pytest.raises(UnknownMeasureRefError, match="flight_count"):
+        st.with_measures(
+            ratio=lambda t: t.flight_count / t.all(t.flight_konut),
+        )
+
+
+def test_substring_measure_name_does_not_trigger_typo():
+    """Names that are substrings of other measures should not trip the typo
+    detector. ``net_revenue`` referenced from a measure that also defines
+    ``total_net_revenue`` is legitimate, not a typo (similarity ≈ 0.79).
+    """
+    from boring_semantic_layer.measure_scope import MeasureScope
+
+    # Probe MeasureScope directly: with measures named [net_revenue,
+    # total_net_revenue], looking up an unrelated name 'net_revenue'
+    # via getattr should NOT fire the typo path.
+    import ibis as i
+
+    tbl = i.table({"col": "int64"}, name="t")
+    scope = MeasureScope(_tbl=tbl, _known=("net_revenue", "total_net_revenue"))
+    # Asking for 'net_revenue' is fine — it's a known measure.
+    assert scope.net_revenue is not None
+    # Asking for 'col' is fine — it's a column.
+    assert scope.col is not None
