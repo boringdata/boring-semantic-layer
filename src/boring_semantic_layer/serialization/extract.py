@@ -101,6 +101,8 @@ def _extract_semantic_table(op, context: BSLSerializationContext) -> dict[str, A
         metadata["calc_measures"] = calc_data
     if op.name:
         metadata["name"] = op.name
+    if op.description:
+        metadata["description"] = op.description
     return metadata
 
 
