@@ -326,18 +326,14 @@ def _unwrap_join_ref(expr):
 
 
 def _rebind_to_backend(expr, target_backend):
-    """Rebind all DatabaseTable ops in *expr* to use *target_backend*."""
-    from xorq.common.utils.graph_utils import replace_nodes
-    from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+    """Rebind every ``DatabaseTable`` op in *expr* to *target_backend*.
 
-    def replacer(op, _kwargs):
-        if isinstance(op, xorq_rel.DatabaseTable) and op.source is not target_backend:
-            kwargs = dict(zip(op.__argnames__, op.__args__, strict=False))
-            kwargs["source"] = target_backend
-            return op.__recreate__(kwargs)
-        return op
+    Thin re-export of the primitive defined in ``ops`` so callers in this
+    module don't have to reach across the package layer.
+    """
+    from ..ops import _rebind_to_backend as _impl
 
-    return replace_nodes(replacer, expr).to_expr()
+    return _impl(expr, target_backend)
 
 
 def _split_join_expr(xorq_expr):

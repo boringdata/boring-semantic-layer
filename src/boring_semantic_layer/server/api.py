@@ -162,8 +162,13 @@ def _search_dimension_values_response(
             ),
         )
 
+    from boring_semantic_layer.compile_all import _get_ibis_module
+
     dim = dims[dimension_name]
     tbl = model.table
+    # Match the ibis module of the underlying table so sort keys etc. don't
+    # mix plain ibis with xorq-vendored types.
+    ibis_module = _get_ibis_module(tbl)
     col_expr = dim(tbl)
     agg = (
         tbl.select(col_expr.name("_value"))
@@ -180,7 +185,7 @@ def _search_dimension_values_response(
         ]
 
     def fetch(base_agg, n: int) -> tuple[list[dict[str, Any]], bool]:
-        df = base_agg.order_by(ibis.desc("frequency")).limit(n + 1).execute()
+        df = base_agg.order_by(ibis_module.desc("frequency")).limit(n + 1).execute()
         return to_value_list(df.head(n)), len(df) <= n
 
     separator_pattern = r"[\s\-_.,]+"

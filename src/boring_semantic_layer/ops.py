@@ -17,29 +17,22 @@ from ibis.expr import types as ir
 from ibis.expr.operations.relations import Field, Relation
 from ibis.expr.schema import Schema
 
-try:
-    from xorq.vendor.ibis.common.collections import FrozenDict, FrozenOrderedDict
-    from xorq.vendor.ibis.expr import operations as xorq_ops
-    from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
+from xorq.vendor.ibis.common.collections import FrozenDict, FrozenOrderedDict
+from xorq.vendor.ibis.expr import operations as xorq_ops
+from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
 
-    _SchemaClass = XorqSchema
-    _FrozenOrderedDict = FrozenOrderedDict
-    _MeanTypes = (ibis_ops.reductions.Mean, xorq_ops.reductions.Mean)
-    _MinTypes = (ibis_ops.reductions.Min, xorq_ops.reductions.Min)
-    _MaxTypes = (ibis_ops.reductions.Max, xorq_ops.reductions.Max)
-    _CountDistinctTypes = (
-        ibis_ops.reductions.CountDistinct,
-        xorq_ops.reductions.CountDistinct,
-    )
-except ImportError:
-    from ibis.common.collections import FrozenDict, FrozenOrderedDict
-
-    _SchemaClass = Schema
-    _FrozenOrderedDict = FrozenOrderedDict
-    _MeanTypes = (ibis_ops.reductions.Mean,)
-    _MinTypes = (ibis_ops.reductions.Min,)
-    _MaxTypes = (ibis_ops.reductions.Max,)
-    _CountDistinctTypes = (ibis_ops.reductions.CountDistinct,)
+_SchemaClass = XorqSchema
+_FrozenOrderedDict = FrozenOrderedDict
+# User-supplied callables may produce expressions against either plain ibis
+# tables or xorq-vendored tables, so isinstance checks against reduction ops
+# accept both forms.
+_MeanTypes = (ibis_ops.reductions.Mean, xorq_ops.reductions.Mean)
+_MinTypes = (ibis_ops.reductions.Min, xorq_ops.reductions.Min)
+_MaxTypes = (ibis_ops.reductions.Max, xorq_ops.reductions.Max)
+_CountDistinctTypes = (
+    ibis_ops.reductions.CountDistinct,
+    xorq_ops.reductions.CountDistinct,
+)
 
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Success, safe
@@ -228,8 +221,14 @@ def _patch_xorq_sortkey_compat():
 def _ensure_xorq_table(table):
     """Convert plain ibis Table to xorq-vendored ibis if possible.
 
+    This is the single boundary between user-supplied ibis tables and
+    BSL's internal xorq representation. ``SemanticModel`` calls it once
+    at construction so internal code paths can assume xorq tables when
+    the backend is supported, and a plain ibis fallback otherwise.
+
     Falls back to returning the plain ibis table when the backend is not
-    supported by xorq (e.g. Databricks).
+    supported by xorq (e.g. Databricks). Idempotent: calling it on a
+    xorq-vendored table is a cheap no-op.
     """
     _patch_xorq_sortkey_compat()
     if "xorq.vendor.ibis" not in type(table).__module__:
@@ -242,16 +241,45 @@ def _ensure_xorq_table(table):
     return table
 
 
-def _unify_backends(expr):
-    """Ensure all DatabaseTable nodes in *expr* share a single xorq backend.
+def _rebind_to_backend(expr, target_backend):
+    """Rebind every ``DatabaseTable`` op in *expr* to *target_backend*.
 
-    ``from_ibis()`` creates a distinct Backend per call, so expressions
+    Low-level primitive shared with ``serialization.reconstruct``.
+    No-op on plain ibis expressions or when xorq is unavailable for any
+    reason; callers must pass a xorq-vendored ``target_backend``.
+    """
+    try:
+        from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+    except Exception:
+        return expr
+
+    def _recreate(op, _kwargs, **overrides):
+        kwargs = dict(zip(op.__argnames__, op.__args__, strict=False))
+        if _kwargs:
+            kwargs.update(_kwargs)
+        kwargs.update(overrides)
+        return op.__recreate__(kwargs)
+
+    def replacer(op, _kwargs):
+        if isinstance(op, xorq_rel.DatabaseTable) and op.source is not target_backend:
+            return _recreate(op, _kwargs, source=target_backend)
+        if _kwargs:
+            return _recreate(op, _kwargs)
+        return op
+
+    return expr.op().replace(replacer).to_expr()
+
+
+def _rebind_to_canonical_backend(expr):
+    """Rebind divergent ``DatabaseTable`` backends in *expr* to share one.
+
+    ``from_ibis()`` creates a distinct ``Backend`` per call, so expressions
     built by composing separately-converted tables contain multiple
-    backends.  This function rewrites the tree so every DatabaseTable
-    points at the same canonical backend, eliminating "Multiple backends
-    found" errors at execution time.
+    backends. Picking the first ``DatabaseTable``'s source as canonical
+    and rebinding the rest eliminates "Multiple backends found" errors
+    at execution time.
 
-    For plain ibis expressions (not xorq-vendored), this is a no-op.
+    No-op on plain ibis expressions (not xorq-vendored).
     """
     try:
         from xorq.common.utils.node_utils import walk_nodes
@@ -265,26 +293,10 @@ def _unify_backends(expr):
         return expr
 
     canonical = db_tables[0].source if db_tables else None
-
     if canonical is None:
         return expr
 
-    # 2. Replace divergent backends.
-    def _recreate(op, _kwargs, **overrides):
-        kwargs = dict(zip(op.__argnames__, op.__args__, strict=False))
-        if _kwargs:
-            kwargs.update(_kwargs)
-        kwargs.update(overrides)
-        return op.__recreate__(kwargs)
-
-    def replacer(op, _kwargs):
-        if isinstance(op, xorq_rel.DatabaseTable) and op.source is not canonical:
-            return _recreate(op, _kwargs, source=canonical)
-        if _kwargs:
-            return _recreate(op, _kwargs)
-        return op
-
-    return expr.op().replace(replacer).to_expr()
+    return _rebind_to_backend(expr, canonical)
 
 
 def _to_untagged(source: Any) -> ir.Table:
@@ -1108,13 +1120,16 @@ class SemanticTableOp(Relation):
         }
         # Resolve calculated measure types via a dummy table with base measure dtypes
         if calc_measures:
-            from .compile_all import _compile_formula
+            from .compile_all import _compile_formula, _get_ibis_module
 
             measure_schema = {
                 name: base_values[name].dtype for name in measures if name in base_values
             }
+            # Match the ibis module of the enriched table so calc-measure
+            # compilation doesn't mix plain ibis and xorq-vendored types.
+            ibis_module = _get_ibis_module(enriched)
             try:
-                dummy = ibis.table(measure_schema, name="__type_inference__")
+                dummy = ibis_module.table(measure_schema, name="__type_inference__")
             except Exception:
                 # ibis.table() rejects schemas with dotted names (joined models);
                 # skip calc-measure type inference in that case.
@@ -1200,7 +1215,9 @@ class SemanticTableOp(Relation):
         return object.__getattribute__(self, name)
 
     def to_untagged(self):
-        return _ensure_xorq_table(self.table)
+        # Conversion happens at SemanticModel construction; self.table is
+        # already xorq when supported, plain ibis when not.
+        return self.table
 
 
 class SemanticFilterOp(Relation):
@@ -4068,13 +4085,13 @@ class SemanticJoinOp(Relation):
         return new_left, new_right
 
     def execute(self):
-        return _unify_backends(self.to_untagged()).execute()
+        return _rebind_to_canonical_backend(self.to_untagged()).execute()
 
     def compile(self, **kwargs):
-        return _unify_backends(self.to_untagged()).compile(**kwargs)
+        return _rebind_to_canonical_backend(self.to_untagged()).compile(**kwargs)
 
     def sql(self, **kwargs):
-        return ibis.to_sql(_unify_backends(self.to_untagged()), **kwargs)
+        return ibis.to_sql(_rebind_to_canonical_backend(self.to_untagged()), **kwargs)
 
     def __getitem__(self, key):
         dims_dict = self.get_dimensions()
@@ -4471,7 +4488,7 @@ class SemanticIndexOp(Relation):
         return SemanticLimit(source=self, n=n, offset=offset)
 
     def execute(self):
-        return _unify_backends(self.to_untagged()).execute()
+        return _rebind_to_canonical_backend(self.to_untagged()).execute()
 
     def as_expr(self):
         """Return self as expression."""

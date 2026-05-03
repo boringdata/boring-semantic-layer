@@ -256,19 +256,19 @@ class SemanticTable(ir.Table):
 
     def execute(self, **kwargs):
         # Accept kwargs for ibis compatibility (params, limit, etc)
-        from .ops import _unify_backends
+        from .ops import _rebind_to_canonical_backend
 
-        return _unify_backends(to_untagged(self)).execute(**kwargs)
+        return _rebind_to_canonical_backend(to_untagged(self)).execute(**kwargs)
 
     def compile(self, **kwargs):
-        from .ops import _unify_backends
+        from .ops import _rebind_to_canonical_backend
 
-        return _unify_backends(to_untagged(self)).compile(**kwargs)
+        return _rebind_to_canonical_backend(to_untagged(self)).compile(**kwargs)
 
     def sql(self, **kwargs):
-        from .ops import _unify_backends
+        from .ops import _rebind_to_canonical_backend
 
-        return ibis.to_sql(_unify_backends(to_untagged(self)), **kwargs)
+        return ibis.to_sql(_rebind_to_canonical_backend(to_untagged(self)), **kwargs)
 
     def to_pandas(self, **kwargs):
         return self.to_untagged().to_pandas(**kwargs)
@@ -489,7 +489,12 @@ class SemanticModel(SemanticTable):
         description: str | None = None,
         _source_join: Any | None = None,
     ) -> None:
-        # Keep tables in regular ibis - only convert to xorq at execution time if needed
+        # Convert ibis → xorq once at the boundary; internal code paths can
+        # then assume xorq-vendored tables when the backend is supported.
+        # Falls back to the plain ibis table on backends xorq can't wrap.
+        from .ops import _ensure_xorq_table
+
+        table = _ensure_xorq_table(table)
 
         dims = _expand_derived_dimensions(dimensions)
 
