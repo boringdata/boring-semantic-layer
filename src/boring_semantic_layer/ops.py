@@ -23,16 +23,19 @@ from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
 
 _SchemaClass = XorqSchema
 _FrozenOrderedDict = FrozenOrderedDict
-# User-supplied callables may produce expressions against either plain ibis
-# tables or xorq-vendored tables, so isinstance checks against reduction ops
-# accept both forms.
-_MeanTypes = (ibis_ops.reductions.Mean, xorq_ops.reductions.Mean)
-_MinTypes = (ibis_ops.reductions.Min, xorq_ops.reductions.Min)
-_MaxTypes = (ibis_ops.reductions.Max, xorq_ops.reductions.Max)
-_CountDistinctTypes = (
-    ibis_ops.reductions.CountDistinct,
-    xorq_ops.reductions.CountDistinct,
-)
+
+
+def _reductions_for_expr(expr):
+    """Return the ``reductions`` ops module matching *expr*'s ibis flavor.
+
+    A user-supplied callable produces expressions against exactly one of
+    ``ibis`` or ``xorq.vendor.ibis`` — whichever the underlying table came
+    from. Pick that module so isinstance checks compare against a single
+    concrete type rather than a cross-module union.
+    """
+    if type(expr.op()).__module__.startswith("xorq.vendor.ibis"):
+        return xorq_ops.reductions
+    return ibis_ops.reductions
 
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Success, safe
@@ -1973,14 +1976,16 @@ def _attach_dim_column(pt, gb_col, measure_names, join_tree_info, merged_dimensi
 def _is_mean_expr(expr):
     """Check if an ibis expression is a Mean/Average reduction."""
     try:
-        return isinstance(expr.op(), _MeanTypes)
+        return isinstance(expr.op(), _reductions_for_expr(expr).Mean)
     except Exception:
         return False
 
 
 def _is_count_distinct_expr(expr):
     """Check if an ibis expression is a CountDistinct (nunique) reduction."""
-    return safe(lambda: isinstance(expr.op(), _CountDistinctTypes))().value_or(False)
+    return safe(
+        lambda: isinstance(expr.op(), _reductions_for_expr(expr).CountDistinct)
+    )().value_or(False)
 
 
 def _reagg_op_for_expr(expr):
@@ -1991,16 +1996,17 @@ def _reagg_op_for_expr(expr):
     MEAN should never reach here — it is decomposed by ``_is_mean_expr``.
     """
     op = expr.op()
-    if isinstance(op, _MinTypes):
+    reductions = _reductions_for_expr(expr)
+    if isinstance(op, reductions.Min):
         return "min"
-    if isinstance(op, _MaxTypes):
+    if isinstance(op, reductions.Max):
         return "max"
-    if isinstance(op, _MeanTypes):
+    if isinstance(op, reductions.Mean):
         raise ValueError(
             f"Mean expression {expr.get_name()!r} was not decomposed — "
             "this is a bug in the pre-aggregation logic"
         )
-    if isinstance(op, _CountDistinctTypes):
+    if isinstance(op, reductions.CountDistinct):
         raise ValueError(
             f"CountDistinct expression {expr.get_name()!r} was not deferred — "
             "this is a bug in the pre-aggregation logic"
