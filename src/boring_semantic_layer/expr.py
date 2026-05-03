@@ -597,7 +597,7 @@ class SemanticModel(SemanticTable):
         scope = MeasureScope(_tbl=base_tbl, _known=all_measure_names)
 
         for name, fn_or_expr in meas.items():
-            kind, value = _classify_measure(fn_or_expr, scope)
+            kind, value = _classify_measure(fn_or_expr, scope, name)
             (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
 
         return SemanticModel(
@@ -990,7 +990,7 @@ class SemanticJoin(SemanticTable):
             dict(self.get_calculated_measures()),
         )
         for name, fn_or_expr in meas.items():
-            kind, value = _classify_measure(fn_or_expr, scope)
+            kind, value = _classify_measure(fn_or_expr, scope, name)
             (new_calc if kind == "calc" else new_base)[name] = value
 
         return SemanticModel(
@@ -1127,7 +1127,7 @@ class SemanticFilter(SemanticTable):
         scope = MeasureScope(_tbl=self.op().to_untagged(), _known=all_measure_names)
 
         for name, fn_or_expr in meas.items():
-            kind, value = _classify_measure(fn_or_expr, scope)
+            kind, value = _classify_measure(fn_or_expr, scope, name)
             (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
 
         return SemanticModel(
@@ -1610,7 +1610,7 @@ class SemanticUnnest(SemanticTable):
         scope = MeasureScope(_tbl=self, _known=all_measure_names)
 
         for name, fn_or_expr in meas.items():
-            kind, value = _classify_measure(fn_or_expr, scope)
+            kind, value = _classify_measure(fn_or_expr, scope, name)
             (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
 
         return SemanticModel(
@@ -1696,7 +1696,7 @@ class SemanticMutate(SemanticTable):
         scope = MeasureScope(_tbl=self, _known=all_measure_names)
 
         for name, fn_or_expr in meas.items():
-            kind, value = _classify_measure(fn_or_expr, scope)
+            kind, value = _classify_measure(fn_or_expr, scope, name)
             (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
 
         return SemanticModel(

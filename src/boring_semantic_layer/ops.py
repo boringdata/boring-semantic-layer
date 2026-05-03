@@ -839,8 +839,12 @@ def _make_base_measure(
         )
 
 
-def _classify_measure(fn_or_expr: Any, scope: Any) -> tuple[str, Any]:
+def _classify_measure(
+    fn_or_expr: Any, scope: Any, measure_name: str | None = None
+) -> tuple[str, Any]:
     """Classify measure as 'calc' or 'base' with appropriate handling."""
+    from .measure_scope import validate_calc_ast
+
     expr, description, requires_unnest, metadata = _extract_measure_metadata(fn_or_expr)
 
     resolved = safe(lambda: _resolve_expr(expr, scope))().map(
@@ -848,7 +852,9 @@ def _classify_measure(fn_or_expr: Any, scope: Any) -> tuple[str, Any]:
     )
 
     if isinstance(resolved, Success) and resolved.unwrap() is not None:
-        return resolved.unwrap()
+        kind, value = resolved.unwrap()
+        validate_calc_ast(value, measure_name)
+        return (kind, value)
 
     if not requires_unnest and callable(expr):
         # All scopes (MeasureScope, ColumnScope) have tbl attribute
@@ -1121,29 +1127,30 @@ class SemanticTableOp(Relation):
             **{name: enriched[name].op() for name in dims},
             **{name: fn(enriched).op() for name, fn in measures.items()},
         }
-        # Resolve calculated measure types via a dummy table with base measure dtypes
+        # Resolve calculated measure types via a dummy table with base measure dtypes.
+        # ``infer_calc_dtype`` mirrors the AggregationExpr rewrite from
+        # ``compile_grouped_with_all`` so calc measures with inline aggregations
+        # (e.g. ``AllOf(AggregationExpr)``) round-trip through type inference.
         if calc_measures:
-            from .compile_all import _compile_formula, _get_ibis_module
+            from .compile_all import _get_ibis_module, infer_calc_dtype
 
             measure_schema = {
                 name: base_values[name].dtype for name in measures if name in base_values
             }
-            # Match the ibis module of the enriched table so calc-measure
-            # compilation doesn't mix plain ibis and xorq-vendored types.
             ibis_module = _get_ibis_module(enriched)
-            try:
-                dummy = ibis_module.table(measure_schema, name="__type_inference__")
-            except Exception:
-                # ibis.table() rejects schemas with dotted names (joined models);
-                # skip calc-measure type inference in that case.
-                dummy = None
-            if dummy is not None:
-                for name, expr in calc_measures.items():
-                    try:
-                        compiled = _compile_formula(expr, dummy, dummy, enriched)
-                        base_values[name] = compiled.op()
-                    except Exception:
-                        pass
+            for name, expr in calc_measures.items():
+                try:
+                    compiled = infer_calc_dtype(
+                        expr, measure_schema, enriched, ibis_module
+                    )
+                    base_values[name] = compiled.op()
+                except Exception as e:
+                    # Joined models with dotted column names, calc measures
+                    # whose inline aggregations don't apply to the dummy schema,
+                    # etc. Type info is best-effort; surface for debugging.
+                    logger.debug(
+                        "calc-measure type inference failed for %r: %s", name, e
+                    )
         return FrozenOrderedDict(base_values)
 
     @property
@@ -3445,7 +3452,7 @@ class SemanticJoinOp(Relation):
             dict(self.get_calculated_measures()),
         )
         for name, fn_or_expr in meas.items():
-            kind, value = _classify_measure(fn_or_expr, scope)
+            kind, value = _classify_measure(fn_or_expr, scope, name)
             (new_calc if kind == "calc" else new_base)[name] = value
 
         return _semantic_table(
