@@ -174,6 +174,43 @@ class AggregationExpr(_Node):
 MeasureExpr = MeasureRef | AllOf | BinOp | MethodCall | AggregationExpr | float | int
 
 
+def validate_calc_ast(expr: Any, measure_name: str | None = None) -> None:
+    """Walk a calc-measure AST and raise ``ValueError`` on illegal shapes.
+
+    The AST nodes are unconstrained at construction (Any-typed fields), so
+    invalid compositions like ``AllOf(BinOp(...))`` parse but later fail
+    deep inside the compiler with confusing messages. Run this after
+    classification to surface the structural problem early, naming the
+    offending calc measure when known.
+
+    ``AllOf.ref`` must be a ``MeasureRef`` or ``AggregationExpr``. Other
+    refs (BinOp, MethodCall, nested AllOf) are not supported by either
+    the direct compile path or the rewrite-then-compile pipeline in
+    ``compile_grouped_with_all``.
+    """
+    where = f" in calc measure {measure_name!r}" if measure_name else ""
+
+    def walk(node):
+        if isinstance(node, AllOf):
+            if not isinstance(node.ref, (MeasureRef, AggregationExpr)):
+                raise ValueError(
+                    f"Invalid AllOf{where}: ref must be a measure reference or "
+                    f"inline aggregation, got {type(node.ref).__name__}. "
+                    f"Wrap it in a named measure first, e.g. "
+                    f".with_measures(my_measure=...) then use t.all(t.my_measure)."
+                )
+            walk(node.ref)
+        elif isinstance(node, BinOp):
+            walk(node.left)
+            walk(node.right)
+        elif isinstance(node, MethodCall):
+            walk(node.receiver)
+            for arg in node.args:
+                walk(arg)
+
+    walk(expr)
+
+
 class DeferredColumn:
     _AGGREGATIONS = {
         "sum": "sum",

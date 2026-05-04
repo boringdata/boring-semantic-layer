@@ -427,8 +427,14 @@ class MCPSemanticModel(FastMCP):
                     f"Available dimensions: {list(dims.keys())}"
                 )
 
+            from boring_semantic_layer.compile_all import _get_ibis_module
+
             dim = dims[dimension_name]
             tbl = model.table
+            # Match the ibis module of the underlying table so sort keys
+            # don't mix plain ibis with xorq-vendored types (which causes
+            # infinite recursion in xorq's ``bind``).
+            ibis_module = _get_ibis_module(tbl)
             col_expr = dim(tbl)
 
             # Aggregate by value to get frequency counts
@@ -453,7 +459,7 @@ class MCPSemanticModel(FastMCP):
                 """Fetch top n+1 rows and return (values_list, is_complete)."""
                 df = (
                     base_agg
-                    .order_by(ibis.desc("frequency"))
+                    .order_by(ibis_module.desc("frequency"))
                     .limit(n + 1)
                     .execute()
                 )

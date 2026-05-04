@@ -217,6 +217,37 @@ def _compile_formula(expr: MeasureExpr, by_tbl, all_tbl, base_tbl):
     return expr
 
 
+def infer_calc_dtype(calc_expr, base_measure_schema, base_tbl, ibis_module):
+    """Compile *calc_expr* against a synthetic dummy table to infer its dtype.
+
+    Mirrors the ``AggregationExpr`` rewrite step in
+    ``compile_grouped_with_all`` so that calc measures containing inline
+    aggregations (e.g. ``t.value.sum() / t.all(t.value.sum())``) can have
+    their type resolved. Each inline ``AggregationExpr`` is materialized
+    against ``base_tbl`` to learn its dtype, added as a synthetic column
+    on a dummy table, and replaced with a ``MeasureRef`` in the rewritten
+    expression before compilation.
+
+    Returns the compiled ibis expression. Caller handles failure.
+    """
+    inline_aggs = set()
+    _collect_aggregation_exprs(calc_expr, inline_aggs)
+
+    extended_schema = dict(base_measure_schema)
+    agg_name_map = {}
+    for agg_expr in sorted(inline_aggs, key=repr):
+        name = _make_agg_name(agg_expr)
+        while name in extended_schema:
+            name = name + "_"
+        agg_name_map[agg_expr] = name
+        agg_fn = _make_agg_fn_from_expr(agg_expr)
+        extended_schema[name] = agg_fn(base_tbl).type()
+
+    dummy = ibis_module.table(extended_schema, name="__type_inference__")
+    rewritten = _replace_aggregation_exprs(calc_expr, agg_name_map)
+    return _compile_formula(rewritten, dummy, dummy, base_tbl)
+
+
 @frozen
 class MeasureClassification:
     regular_measures: dict[str, tuple[callable, Any]]

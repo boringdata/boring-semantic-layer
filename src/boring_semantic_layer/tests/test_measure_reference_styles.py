@@ -500,3 +500,43 @@ def test_method_call_serialization_roundtrip():
     assert result.args == (2,)
     assert isinstance(result.receiver, BinOp)
     assert result.receiver.op == "div"
+
+
+def test_validate_calc_ast_rejects_allof_binop():
+    """AllOf wrapping a BinOp should fail at construction with a clear error."""
+    from boring_semantic_layer.measure_scope import (
+        AllOf,
+        BinOp,
+        MeasureRef,
+        validate_calc_ast,
+    )
+
+    bad = AllOf(ref=BinOp("add", MeasureRef("a"), MeasureRef("b")))
+    with pytest.raises(ValueError, match="Invalid AllOf.*BinOp"):
+        validate_calc_ast(bad, measure_name="ratio")
+
+
+def test_validate_calc_ast_accepts_allof_aggregation_expr():
+    """AllOf(AggregationExpr) is valid — handled by the rewrite pipeline."""
+    from boring_semantic_layer.measure_scope import (
+        AggregationExpr,
+        AllOf,
+        validate_calc_ast,
+    )
+
+    ok = AllOf(ref=AggregationExpr(column="value", operation="sum"))
+    validate_calc_ast(ok, measure_name="pct")  # no raise
+
+
+def test_calc_dtype_inference_with_inline_aggregation():
+    """``schema`` should know the dtype of a calc measure built with t.all(t.col.sum())."""
+    con = ibis.duckdb.connect(":memory:")
+    events = pd.DataFrame({"grp": ["a", "b"], "value": [1.0, 2.0]})
+    tbl = con.create_table("events", events)
+
+    st = to_semantic_table(tbl, "events").with_measures(
+        pct_of_total=lambda t: t.value.sum() / t.all(t.value.sum()),
+    )
+    # Before infer_calc_dtype handled the rewrite path, this was silently
+    # dropped from values and the dtype was unknown.
+    assert "pct_of_total" in st.schema.names
