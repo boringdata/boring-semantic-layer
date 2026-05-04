@@ -27,7 +27,7 @@ def _get_ibis_api():
     xorq does not support, plain ibis is used as the fallback.
     """
     try:
-        import xorq.api as xo
+        from ._xorq import api as xo
 
         return xo
     except Exception:

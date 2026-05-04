@@ -21,7 +21,7 @@ from typing import Any
 
 from attrs import frozen
 from toolz import curry
-from xorq.vendor.ibis.expr import types as ir
+from ._xorq import types as ir
 
 
 @frozen

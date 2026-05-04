@@ -178,8 +178,7 @@ def _check_closure_vars(fn: Callable) -> Maybe[str]:
 def _try_ibis_introspection(fn: Callable) -> Maybe[str]:
     from returns.result import Success
 
-    from xorq.vendor.ibis import _
-    from xorq.vendor.ibis.common.deferred import Deferred
+    from ._xorq import Deferred, _
 
     result = fn(_)
     if not isinstance(result, Deferred):
@@ -254,8 +253,7 @@ def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
         from ibis import _
 
         try:
-            from xorq import api as xo
-            from xorq.vendor import ibis as xorq_ibis
+            from ._xorq import api as xo, ibis as xorq_ibis
 
             eval_context = {
                 "ibis": ibis,
@@ -284,7 +282,7 @@ def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
 
 def _is_ibis_literal_node(value) -> bool:
     try:
-        from xorq.vendor.ibis.expr.operations.generic import Literal
+        from ._xorq import Literal
         return isinstance(value, Literal)
     except ImportError:
         return False
@@ -292,7 +290,7 @@ def _is_ibis_literal_node(value) -> bool:
 
 def serialize_resolver(resolver) -> tuple:
     """Walk a Resolver tree and produce a hashable nested-tuple representation."""
-    from xorq.vendor.ibis.common.deferred import (
+    from ._xorq import (
         Attr,
         BinaryOperator,
         Call,
@@ -402,7 +400,7 @@ def _resolve_qualname(module_obj, qualname: str):
 
 def deserialize_resolver(data: tuple):
     """Reconstruct a Resolver tree from a nested-tuple representation."""
-    from xorq.vendor.ibis.common.deferred import (
+    from ._xorq import (
         Attr,
         BinaryOperator,
         Call,
@@ -426,7 +424,7 @@ def deserialize_resolver(data: tuple):
             return Just(func)
 
         case ("ibis_literal", py_value, dtype_str):
-            from xorq.vendor import ibis
+            from ._xorq import ibis
             lit_expr = ibis.literal(py_value, type=ibis.dtype(dtype_str))
             return Just(lit_expr.op())
 
@@ -441,7 +439,7 @@ def deserialize_resolver(data: tuple):
         case ("call", func_data, args_data, kwargs_data):
             func_resolver = deserialize_resolver(func_data)
             args_resolvers = tuple(deserialize_resolver(a) for a in args_data)
-            from xorq.vendor.ibis.common.collections import FrozenDict
+            from ._xorq import FrozenDict
             kwargs_resolvers = FrozenDict(
                 {k: deserialize_resolver(v) for k, v in kwargs_data}
             )
@@ -483,7 +481,7 @@ def deserialize_resolver(data: tuple):
 
         case ("map", type_name, items_data):
             typ = {"dict": dict}[type_name]
-            from xorq.vendor.ibis.common.collections import FrozenDict
+            from ._xorq import FrozenDict
             values = FrozenDict(
                 {k: deserialize_resolver(v) for k, v in items_data}
             )
@@ -503,11 +501,11 @@ def _is_deferred(obj) -> bool:
 
 def expr_to_structured(fn: Callable) -> Result[tuple, Exception]:
     """Convert a callable/Deferred expression to a structured tuple representation."""
-    from xorq.vendor.ibis.common.deferred import Deferred as XorqDeferred
+    from ._xorq import Deferred as XorqDeferred
 
     @safe
     def do_convert():
-        from xorq.vendor.ibis import _
+        from ._xorq import _
 
         if isinstance(fn, XorqDeferred):
             return serialize_resolver(fn._resolver)
@@ -528,7 +526,7 @@ def expr_to_structured(fn: Callable) -> Result[tuple, Exception]:
 
 def structured_to_expr(data: tuple) -> Result:
     """Reconstruct a Deferred from a structured tuple representation."""
-    from xorq.vendor.ibis.common.deferred import Deferred
+    from ._xorq import Deferred
 
     @safe
     def do_convert():
@@ -545,7 +543,7 @@ def join_predicate_to_structured(fn: Callable) -> Result[tuple, Exception]:
     calling the function with two named Deferred variables (``left``, ``right``)
     and serializing the resulting resolver tree.
     """
-    from xorq.vendor.ibis.common.deferred import Deferred, Variable
+    from ._xorq import Deferred, Variable
 
     @safe
     def do_convert():
@@ -566,7 +564,7 @@ def join_predicate_to_structured(fn: Callable) -> Result[tuple, Exception]:
 
 def structured_to_join_predicate(data: tuple) -> Result[Callable, Exception]:
     """Reconstruct a binary join predicate from a structured tuple representation."""
-    from xorq.vendor.ibis.common.deferred import Deferred
+    from ._xorq import Deferred
 
     @safe
     def do_convert():

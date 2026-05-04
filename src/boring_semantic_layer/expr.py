@@ -12,9 +12,11 @@ from ibis.expr import types as ir
 from ibis.expr.types.groupby import GroupedTable as IbisGroupedTable
 from ibis.expr.types.relations import Table as IbisTable
 from returns.result import Success, safe
-from xorq.vendor.ibis.expr.types import Table
-from xorq.vendor.ibis.expr.types.generic import Column as XorqColumn
-from xorq.vendor.ibis.expr.types.groupby import GroupedTable
+from ._xorq import (
+    Column as XorqColumn,
+    GroupedTable,
+    Table,
+)
 
 from .chart import chart as create_chart
 from .measure_scope import AggregationExpr, MeasureScope
@@ -1253,7 +1255,7 @@ class SemanticGroupBy(SemanticTable):
                     # each can only infer types from columns of its own module
                     first_col = next(iter(struct_dict.values()))
                     if isinstance(first_col, XorqColumn):
-                        import xorq.vendor.ibis as xibis
+                        from ._xorq import ibis as xibis
 
                         return xibis.struct(struct_dict).collect()
                     return ibis.struct(struct_dict).collect()

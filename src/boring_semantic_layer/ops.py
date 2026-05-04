@@ -8,7 +8,6 @@ from functools import reduce
 from typing import TYPE_CHECKING, Any
 
 import ibis
-from xorq.api import selectors as s
 from attrs import field, frozen
 from ibis.common.deferred import Deferred
 from ibis.expr import datatypes as dt
@@ -17,9 +16,13 @@ from ibis.expr import types as ir
 from ibis.expr.operations.relations import Field, Relation
 from ibis.expr.schema import Schema
 
-from xorq.vendor.ibis.common.collections import FrozenDict, FrozenOrderedDict
-from xorq.vendor.ibis.expr import operations as xorq_ops
-from xorq.vendor.ibis.expr.schema import Schema as XorqSchema
+from ._xorq import (
+    FrozenDict,
+    FrozenOrderedDict,
+    Schema as XorqSchema,
+    operations as xorq_ops,
+    selectors as s,
+)
 
 _SchemaClass = XorqSchema
 _FrozenOrderedDict = FrozenOrderedDict
@@ -204,8 +207,8 @@ def _patch_xorq_sortkey_compat():
     while xorq's vendored ibis keeps ``SortKey.expr``.  Handle both.
     """
     from ibis.expr.operations.sortkeys import SortKey as IbisSortKey
-    from xorq.common.utils.ibis_utils import map_ibis
-    from xorq.vendor.ibis.expr.operations.sortkeys import SortKey as XorqSortKey
+
+    from ._xorq import SortKey as XorqSortKey, map_ibis
 
     if IbisSortKey in map_ibis.registry:
         return  # already patched
@@ -236,7 +239,7 @@ def _ensure_xorq_table(table):
     _patch_xorq_sortkey_compat()
     if "xorq.vendor.ibis" not in type(table).__module__:
         try:
-            from xorq.common.utils.ibis_utils import from_ibis
+            from ._xorq import from_ibis
 
             return from_ibis(table)
         except Exception:
@@ -252,7 +255,7 @@ def _rebind_to_backend(expr, target_backend):
     reason; callers must pass a xorq-vendored ``target_backend``.
     """
     try:
-        from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+        from ._xorq import relations as xorq_rel
     except Exception:
         return expr
 
@@ -285,8 +288,7 @@ def _rebind_to_canonical_backend(expr):
     No-op on plain ibis expressions (not xorq-vendored).
     """
     try:
-        from xorq.common.utils.node_utils import walk_nodes
-        from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+        from ._xorq import relations as xorq_rel, walk_nodes
     except Exception:
         return expr
 
@@ -471,7 +473,7 @@ def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
         scope_is_xorq = "xorq.vendor.ibis" in scope_module
 
         if result_is_regular_ibis and scope_is_xorq:
-            from xorq.common.utils.ibis_utils import from_ibis
+            from ._xorq import from_ibis
 
             result = from_ibis(result)
 
@@ -4062,8 +4064,7 @@ class SemanticJoinOp(Relation):
         returning the inputs unchanged so ibis executes the join natively.
         """
         try:
-            from xorq.common.utils.node_utils import walk_nodes
-            from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+            from ._xorq import relations as xorq_rel, walk_nodes
         except Exception:
             return left_tbl, right_tbl
 
@@ -4247,7 +4248,7 @@ def _get_weight_expr(
     all_roots: list,
     is_string: bool,
 ) -> Any:
-    import xorq.api as xo
+    from ._xorq import api as xo
 
     if not by_measure:
         return xo._.count()
@@ -4266,7 +4267,7 @@ def _build_string_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
-    import xorq.api as xo
+    from ._xorq import api as xo
 
     return (
         base_tbl.group_by(field_expr.name("value"))
@@ -4289,7 +4290,7 @@ def _build_numeric_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
-    import xorq.api as xo
+    from ._xorq import api as xo
 
     return (
         base_tbl.select(field_expr.name("value"))
@@ -4387,7 +4388,7 @@ class SemanticIndexOp(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        import xorq.api as xo
+        from ._xorq import api as xo
 
         return FrozenOrderedDict(
             {
@@ -4435,7 +4436,7 @@ class SemanticIndexOp(Relation):
         )
 
         if not fields_to_index:
-            import xorq.api as xo
+            from ._xorq import api as xo
 
             return xo.memtable(
                 {

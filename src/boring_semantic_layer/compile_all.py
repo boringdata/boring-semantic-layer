@@ -145,7 +145,7 @@ def _get_ibis_module(table):
     table_module = type(table).__module__
     if table_module.startswith("xorq.vendor.ibis"):
         # Table is from xorq's vendored ibis
-        from xorq.vendor import ibis as xorq_ibis
+        from ._xorq import ibis as xorq_ibis
         return xorq_ibis
     else:
         # Table is from regular ibis
