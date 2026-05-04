@@ -75,6 +75,21 @@ class _RenamedResolver:
 
     Used during join predicate resolution to avoid ibis "Ambiguous field
     reference" errors when left and right tables share column names.
+
+    This works around two upstream ibis behaviors that have no public
+    issue tracker entry yet but are pinned by
+    ``test_upstream_ibis_pins.py``:
+
+    1. ``DerefMap`` raises ``IbisInputError: Ambiguous field reference``
+       when a predicate column-name appears in more than one relation
+       reachable from the join's LHS.
+    2. The default ``rname='{name}_right'`` collides on the third
+       table when 3+ joined relations share a column name, raising
+       ``IntegrityError: Name collisions``.
+
+    When the pinning tests start failing — i.e. ibis no longer raises
+    these errors — the rename dance in ``SemanticJoinOp.to_untagged``
+    can be removed.
     """
 
     __slots__ = ("_table", "_name_map")
@@ -663,13 +678,31 @@ def _extract_measure_metadata(
         return (fn_or_expr, None, (), {})
 
 
-_AGG_METHODS = frozenset({"sum", "mean", "avg", "count", "min", "max"})
+_AGG_METHODS = frozenset({
+    # Standard reductions
+    "sum", "mean", "avg", "count", "min", "max",
+    # Statistical reductions
+    "var", "std", "median", "quantile",
+    # Approximate reductions
+    "approx_count_distinct", "approx_nunique", "approx_median",
+    # Distinct count
+    "nunique",
+    # Categorical reductions
+    "mode", "first", "last", "arbitrary",
+    # Boolean reductions
+    "any", "all",
+    # Collection reductions
+    "group_concat", "collect",
+})
 
 
 def _is_calculated_measure(val: Any) -> bool:
     # A MethodCall with an aggregation method on a MeasureRef is a base measure:
     # the column name matched a known measure name in MeasureScope, but the user
-    # is really defining a column aggregation (e.g. lambda t: t.flight_count.sum()).
+    # is really defining a column aggregation (e.g. lambda t: t.flight_count.sum()
+    # or t.distance.var()).  ``_AGG_METHODS`` covers the ibis ``Reduction`` ops a
+    # user might reasonably reach for; methods outside the set fall through to
+    # the calc path.
     if (
         isinstance(val, MethodCall)
         and val.method in _AGG_METHODS
@@ -843,18 +876,26 @@ def _classify_measure(
     fn_or_expr: Any, scope: Any, measure_name: str | None = None
 ) -> tuple[str, Any]:
     """Classify measure as 'calc' or 'base' with appropriate handling."""
-    from .measure_scope import validate_calc_ast
+    from .measure_scope import UnknownMeasureRefError, validate_calc_ast
 
     expr, description, requires_unnest, metadata = _extract_measure_metadata(fn_or_expr)
 
-    resolved = safe(lambda: _resolve_expr(expr, scope))().map(
-        lambda val: ("calc", val) if _is_calculated_measure(val) else None
-    )
+    # ``_resolve_expr`` may raise for legitimate base-measure shapes
+    # (e.g. lambdas that touch ibis methods MeasureScope can't reflect),
+    # so most exceptions are caught and the lambda falls through to
+    # base classification. ``UnknownMeasureRefError`` is the typo case
+    # though — surface it loudly instead of letting the lambda fail with
+    # an opaque error at execute time.
+    try:
+        resolved_value = _resolve_expr(expr, scope)
+    except UnknownMeasureRefError:
+        raise
+    except Exception:
+        resolved_value = None
 
-    if isinstance(resolved, Success) and resolved.unwrap() is not None:
-        kind, value = resolved.unwrap()
-        validate_calc_ast(value, measure_name)
-        return (kind, value)
+    if resolved_value is not None and _is_calculated_measure(resolved_value):
+        validate_calc_ast(resolved_value, measure_name)
+        return ("calc", resolved_value)
 
     if not requires_unnest and callable(expr):
         # All scopes (MeasureScope, ColumnScope) have tbl attribute
@@ -4014,7 +4055,10 @@ class SemanticJoinOp(Relation):
             return left_tbl.join(right_tbl, how=self.how, rname=rname)
 
         # Detect column name conflicts that cause ibis/xorq to raise
-        # "Ambiguous field reference" during predicate resolution.
+        # ``Ambiguous field reference`` during predicate resolution. The
+        # rename dance + ``_RenamedResolver`` below is a workaround for
+        # upstream ibis behaviors pinned by ``test_upstream_ibis_pins``;
+        # remove this branch when those tests fail.
         conflicting = frozenset(left_tbl.columns) & frozenset(right_tbl.columns)
 
         if not conflicting:

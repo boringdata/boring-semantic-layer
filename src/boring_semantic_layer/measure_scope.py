@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+import difflib
 from collections.abc import Iterable
 from typing import Any
 
 from attrs import field, frozen
 from returns.maybe import Maybe, Some
 from toolz import curry
+
+
+class UnknownMeasureRefError(AttributeError):
+    """Raised when a calc-measure lambda references an unknown name.
+
+    Subclasses :class:`AttributeError` so existing code that ``except``\\ s
+    on attribute errors continues to work, but ``_classify_measure``
+    re-raises this specific subclass instead of swallowing it. Surfaces
+    typos at construction time with a "did you mean?" suggestion built
+    from the surrounding measure / column names.
+    """
 
 
 def _has_prefixed_columns(tbl, name: str) -> bool:
@@ -361,7 +373,39 @@ class MeasureScope:
         if _has_prefixed_columns(self.tbl, name):
             return _ColumnPrefixProxy(self.tbl, name)
 
-        return _resolve_column_short_name(self.tbl, name)
+        # Fall through to ibis (covers Table methods like ``count``, ``filter``).
+        # If ibis rejects too, surface a typo suggestion rather than the opaque
+        # ibis AttributeError so the user can see a "did you mean?" hint.
+        try:
+            return _resolve_column_short_name(self.tbl, name)
+        except AttributeError:
+            suggestion = self._typo_suggestion(name)
+            if suggestion:
+                raise UnknownMeasureRefError(
+                    f"{name!r} is not a known measure or column. {suggestion}"
+                ) from None
+            raise
+
+    def _typo_suggestion(self, name: str) -> str | None:
+        # 0.80 catches single-character typos and case mistakes
+        # (``flight_konut`` vs ``flight_count`` ≈ 0.83) without flagging
+        # legitimate substring overlaps (``net_revenue`` vs
+        # ``total_net_revenue`` ≈ 0.79). Calibrated against real-world
+        # confusable measure names.
+        cutoff = 0.80
+        candidates: list[tuple[str, str]] = []
+        if self.known:
+            for match in difflib.get_close_matches(name, self.known, n=3, cutoff=cutoff):
+                candidates.append(("measure", match))
+        if hasattr(self.tbl, "columns"):
+            for match in difflib.get_close_matches(
+                name, list(self.tbl.columns), n=3, cutoff=cutoff
+            ):
+                candidates.append(("column", match))
+        if not candidates:
+            return None
+        formatted = ", ".join(f"{kind} {match!r}" for kind, match in candidates)
+        return f"Did you mean: {formatted}?"
 
     def __getitem__(self, name: str):
         if self.post_agg:
