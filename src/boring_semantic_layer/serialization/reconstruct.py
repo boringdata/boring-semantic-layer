@@ -141,6 +141,7 @@ def _reconstruct_semantic_table(
         measures=measures,
         calc_measures=calc_measures,
         name=metadata.get("name"),
+        description=metadata.get("description"),
     )
 
 

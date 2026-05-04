@@ -168,6 +168,30 @@ def test_to_xorq_returns_xorq_expr():
 
 
 @pytest.mark.skipif(not xorq, reason="xorq not available")
+def test_descriptions_roundtrip_to_tagged_from_tagged():
+    """Model, dimension, and measure descriptions survive to_tagged → from_tagged."""
+    import ibis
+
+    from boring_semantic_layer import SemanticModel
+    from boring_semantic_layer.ops import Dimension, Measure
+
+    table = ibis.memtable({"a": [1, 2, 3], "b": [4, 5, 6]})
+    model = SemanticModel(
+        table=table,
+        dimensions={"a": Dimension(expr=lambda t: t.a, description="The A dim")},
+        measures={"sum_b": Measure(expr=lambda t: t.b.sum(), description="Sum of B")},
+        name="m",
+        description="Top-level model description",
+    )
+
+    restored = from_tagged(to_tagged(model))
+
+    assert restored.description == "Top-level model description"
+    assert restored.get_dimensions()["a"].description == "The A dim"
+    assert restored.get_measures()["sum_b"].description == "Sum of B"
+
+
+@pytest.mark.skipif(not xorq, reason="xorq not available")
 def test_from_xorq_returns_bsl_expr():
     from xorq.api import memtable
 
