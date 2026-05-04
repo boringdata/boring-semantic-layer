@@ -16,7 +16,7 @@ from ibis.expr import types as ir
 from ibis.expr.operations.relations import Field, Relation
 from ibis.expr.schema import Schema
 
-from ._xorq import (
+from .._xorq import (
     FrozenDict,
     FrozenOrderedDict,
     Schema as XorqSchema,
@@ -44,10 +44,10 @@ from returns.maybe import Maybe, Nothing, Some
 from returns.result import Success, safe
 from toolz import curry
 
-from . import projection_utils
-from .compile_all import compile_grouped_with_all
-from .graph_utils import walk_nodes
-from .measure_scope import (
+from .. import projection_utils
+from ..compile_all import compile_grouped_with_all
+from ..graph_utils import walk_nodes
+from ..measure_scope import (
     AggregationExpr,
     AllOf,
     BinOp,
@@ -56,7 +56,7 @@ from .measure_scope import (
     MeasureScope,
     MethodCall,
 )
-from .nested_access import NestedAccessMarker
+from ..nested_access import NestedAccessMarker
 
 logger = logging.getLogger(__name__)
 
@@ -89,11 +89,6 @@ class _RenamedResolver:
     def __getattr__(self, name):
         mapped = self._name_map.get(name, name)
         return getattr(self._table, mapped)
-
-
-def _is_deferred(expr) -> bool:
-    # Duck-type check: works for both ibis and xorq Deferred objects
-    return hasattr(expr, "_resolver") and hasattr(expr, "resolve")
 
 
 def _normalize_to_name(arg: str | Deferred) -> str:
@@ -191,7 +186,7 @@ def _normalize_join_predicate(on):
 
 
 if TYPE_CHECKING:
-    from .expr import (
+    from ..expr import (
         SemanticFilter,
         SemanticGroupBy,
         SemanticLimit,
@@ -208,7 +203,7 @@ def _patch_xorq_sortkey_compat():
     """
     from ibis.expr.operations.sortkeys import SortKey as IbisSortKey
 
-    from ._xorq import SortKey as XorqSortKey, map_ibis
+    from .._xorq import SortKey as XorqSortKey, map_ibis
 
     if IbisSortKey in map_ibis.registry:
         return  # already patched
@@ -239,7 +234,7 @@ def _ensure_xorq_table(table):
     _patch_xorq_sortkey_compat()
     if "xorq.vendor.ibis" not in type(table).__module__:
         try:
-            from ._xorq import from_ibis
+            from .._xorq import from_ibis
 
             return from_ibis(table)
         except Exception:
@@ -262,7 +257,7 @@ def _rebind_to_backend(expr, target_backend):
     reason; callers must pass a xorq-vendored ``target_backend``.
     """
     try:
-        from ._xorq import relations as xorq_rel
+        from .._xorq import relations as xorq_rel
     except ImportError:
         return expr
 
@@ -295,7 +290,7 @@ def _rebind_to_canonical_backend(expr):
     No-op on plain ibis expressions (not xorq-vendored).
     """
     try:
-        from ._xorq import relations as xorq_rel, walk_nodes
+        from .._xorq import relations as xorq_rel, walk_nodes
     except ImportError:
         return expr
 
@@ -318,7 +313,7 @@ def _to_untagged(source: Any) -> ir.Table:
 
 
 def _semantic_table(*args, **kwargs) -> SemanticTable:
-    from .expr import SemanticModel
+    from ..expr import SemanticModel
 
     return SemanticModel(*args, **kwargs)
 
@@ -482,7 +477,7 @@ def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
         scope_is_xorq = "xorq.vendor.ibis" in scope_module
 
         if result_is_regular_ibis and scope_is_xorq:
-            from ._xorq import from_ibis
+            from .._xorq import from_ibis
 
             result = from_ibis(result)
 
@@ -642,7 +637,7 @@ def _infer_unnest(fn: Callable, table: Any) -> tuple[str, ...]:
         to_semantic_table(tbl).unnest("hits").with_measures(...) -> ("hits",)
         unnested.unnest("product").with_measures(...) -> ("product",)
     """
-    from .expr import SemanticUnnest
+    from ..expr import SemanticUnnest
 
     if isinstance(table, SemanticUnnest):
         op = table.op()
@@ -854,7 +849,7 @@ def _classify_measure(
     fn_or_expr: Any, scope: Any, measure_name: str | None = None
 ) -> tuple[str, Any]:
     """Classify measure as 'calc' or 'base' with appropriate handling."""
-    from .measure_scope import validate_calc_ast
+    from ..measure_scope import validate_calc_ast
 
     expr, description, requires_unnest, metadata = _extract_measure_metadata(fn_or_expr)
 
@@ -933,149 +928,15 @@ def _format_column_error(e: AttributeError, table: ir.Table) -> str:
     return " ".join(parts)
 
 
-class _DimPrefixProxy:
-    """Resolves ``proxy.column`` to ``dims["prefix.column"](table)``."""
-
-    __slots__ = ("_tbl", "_dims", "_prefix")
-
-    def __init__(self, tbl, dims: dict, prefix: str):
-        object.__setattr__(self, "_tbl", tbl)
-        object.__setattr__(self, "_dims", dims)
-        object.__setattr__(self, "_prefix", prefix)
-
-    def __getattr__(self, name: str):
-        full_name = f"{self._prefix}.{name}"
-        if full_name in self._dims:
-            return self._dims[full_name](self._tbl)
-        raise AttributeError(
-            f"No dimension '{full_name}' found. "
-            f"Available dimensions with prefix '{self._prefix}.': "
-            f"{[k for k in self._dims if k.startswith(self._prefix + '.')]}"
-        )
+from ._values import (  # noqa: E402
+    Dimension,
+    Measure,
+    _DimPrefixProxy,
+    _DimensionTableProxy,
+    _is_deferred,
+)
 
 
-class _DimensionTableProxy:
-    """Proxy that wraps an ibis table to support model-prefix navigation.
-
-    Allows dimension lambdas like ``lambda t: t.flights.carrier`` to work on
-    joined tables by resolving ``t.flights.carrier`` through the merged
-    dimension map (``dims["flights.carrier"](table)``).
-    """
-
-    __slots__ = ("_tbl", "_dims")
-
-    def __init__(self, tbl, dims: dict):
-        object.__setattr__(self, "_tbl", tbl)
-        object.__setattr__(self, "_dims", dims)
-
-    def __getattr__(self, name: str):
-        prefix = f"{name}."
-        if any(k.startswith(prefix) for k in self._dims):
-            return _DimPrefixProxy(self._tbl, self._dims, name)
-        return getattr(self._tbl, name)
-
-    def __getitem__(self, name: str):
-        if name in self._dims:
-            return self._dims[name](self._tbl)
-        return self._tbl[name]
-
-    @property
-    def columns(self):
-        return self._tbl.columns
-
-
-@frozen(kw_only=True, slots=True)
-class Dimension:
-    expr: Callable[[ir.Table], ir.Value] | Deferred
-    description: str | None = None
-    is_entity: bool = False
-    is_time_dimension: bool = False
-    is_event_timestamp: bool = False
-    smallest_time_grain: str | None = None
-    derived_dimensions: tuple[str, ...] = ()
-    metadata: Mapping[str, Any] = field(factory=dict, eq=False, hash=False)
-
-    def __call__(self, table: ir.Table, _dims: dict | None = None) -> ir.Value:
-        try:
-            return self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
-        except AttributeError as e:
-            # Retry with a prefix-aware proxy for joined tables where
-            # model prefixes are used (e.g., lambda t: t.flights.carrier)
-            if _dims and not _is_deferred(self.expr) and callable(self.expr):
-                try:
-                    proxy = _DimensionTableProxy(table, _dims)
-                    return self.expr(proxy)
-                except AttributeError as proxy_err:
-                    # Preserve explicit prefix-proxy errors (e.g. missing
-                    # "model.field") to avoid silent fallback to unprefixed
-                    # columns, but keep normal missing-column errors on the
-                    # original table so they get the helpful formatter below.
-                    if str(proxy_err).startswith("No dimension '"):
-                        raise
-                except Exception:
-                    pass
-            # Provide helpful error for missing columns
-            if "'Table' object has no attribute" in str(
-                e
-            ) or "'Join' object has no attribute" in str(e):
-                raise AttributeError(_format_column_error(e, table)) from e
-            raise
-
-    def to_json(self) -> Mapping[str, Any]:
-        base = {"description": self.description}
-        if self.is_entity:
-            base["is_entity"] = True
-        if self.is_event_timestamp:
-            base["is_event_timestamp"] = True
-        if self.is_time_dimension:
-            base["smallest_time_grain"] = self.smallest_time_grain
-        if self.derived_dimensions:
-            base["derived_dimensions"] = list(self.derived_dimensions)
-        if self.metadata:
-            base.update(self.metadata)
-        return base
-
-    def __hash__(self) -> int:
-        return hash(
-            (
-                self.description,
-                self.is_entity,
-                self.is_event_timestamp,
-                self.is_time_dimension,
-                self.smallest_time_grain,
-                self.derived_dimensions,
-            ),
-        )
-
-
-@frozen(kw_only=True, slots=True)
-class Measure:
-    expr: Callable[[ir.Table], ir.Value] | Deferred
-    description: str | None = None
-    requires_unnest: tuple[str, ...] = ()  # Internal: Arrays that must be unnested
-    original_expr: Any = field(default=None, eq=False, hash=False)
-    metadata: Mapping[str, Any] = field(factory=dict, eq=False, hash=False)
-
-    def __call__(self, table: ir.Table) -> ir.Value:
-        return self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
-
-    @property
-    def locality(self) -> str | None:
-        """Derive locality from requires_unnest (most nested level)."""
-        return self.requires_unnest[-1] if self.requires_unnest else None
-
-    def to_json(self) -> Mapping[str, Any]:
-        base = {"description": self.description}
-        if self.locality:
-            base["locality"] = self.locality
-        if self.requires_unnest:
-            base["requires_unnest"] = list(self.requires_unnest)
-        if self.metadata:
-            base.update(self.metadata)
-        return base
-
-    def __hash__(self) -> int:
-        return hash((self.description, self.requires_unnest))
 
 
 class SemanticTableOp(Relation):
@@ -1143,7 +1004,7 @@ class SemanticTableOp(Relation):
         # ``compile_grouped_with_all`` so calc measures with inline aggregations
         # (e.g. ``AllOf(AggregationExpr)``) round-trip through type inference.
         if calc_measures:
-            from .compile_all import _get_ibis_module, infer_calc_dtype
+            from ..compile_all import _get_ibis_module, infer_calc_dtype
 
             measure_schema = {
                 name: base_values[name].dtype for name in measures if name in base_values
@@ -1203,7 +1064,7 @@ class SemanticTableOp(Relation):
         return self.calc_measures
 
     def get_graph(self) -> dict[str, dict[str, Any]]:
-        from .graph_utils import build_dependency_graph
+        from ..graph_utils import build_dependency_graph
 
         return build_dependency_graph(
             self.get_dimensions(),
@@ -1263,7 +1124,7 @@ class SemanticFilterOp(Relation):
         return self.source.schema
 
     def to_untagged(self):
-        from .convert import _Resolver
+        from ..convert import _Resolver
 
         all_roots = _find_all_root_models(self.source)
         base_tbl = _to_untagged(self.source)
@@ -2440,7 +2301,7 @@ class SemanticAggregateOp(Relation):
             # Apply collected filters to the full joined table so that
             # dimension bridges only include rows surviving the filter.
             if filters:
-                from .convert import _Resolver
+                from ..convert import _Resolver
 
                 for pred in filters:
                     pred_fn = _unwrap(pred)
@@ -2864,7 +2725,7 @@ class SemanticAggregateOp(Relation):
 
         # Apply filters
         if filters:
-            from .convert import _Resolver
+            from ..convert import _Resolver
 
             for pred in filters:
                 pred_fn = _unwrap(pred)
@@ -2908,7 +2769,7 @@ class SemanticAggregateOp(Relation):
 
         # Handle calculated measures
         if plan.calc_specs:
-            from .compile_all import compile_calc_measures
+            from ..compile_all import compile_calc_measures
 
             result = compile_calc_measures(result, plan.calc_specs)
 
@@ -2985,7 +2846,7 @@ class SemanticAggregateOp(Relation):
 
         ``decomposed_means`` and ``reagg_ops`` are tuples of (key, value) pairs.
         """
-        from .compile_all import _join_tables
+        from ..compile_all import _join_tables
 
         reagg_map = dict(reagg_ops)
         # Include decomposed auxiliary columns in measure names
@@ -3069,7 +2930,7 @@ class SemanticAggregateOp(Relation):
 
         ``decomposed_means`` and ``reagg_ops`` are tuples of (key, value) pairs.
         """
-        from .compile_all import _join_tables
+        from ..compile_all import _join_tables
 
         reagg_map = dict(reagg_ops)
         aux_cols = frozenset(c for _, (sc, cc) in decomposed_means for c in (sc, cc))
@@ -3133,7 +2994,7 @@ class SemanticAggregateOp(Relation):
     @staticmethod
     def _apply_calc_specs(result, plan, tbl):
         """Apply calculated measure specs (ratios, percent-of-total, etc.)."""
-        from .compile_all import _collect_all_refs, _compile_formula
+        from ..compile_all import _collect_all_refs, _compile_formula
 
         needed_totals: set[str] = set()
         for ast in plan.calc_specs.values():
@@ -3429,7 +3290,7 @@ class SemanticJoinOp(Relation):
         time_range: dict[str, str] | None = None,
         having: list | None = None,
     ):
-        from .query import query as build_query
+        from ..query import query as build_query
 
         return build_query(
             semantic_table=self,
@@ -3479,12 +3340,12 @@ class SemanticJoinOp(Relation):
         )
 
     def group_by(self, *keys: str) -> SemanticGroupBy:
-        from .expr import SemanticGroupBy
+        from ..expr import SemanticGroupBy
 
         return SemanticGroupBy(source=self, keys=keys)
 
     def filter(self, predicate: Callable) -> SemanticFilter:
-        from .expr import SemanticFilter
+        from ..expr import SemanticFilter
 
         return SemanticFilter(source=self, predicate=predicate)
 
@@ -3495,7 +3356,7 @@ class SemanticJoinOp(Relation):
         how: str = "left",
     ):
         """Join with one-to-one relationship semantics (left outer join)."""
-        from .expr import SemanticJoin
+        from ..expr import SemanticJoin
 
         return SemanticJoin(
             left=self,
@@ -3512,7 +3373,7 @@ class SemanticJoinOp(Relation):
         how: str = "left",
     ):
         """Join with one-to-many relationship semantics."""
-        from .expr import SemanticJoin
+        from ..expr import SemanticJoin
 
         return SemanticJoin(
             left=self,
@@ -3524,7 +3385,7 @@ class SemanticJoinOp(Relation):
 
     def join_cross(self, other: SemanticTable):
         """Cross join (Cartesian product) with another semantic model."""
-        from .expr import SemanticJoin
+        from ..expr import SemanticJoin
 
         return SemanticJoin(
             left=self,
@@ -3984,7 +3845,7 @@ class SemanticJoinOp(Relation):
         Returns:
             Ibis join expression (potentially simplified).
         """
-        from .convert import _Resolver
+        from ..convert import _Resolver
 
         augmented_requirements = self._augment_parent_requirements_for_pruning(parent_requirements)
 
@@ -4076,7 +3937,7 @@ class SemanticJoinOp(Relation):
         returning the inputs unchanged so ibis executes the join natively.
         """
         try:
-            from ._xorq import relations as xorq_rel, walk_nodes
+            from .._xorq import relations as xorq_rel, walk_nodes
         except ImportError:
             return left_tbl, right_tbl
 
@@ -4262,7 +4123,7 @@ def _get_weight_expr(
     all_roots: list,
     is_string: bool,
 ) -> Any:
-    from ._xorq import api as xo
+    from .._xorq import api as xo
 
     if not by_measure:
         return xo._.count()
@@ -4281,7 +4142,7 @@ def _build_string_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
-    from ._xorq import api as xo
+    from .._xorq import api as xo
 
     return (
         base_tbl.group_by(field_expr.name("value"))
@@ -4304,7 +4165,7 @@ def _build_numeric_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
-    from ._xorq import api as xo
+    from .._xorq import api as xo
 
     return (
         base_tbl.select(field_expr.name("value"))
@@ -4402,7 +4263,7 @@ class SemanticIndexOp(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        from ._xorq import api as xo
+        from .._xorq import api as xo
 
         return FrozenOrderedDict(
             {
@@ -4450,7 +4311,7 @@ class SemanticIndexOp(Relation):
         )
 
         if not fields_to_index:
-            from ._xorq import api as xo
+            from .._xorq import api as xo
 
             return xo.memtable(
                 {
@@ -4501,17 +4362,17 @@ class SemanticIndexOp(Relation):
         return reduce(lambda acc, frag: acc.union(frag), fragments[1:], fragments[0])
 
     def filter(self, predicate: Callable) -> SemanticFilter:
-        from .expr import SemanticFilter
+        from ..expr import SemanticFilter
 
         return SemanticFilter(source=self, predicate=predicate)
 
     def order_by(self, *keys: str | ir.Value | Callable) -> SemanticOrderBy:
-        from .expr import SemanticOrderBy
+        from ..expr import SemanticOrderBy
 
         return SemanticOrderBy(source=self, keys=keys)
 
     def limit(self, n: int, offset: int = 0) -> SemanticLimit:
-        from .expr import SemanticLimit
+        from ..expr import SemanticLimit
 
         return SemanticLimit(source=self, n=n, offset=offset)
 
@@ -4781,7 +4642,7 @@ def _build_column_rename_map(
     # Build column index using graph_utils (returns Result)
     from returns.result import Failure
 
-    from .graph_utils import build_column_index_from_roots, extract_column_from_dimension
+    from ..graph_utils import build_column_index_from_roots, extract_column_from_dimension
 
     column_index_result = build_column_index_from_roots(all_roots)
     if isinstance(column_index_result, Failure):
@@ -4931,7 +4792,7 @@ def _merge_fields_with_prefixing(
     if all_roots:
         sample_fields = field_accessor(all_roots[0])
         if sample_fields:
-            from .measure_scope import AllOf, BinOp, MeasureRef, MethodCall
+            from ..measure_scope import AllOf, BinOp, MeasureRef, MethodCall
 
             first_val = next(iter(sample_fields.values()), None)
             is_calc_measures = isinstance(
@@ -4983,348 +4844,17 @@ def _merge_fields_with_prefixing(
 
     return FrozenDict(merged_fields)
 
-
-# ==============================================================================
-# Column Tracking for Projection Pushdown
-# ==============================================================================
-
-
-@frozen
-class ColumnTracker:
-    """Immutable tracker for column references during expression evaluation.
-
-    Uses frozenset for tracked columns. New columns are added by creating
-    new tracker instances with updated sets.
-    """
-
-    columns: frozenset[str] = field(factory=frozenset, converter=frozenset)
-
-    def with_column(self, col_name: str) -> ColumnTracker:
-        """Return new tracker with additional column."""
-        return ColumnTracker(columns=self.columns | {col_name})
-
-    def merge(self, other: ColumnTracker) -> ColumnTracker:
-        """Return new tracker with merged columns."""
-        return ColumnTracker(columns=self.columns | other.columns)
-
-
-@frozen
-class ColumnExtractionResult:
-    """Result of column extraction with error handling.
-
-    Separates successful extraction from error cases.
-    """
-
-    columns: frozenset[str] = field(factory=frozenset, converter=frozenset)
-    extraction_failed: bool = False
-    error_type: type[Exception] | None = None
-
-    @classmethod
-    def success(cls, columns: set[str] | frozenset[str]) -> ColumnExtractionResult:
-        """Create successful result."""
-        return cls(columns=frozenset(columns), extraction_failed=False)
-
-    @classmethod
-    def failure(cls, error: Exception) -> ColumnExtractionResult:
-        """Create failure result with error information."""
-        return cls(
-            columns=frozenset(),
-            extraction_failed=True,
-            error_type=type(error),
-        )
-
-    def is_success(self) -> bool:
-        """Check if extraction succeeded."""
-        return not self.extraction_failed
-
-
-@frozen
-class JoinColumnExtractionResult:
-    """Result of join column extraction for both tables."""
-
-    left_columns: frozenset[str] = field(factory=frozenset, converter=frozenset)
-    right_columns: frozenset[str] = field(factory=frozenset, converter=frozenset)
-    extraction_failed: bool = False
-    error_type: type[Exception] | None = None
-
-    @classmethod
-    def success(
-        cls,
-        left: set[str] | frozenset[str],
-        right: set[str] | frozenset[str],
-    ) -> JoinColumnExtractionResult:
-        """Create successful result."""
-        return cls(
-            left_columns=frozenset(left),
-            right_columns=frozenset(right),
-            extraction_failed=False,
-        )
-
-    @classmethod
-    def failure(cls, error: Exception) -> JoinColumnExtractionResult:
-        """Create failure result with error information."""
-        return cls(
-            left_columns=frozenset(),
-            right_columns=frozenset(),
-            extraction_failed=True,
-            error_type=type(error),
-        )
-
-    def is_success(self) -> bool:
-        """Check if extraction succeeded."""
-        return not self.extraction_failed
-
-
-def _make_tracking_proxy(
-    table: ir.Table,
-    on_access: Callable[[str], None],
-) -> Any:
-    """Create tracking proxy with custom access handler.
-
-    Composable factory that enables different tracking strategies
-    via the on_access callback.
-    """
-
-    class _TrackingProxy:
-        """Proxy that tracks attribute and item access."""
-
-        def __init__(self, inner_table: ir.Table, access_handler: Callable[[str], None]):
-            object.__setattr__(self, "_table", inner_table)
-            object.__setattr__(self, "_on_access", access_handler)
-
-        def __getattr__(self, name: str):
-            if name.startswith("_"):
-                return getattr(self._table, name)
-            self._on_access(name)
-            return getattr(self._table, name)
-
-        def __getitem__(self, name: str):
-            self._on_access(name)
-            return self._table[name]
-
-    return _TrackingProxy(table, on_access)
-
-
-def _extract_columns_from_callable(
-    fn: Any,
-    table: ir.Table,
-) -> ColumnExtractionResult:
-    """Extract column names referenced by a callable.
-
-    Uses immutable tracking and returns structured result.
-    """
-    if not callable(fn):
-        return ColumnExtractionResult.success(frozenset())
-
-    tracker_ref = [ColumnTracker()]
-
-    def on_column_access(col_name: str) -> None:
-        tracker_ref[0] = tracker_ref[0].with_column(col_name)
-
-    try:
-        tracking_proxy = _make_tracking_proxy(table, on_column_access)
-        fn(tracking_proxy)
-        return ColumnExtractionResult.success(tracker_ref[0].columns)
-
-    except Exception as e:
-        return ColumnExtractionResult.failure(e)
-
-
-def _extract_join_key_columns(
-    on: Callable[[Any, Any], ir.BooleanValue],
-    left_table: ir.Table,
-    right_table: ir.Table,
-) -> JoinColumnExtractionResult:
-    left_tracker_ref = [ColumnTracker()]
-    right_tracker_ref = [ColumnTracker()]
-
-    def on_left_access(col_name: str) -> None:
-        left_tracker_ref[0] = left_tracker_ref[0].with_column(col_name)
-
-    def on_right_access(col_name: str) -> None:
-        right_tracker_ref[0] = right_tracker_ref[0].with_column(col_name)
-
-    try:
-        left_proxy = _make_tracking_proxy(left_table, on_left_access)
-        right_proxy = _make_tracking_proxy(right_table, on_right_access)
-        on(left_proxy, right_proxy)
-
-        return JoinColumnExtractionResult.success(
-            left_tracker_ref[0].columns,
-            right_tracker_ref[0].columns,
-        )
-
-    except Exception as e:
-        return JoinColumnExtractionResult.failure(e)
-
-
-# ==============================================================================
-# Table Column Requirements
-# ==============================================================================
-
-
-@frozen
-class TableColumnRequirements:
-    """Immutable representation of column requirements per table.
-
-    Maps table names to sets of required column names.
-    """
-
-    requirements: FrozenDict[str, frozenset[str]] = field(
-        factory=lambda: FrozenDict({}),
-        converter=lambda d: FrozenDict(
-            {k: frozenset(v) if not isinstance(v, frozenset) else v for k, v in d.items()},
-        ),
-    )
-
-    def with_column(self, table_name: str, col_name: str) -> TableColumnRequirements:
-        """Return new requirements with additional column for table."""
-        current_cols = self.requirements.get(table_name, frozenset())
-        updated_cols = current_cols | {col_name}
-
-        return TableColumnRequirements(
-            requirements=dict(self.requirements) | {table_name: updated_cols},
-        )
-
-    def with_columns(
-        self,
-        table_name: str,
-        col_names: Iterable[str],
-    ) -> TableColumnRequirements:
-        """Return new requirements with multiple columns for table."""
-        current_cols = self.requirements.get(table_name, frozenset())
-        updated_cols = current_cols | frozenset(col_names)
-
-        return TableColumnRequirements(
-            requirements=dict(self.requirements) | {table_name: updated_cols},
-        )
-
-    def merge(self, other: TableColumnRequirements) -> TableColumnRequirements:
-        """Merge requirements from another instance."""
-        merged_dict = dict(self.requirements)
-
-        for table, cols in other.requirements.items():
-            if table in merged_dict:
-                merged_dict[table] = merged_dict[table] | cols
-            else:
-                merged_dict[table] = cols
-
-        return TableColumnRequirements(requirements=merged_dict)
-
-    def to_dict(self) -> dict[str, set[str]]:
-        """Convert to mutable dict for API compatibility."""
-        return {table: set(cols) for table, cols in self.requirements.items()}
-
-
-def _parse_prefixed_field(field_name: str) -> tuple[str | None, str]:
-    """Parse potentially prefixed field name.
-
-    Args:
-        field_name: Field name, possibly prefixed (e.g., "table.column")
-
-    Returns:
-        Tuple of (table_name or None, column_name)
-    """
-    if "." in field_name:
-        table, col = field_name.split(".", 1)
-        return (table, col)
-    return (None, field_name)
-
-
-def _extract_requirements_from_keys(
-    keys: Iterable[str],
-    merged_dimensions: Mapping[str, Any],
-    all_roots: Sequence[Any],
-    table: ir.Table,
-) -> TableColumnRequirements:
-    """Extract column requirements from group-by keys using graph traversal."""
-    requirements = TableColumnRequirements()
-
-    for key in keys:
-        table_name, col_name = _parse_prefixed_field(key)
-
-        if table_name:
-            # Prefixed: we know the table
-            requirements = requirements.with_column(table_name, col_name)
-        else:
-            # Unprefixed: resolve dimension or use conservative fallback
-            if key in merged_dimensions:
-                dim_fn = merged_dimensions[key]
-
-                try:
-                    # Evaluate the dimension to get an Ibis expression
-                    dim_expr = dim_fn(table)
-
-                    # Walk the expression graph to find all Field nodes (column references)
-                    field_names = {node.name for node in walk_nodes(ibis_ops.Field, dim_expr)}
-
-                    # Filter to only actual columns in the table schema
-                    actual_cols = {col for col in field_names if col in table.columns}
-
-                    if actual_cols:
-                        for root in all_roots:
-                            if root.name:
-                                requirements = requirements.with_columns(root.name, actual_cols)
-                    else:
-                        # Fallback: assume key name is column name
-                        for root in all_roots:
-                            if root.name:
-                                requirements = requirements.with_column(root.name, key)
-                except Exception:
-                    logger.debug(
-                        "dimension graph traversal failed for %r; "
-                        "treating key name as column name",
-                        key,
-                        exc_info=True,
-                    )
-                    for root in all_roots:
-                        if root.name:
-                            requirements = requirements.with_column(root.name, key)
-            else:
-                # Raw column
-                for root in all_roots:
-                    if root.name:
-                        requirements = requirements.with_column(root.name, key)
-
-    return requirements
-
-
-def _extract_requirements_from_measures(
-    aggs: Mapping[str, Callable],
-    all_roots: Sequence[Any],
-    table: ir.Table,
-) -> TableColumnRequirements:
-    """Extract column requirements from measure aggregations using graph traversal."""
-    requirements = TableColumnRequirements()
-
-    for measure_name, measure_fn in aggs.items():
-        fn = _unwrap(measure_fn)
-
-        try:
-            # Evaluate the measure to get an Ibis expression
-            measure_expr = fn(table)
-
-            # Walk the expression graph to find all Field nodes (column references)
-            field_names = {node.name for node in walk_nodes(ibis_ops.Field, measure_expr)}
-
-            # Filter to only actual columns in the table schema
-            actual_cols = {col for col in field_names if col in table.columns}
-
-            if actual_cols:
-                for root in all_roots:
-                    if root.name:
-                        requirements = requirements.with_columns(root.name, actual_cols)
-        except Exception:
-            logger.debug(
-                "measure graph traversal failed for %r; "
-                "falling back to name-based column inference",
-                measure_name,
-                exc_info=True,
-            )
-            # Conservative fallback: if measure name looks like a column, include it
-            if measure_name.isidentifier():
-                for root in all_roots:
-                    if root.name:
-                        requirements = requirements.with_column(root.name, measure_name)
-
-    return requirements
+# Column-extraction classes & helpers were moved to ._column_extraction.
+# Re-imported here so internal callers in this module keep working.
+from ._column_extraction import (  # noqa: E402
+    ColumnExtractionResult,
+    ColumnTracker,
+    JoinColumnExtractionResult,
+    TableColumnRequirements,
+    _extract_columns_from_callable,
+    _extract_join_key_columns,
+    _extract_requirements_from_keys,
+    _extract_requirements_from_measures,
+    _make_tracking_proxy,
+    _parse_prefixed_field,
+)
