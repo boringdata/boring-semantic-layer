@@ -243,6 +243,13 @@ def _ensure_xorq_table(table):
 
             return from_ibis(table)
         except Exception:
+            # Backend isn't supported by xorq's map_ibis registry (e.g.
+            # Databricks). Fall back so plain-ibis paths can still execute.
+            logger.debug(
+                "from_ibis failed for %s; using plain ibis table",
+                type(table).__module__,
+                exc_info=True,
+            )
             return table
     return table
 
@@ -256,7 +263,7 @@ def _rebind_to_backend(expr, target_backend):
     """
     try:
         from ._xorq import relations as xorq_rel
-    except Exception:
+    except ImportError:
         return expr
 
     def _recreate(op, _kwargs, **overrides):
@@ -289,12 +296,14 @@ def _rebind_to_canonical_backend(expr):
     """
     try:
         from ._xorq import relations as xorq_rel, walk_nodes
-    except Exception:
+    except ImportError:
         return expr
 
     try:
         db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), expr))
     except Exception:
+        # walk_nodes can't traverse plain ibis trees; treat as no-op.
+        logger.debug("walk_nodes failed on plain ibis expr", exc_info=True)
         return expr
 
     canonical = db_tables[0].source if db_tables else None
@@ -1874,6 +1883,7 @@ def _find_deferrable_joins(
                 return
             left_cols = tuple(sorted(join_keys_result.left_columns))
         except Exception:
+            logger.debug("join-defer eligibility check failed", exc_info=True)
             return
 
         # Identify which group-by dimensions from the right table will be deferred
@@ -1986,7 +1996,7 @@ def _is_mean_expr(expr):
     """Check if an ibis expression is a Mean/Average reduction."""
     try:
         return isinstance(expr.op(), _reductions_for_expr(expr).Mean)
-    except Exception:
+    except (AttributeError, TypeError):
         return False
 
 
@@ -2438,7 +2448,9 @@ class SemanticAggregateOp(Relation):
                     pred_expr = _resolve_expr(pred_fn, resolver)
                     tbl = tbl.filter(pred_expr)
         except Exception:
-            tbl = None  # chasm / column collision – work without full join
+            # chasm / column collision – work without full join
+            logger.debug("full-join construction failed; using per-table path", exc_info=True)
+            tbl = None
 
         # --- 2. Build aggregation plan ---
         if tbl is not None:
@@ -4065,13 +4077,15 @@ class SemanticJoinOp(Relation):
         """
         try:
             from ._xorq import relations as xorq_rel, walk_nodes
-        except Exception:
+        except ImportError:
             return left_tbl, right_tbl
 
         # Find a canonical backend from the left tree.
         try:
             db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), left_tbl))
         except Exception:
+            # Plain ibis tree — no DatabaseTable nodes for xorq to walk.
+            logger.debug("walk_nodes failed on plain ibis left side", exc_info=True)
             return left_tbl, right_tbl
         canonical = db_tables[0].source if db_tables else None
 
@@ -5257,7 +5271,12 @@ def _extract_requirements_from_keys(
                             if root.name:
                                 requirements = requirements.with_column(root.name, key)
                 except Exception:
-                    # Fallback: assume key name is column name
+                    logger.debug(
+                        "dimension graph traversal failed for %r; "
+                        "treating key name as column name",
+                        key,
+                        exc_info=True,
+                    )
                     for root in all_roots:
                         if root.name:
                             requirements = requirements.with_column(root.name, key)
@@ -5296,6 +5315,12 @@ def _extract_requirements_from_measures(
                     if root.name:
                         requirements = requirements.with_columns(root.name, actual_cols)
         except Exception:
+            logger.debug(
+                "measure graph traversal failed for %r; "
+                "falling back to name-based column inference",
+                measure_name,
+                exc_info=True,
+            )
             # Conservative fallback: if measure name looks like a column, include it
             if measure_name.isidentifier():
                 for root in all_roots:
