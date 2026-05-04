@@ -7,7 +7,6 @@ Provides parameter-based querying as an alternative to method chaining.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from operator import eq, ge, gt, le, lt, ne
 from typing import Any, ClassVar, Literal
 
 import ibis
@@ -71,68 +70,7 @@ TIME_GRAIN_ORDER: tuple[str, ...] = (
 )
 
 
-# Helper functions using operator module instead of lambdas
-def _ibis_isin(x, y):
-    return x.isin(y)
-
-
-def _ibis_not_isin(x, y):
-    return ~x.isin(y)
-
-
-def _ibis_like(x, y):
-    return x.like(y)
-
-
-def _ibis_not_like(x, y):
-    return ~x.like(y)
-
-
-def _ibis_ilike(x, y):
-    return x.ilike(y)
-
-
-def _ibis_not_ilike(x, y):
-    return ~x.ilike(y)
-
-
-def _ibis_isnull(x, _):
-    return x.isnull()
-
-
-def _ibis_notnull(x, _):
-    return x.notnull()
-
-
-def _ibis_and(x, y):
-    return x & y
-
-
-def _ibis_or(x, y):
-    return x | y
-
-
-# Operator mapping using operator module functions where possible
-OPERATOR_MAPPING: FrozenDict = {
-    "=": eq,
-    "eq": eq,
-    "equals": eq,
-    "!=": ne,
-    ">": gt,
-    ">=": ge,
-    "<": lt,
-    "<=": le,
-    "in": _ibis_isin,
-    "not in": _ibis_not_isin,
-    "like": _ibis_like,
-    "not like": _ibis_not_like,
-    "ilike": _ibis_ilike,
-    "not ilike": _ibis_not_ilike,
-    "is null": _ibis_isnull,
-    "is not null": _ibis_notnull,
-    "AND": _ibis_and,
-    "OR": _ibis_or,
-}
+# Filter parsing and compilation lives in ``boring_semantic_layer.predicate``.
 
 
 @curry
@@ -233,7 +171,6 @@ class Filter:
 
     filter: FrozenDict | str | Callable
 
-    OPERATORS: ClassVar[set] = set(OPERATOR_MAPPING.keys())
     COMPOUND_OPERATORS: ClassVar[set] = {"AND", "OR"}
 
     def __attrs_post_init__(self) -> None:
@@ -261,78 +198,19 @@ class Filter:
         # Not a date/timestamp, return original value
         return value
 
-    def _get_field_expr(self, field: str) -> Any:
-        """Get field expression using ibis._ for unbound reference.
-
-        For prefixed fields (e.g., 'customers.country'), use only the field name
-        since joined tables flatten the columns to the top level.
-        """
-        _ibis = _get_ibis_api()
-        if "." in field:
-            # Extract just the field name, ignoring the table prefix
-            # e.g., 'customers.country' -> 'country'
-            _table_name, field_name = field.split(".", 1)
-            return getattr(_ibis._, field_name)
-        return getattr(_ibis._, field)
-
-    def _parse_json_filter(self, filter_obj: FrozenDict) -> Any:
-        """Parse JSON filter object into ibis expression."""
-        # Compound filters (AND/OR)
-        if filter_obj.get("operator") in self.COMPOUND_OPERATORS:
-            conditions = filter_obj.get("conditions")
-            if not conditions:
-                raise ValueError("Compound filter must have non-empty conditions list")
-            expr = self._parse_json_filter(conditions[0])
-            for cond in conditions[1:]:
-                next_expr = self._parse_json_filter(cond)
-                expr = OPERATOR_MAPPING[filter_obj["operator"]](expr, next_expr)
-            return expr
-
-        # Simple filter
-        field = filter_obj.get("field")
-        op = filter_obj.get("operator")
-        if field is None or op is None:
-            raise KeyError(
-                "Missing required keys in filter: 'field' and 'operator' are required",
-            )
-
-        field_expr = self._get_field_expr(field)
-
-        if op not in self.OPERATORS:
-            raise ValueError(f"Unsupported operator: {op}")
-
-        # List membership operators
-        if op in ("in", "not in"):
-            values = filter_obj.get("values")
-            if values is None:
-                raise ValueError(f"Operator '{op}' requires 'values' field")
-            # Convert each value for date/timestamp support
-            converted_values = [self._convert_filter_value(v) for v in values]
-            return OPERATOR_MAPPING[op](field_expr, converted_values)
-
-        # Null checks
-        if op in ("is null", "is not null"):
-            if any(k in filter_obj for k in ("value", "values")):
-                raise ValueError(
-                    f"Operator '{op}' should not have 'value' or 'values' fields",
-                )
-            return OPERATOR_MAPPING[op](field_expr, None)
-
-        # Single value operators
-        value = filter_obj.get("value")
-        if value is None:
-            raise ValueError(f"Operator '{op}' requires 'value' field")
-        # Convert value for date/timestamp support
-        converted_value = self._convert_filter_value(value)
-        return OPERATOR_MAPPING[op](field_expr, converted_value)
-
     def to_callable(self) -> Callable:
         """Convert filter to callable that can be used with SemanticTable.filter()."""
+        from . import predicate as pred_mod
         from .ops import _ensure_xorq_table
 
         if isinstance(self.filter, dict):
-            expr = self._parse_json_filter(self.filter)
-            return lambda t: expr.resolve(_ensure_xorq_table(t))
+            pred = pred_mod.from_dict(self.filter)
+            ibis_module = _get_ibis_api()
+            return lambda t: pred_mod.compile(
+                pred,
+                ibis_module._,
+                ibis_module=ibis_module,
+            ).resolve(_ensure_xorq_table(t))
         elif isinstance(self.filter, str):
             _ibis = _get_ibis_api()
             expr = safe_eval(
@@ -414,15 +292,11 @@ def _normalize_order_by(
 
 def _extract_filter_fields(filter_spec: dict) -> set[str]:
     """Extract all field names referenced by a dict filter (including compound)."""
+    from . import predicate as pred_mod
+
     if not isinstance(filter_spec, dict):
         return set()
-    if filter_spec.get("operator") in ("AND", "OR"):
-        fields: set[str] = set()
-        for cond in filter_spec.get("conditions", []):
-            fields |= _extract_filter_fields(cond)
-        return fields
-    field = filter_spec.get("field")
-    return {field} if field else set()
+    return pred_mod.fields(pred_mod.from_dict(filter_spec))
 
 
 def _normalize_filter_fields(
@@ -448,40 +322,16 @@ def _normalize_filter_fields(
 
 
 def _build_post_agg_predicate(filter_obj: dict) -> Any:
-    """Build an ibis predicate for post-aggregation filters.
+    """Build an ibis predicate (``Deferred``) for post-aggregation filters.
 
-    Uses bracket access (``t[field]``) instead of attribute access so that
-    dotted column names from joined models (e.g. ``orders.total_amount``)
-    resolve correctly on the aggregated table.
+    Delegates to the ``Predicate`` AST in ``predicate``. Bracket-access
+    field resolution preserves dotted names from joined models (e.g.
+    ``orders.total_amount``) on the aggregated table.
     """
-    if filter_obj.get("operator") in ("AND", "OR"):
-        conditions = filter_obj.get("conditions", [])
-        expr = _build_post_agg_predicate(conditions[0])
-        for cond in conditions[1:]:
-            next_expr = _build_post_agg_predicate(cond)
-            expr = OPERATOR_MAPPING[filter_obj["operator"]](expr, next_expr)
-        return expr
+    from . import predicate as pred_mod
 
-    field = filter_obj["field"]
-    op = filter_obj["operator"]
-    # Use bracket access on ibis._ to preserve dotted names
-    field_expr = ibis._[field]
-
-    if op in ("is null", "is not null"):
-        return OPERATOR_MAPPING[op](field_expr, None)
-    if op in ("in", "not in"):
-        return OPERATOR_MAPPING[op](field_expr, filter_obj.get("values", []))
-
-    value = filter_obj.get("value")
-    # Convert date/timestamp strings
-    if isinstance(value, str):
-        for dtype in ("timestamp", "date"):
-            try:
-                value = ibis.literal(value, type=dtype)
-                break
-            except (ValueError, TypeError):
-                pass
-    return OPERATOR_MAPPING[op](field_expr, value)
+    pred = pred_mod.from_dict(filter_obj)
+    return pred_mod.compile(pred, ibis._, post_agg=True, ibis_module=ibis)
 
 
 def _normalize_post_agg_filter(
