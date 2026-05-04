@@ -17,7 +17,7 @@ import importlib.metadata
 import ibis
 import pytest
 
-from boring_semantic_layer import SemanticModel
+from boring_semantic_layer import SemanticModel, to_semantic_table
 from boring_semantic_layer.serialization import to_tagged
 from boring_semantic_layer.serialization.tag_handler import (
     bsl_tag_handler,
@@ -112,6 +112,54 @@ def test_extract_metadata_walks_source_chain(simple_model):
     # Names come from the base model, not just the projected query columns.
     assert set(meta["dimensions"]) == {"a", "b"}
     assert set(meta["measures"]) == {"sum_b", "avg_b"}
+
+
+def test_extract_metadata_walks_join_branches():
+    """For joined models the handler must descend into both ``left`` and
+    ``right`` branches and union dim/measure names from every leaf
+    ``SemanticTableOp``, prefixing them with the leaf's table name to match
+    how a joined ``SemanticTable`` exposes its fields."""
+    t1 = ibis.memtable({"id": [1, 2], "name": ["a", "b"]})
+    t2 = ibis.memtable({"id": [1, 2], "value": [10, 20]})
+    t3 = ibis.memtable({"id": [1, 2], "extra": ["x", "y"]})
+
+    st1 = (
+        to_semantic_table(t1, name="t1")
+        .with_dimensions(id=lambda t: t.id, name=lambda t: t.name)
+        .with_measures(count=lambda t: t.count())
+    )
+    st2 = (
+        to_semantic_table(t2, name="t2")
+        .with_dimensions(id=lambda t: t.id)
+        .with_measures(total=lambda t: t.value.sum())
+    )
+    st3 = (
+        to_semantic_table(t3, name="t3")
+        .with_dimensions(id=lambda t: t.id, extra=lambda t: t.extra)
+        .with_measures(extra_count=lambda t: t.count())
+    )
+
+    # Two-arm join chain: covers nested SemanticJoinOp on the left as well as
+    # a query wrapper on top, exercising the same path as the original bug
+    # where every leaf was being missed.
+    joined = st1.join_one(st2, on=lambda l, r: l.id == r.id).join_one(
+        st3, on=lambda l, r: l.id == r.id
+    )
+    query = joined.query(dimensions=("t1.name",), measures=("t1.count",))
+    tag_node = _tag_node(to_tagged(query))
+
+    meta = extract_metadata(tag_node)
+
+    assert set(meta["dimensions"]) == {
+        "t1.id",
+        "t1.name",
+        "t2.id",
+        "t3.id",
+        "t3.extra",
+    }
+    assert set(meta["measures"]) == {"t1.count", "t2.total", "t3.extra_count"}
+    assert "5 dims" in meta["description"]
+    assert "3 measures" in meta["description"]
 
 
 # ---------------------------------------------------------------------------
