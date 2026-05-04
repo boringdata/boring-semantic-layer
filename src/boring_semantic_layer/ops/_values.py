@@ -104,7 +104,7 @@ class Dimension:
             if "'Table' object has no attribute" in str(
                 e
             ) or "'Join' object has no attribute" in str(e):
-                from ._core import _format_column_error
+                from ._measure_helpers import _format_column_error
 
                 raise AttributeError(_format_column_error(e, table)) from e
             raise
