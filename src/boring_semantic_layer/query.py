@@ -550,6 +550,7 @@ def compare_periods(
     result_tbl = result_tbl.mutate(**delta_mutations, **pct_mutations)
 
     if order_by:
+        order_by = _normalize_order_by(order_by, set(result_tbl.columns), expected_prefix=model_name)
         result_tbl = result_tbl.order_by(
             [
                 result_tbl[field].desc() if direction.lower() == "desc" else result_tbl[field]
