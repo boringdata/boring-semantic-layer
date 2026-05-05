@@ -11,20 +11,18 @@ from returns.curry import partial
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Failure, Result, Success, safe
 from toolz import compose
-from xorq.common.utils.graph_utils import (
+from ._xorq import (
+    Expr as XorqExpr,
+    Graph,
+    Node,
     replace_nodes as _xorq_replace_nodes,
-)
-from xorq.common.utils.graph_utils import (
     to_node as _xorq_to_node,
 )
-from xorq.vendor.ibis.common.graph import Graph
-from xorq.vendor.ibis.expr.operations.core import Node
-from xorq.vendor.ibis.expr.types import Expr as XorqExpr
 
 
 def _collect_field_types() -> tuple[type, ...]:
     """Collect all Field types that may appear in expressions."""
-    from xorq.vendor.ibis.expr.operations.relations import Field as XorqField
+    from ._xorq import Field as XorqField
 
     types = [XorqField]
     try:

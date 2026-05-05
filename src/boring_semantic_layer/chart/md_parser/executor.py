@@ -5,10 +5,10 @@ import sys
 from typing import Any
 
 import ibis
-import xorq.api as xo
 from returns.result import Success
 
 from boring_semantic_layer import to_semantic_table
+from boring_semantic_layer._xorq import api as xo
 from boring_semantic_layer.utils import safe_eval
 
 

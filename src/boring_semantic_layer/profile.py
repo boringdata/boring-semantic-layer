@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from ibis import BaseBackend
-from xorq.vendor.ibis.backends.profiles import Profile as XorqProfile
+from ._xorq import Profile as XorqProfile
 
 from .utils import read_yaml_file
 

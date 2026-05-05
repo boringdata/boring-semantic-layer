@@ -82,11 +82,13 @@ def _reconstruct_semantic_table(
         return _unwrap_xorq_wrappers(expr, strip_remote=False)
 
     def _reconstruct_table():
-        from xorq.common.utils.graph_utils import walk_nodes
-        from xorq.common.utils.ibis_utils import from_ibis
-        from xorq.expr.relations import Read
-        from xorq.vendor import ibis
-        from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+        from .._xorq import (
+            Read,
+            from_ibis,
+            ibis,
+            relations as xorq_rel,
+            walk_nodes,
+        )
 
         unwrapped_expr = _unwrap_cached_nodes(xorq_expr)
 
@@ -247,8 +249,7 @@ def _reconstruct_limit(
 def _reconstruct_join(
     metadata: dict, xorq_expr, source, context: BSLSerializationContext
 ):
-    from xorq.common.utils.graph_utils import walk_nodes
-    from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+    from .._xorq import relations as xorq_rel, walk_nodes
 
     from .. import expr as bsl_expr
 
@@ -303,7 +304,7 @@ def _reconstruct_join(
 
 def _unwrap_xorq_wrappers(expr, *, strip_remote: bool = False):
     """Walk past Tag, CachedNode, and optionally RemoteTable wrappers."""
-    from xorq.expr.relations import CachedNode, RemoteTable, Tag
+    from .._xorq import CachedNode, RemoteTable, Tag
 
     op = expr.op()
     if isinstance(op, Tag):
@@ -319,7 +320,7 @@ def _unwrap_xorq_wrappers(expr, *, strip_remote: bool = False):
 
 def _unwrap_join_ref(expr):
     """If expr is a JoinReference, return the underlying table."""
-    from xorq.vendor.ibis.expr.operations.relations import JoinReference
+    from .._xorq import JoinReference
 
     if isinstance(expr.op(), JoinReference):
         return expr.op().parent.to_expr()
@@ -339,7 +340,7 @@ def _rebind_to_backend(expr, target_backend):
 
 def _split_join_expr(xorq_expr):
     """Extract left and right table expressions from a joined xorq expression."""
-    from xorq.vendor.ibis.expr.operations.relations import JoinChain
+    from .._xorq import JoinChain
 
     expr = _unwrap_xorq_wrappers(xorq_expr, strip_remote=True)
     op = expr.op()
@@ -373,7 +374,7 @@ def _split_join_expr(xorq_expr):
 
 def extract_xorq_metadata(xorq_expr) -> dict[str, Any] | None:
     """Walk a xorq expression tree to find BSL tag metadata."""
-    from xorq.expr.relations import Tag
+    from .._xorq import Tag
 
     @safe
     def get_op(expr):
