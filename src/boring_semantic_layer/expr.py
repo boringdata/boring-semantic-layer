@@ -19,7 +19,7 @@ from ._xorq import (
 )
 
 from .chart import chart as create_chart
-from .measure_scope import AggregationExpr, MeasureScope
+from .measure_scope import MeasureScope
 from .ops import (
     Dimension,
     Measure,
@@ -1230,18 +1230,6 @@ class SemanticGroupBy(SemanticTable):
                     f"got {type(item)}",
                 )
 
-        def wrap_aggregation_expr(expr):
-            if isinstance(expr, AggregationExpr):
-
-                def wrapped(t):
-                    if expr.operation == "count":
-                        return t.count()
-                    return getattr(t[expr.column], expr.operation)()
-
-                return wrapped
-            return expr
-
-        aliased = {k: wrap_aggregation_expr(v) for k, v in aliased.items()}
         aggs.update(aliased)
 
         if nest:
