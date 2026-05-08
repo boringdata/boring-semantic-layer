@@ -123,12 +123,19 @@ def _walk_children(node: Node):
     """Yield direct child Nodes of ``node``. Robust to ibis API drift.
 
     Walks ``__children__`` if present, otherwise ``__args__``. Skips
-    non-Node leaves (literals, schemas, etc.).
+    non-Node leaves (literals, schemas, etc.). Skips ``Relation`` nodes
+    so the analyzer does not descend into base-table expressions whose
+    body may itself contain window functions or aggregations unrelated
+    to the calc measure being classified.
     """
+    from ._xorq import operations as ibis_ops
+
+    Relation = getattr(ibis_ops.relations, "Relation", None)
+
     children = getattr(node, "__children__", None)
     if children is not None:
         for c in children:
-            if isinstance(c, Node):
+            if isinstance(c, Node) and not (Relation is not None and isinstance(c, Relation)):
                 yield c
         return
     args = getattr(node, "__args__", None)
@@ -136,15 +143,24 @@ def _walk_children(node: Node):
         return
     for arg in args:
         if isinstance(arg, Node):
+            if Relation is not None and isinstance(arg, Relation):
+                continue
             yield arg
         elif isinstance(arg, tuple):
             for inner in arg:
                 if isinstance(inner, Node):
+                    if Relation is not None and isinstance(inner, Relation):
+                        continue
                     yield inner
 
 
 def _walk(node: Node):
-    """Iterate ``node`` and all descendants (preorder, deduped)."""
+    """Iterate ``node`` and all descendants (preorder, deduped).
+
+    Does not descend into ``Relation`` subtrees — those are the table
+    references the calc expression sits on top of, not part of its
+    structural shape.
+    """
     seen: set[int] = set()
     stack = [node]
     while stack:
