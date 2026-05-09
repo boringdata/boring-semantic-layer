@@ -233,14 +233,15 @@ def test_inline_measure_with_different_reference_styles():
 
 
 def test_all_of_multilayer_calc_measure():
-    """``t.all()`` over a calc-of-calc chain compiles via the analyzer path.
+    """``t.all()`` over a calc-of-calc chain re-aggregates from the base.
 
-    The analyzer-based compiler lifts the totals shape to a windowed sum
-    over the post-aggregation column (``x.sum().over(window())``).  For
-    sum-style measures this matches the legacy curated-AST behavior of
-    re-aggregating on the unfiltered base table; for non-sum measures
-    (e.g. ``avg``) it differs, which is documented as a v1 limitation —
-    see ADR 0001 design decision #1.
+    The compiler builds a totals table by re-running the same aggregation
+    without group_by, applies non-AllOf calc measures to it, and
+    cross-joins it into the per-group result so ``t.all(measure_ref)``
+    references the totals column directly. For non-sum-style chains
+    (e.g. ``avg_distance + 1``) this matches the curated-AST behavior:
+    the ``+ 1`` participates in the totals computation exactly once,
+    not once per group.
     """
     con = ibis.duckdb.connect(":memory:")
     flights = pd.DataFrame(
@@ -256,20 +257,63 @@ def test_all_of_multilayer_calc_measure():
         .with_measures(
             total_distance=lambda t: t.distance.sum(),
             total_flights=lambda t: t.count(),
-            distance_plus_one=lambda t: t.total_distance + 1,
+            avg_distance=lambda t: t.total_distance / t.total_flights,
+            avg_distance_plus_one=lambda t: t.avg_distance + 1,
         )
         .with_measures(
-            pct_of_total=lambda t: t.distance_plus_one / t.all(t.distance_plus_one),
+            pct_of_total=lambda t: t.avg_distance_plus_one / t.all(t.avg_distance_plus_one),
         )
     )
 
     df = flights_st.group_by("carrier").aggregate("pct_of_total").execute()
 
+    # AA avg_distance = 300/2 = 150, +1 = 151
+    # UA avg_distance = 700/2 = 350, +1 = 351
+    # Totals (re-aggregated from base): avg_distance = 1000/4 = 250, +1 = 251
     assert len(df) == 2
     assert "pct_of_total" in df.columns
-    # AA total_distance=300, +1=301; UA total_distance=700, +1=701.
-    # windowed sum over the carriers = 301 + 701 = 1002.
-    assert pytest.approx(df.pct_of_total.sum()) == 1.0
+    assert pytest.approx(sorted(df.pct_of_total.tolist())) == sorted([151 / 251, 351 / 251])
+
+
+def test_all_of_non_sum_measure_uses_totals_table():
+    """``t.all(mean_measure)`` re-aggregates from base, not sum-of-means.
+
+    The bug: emitting ``column.sum().over(window())`` for ``t.all(...)``
+    is correct for sum-style measures (sum of per-group sums = overall
+    sum) but wrong for ``mean`` (sum of per-group means != overall mean).
+    The fix builds a totals table by re-aggregating from base without
+    group_by, then references the totals column.
+    """
+    con = ibis.duckdb.connect(":memory:")
+    flights = pd.DataFrame(
+        {
+            "carrier": ["AA", "AA", "UA", "UA"],
+            "distance": [100, 200, 300, 400],
+        }
+    )
+    f_tbl = con.create_table("flights_avg", flights)
+
+    flights_st = (
+        to_semantic_table(f_tbl, "flights_avg")
+        .with_measures(avg_distance=lambda t: t.distance.mean())
+        .with_measures(
+            ratio=lambda t: t.avg_distance / t.all(t.avg_distance),
+        )
+    )
+
+    df = (
+        flights_st.group_by("carrier")
+        .aggregate("avg_distance", "ratio")
+        .execute()
+        .sort_values("carrier")
+        .reset_index(drop=True)
+    )
+
+    # AA avg = 150, UA avg = 350, overall avg = 250 (NOT 150+350=500).
+    aa = df[df.carrier == "AA"].iloc[0]
+    ua = df[df.carrier == "UA"].iloc[0]
+    assert pytest.approx(aa.ratio) == 150 / 250
+    assert pytest.approx(ua.ratio) == 350 / 250
 
 
 # --- Tests for .values / .schema / .columns with calc measures ---

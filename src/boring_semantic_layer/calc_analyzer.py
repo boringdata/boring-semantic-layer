@@ -244,6 +244,7 @@ def analyze_calc_expr(
     expr: Any,
     known_measures: frozenset[str] = frozenset(),
     base_table_op: Node | None = None,
+    totals_vt_op: Node | None = None,
 ) -> CalcExprAnalysis:
     """Classify a calc-measure ibis expression.
 
@@ -262,6 +263,12 @@ def analyze_calc_expr(
         referencing this exact table are not treated as measure
         dependencies — they are inline base columns (used by inline
         aggregations like ``t.distance.sum()`` in calc-measure form).
+    totals_vt_op:
+        Optional. The totals virtual table's ibis op (parallel to
+        ``base_table_op`` but representing no-group-by aggregation).
+        Field references on this table mark the totals pattern; the
+        compiler later substitutes them with a real totals aggregation
+        cross-joined into the result.
 
     Returns
     -------
@@ -303,8 +310,12 @@ def analyze_calc_expr(
     depends_on: set[str] = set()
     inline_aggs: set[str] = set()
     base_id = id(base_table_op) if base_table_op is not None else None
+    totals_id = id(totals_vt_op) if totals_vt_op is not None else None
     for fld in (n for n in _walk(node) if isinstance(n, Field)):
-        if base_id is not None and id(fld.rel) == base_id:
+        if totals_id is not None and id(fld.rel) == totals_id:
+            references_AllOf = True
+            depends_on.add(fld.name)
+        elif base_id is not None and id(fld.rel) == base_id:
             inline_aggs.add(fld.name)
         elif fld.name in known_measures:
             depends_on.add(fld.name)

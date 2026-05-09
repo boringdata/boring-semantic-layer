@@ -738,7 +738,9 @@ def _classify_measure(
     virtual_schema = {name: "float64" for name in known_set}
 
     try:
-        ibis_expr, vt = evaluate_calc_lambda(expr, base_tbl, known_set, virtual_schema)
+        ibis_expr, vt, totals_vt = evaluate_calc_lambda(
+            expr, base_tbl, known_set, virtual_schema
+        )
     except UnknownMeasureRefError:
         raise
     except Exception:
@@ -752,7 +754,13 @@ def _classify_measure(
         return ("base", _make_base_measure(expr, description, requires_unnest, metadata))
 
     base_op = base_tbl.op() if hasattr(base_tbl, "op") and callable(base_tbl.op) else None
-    analysis = analyze_calc_expr(ibis_expr, known_measures=known_set, base_table_op=base_op)
+    totals_op = totals_vt.op() if hasattr(totals_vt, "op") and callable(totals_vt.op) else None
+    analysis = analyze_calc_expr(
+        ibis_expr,
+        known_measures=known_set,
+        base_table_op=base_op,
+        totals_vt_op=totals_op,
+    )
 
     if analysis.pushable or analysis.post_agg_only is False:
         if not requires_unnest and callable(expr):
@@ -1076,7 +1084,7 @@ class SemanticTableOp(Relation):
             for name, calc in calc_measures.items():
                 fn = calc.expr if isinstance(calc, CalcMeasure) else calc
                 try:
-                    expr, _vt = evaluate_calc_lambda(
+                    expr, _vt, _tvt = evaluate_calc_lambda(
                         fn, enriched, known_set, measure_schema
                     )
                     base_values[name] = expr.op()
@@ -1539,30 +1547,50 @@ def _compile_aggregation(
     aggregations surface as :class:`NestedAccessMarker` values and are
     routed through :func:`_compile_aggregation_with_nested`.
     """
-    # --- Pre-process calc specs: lift inline reductions to base aggs ---
-    # User calc lambdas like ``t.distance.sum() / t.all(t.distance.sum())``
-    # contain inline reductions that read base-table columns. These can't
-    # be applied via ``mutate`` after aggregation because the reduction is
-    # bound to the base relation, not the aggregated result. We lift them
-    # to anonymous base measures here so ``Field(vt, anon)`` substitution
-    # at compile time produces a valid post-agg expression.
-    lifted_calc_specs: dict[str, tuple[Any, Any]] = {}
+    # --- Pre-process calc specs ---------------------------------------
+    # For each calc lambda we run the analyzer once to discover:
+    #   * inline base-table reductions to lift into anonymous base aggs;
+    #   * whether the calc references the totals virtual table
+    #     (``t.all(measure_ref)``) and so needs a no-group-by totals
+    #     aggregation cross-joined into the result at compile time.
+    # ``lifted_calc_specs[name]`` holds the rewritten expression plus
+    # the virtual tables it references; ``None`` means classification
+    # failed and we'll re-run the lambda from scratch at compile time.
+    lifted_calc_specs: dict[str, tuple[Any, Any, Any] | None] = {}
+    needs_totals = False
     if calc_specs:
         from .calc_compiler import lift_inline_reductions
 
         for name, cm in calc_specs.items():
             try:
                 virtual_schema = {n: "float64" for n in known_measures}
-                expr, vt = evaluate_calc_lambda(
+                expr, vt, totals_vt = evaluate_calc_lambda(
                     cm.expr, base_tbl, known_measures, virtual_schema
                 )
-                new_expr, new_vt, lifted = lift_inline_reductions(expr, vt, base_tbl)
-                lifted_calc_specs[name] = (new_expr, new_vt)
+                new_expr, new_vt, new_totals_vt, lifted = lift_inline_reductions(
+                    expr, vt, base_tbl, totals_virtual_agg_tbl=totals_vt
+                )
+                base_op = (
+                    base_tbl.op() if hasattr(base_tbl, "op") and callable(base_tbl.op) else None
+                )
+                totals_op = (
+                    new_totals_vt.op()
+                    if hasattr(new_totals_vt, "op") and callable(new_totals_vt.op)
+                    else None
+                )
+                analysis = analyze_calc_expr(
+                    new_expr,
+                    known_measures=known_measures,
+                    base_table_op=base_op,
+                    totals_vt_op=totals_op,
+                )
+                lifted_calc_specs[name] = (new_expr, new_vt, new_totals_vt)
+                if analysis.references_AllOf:
+                    needs_totals = True
                 for anon_name, reduction_expr in lifted.items():
                     if anon_name not in agg_specs:
                         agg_specs[anon_name] = (lambda r=reduction_expr: lambda t: r)()
             except Exception:
-                # Fall back to runtime path; apply_calc_measures will retry.
                 lifted_calc_specs[name] = None
 
     nested_marker_specs: dict[str, Any] = {}
@@ -1588,30 +1616,71 @@ def _compile_aggregation(
             else:
                 real_agg_tbl = base_tbl.aggregate(**agg_exprs)
         else:
-            # Pure calc measures with no group-by reduce to a one-row
-            # aggregate. Build an empty groupby aggregation as a base.
             real_agg_tbl = base_tbl.aggregate()
     else:
-        # Defer to nested-array compile pipeline.
         real_agg_tbl = _compile_aggregation_with_nested(
             base_tbl, by_cols, regular_specs, nested_marker_specs
         )
 
-    # Apply calc measures. Use the pre-rewritten exprs when available so
-    # the inline reductions resolve to the lifted columns.
+    # --- Build totals table if any calc references it ----------------
+    # The totals table re-runs ``regular_specs`` on the base without
+    # group_by, then applies non-AllOf calc measures so calc-of-calc
+    # chains see correctly-recomputed dependencies. AllOf-using calcs
+    # are excluded from the totals table itself (sum-over-totals is a
+    # no-op) but resolved against it at compile time.
+    real_totals_tbl = None
+    if needs_totals and regular_specs and not nested_marker_specs:
+        totals_agg_exprs = {n: f(base_tbl) for n, f in regular_specs.items()}
+        real_totals_tbl = base_tbl.aggregate(**totals_agg_exprs)
+        non_allof_calcs: dict[str, CalcMeasure] = {}
+        for n, cm in calc_specs.items():
+            spec = lifted_calc_specs.get(n)
+            if spec is None:
+                continue
+            new_expr, _new_vt, new_totals_vt = spec
+            base_op = (
+                base_tbl.op() if hasattr(base_tbl, "op") and callable(base_tbl.op) else None
+            )
+            totals_op = (
+                new_totals_vt.op()
+                if hasattr(new_totals_vt, "op") and callable(new_totals_vt.op)
+                else None
+            )
+            inner_analysis = analyze_calc_expr(
+                new_expr,
+                known_measures=known_measures,
+                base_table_op=base_op,
+                totals_vt_op=totals_op,
+            )
+            if not inner_analysis.references_AllOf:
+                non_allof_calcs[n] = cm
+        if non_allof_calcs:
+            from .calc_compiler import apply_calc_measures as _apply
+
+            real_totals_tbl = _apply(
+                real_totals_tbl,
+                base_tbl,
+                {n: cm.expr for n, cm in non_allof_calcs.items()},
+                known_measures,
+            )
+
+    # --- Apply calc measures -----------------------------------------
     if calc_specs:
-        from .calc_compiler import compile_calc_measure as _compile_calc_measure
+        from .calc_compiler import (
+            _join_totals,
+            compile_calc_measure as _compile_calc_measure,
+        )
+
+        real_with_totals = (
+            _join_totals(real_agg_tbl, real_totals_tbl, "__bsl_totals__")
+            if real_totals_tbl is not None
+            else None
+        )
 
         ordered = _topological_calc_order(calc_specs, base_tbl, known_measures)
         for name in ordered:
-            if name in lifted_calc_specs and lifted_calc_specs[name] is not None:
-                rewritten_expr, rewritten_vt = lifted_calc_specs[name]
-                compiled = _compile_calc_measure(rewritten_expr, rewritten_vt, real_agg_tbl)
-                real_agg_tbl = real_agg_tbl.mutate(**{name: compiled})
-            else:
-                # Fallback: re-run the lambda fresh against the current
-                # post-agg shape (handles calcs whose dependencies were
-                # also calcs and now exist as columns).
+            spec = lifted_calc_specs.get(name)
+            if spec is None:
                 cm = calc_specs[name]
                 fn = cm.expr
                 virtual_schema = {
@@ -1619,11 +1688,52 @@ def _compile_aggregation(
                     for col in real_agg_tbl.columns
                     if col in known_measures or col in calc_specs
                 }
-                expr, vt = evaluate_calc_lambda(
-                    fn, base_tbl, known_measures | frozenset(calc_specs.keys()), virtual_schema
+                expr, vt, totals_vt = evaluate_calc_lambda(
+                    fn,
+                    base_tbl,
+                    known_measures | frozenset(calc_specs.keys()),
+                    virtual_schema,
                 )
-                compiled = _compile_calc_measure(expr, vt, real_agg_tbl)
+                rewritten_expr, rewritten_vt, rewritten_totals_vt = expr, vt, totals_vt
+            else:
+                rewritten_expr, rewritten_vt, rewritten_totals_vt = spec
+
+            base_op = (
+                base_tbl.op() if hasattr(base_tbl, "op") and callable(base_tbl.op) else None
+            )
+            totals_op = (
+                rewritten_totals_vt.op()
+                if rewritten_totals_vt is not None
+                and hasattr(rewritten_totals_vt, "op")
+                and callable(rewritten_totals_vt.op)
+                else None
+            )
+            analysis = analyze_calc_expr(
+                rewritten_expr,
+                known_measures=known_measures,
+                base_table_op=base_op,
+                totals_vt_op=totals_op,
+            )
+
+            if analysis.references_AllOf and real_with_totals is not None:
+                compiled = _compile_calc_measure(
+                    rewritten_expr,
+                    rewritten_vt,
+                    real_with_totals,
+                    totals_virtual_agg_tbl=rewritten_totals_vt,
+                    real_with_totals=real_with_totals,
+                )
+                real_with_totals = real_with_totals.mutate(**{name: compiled})
+                real_agg_tbl = real_with_totals.select(
+                    [c for c in real_with_totals.columns if not c.startswith("__bsl_totals__")]
+                )
+            else:
+                compiled = _compile_calc_measure(rewritten_expr, rewritten_vt, real_agg_tbl)
                 real_agg_tbl = real_agg_tbl.mutate(**{name: compiled})
+                if real_with_totals is not None and real_totals_tbl is not None:
+                    real_with_totals = _join_totals(
+                        real_agg_tbl, real_totals_tbl, "__bsl_totals__"
+                    )
 
     if requested_measures is not None:
         select_cols = list(
@@ -2945,7 +3055,9 @@ class SemanticAggregateOp(Relation):
                 for name, cm in plan.calc_specs.items()
             }
             known = frozenset(merged_base_measures) | frozenset(merged_calc_measures)
-            result = apply_calc_measures(result, core_tbl, calc_lambdas, known)
+            result = apply_calc_measures(
+                result, core_tbl, calc_lambdas, known, agg_specs=dict(plan.agg_specs)
+            )
 
         # --- 3. LEFT JOIN deferred dimension tables ---
         for d in deferrable:
@@ -3171,9 +3283,11 @@ class SemanticAggregateOp(Relation):
 
         Each calc spec is a :class:`CalcMeasure` whose lambda is
         re-evaluated against the post-aggregation result via the
-        ibis-native compiler. ``t.all(...)`` patterns surface as windowed
-        sums on the post-agg column; full re-aggregation on the base
-        table is no longer used in the new path.
+        ibis-native compiler. ``t.all(measure_ref)`` patterns trigger a
+        no-group-by totals aggregation that gets cross-joined into the
+        result so non-sum measures (mean/quantile/…) get correct overall
+        values; ``apply_calc_measures`` builds the totals lazily on
+        first use.
         """
         calc_lambdas = {
             name: cm.expr if isinstance(cm, CalcMeasure) else cm
@@ -3183,7 +3297,13 @@ class SemanticAggregateOp(Relation):
             return result
         base_for_calc = tbl if tbl is not None else result
         known = frozenset(plan.agg_specs.keys()) | frozenset(plan.calc_specs.keys())
-        return apply_calc_measures(result, base_for_calc, calc_lambdas, known)
+        return apply_calc_measures(
+            result,
+            base_for_calc,
+            calc_lambdas,
+            known,
+            agg_specs=dict(plan.agg_specs),
+        )
 
 
 class SemanticMutateOp(Relation):
