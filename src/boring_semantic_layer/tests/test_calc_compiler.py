@@ -343,6 +343,59 @@ def test_apply_calc_measures_non_sum_totals(reducer, expected_total, per_group):
     assert pytest.approx(by_ratio["UA"]) == per_group["UA"] / expected_total
 
 
+def test_cast_to_float_survives_int_measure_substitution():
+    """``int_measure.cast('float64') / int_measure_total * 100`` returns nonzero.
+
+    Regression test for the bug where the preprocess step in
+    ``_compile_aggregation`` populated the virtual aggregated table's
+    schema with placeholder ``float64`` dtypes for every measure.
+    User casts like ``t.flight_count.cast('float64')`` were elided as
+    no-ops by ibis (the column was already float64 in the synthetic
+    schema). After substitution to the real aggregated table — where
+    ``flight_count`` is int64 (from ``CountStar``) — the Cast was gone,
+    so ``int / int * 100`` returned 0 for ratios less than 1.
+
+    The fix uses the *real* dtype derived from ``agg_specs[name](base_tbl).type()``
+    so the cast is preserved when substituted. This test pins the
+    behavior end-to-end with a count-style integer measure and a
+    ``cast('float64')``-using calc.
+    """
+    from boring_semantic_layer import to_semantic_table
+
+    con = xo.duckdb.connect()
+    df = pd.DataFrame(
+        {
+            "carrier": ["AA"] * 30 + ["UA"] * 70,
+            "value": list(range(100)),
+        }
+    )
+    tbl = con.create_table("flights_cast_regression", df)
+
+    st = (
+        to_semantic_table(tbl, "flights_cast_regression")
+        .with_measures(
+            flight_count=lambda t: t.count(),  # int64
+        )
+        .with_measures(
+            share_pct=(
+                lambda t: t.flight_count.cast("float64") / t.all(t.flight_count) * 100
+            ),
+        )
+    )
+    result = (
+        st.group_by("carrier")
+        .aggregate("flight_count", "share_pct")
+        .execute()
+        .sort_values("carrier")
+        .reset_index(drop=True)
+    )
+    by_carrier = dict(zip(result["carrier"], result["share_pct"], strict=True))
+    # AA = 30/100 = 30%, UA = 70/100 = 70%; sum = 100% (sanity)
+    assert pytest.approx(by_carrier["AA"]) == 30.0
+    assert pytest.approx(by_carrier["UA"]) == 70.0
+    assert pytest.approx(result["share_pct"].sum()) == 100.0
+
+
 def test_lift_inline_reductions_routes_window_to_totals():
     """The two-pass substitution gives top-level reductions vt refs and
     ``t.all(...)``-style windowed reductions totals_vt refs.

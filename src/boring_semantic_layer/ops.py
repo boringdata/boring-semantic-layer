@@ -1581,7 +1581,31 @@ def _compile_aggregation(
     # ``classifications[name]`` carries the structural analysis.
     # ``None`` lift means the lambda blew up — we'll re-evaluate from
     # scratch in the apply loop.
+    #
+    # Build the virtual schema with *real* dtypes derived from the base
+    # aggregations. Using a placeholder dtype (``float64`` for
+    # everything) lets ibis silently elide ``column.cast(float64)`` as a
+    # no-op during ``evaluate_calc_lambda``; after the substitution
+    # ``Field(virtual_agg) → Field(real_agg)`` the Cast is gone but the
+    # real column is int64, so ``int / int * 100`` returns 0. Probing
+    # ``agg_specs[n](base_tbl).type()`` gives the analyzer the same
+    # dtype the user's calc will see at compile time.
     base_op = _to_op(base_tbl)
+    virtual_schema_real: dict[str, Any] = {}
+    for n in known_measures:
+        if n in agg_specs:
+            try:
+                virtual_schema_real[n] = agg_specs[n](base_tbl).type()
+            except Exception as exc:
+                logger.debug(
+                    "could not probe dtype for measure %r; falling back to float64: %s",
+                    n,
+                    exc,
+                )
+                virtual_schema_real[n] = "float64"
+        else:
+            virtual_schema_real[n] = "float64"
+
     lifted_calc_specs: dict[str, tuple[Any, Any, Any] | None] = {}
     classifications: dict[str, Any] = {}
     preproc_errors: dict[str, Exception] = {}
@@ -1589,7 +1613,7 @@ def _compile_aggregation(
     if calc_specs:
         for name, cm in calc_specs.items():
             try:
-                virtual_schema = {n: "float64" for n in known_measures}
+                virtual_schema = dict(virtual_schema_real)
                 expr, vt, totals_vt = evaluate_calc_lambda(
                     cm.expr, base_tbl, known_measures, virtual_schema
                 )

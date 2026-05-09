@@ -547,6 +547,19 @@ def _join_totals(real_agg_tbl, real_totals_tbl, totals_prefix: str):
     avoid clashing with per-group columns of the same name, then cross
     join. Calc-measure compilation rewrites ``Field(totals_vt, name)``
     references to point at the prefixed columns on the resulting table.
+
+    .. note::
+       Known limitation: when ``real_agg_tbl`` and ``real_totals_tbl``
+       share a parent relation (per-group ``Aggregate(X)`` and
+       no-group-by ``Aggregate(X)`` with a shared ``X``) — typical on
+       joined models built from xorq RemoteTables — some SQL backends
+       collapse the shared-ancestor cross-join and return zero rows.
+       Synthetic duckdb tables and direct base aggregations work
+       correctly. ``.view()`` and ``.distinct()`` are dissolved by
+       downstream ``op.replace`` substitutions; ``.cache()`` works at
+       execute time but breaks SQL ``.compile()`` (no translation rule
+       for ``CachedNode``). A correct fix likely needs to live in the
+       SQL compiler. Tracked as a Phase 3 follow-up.
     """
     rename_map = {f"{totals_prefix}{c}": c for c in real_totals_tbl.columns}
     totals_renamed = real_totals_tbl.rename(rename_map)
