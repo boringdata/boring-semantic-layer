@@ -771,6 +771,17 @@ def _classify_measure(
     )
 
     if analysis.pushable or analysis.post_agg_only is False:
+        # ``post_agg_only=False`` without ``pushable`` means no window /
+        # AllOf / measure deps but the expression touched multiple source
+        # tables. Routing to base lets the lambda run verbatim at agg
+        # time; if it really does span tables, ibis will surface the
+        # error there. Log so the silent fallthrough is visible.
+        if not analysis.pushable:
+            logger.debug(
+                "calc-measure %r references multiple source tables but no measures; "
+                "routing to base classification — ibis will validate at agg time.",
+                measure_name,
+            )
         if not requires_unnest and callable(expr):
             inferred_unnest = _infer_unnest(expr, base_tbl)
             requires_unnest = requires_unnest or inferred_unnest
@@ -1419,7 +1430,15 @@ class _AggregationPlan:
 
 
 def _make_agg_callable(measure: Any) -> Callable:
-    """Wrap a base-measure value into a callable that returns an ibis aggregation."""
+    """Wrap a base-measure value into a callable that returns an ibis aggregation.
+
+    ``Measure.expr`` is already wrapped with ``ColumnScope`` inside
+    :func:`_make_base_measure`, so ``Measure`` instances and raw callables
+    (e.g. lifted-reduction stubs that close over a pre-built ibis op) are
+    invoked with the raw ibis table directly. Only ``Deferred`` values
+    are resolved through ``ColumnScope`` here, since they have no other
+    way to bind to the table.
+    """
     if _is_deferred(measure):
         return lambda t: measure.resolve(ColumnScope(_tbl=t))
     if isinstance(measure, Measure):
@@ -4810,19 +4829,6 @@ def _build_join_depth_map(node: Any) -> dict[str, int]:
     return depth_map
 
 
-def _update_measure_refs_in_calc(expr, prefix_map: dict[str, str]):
-    """No-op for ibis-native calc measures.
-
-    Calc measures are stored as :class:`CalcMeasure` objects whose lambdas
-    reference measures by short name. At query time, the
-    :class:`IbisCalcScope` performs suffix-based resolution so prefixed
-    measure names on joined models bind correctly without rewriting the
-    stored lambda. Kept as a hook for callers that still pass a calc
-    measure through prefix logic.
-    """
-    return expr
-
-
 def _extract_join_key_column_names(source: Relation) -> set[str]:
     """
     Extract column names that ibis will merge (coalesce) during joins.
@@ -5035,16 +5041,13 @@ def _merge_fields_with_prefixing(
 
     merged_fields = {}
 
-    is_calc_measures = False
     is_dimensions = False
     if all_roots:
         sample_fields = field_accessor(all_roots[0])
         if sample_fields:
             first_val = next(iter(sample_fields.values()), None)
-            is_calc_measures = isinstance(first_val, CalcMeasure)
             is_dimensions = isinstance(first_val, Dimension)
 
-    # For dimensions, build a column rename map to handle Ibis join conflicts
     column_rename_map = {}
     if is_dimensions:
         column_rename_map = _build_column_rename_map(all_roots, field_accessor, source)
@@ -5053,36 +5056,17 @@ def _merge_fields_with_prefixing(
         root_name = root.name
         fields_dict = field_accessor(root)
 
-        if is_calc_measures and root_name:
-            base_map = (
-                {k: f"{root_name}.{k}" for k in root.get_measures()}
-                if hasattr(root, "get_measures")
-                else {}
-            )
-            calc_map = (
-                {k: f"{root_name}.{k}" for k in root.get_calculated_measures()}
-                if hasattr(root, "get_calculated_measures")
-                else {}
-            )
-            prefix_map = {**base_map, **calc_map}
-
         for field_name, field_value in fields_dict.items():
             if root_name:
-                # Always use prefixed name with . separator
                 prefixed_name = f"{root_name}.{field_name}"
 
-                # If it's a calculated measure, update internal MeasureRefs
-                if is_calc_measures:
-                    field_value = _update_measure_refs_in_calc(field_value, prefix_map)
-                # If it's a dimension that needs column renaming, wrap the callable
-                elif is_dimensions and prefixed_name in column_rename_map:
+                if is_dimensions and prefixed_name in column_rename_map:
                     field_value = _wrap_dimension_for_renamed_column(
                         field_value, column_rename_map[prefixed_name]
                     )
 
                 merged_fields[prefixed_name] = field_value
             else:
-                # Fallback to original name if no root name
                 merged_fields[field_name] = field_value
 
     return FrozenDict(merged_fields)

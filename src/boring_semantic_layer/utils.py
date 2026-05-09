@@ -402,6 +402,22 @@ def _resolve_qualname(module_obj, qualname: str):
     return obj
 
 
+def _finalize_frozen_slotted(obj, *fields) -> None:
+    """Set ``__precomputed_hash__`` on a FrozenSlotted built via ``object.__new__``.
+
+    xorq's vendored ibis FrozenSlotted base implements ``__hash__`` by
+    returning a precomputed value that ``__init__`` would normally set
+    via ``hash((cls, tuple(field_values)))``. When we bypass
+    ``__init__`` to skip validation during deserialization we must
+    mirror that exactly — note the inner ``tuple(...)`` wrap, which is
+    significant: ``hash((cls, *fields))`` produces a different value.
+    Without this the rebuilt resolver raises ``AttributeError`` the
+    first time it is hashed (e.g. as a key in ``op.replace``
+    substitutions).
+    """
+    object.__setattr__(obj, "__precomputed_hash__", hash((type(obj), tuple(fields))))
+
+
 def deserialize_resolver(data: tuple):
     """Reconstruct a Resolver tree from a nested-tuple representation."""
     from ._xorq import (
@@ -439,6 +455,7 @@ def deserialize_resolver(data: tuple):
             attr = object.__new__(Attr)
             object.__setattr__(attr, "obj", obj_resolver)
             object.__setattr__(attr, "name", name_resolver)
+            _finalize_frozen_slotted(attr, obj_resolver, name_resolver)
             return attr
 
         case ("item", obj_data, name_data):
@@ -447,6 +464,7 @@ def deserialize_resolver(data: tuple):
             item = object.__new__(Item)
             object.__setattr__(item, "obj", obj_resolver)
             object.__setattr__(item, "name", name_resolver)
+            _finalize_frozen_slotted(item, obj_resolver, name_resolver)
             return item
 
         case ("call", func_data, args_data, kwargs_data):
@@ -460,6 +478,7 @@ def deserialize_resolver(data: tuple):
             object.__setattr__(call, "func", func_resolver)
             object.__setattr__(call, "args", args_resolvers)
             object.__setattr__(call, "kwargs", kwargs_resolvers)
+            _finalize_frozen_slotted(call, func_resolver, args_resolvers, kwargs_resolvers)
             return call
 
         case ("binop", op_name, left_data, right_data):
@@ -472,6 +491,7 @@ def deserialize_resolver(data: tuple):
             object.__setattr__(binop, "func", func)
             object.__setattr__(binop, "left", left)
             object.__setattr__(binop, "right", right)
+            _finalize_frozen_slotted(binop, func, left, right)
             return binop
 
         case ("unop", op_name, arg_data):
@@ -482,6 +502,7 @@ def deserialize_resolver(data: tuple):
             unop = object.__new__(UnaryOperator)
             object.__setattr__(unop, "func", func)
             object.__setattr__(unop, "arg", arg)
+            _finalize_frozen_slotted(unop, func, arg)
             return unop
 
         case ("seq", type_name, items_data):
@@ -490,6 +511,7 @@ def deserialize_resolver(data: tuple):
             seq = object.__new__(Sequence)
             object.__setattr__(seq, "typ", typ)
             object.__setattr__(seq, "values", values)
+            _finalize_frozen_slotted(seq, typ, values)
             return seq
 
         case ("map", type_name, items_data):
@@ -501,6 +523,7 @@ def deserialize_resolver(data: tuple):
             mapping = object.__new__(MappingResolver)
             object.__setattr__(mapping, "typ", typ)
             object.__setattr__(mapping, "values", values)
+            _finalize_frozen_slotted(mapping, typ, values)
             return mapping
 
         case _:

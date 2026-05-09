@@ -60,6 +60,13 @@ aggregation; calc-measure compilation rewrites
 columns."""
 
 
+_EMPTY_VT_SCHEMA: dict[str, str] = {"__bsl_unused__": "int64"}
+"""Placeholder schema used when a virtual aggregated table would
+otherwise be empty (e.g. a model with no measures yet). ibis tables must
+have at least one column; the sentinel name is unlikely to collide with
+real column names and lets analyzer/compiler logic stay uniform."""
+
+
 class TotalsNotAvailableError(RuntimeError):
     """Raised when a calc measure references ``t.all(measure_ref)`` but
     no totals table can be constructed in the current compilation context.
@@ -134,7 +141,7 @@ class IbisCalcScope:
                 else {n: "float64" for n in known_measures}
             )
             if not schema:
-                schema = {"__bsl_unused__": "int64"}
+                schema = dict(_EMPTY_VT_SCHEMA)
             totals_virtual_agg_tbl = ibis_mod.table(schema, name="__bsl_virtual_totals__")
         object.__setattr__(self, "_totals_virtual_agg_tbl", totals_virtual_agg_tbl)
         object.__setattr__(self, "_known_measures", frozenset(known_measures))
@@ -294,7 +301,7 @@ def evaluate_calc_lambda(
     if virtual_agg_schema is None:
         virtual_agg_schema = {name: "float64" for name in known_measures}
     if not virtual_agg_schema:
-        virtual_agg_schema = {"__bsl_unused__": "int64"}
+        virtual_agg_schema = dict(_EMPTY_VT_SCHEMA)
 
     vt = virtual_agg_table(virtual_agg_schema)
     totals_vt = ibis_mod.table(dict(virtual_agg_schema), name="__bsl_virtual_totals__")
@@ -448,6 +455,15 @@ def apply_calc_measures(
     and at least one calc actually references totals, we build the
     totals table on first need by re-running ``agg_specs`` on
     ``base_tbl`` without group keys.
+
+    .. note::
+        When ``real_totals_tbl`` is supplied directly, the caller is
+        responsible for ensuring it already carries any non-AllOf calc
+        columns that AllOf calcs depend on. The lazy ``agg_specs`` path
+        re-applies those calc-of-calc deps automatically; the
+        pre-built path does not, since rebuilding them would require
+        re-running the analyzer on a table whose schema may already
+        diverge from ``base_tbl`` + ``agg_specs``.
 
     Raises :class:`TotalsNotAvailableError` when a calc references
     totals but neither ``real_totals_tbl`` nor ``agg_specs`` lets us
@@ -701,7 +717,7 @@ def lift_inline_reductions(expr, virtual_agg_tbl, base_tbl, totals_virtual_agg_t
     if totals_virtual_agg_tbl is None:
         totals_schema = dict(vt_op.schema.items()) if hasattr(vt_op, "schema") else {}
         totals_virtual_agg_tbl = ibis_mod.table(
-            totals_schema or {"__bsl_unused__": "int64"},
+            totals_schema or dict(_EMPTY_VT_SCHEMA),
             name="__bsl_virtual_totals__",
         )
     totals_vt_op = _to_op(totals_virtual_agg_tbl)
@@ -748,7 +764,7 @@ def lift_inline_reductions(expr, virtual_agg_tbl, base_tbl, totals_virtual_agg_t
     for anon, r in name_to_reduction.items():
         totals_extended_schema[anon] = r.dtype
     new_totals_vt = ibis_mod.table(
-        totals_extended_schema or {"__bsl_unused__": "int64"},
+        totals_extended_schema or dict(_EMPTY_VT_SCHEMA),
         name=getattr(totals_vt_op, "name", "__bsl_virtual_totals__"),
     )
     new_totals_vt_op = new_totals_vt.op()

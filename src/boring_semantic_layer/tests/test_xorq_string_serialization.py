@@ -487,6 +487,38 @@ def test_serialize_resolver_case_expr():
     assert resolved.execute() == 1
 
 
+def test_serialize_resolver_item_subscript_roundtrips_and_hashes():
+    """``_["flights.flight_count"]`` round-trips and the rebuilt resolver is hashable.
+
+    The deserializer rebuilds resolvers via ``object.__new__`` +
+    ``__setattr__`` to bypass FrozenSlotted validation; missing
+    ``__precomputed_hash__`` would surface as ``AttributeError`` the
+    first time a deserialized resolver is hashed (e.g. when used as a
+    dict key inside ibis op replacement). Calc measures that look up
+    prefixed names via subscript depend on this round-trip.
+    """
+    from boring_semantic_layer.utils import deserialize_resolver, serialize_resolver
+
+    from xorq.vendor.ibis import _
+    from xorq.vendor.ibis.common.deferred import Deferred
+
+    d = _["flights.flight_count"]
+    data = serialize_resolver(d._resolver)
+    assert data[0] == "item"
+
+    r = deserialize_resolver(data)
+    d2 = Deferred(r)
+    assert repr(d2) == repr(d)
+
+    # Hashing the rebuilt resolver must not raise. ``hash(r)`` exercises
+    # the path that surfaces missing ``__precomputed_hash__``.
+    hash(r)
+    # An equal resolver built fresh (via ``__init__``) should hash to
+    # the same value — proving the precomputed hash matches normal
+    # construction, not just any arbitrary value.
+    assert hash(r) == hash(d._resolver)
+
+
 def test_serialize_resolver_ifelse():
     """xo.ifelse(_.distance < 200, 1, 0).sum() round-trips."""
     import xorq.api as xo

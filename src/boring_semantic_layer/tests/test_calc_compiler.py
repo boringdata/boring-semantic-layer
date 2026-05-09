@@ -289,3 +289,112 @@ def test_apply_calc_measures_join_with_mean_totals():
     by_name = dict(zip(df["carrier_name"], df["ratio"], strict=True))
     assert pytest.approx(by_name["American"]) == 150 / 250
     assert pytest.approx(by_name["United"]) == 350 / 250
+
+
+@pytest.mark.parametrize(
+    "reducer,expected_total,per_group",
+    [
+        # Median: pooled rows [100, 200, 300, 400] → 250.
+        ("median", 250.0, {"AA": 150.0, "UA": 350.0}),
+        # Min: AA=100, UA=300, overall=100.
+        ("min", 100.0, {"AA": 100.0, "UA": 300.0}),
+        # Max: AA=200, UA=400, overall=400.
+        ("max", 400.0, {"AA": 200.0, "UA": 400.0}),
+    ],
+)
+def test_apply_calc_measures_non_sum_totals(reducer, expected_total, per_group):
+    """``t.all`` over min/max/median recomputes totals via the formula, not a windowed sum.
+
+    Locks the same v1-bug fix as the mean case for the rest of the
+    common non-sum reductions: per-group sums-of-medians or sum-of-mins
+    would be obviously wrong.
+    """
+    from boring_semantic_layer import to_semantic_table
+
+    con = xo.duckdb.connect()
+    df = pd.DataFrame(
+        {
+            "carrier": ["AA", "AA", "UA", "UA"],
+            "distance": [100, 200, 300, 400],
+        }
+    )
+    tbl = con.create_table(f"flights_nonsum_{reducer}", df)
+
+    st = (
+        to_semantic_table(tbl, f"flights_nonsum_{reducer}")
+        .with_measures(**{f"d_{reducer}": lambda t, op=reducer: getattr(t.distance, op)()})
+        .with_measures(
+            ratio=lambda t, op=reducer: getattr(t, f"d_{op}")
+            / t.all(getattr(t, f"d_{op}")),
+        )
+    )
+    df_out = (
+        st.group_by("carrier")
+        .aggregate(f"d_{reducer}", "ratio")
+        .execute()
+        .sort_values("carrier")
+        .reset_index(drop=True)
+    )
+    by_carrier = dict(zip(df_out["carrier"], df_out[f"d_{reducer}"], strict=True))
+    assert pytest.approx(by_carrier["AA"]) == per_group["AA"]
+    assert pytest.approx(by_carrier["UA"]) == per_group["UA"]
+    by_ratio = dict(zip(df_out["carrier"], df_out["ratio"], strict=True))
+    assert pytest.approx(by_ratio["AA"]) == per_group["AA"] / expected_total
+    assert pytest.approx(by_ratio["UA"]) == per_group["UA"] / expected_total
+
+
+def test_lift_inline_reductions_routes_window_to_totals():
+    """The two-pass substitution gives top-level reductions vt refs and
+    ``t.all(...)``-style windowed reductions totals_vt refs.
+
+    Locks the contract documented in :func:`lift_inline_reductions`:
+    the same ``Reduction`` node may appear both at top level (per-group
+    value, want ``Field(vt, anon)``) and as a ``WindowFunction.func``
+    (totals value, want ``Field(totals_vt, anon)``). Bind the reduction
+    to a single Python object so the duplicate-id case (which
+    ``op.replace`` would dedupe by equality) is exercised end-to-end.
+    """
+    from boring_semantic_layer.calc_compiler import lift_inline_reductions
+
+    base = xibis.table(
+        {"distance": "float64", "passengers": "int64"},
+        "flights_lift",
+    )
+    vt = xibis.table({"__bsl_unused__": "int64"}, "__vt__")
+
+    shared = base.distance.sum()
+    expr = shared / shared.over(xibis.window())
+
+    rewritten, new_vt, new_totals_vt, lifted = lift_inline_reductions(expr, vt, base)
+
+    # A single shared reduction should produce exactly one anonymous lift —
+    # locking the dedup-by-id behavior at the top of the function.
+    assert len(lifted) == 1
+    anon_name = next(iter(lifted))
+
+    assert anon_name in dict(new_vt.op().schema.items())
+    assert anon_name in dict(new_totals_vt.op().schema.items())
+
+    new_vt_id = id(new_vt.op())
+    new_totals_id = id(new_totals_vt.op())
+    rewritten_op = rewritten.op() if hasattr(rewritten, "op") else rewritten
+
+    fields_seen: list[tuple[str, int]] = []
+    seen: set[int] = set()
+    stack: list = [rewritten_op]
+    while stack:
+        cur = stack.pop()
+        if id(cur) in seen:
+            continue
+        seen.add(id(cur))
+        if hasattr(cur, "name") and hasattr(cur, "rel"):
+            fields_seen.append((cur.name, id(cur.rel)))
+        for child in getattr(cur, "__args__", ()) or ():
+            if hasattr(child, "__args__") or hasattr(child, "rel"):
+                stack.append(child)
+
+    rels_for_anon = {r for n, r in fields_seen if n == anon_name}
+    assert new_vt_id in rels_for_anon, "expected Field(new_vt, anon) for the bare reduction"
+    assert new_totals_id in rels_for_anon, (
+        "expected Field(new_totals_vt, anon) for the windowed reduction"
+    )
