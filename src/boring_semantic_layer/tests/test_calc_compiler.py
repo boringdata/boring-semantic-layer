@@ -407,6 +407,206 @@ def test_cast_to_float_survives_int_measure_substitution():
     assert pytest.approx(result["share_pct"].sum()) == 100.0
 
 
+def test_joined_model_totals_via_windowed_aggregation():
+    """``t.all(measure)`` on a joined model returns correct per-group shares.
+
+    Regression: previously, ``t.all(measure)`` on a joined model
+    compiled to two aggregations of a shared parent relation
+    (``Aggregate(JoinChain)`` for per-group + ``Aggregate(JoinChain)``
+    without group_by, both referencing the same JoinChain) and
+    cross-joined them. SQL backends that fold shared ancestors
+    collapsed the cross-join to zero rows, so the user got an empty
+    result instead of per-group totals.
+
+    The fix attaches a windowed aggregation to the base before
+    group_by — ``measure.over(window()) AS __bsl_totals__<name>`` —
+    and carries it through the per-group aggregation via
+    ``arbitrary()``. There is no cross-join, so the shared-ancestor
+    optimization can't kick in.
+    """
+    from boring_semantic_layer import to_semantic_table
+
+    con = xo.duckdb.connect()
+    flights = pd.DataFrame(
+        {
+            "carrier_code": ["AA", "AA", "AA", "UA", "UA", "DL"],
+            "distance": [100, 200, 300, 400, 500, 600],
+        }
+    )
+    carriers = pd.DataFrame(
+        {"code": ["AA", "UA", "DL"], "carrier_name": ["American", "United", "Delta"]}
+    )
+    f_tbl = con.create_table("joined_totals_flights", flights)
+    c_tbl = con.create_table("joined_totals_carriers", carriers)
+
+    flights_st = (
+        to_semantic_table(f_tbl, "flights")
+        .with_measures(
+            flight_count=lambda t: t.count(),
+        )
+        .with_measures(
+            share=lambda t: t.flight_count.cast("float64") / t.all(t.flight_count) * 100,
+        )
+    )
+    carriers_st = to_semantic_table(c_tbl, "carriers").with_dimensions(
+        carrier_name=lambda t: t.carrier_name,
+    )
+    joined = flights_st.join_one(
+        carriers_st,
+        on=lambda left, right: left.carrier_code == right.code,
+    )
+
+    df = (
+        joined.group_by("carriers.carrier_name")
+        .aggregate("flights.flight_count", "flights.share")
+        .execute()
+        .sort_values("carriers.carrier_name")
+        .reset_index(drop=True)
+    )
+    # Three carriers — non-empty result is the regression-blocking property.
+    assert len(df) == 3
+    # Per-carrier counts: AA=3, UA=2, DL=1; total=6.
+    by_name = dict(
+        zip(df["carriers.carrier_name"], df["flights.flight_count"], strict=True)
+    )
+    assert by_name == {"American": 3, "United": 2, "Delta": 1}
+    # Shares sum to exactly 100% (windowed totals are constant across rows
+    # — no per-group / totals snapshot drift).
+    assert pytest.approx(df["flights.share"].sum()) == 100.0
+    by_share = dict(zip(df["carriers.carrier_name"], df["flights.share"], strict=True))
+    assert pytest.approx(by_share["American"]) == 50.0
+    assert pytest.approx(by_share["United"]) == pytest.approx(100.0 * 2 / 6)
+    assert pytest.approx(by_share["Delta"]) == pytest.approx(100.0 * 1 / 6)
+
+
+def test_joined_model_totals_does_not_emit_cross_join():
+    """The joined-model totals path compiles to zero ``CROSS JOIN`` operations.
+
+    The new strategy carries totals through the per-group aggregation
+    via window functions, not via a cross-joined totals table. Locking
+    this in SQL prevents a regression to the shared-ancestor cross-join
+    pattern that would silently return zero rows on some backends.
+    """
+    from boring_semantic_layer import to_semantic_table
+
+    con = xo.duckdb.connect()
+    flights = pd.DataFrame(
+        {"carrier_code": ["AA", "AA", "UA"], "distance": [100, 200, 300]}
+    )
+    carriers = pd.DataFrame({"code": ["AA", "UA"], "name": ["American", "United"]})
+    f_tbl = con.create_table("nocrossjoin_flights", flights)
+    c_tbl = con.create_table("nocrossjoin_carriers", carriers)
+
+    flights_st = (
+        to_semantic_table(f_tbl, "flights")
+        .with_measures(flight_count=lambda t: t.count())
+        .with_measures(share=lambda t: t.flight_count / t.all(t.flight_count))
+    )
+    carriers_st = to_semantic_table(c_tbl, "carriers").with_dimensions(
+        name=lambda t: t.name,
+    )
+    joined = flights_st.join_one(
+        carriers_st, on=lambda l, r: l.carrier_code == r.code
+    )
+
+    sql = joined.group_by("carriers.name").aggregate("flights.share").compile()
+    assert sql.upper().count("CROSS JOIN") == 0
+    # And there's at least one OVER() window (the totals computation).
+    assert "OVER" in sql.upper()
+
+
+def test_attach_windowed_totals_helper():
+    """``attach_windowed_totals`` adds ``__bsl_totals__<name>`` columns.
+
+    Direct unit test: each base measure gets a window-aggregated
+    column on the base table, plus an arbitrary() spec for the
+    per-group aggregation.
+    """
+    from boring_semantic_layer.calc_compiler import (
+        TOTALS_PREFIX,
+        attach_windowed_totals,
+    )
+
+    con = xo.duckdb.connect()
+    df = pd.DataFrame(
+        {"g": ["a", "a", "b", "b"], "v": [10, 20, 30, 40]}
+    )
+    base = con.create_table("attach_helper", df)
+
+    agg_specs = {
+        "v_sum": lambda t: t.v.sum(),
+        "v_mean": lambda t: t.v.mean(),
+    }
+    new_base, totals_arbitrary_specs = attach_windowed_totals(
+        base, agg_specs, ["v_sum", "v_mean"]
+    )
+    # Two new columns added to the base.
+    assert f"{TOTALS_PREFIX}v_sum" in new_base.columns
+    assert f"{TOTALS_PREFIX}v_mean" in new_base.columns
+    # Each row has the same totals value — verify by executing.
+    materialized = new_base.execute()
+    assert (materialized[f"{TOTALS_PREFIX}v_sum"] == 100).all()
+    assert (materialized[f"{TOTALS_PREFIX}v_mean"] == 25.0).all()
+    # The arbitrary specs return the totals when applied to the base.
+    assert set(totals_arbitrary_specs) == {
+        f"{TOTALS_PREFIX}v_sum",
+        f"{TOTALS_PREFIX}v_mean",
+    }
+
+
+def test_attach_calc_totals_handles_calc_of_calc():
+    """Calc-of-calc-AllOf chains derive their totals via the totals scope.
+
+    Tests the ``attach_calc_totals`` helper directly: given a per-group
+    result with ``__bsl_totals__<base>`` columns already attached and
+    a calc ``avg = total_distance / total_count`` whose totals are
+    needed (because some other calc references ``t.all(t.avg)``), the
+    helper should add ``__bsl_totals__avg`` computed from
+    ``__bsl_totals__total_distance / __bsl_totals__total_count``.
+    """
+    from boring_semantic_layer import to_semantic_table
+
+    con = xo.duckdb.connect()
+    df = pd.DataFrame(
+        {
+            "carrier": ["AA", "AA", "UA", "UA"],
+            "distance": [100, 200, 300, 400],
+        }
+    )
+    tbl = con.create_table("calc_of_calc_totals", df)
+
+    st = (
+        to_semantic_table(tbl, "calc_of_calc_totals")
+        .with_measures(
+            total_distance=lambda t: t.distance.sum(),
+            total_flights=lambda t: t.count(),
+        )
+        .with_measures(
+            avg_distance=lambda t: t.total_distance / t.total_flights,
+        )
+        .with_measures(
+            ratio=lambda t: t.avg_distance / t.all(t.avg_distance),
+        )
+    )
+
+    df_out = (
+        st.group_by("carrier")
+        .aggregate("avg_distance", "ratio")
+        .execute()
+        .sort_values("carrier")
+        .reset_index(drop=True)
+    )
+    by_carrier = dict(
+        zip(df_out["carrier"], df_out["avg_distance"], strict=True)
+    )
+    # AA mean=150, UA mean=350; overall mean=250 (NOT sum-of-means=500).
+    assert pytest.approx(by_carrier["AA"]) == 150.0
+    assert pytest.approx(by_carrier["UA"]) == 350.0
+    by_ratio = dict(zip(df_out["carrier"], df_out["ratio"], strict=True))
+    assert pytest.approx(by_ratio["AA"]) == 150 / 250
+    assert pytest.approx(by_ratio["UA"]) == 350 / 250
+
+
 def test_lift_inline_reductions_routes_window_to_totals():
     """The two-pass substitution gives top-level reductions vt refs and
     ``t.all(...)``-style windowed reductions totals_vt refs.
