@@ -187,14 +187,6 @@ def _collect_source_tables(node: Node) -> set[int]:
     return {id(n.rel) for n in _walk(node) if isinstance(n, Field)}
 
 
-def _has_reduction_under(node: Node) -> bool:
-    return any(_is_reduction(n) for n in _walk(node))
-
-
-def _has_window_under(node: Node) -> bool:
-    return any(_is_window(n) for n in _walk(node))
-
-
 def _is_empty_window(node: Node) -> bool:
     """True if ``node`` is a window with no partitioning or ordering.
 
@@ -210,34 +202,48 @@ def _is_empty_window(node: Node) -> bool:
     return not group_by and not order_by
 
 
-def _has_totals_pattern(node: Node) -> bool:
-    """Detect the calc-measure "totals" pattern (``t.all(...)``).
+def _scan_tree(node: Node) -> tuple[bool, bool, bool]:
+    """Single-pass tree walk returning ``(has_reduction, has_window, has_totals)``.
 
-    Two structural shapes count:
+    Combining the three checks avoids the O(K) full subtree walks the
+    original ``_has_totals_pattern`` did once per encountered reduction —
+    structural classification is a hot path called once per
+    ``with_measures`` lambda. Definition of ``has_totals``:
 
-    1. A ``Reduction`` whose subtree contains another ``Reduction`` —
-       the canonical "aggregation as scalar inside an enclosing
-       aggregation context."
-    2. A ``WindowFunction`` with no partitioning or ordering whose
-       subtree contains a ``Reduction`` — the actual shape ``t.all(x)``
-       produces today (``x.sum().over(window())``).
-
-    Partitioned or ordered windows do *not* match (they are real
-    window functions and surface separately as ``has_window``).
+    * a ``Reduction`` whose subtree contains another ``Reduction`` (an
+      aggregation-inside-aggregation), or
+    * an empty (no group_by, no order_by) ``WindowFunction`` over a
+      ``Reduction`` — the ``x.sum().over(window())`` shape ``t.all(x)``
+      emits today.
     """
-    for outer in _walk(node):
-        if _is_reduction(outer):
-            for inner in _walk_children(outer):
-                for descendant in _walk(inner):
-                    if _is_reduction(descendant):
-                        return True
-        if _is_empty_window(outer):
-            for child in _walk(outer):
-                if child is outer:
-                    continue
-                if _is_reduction(child):
-                    return True
-    return False
+    has_reduction = False
+    has_window = False
+    has_totals = False
+    seen: set[int] = set()
+    stack = [(node, 0)]  # (node, depth_of_enclosing_reduction)
+    while stack:
+        cur, agg_depth = stack.pop()
+        key = id(cur)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        cur_is_reduction = _is_reduction(cur)
+        cur_is_window = _is_window(cur)
+
+        if cur_is_reduction:
+            has_reduction = True
+            if agg_depth > 0:
+                has_totals = True
+            agg_depth += 1
+        elif cur_is_window:
+            has_window = True
+            if _is_empty_window(cur):
+                agg_depth += 1
+
+        for child in _walk_children(cur):
+            stack.append((child, agg_depth))
+    return has_reduction, has_window, has_totals
 
 
 def analyze_calc_expr(
@@ -301,8 +307,7 @@ def analyze_calc_expr(
             post_agg_only=True,
         )
 
-    has_window = _has_window_under(node)
-    references_AllOf = _has_totals_pattern(node)
+    _, has_window, references_AllOf = _scan_tree(node)
 
     field_names = _collect_field_names(node)
     source_tables = _collect_source_tables(node)

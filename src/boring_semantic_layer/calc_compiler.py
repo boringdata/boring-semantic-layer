@@ -33,7 +33,6 @@ was registered as a measure.
 from __future__ import annotations
 
 import difflib
-import hashlib
 import logging
 from typing import Any
 
@@ -234,6 +233,13 @@ class IbisCalcScope:
             if resolved is not None:
                 return self._totals_virtual_agg_tbl[resolved]
             if self._has_column(x):
+                logger.warning(
+                    "t.all(%r) over a raw column emits column.sum().over(window()); "
+                    "this is correct only for sum semantics. Reference a measure "
+                    "instead (e.g. t.all(t.measure_name)) so the totals re-aggregation "
+                    "uses the measure formula.",
+                    x,
+                )
                 return self._base_tbl[x].sum().over(ibis_mod.window())
             suggestion = self._typo_suggestion(x)
             if suggestion:
@@ -355,6 +361,7 @@ def compile_calc_measure(
     real_op = _to_op(real_agg_tbl)
     subs: dict = {vt_op: real_op}
 
+    totals_vt_op = None
     if totals_virtual_agg_tbl is not None and real_with_totals is not None:
         totals_vt_op = _to_op(totals_virtual_agg_tbl)
         rwt_op = _to_op(real_with_totals)
@@ -370,7 +377,30 @@ def compile_calc_measure(
             if target_name in rwt_columns:
                 subs[Field(totals_vt_op, col_name)] = Field(rwt_op, target_name)
 
-    return op.replace(subs).to_expr()
+    rewritten = op.replace(subs)
+
+    # Verify no Field reference to the totals virtual table survived the
+    # rewrite; an unsubstituted reference reaches ibis as
+    # ``IntegrityError: Cannot add ... to projection`` and obscures the
+    # real cause (schema drift / missing totals column).
+    if totals_vt_op is not None:
+        unresolved = sorted(
+            {
+                n.name
+                for n in _walk(rewritten)
+                if isinstance(n, Field) and id(n.rel) == id(totals_vt_op)
+            }
+        )
+        if unresolved:
+            raise TotalsNotAvailableError(
+                "Calc measure references totals columns that were not "
+                f"substituted: {unresolved!r}. Expected prefixed columns "
+                f"({totals_prefix}<name>) on the cross-joined real_with_totals "
+                f"table but found neither prefixed nor unprefixed match in "
+                f"columns: {list(real_with_totals.columns)!r}."
+            )
+
+    return rewritten.to_expr()
 
 
 def compile_calc_measures(
@@ -589,45 +619,54 @@ _EMPTY_ANALYSIS = CalcExprAnalysis(
 )
 
 
+def topological_order_from_deps(
+    names: list[str] | tuple[str, ...] | dict[str, Any],
+    deps: dict[str, set[str] | frozenset[str]],
+) -> list[str]:
+    """Topologically order ``names`` using ``deps`` (``name → {dep, ...}``).
+
+    Edges to nodes outside ``names`` are ignored; cycles fall back to
+    insertion order so a downstream substitution failure surfaces the
+    real error rather than this helper raising. Shared by ops.py and
+    apply_calc_measures so calc-of-calc ordering is consistent.
+    """
+    name_seq = list(names)
+    name_set = set(name_seq)
+
+    ordered: list[str] = []
+    visited: set[str] = set()
+    visiting: set[str] = set()
+
+    def visit(node: str) -> None:
+        if node in visited or node in visiting:
+            return
+        visiting.add(node)
+        for dep in deps.get(node, ()):
+            if dep in name_set:
+                visit(dep)
+        visiting.discard(node)
+        visited.add(node)
+        ordered.append(node)
+
+    for n in name_seq:
+        visit(n)
+    return ordered
+
+
 def _topological_order(
     calc_lambdas: dict[str, Any],
     base_tbl,
     known_measures: frozenset[str],
     classifications: dict[str, CalcExprAnalysis] | None = None,
 ) -> list[str]:
-    """Order calc measures so dependencies are compiled before their consumers.
-
-    Reads ``depends_on`` off each calc's ``CalcExprAnalysis``. Cycles
-    fall back to insertion order; the substitution pass surfaces a
-    clear error if the cycle was real.
-    """
+    """Order calc lambdas using analyzer-derived dependencies."""
     if classifications is None:
         classifications = classify_calc_lambdas(calc_lambdas, base_tbl, known_measures)
-    calc_keys = set(calc_lambdas.keys())
-    deps: dict[str, set[str]] = {
-        name: set(classifications.get(name, _EMPTY_ANALYSIS).depends_on) & calc_keys
+    deps = {
+        name: set(classifications.get(name, _EMPTY_ANALYSIS).depends_on)
         for name in calc_lambdas
     }
-
-    ordered: list[str] = []
-    visited: set[str] = set()
-    visiting: set[str] = set()
-
-    def visit(node: str):
-        if node in visited:
-            return
-        if node in visiting:
-            return  # cycle — break here
-        visiting.add(node)
-        for dep in deps.get(node, ()):
-            visit(dep)
-        visiting.discard(node)
-        visited.add(node)
-        ordered.append(node)
-
-    for name in calc_lambdas:
-        visit(name)
-    return ordered
+    return topological_order_from_deps(calc_lambdas, deps)
 
 
 def lift_inline_reductions(expr, virtual_agg_tbl, base_tbl, totals_virtual_agg_tbl=None):
@@ -688,18 +727,13 @@ def lift_inline_reductions(expr, virtual_agg_tbl, base_tbl, totals_virtual_agg_t
 
     name_to_reduction: dict[str, Any] = {}
     reduction_to_name: dict[int, str] = {}
+    counter = 0
     for r in base_reductions:
         if id(r) in reduction_to_name:
             continue
-        sig = hashlib.md5(repr(r).encode()).hexdigest()[:8]
-        anon = f"__bsl_inline_{type(r).__name__.lower()}_{sig}"
-        base_anon = anon
-        suffix_idx = 0
-        while anon in name_to_reduction and name_to_reduction[anon] is not r:
-            suffix_idx += 1
-            anon = f"{base_anon}_{suffix_idx}"
-        if anon not in name_to_reduction:
-            name_to_reduction[anon] = r
+        anon = f"__bsl_inline_{type(r).__name__.lower()}_{counter}"
+        counter += 1
+        name_to_reduction[anon] = r
         reduction_to_name[id(r)] = anon
 
     extended_schema = dict(vt_op.schema.items())

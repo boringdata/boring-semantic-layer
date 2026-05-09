@@ -40,6 +40,7 @@ from .ops import (
     _is_deferred,
     _normalize_join_predicate,
     _normalize_to_name,
+    make_bare_ref_lambda,
 )
 from .query import compare_periods as build_compare_periods
 from .query import query as build_query
@@ -1216,12 +1217,12 @@ class SemanticGroupBy(SemanticTable):
             if _is_deferred(item):
                 try:
                     name = _normalize_to_name(item)
-                    aggs[name] = lambda t, n=name: t[n]
+                    aggs[name] = make_bare_ref_lambda(name)
                 except TypeError:
                     # Complex Deferred (e.g. _.distance.sum()) — treat as callable
                     aggs[f"_measure_{id(item)}"] = item
             elif isinstance(item, str):
-                aggs[item] = lambda t, n=item: t[n]
+                aggs[item] = make_bare_ref_lambda(item)
             elif callable(item):
                 aggs[f"_measure_{id(item)}"] = item
             else:
