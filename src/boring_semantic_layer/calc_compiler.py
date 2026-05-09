@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import difflib
 import logging
+from collections.abc import Iterable
 from typing import Any
 
 from ._xorq import Deferred, Field, Node
@@ -540,26 +541,207 @@ def apply_calc_measures(
     return real_agg_tbl
 
 
+def attach_windowed_totals(
+    base_tbl,
+    agg_specs: dict[str, Any],
+    total_names: Iterable[str],
+    totals_prefix: str = TOTALS_PREFIX,
+) -> tuple[Any, dict[str, Any]]:
+    """Pre-mutate ``base_tbl`` with windowed totals for the given base measures.
+
+    For each name in ``total_names`` that has an entry in ``agg_specs``,
+    evaluate the agg-spec callable on ``base_tbl`` to get the measure's
+    aggregation expression (e.g. ``base.count()`` or
+    ``base.distance.mean()``), wrap it in ``.over(window())`` to produce
+    a window function over the entire base, and add the result as a
+    new column ``f"{totals_prefix}{name}"``. Returns the mutated base
+    table plus a dict of arbitrary-aggregator specs that callers should
+    add to their per-group aggregation so the totals propagate as
+    ordinary columns on the result.
+
+    This expresses "ungrouped aggregate alongside a grouped one" as a
+    single-pass query: the totals are computed once via window function,
+    broadcast to every base row, and surface as a per-group column via
+    ``arbitrary()`` in the aggregation. No cross-join, no shared-ancestor
+    collapse, compiles to SQL on every backend that supports window
+    functions.
+
+    Returns
+    -------
+    (new_base_tbl, totals_arbitrary_specs):
+        - ``new_base_tbl`` carries the original columns plus
+          ``__bsl_totals__<name>`` for each requested measure.
+        - ``totals_arbitrary_specs[col]`` is an agg-spec callable that
+          wraps ``t[col].arbitrary()``.
+    """
+    new_base = base_tbl
+    arbitrary_specs: dict[str, Any] = {}
+    for name in total_names:
+        if name not in agg_specs:
+            continue
+        try:
+            agg_expr = agg_specs[name](new_base)
+        except Exception as exc:
+            logger.debug(
+                "could not evaluate agg_spec for %r when attaching windowed totals: %s",
+                name,
+                exc,
+            )
+            continue
+        try:
+            windowed = agg_expr.over(ibis_mod.window())
+        except Exception as exc:
+            logger.debug(
+                "could not wrap %r in window() for windowed totals: %s",
+                name,
+                exc,
+            )
+            continue
+        col = f"{totals_prefix}{name}"
+        new_base = new_base.mutate(**{col: windowed})
+        arbitrary_specs[col] = (lambda t, _c=col: t[_c].arbitrary())
+    return new_base, arbitrary_specs
+
+
+class _TotalsResolvingScope:
+    """Scope that resolves measure references to ``__bsl_totals__<name>`` columns.
+
+    Used by :func:`attach_calc_totals` to evaluate a calc lambda
+    against the totals columns of a per-group result. Since each
+    ``__bsl_totals__<name>`` column carries the same value across all
+    rows (the overall total computed via window function), applying
+    a calc formula against this scope produces the calc's totals value
+    on every row.
+    """
+
+    __slots__ = ("_tbl", "_totals_prefix")
+
+    def __init__(self, tbl, totals_prefix: str):
+        object.__setattr__(self, "_tbl", tbl)
+        object.__setattr__(self, "_totals_prefix", totals_prefix)
+
+    def _resolve(self, name: str):
+        col = f"{self._totals_prefix}{name}"
+        if hasattr(self._tbl, "columns") and col in self._tbl.columns:
+            return self._tbl[col]
+        # Suffix matching for joined models: ``flights.flight_count``
+        # has totals column ``__bsl_totals__flights.flight_count``.
+        suffix = f".{name}"
+        for c in getattr(self._tbl, "columns", ()):
+            if c.startswith(self._totals_prefix) and c[len(self._totals_prefix):].endswith(
+                suffix
+            ):
+                return self._tbl[c]
+        raise AttributeError(f"No totals column found for measure {name!r}")
+
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return self._resolve(name)
+
+    def __getitem__(self, name: str):
+        return self._resolve(name)
+
+    def all(self, x):
+        # Inside a totals evaluation, ``t.all(t.x)`` is just ``t.x`` —
+        # we're already computing in the totals scope. Pass the value
+        # through.
+        if isinstance(x, str):
+            return self._resolve(x)
+        return x
+
+
+def attach_calc_totals(
+    real_agg_tbl,
+    calc_specs: dict[str, Any],
+    classifications: dict[str, CalcExprAnalysis],
+    totals_prefix: str = TOTALS_PREFIX,
+):
+    """Compute ``__bsl_totals__<calc_name>`` columns for calc-of-calc-AllOf chains.
+
+    When an AllOf-using calc references another calc (rather than a
+    base measure) — e.g. ``t.all(t.avg_distance)`` where
+    ``avg_distance`` is itself a calc — we need the totals value of
+    the referenced calc on the per-group result so substitution can
+    point at it. ``attach_windowed_totals`` only handles base measures
+    via ``agg.over(window())``; this function fills the gap by
+    evaluating each calc's lambda against the totals columns already
+    attached to ``real_agg_tbl``, in topological order so calc-of-calc
+    chains see prior totals as inputs.
+
+    The user's calc lambda doesn't change — it's the same formula —
+    but the scope it runs against returns ``__bsl_totals__<dep>``
+    columns instead of regular per-group columns. Since each totals
+    column carries a constant value across rows, applying the formula
+    yields the corresponding constant calc-totals value.
+    """
+    # Identify calcs whose totals are needed: the direct AllOf targets
+    # plus any transitive calc dependencies of those.
+    needed: set[str] = set()
+    work: list[str] = []
+    for cn, c in classifications.items():
+        if c.references_AllOf:
+            for d in c.depends_on:
+                if d in calc_specs:
+                    needed.add(d)
+                    work.append(d)
+    while work:
+        n = work.pop()
+        if n not in classifications:
+            continue
+        for d in classifications[n].depends_on:
+            if d in calc_specs and d not in needed:
+                needed.add(d)
+                work.append(d)
+
+    if not needed:
+        return real_agg_tbl
+
+    # Topo-order so a calc's deps are computed before the calc itself.
+    deps_map = {
+        n: set(classifications[n].depends_on) & needed
+        for n in needed
+        if n in classifications
+    }
+    ordered = topological_order_from_deps(needed, deps_map)
+
+    for calc_name in ordered:
+        if calc_name not in calc_specs:
+            continue
+        cm = calc_specs[calc_name]
+        fn = cm.expr if hasattr(cm, "expr") else cm
+        try:
+            scope = _TotalsResolvingScope(real_agg_tbl, totals_prefix)
+            if hasattr(fn, "_resolver") and hasattr(fn, "resolve"):
+                totals_expr = fn.resolve(scope)
+            elif callable(fn):
+                totals_expr = fn(scope)
+            else:
+                totals_expr = fn
+        except Exception as exc:
+            logger.debug(
+                "calc-of-calc totals evaluation failed for %r: %s", calc_name, exc
+            )
+            continue
+        col = f"{totals_prefix}{calc_name}"
+        real_agg_tbl = real_agg_tbl.mutate(**{col: totals_expr})
+
+    return real_agg_tbl
+
+
 def _join_totals(real_agg_tbl, real_totals_tbl, totals_prefix: str):
-    """Cross-join ``real_totals_tbl`` into ``real_agg_tbl`` with a column prefix.
+    """Legacy cross-join path. Kept for ``apply_calc_measures`` callers
+    that pass a pre-built ``real_totals_tbl``.
 
-    The totals table is a 1-row aggregation; we rename its columns to
-    avoid clashing with per-group columns of the same name, then cross
-    join. Calc-measure compilation rewrites ``Field(totals_vt, name)``
-    references to point at the prefixed columns on the resulting table.
-
-    .. note::
-       Known limitation: when ``real_agg_tbl`` and ``real_totals_tbl``
-       share a parent relation (per-group ``Aggregate(X)`` and
-       no-group-by ``Aggregate(X)`` with a shared ``X``) — typical on
-       joined models built from xorq RemoteTables — some SQL backends
-       collapse the shared-ancestor cross-join and return zero rows.
-       Synthetic duckdb tables and direct base aggregations work
-       correctly. ``.view()`` and ``.distinct()`` are dissolved by
-       downstream ``op.replace`` substitutions; ``.cache()`` works at
-       execute time but breaks SQL ``.compile()`` (no translation rule
-       for ``CachedNode``). A correct fix likely needs to live in the
-       SQL compiler. Tracked as a Phase 3 follow-up.
+    .. deprecated::
+       Prefer :func:`attach_windowed_totals` which avoids the
+       shared-ancestor cross-join collapse some SQL backends apply
+       when both sides derive from the same parent relation. This
+       helper survives only for the ``apply_calc_measures(real_totals_tbl=...)``
+       entry point where the totals are produced externally and the
+       per-group table is already built; the windowed-totals path
+       requires attaching at base-table time before the per-group
+       aggregation runs.
     """
     rename_map = {f"{totals_prefix}{c}": c for c in real_totals_tbl.columns}
     totals_renamed = real_totals_tbl.rename(rename_map)

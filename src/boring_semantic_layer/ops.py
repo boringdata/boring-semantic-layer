@@ -49,11 +49,14 @@ from .calc_analyzer import analyze_calc_expr, virtual_agg_table
 from .calc_compiler import (
     TOTALS_PREFIX,
     IbisCalcScope,
+    TotalsNotAvailableError,
     UnknownMeasureRefError,
     _drop_totals_columns,
     _join_totals,
     _to_op,
     apply_calc_measures,
+    attach_calc_totals,
+    attach_windowed_totals,
     classify_calc_lambdas,
     compile_calc_measure as _compile_calc_measure_impl,
     compile_calc_measures,
@@ -1656,9 +1659,61 @@ def _compile_aggregation(
         else:
             regular_specs[name] = fn
 
+    # --- Attach windowed totals to base ------------------------------
+    # When any calc references ``t.all(measure_ref)``, compute that
+    # measure's formula as a window function over the entire base
+    # *before* group_by, then carry it through the per-group aggregation
+    # via ``arbitrary()``. This expresses "ungrouped aggregate alongside
+    # grouped one" as a single-pass query — no cross-join, no
+    # shared-ancestor collapse, compiles to SQL on every backend
+    # supporting window functions. Skipped on the nested-array path:
+    # totals across multiple grains aren't well-defined; we surface a
+    # clear error in the apply loop.
+    #
+    # Calc-of-calc-AllOf (an AllOf-using calc that references a calc,
+    # not a base measure — e.g. ``t.all(t.avg_distance)`` where
+    # ``avg_distance`` is itself a calc) is handled in two passes:
+    # first transitively expand to the base measures; attach window
+    # totals for those; then post-aggregation derive the calc's totals
+    # value via :func:`attach_calc_totals`.
+    totals_arbitrary_specs: dict[str, Callable] = {}
+    if needs_totals and regular_specs and not nested_marker_specs:
+        totals_for_base: set[str] = set()
+        # Transitive expansion: for AllOf-using calcs, follow calc deps
+        # through ``classifications`` until we land on base measures.
+        work: list[str] = []
+        for cn, c in classifications.items():
+            if c.references_AllOf:
+                for d in c.depends_on:
+                    if d in regular_specs:
+                        totals_for_base.add(d)
+                    elif d in calc_specs:
+                        work.append(d)
+        seen: set[str] = set()
+        while work:
+            calc_dep = work.pop()
+            if calc_dep in seen:
+                continue
+            seen.add(calc_dep)
+            cls = classifications.get(calc_dep)
+            if cls is None:
+                continue
+            for d in cls.depends_on:
+                if d in regular_specs:
+                    totals_for_base.add(d)
+                elif d in calc_specs:
+                    work.append(d)
+
+        if totals_for_base:
+            base_tbl, totals_arbitrary_specs = attach_windowed_totals(
+                base_tbl, regular_specs, totals_for_base, TOTALS_PREFIX
+            )
+
     if not nested_marker_specs:
-        if by_cols or regular_specs:
+        if by_cols or regular_specs or totals_arbitrary_specs:
             agg_exprs = {n: f(base_tbl) for n, f in regular_specs.items()}
+            for tn, tf in totals_arbitrary_specs.items():
+                agg_exprs[tn] = tf(base_tbl)
             if by_cols:
                 real_agg_tbl = base_tbl.group_by([base_tbl[c] for c in by_cols]).aggregate(
                     **agg_exprs
@@ -1672,36 +1727,24 @@ def _compile_aggregation(
             base_tbl, by_cols, regular_specs, nested_marker_specs
         )
 
-    # --- Build totals table if any calc references it ----------------
-    # Re-runs ``regular_specs`` on the base without group_by, then
-    # applies non-AllOf calc measures so calc-of-calc chains see
-    # correctly-recomputed dependencies. Skipped on the nested-array
-    # path: those tables are computed at multiple grains and joined,
-    # so a single totals aggregation doesn't represent them — we surface
-    # a clear error in the apply loop instead of compiling a nonsensical
-    # cross join.
-    real_totals_tbl = None
-    if needs_totals and regular_specs and not nested_marker_specs:
-        totals_agg_exprs = {n: f(base_tbl) for n, f in regular_specs.items()}
-        real_totals_tbl = base_tbl.aggregate(**totals_agg_exprs)
-        non_allof_calcs = {
-            n: cm.expr
-            for n, cm in calc_specs.items()
-            if classifications.get(n) is not None
-            and not classifications[n].references_AllOf
-        }
-        if non_allof_calcs:
-            real_totals_tbl = apply_calc_measures(
-                real_totals_tbl, base_tbl, non_allof_calcs, known_measures
-            )
+    # --- Derive calc-of-calc totals ----------------------------------
+    # If any AllOf-using calc references another calc (transitively),
+    # the windowed-totals pass attached only the base totals. Now that
+    # ``real_agg_tbl`` has those base totals as columns, we evaluate
+    # each needed calc lambda against the totals columns to derive the
+    # calc's totals value (constant across rows).
+    if calc_specs and totals_arbitrary_specs:
+        real_agg_tbl = attach_calc_totals(
+            real_agg_tbl, calc_specs, classifications, TOTALS_PREFIX
+        )
 
     # --- Apply calc measures -----------------------------------------
     if calc_specs:
-        real_with_totals = (
-            _join_totals(real_agg_tbl, real_totals_tbl, TOTALS_PREFIX)
-            if real_totals_tbl is not None
-            else None
-        )
+        # ``real_agg_tbl`` already carries ``__bsl_totals__<name>``
+        # columns when totals were attached above. Calc compilation
+        # rewrites ``Field(totals_vt, name) → Field(real_agg, "__bsl_totals__<name>")``
+        # directly; no separate cross-joined table is needed.
+        real_with_totals = real_agg_tbl if totals_arbitrary_specs else None
         cur_known = known_measures | frozenset(calc_specs.keys())
 
         ordered = _topological_calc_order(calc_specs, base_tbl, known_measures)
@@ -1751,29 +1794,33 @@ def _compile_aggregation(
                 if real_with_totals is None:
                     raise TotalsNotAvailableError(
                         f"Calc measure {name!r} references t.all(...) but no totals "
-                        "table was built. This typically means the model contains "
-                        "nested-array measures, which compile at multiple grains and "
-                        "don't yet support totals; remove the t.all(...) reference or "
-                        "lift it onto a flat-grained calc measure."
+                        "columns were attached. This typically means the model contains "
+                        "nested-array measures (which compile at multiple grains and "
+                        "don't yet support totals), or the AllOf reference targets a "
+                        "calc measure rather than a base measure (calc-of-calc-totals "
+                        "is not yet supported via the windowed-totals path)."
                     )
                 compiled = _compile_calc_measure_impl(
                     rewritten_expr,
                     rewritten_vt,
-                    real_with_totals,
+                    real_agg_tbl,
                     totals_virtual_agg_tbl=rewritten_totals_vt,
-                    real_with_totals=real_with_totals,
+                    real_with_totals=real_agg_tbl,
                 )
-                real_with_totals = real_with_totals.mutate(**{name: compiled})
-                real_agg_tbl = _drop_totals_columns(real_with_totals, TOTALS_PREFIX)
+                real_agg_tbl = real_agg_tbl.mutate(**{name: compiled})
+                real_with_totals = real_agg_tbl
             else:
                 compiled = _compile_calc_measure_impl(
                     rewritten_expr, rewritten_vt, real_agg_tbl
                 )
                 real_agg_tbl = real_agg_tbl.mutate(**{name: compiled})
-                if real_with_totals is not None and real_totals_tbl is not None:
-                    real_with_totals = _join_totals(
-                        real_agg_tbl, real_totals_tbl, TOTALS_PREFIX
-                    )
+                if real_with_totals is not None:
+                    real_with_totals = real_agg_tbl
+
+    # Drop the synthetic ``__bsl_totals__<name>`` columns so the
+    # result schema only carries user-requested measures.
+    if calc_specs:
+        real_agg_tbl = _drop_totals_columns(real_agg_tbl, TOTALS_PREFIX)
 
     if requested_measures is not None:
         select_cols = list(

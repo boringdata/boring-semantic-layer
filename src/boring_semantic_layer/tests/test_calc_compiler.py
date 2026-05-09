@@ -208,15 +208,20 @@ def test_compile_multiple_calc_measures(base_tbl):
     assert pytest.approx(df["pct"].sum()) == 1.0
 
 
-def test_multiple_allof_calcs_share_one_totals_aggregation():
-    """Two t.all-referencing calcs share a single totals aggregation node.
+def test_multiple_allof_calcs_share_one_totals_per_measure():
+    """Two t.all-referencing calcs share their totals computations.
 
-    The orchestration in ``_compile_aggregation`` builds the totals
-    table once and cross-joins it; both calcs should resolve their
-    ``Field(totals_vt, ...)`` references to the same prefixed columns.
-    Inspecting the rendered SQL is the easiest way to lock this down:
-    if we built two totals aggs we'd see two ``GROUP BY ()`` (or
-    flatter equivalents) in the query.
+    Each base measure that's referenced by ``t.all(...)`` gets exactly
+    one windowed-totals column added to the base via
+    ``measure.over(window())``. Multiple calcs referencing the same
+    measure share the same totals column — no duplicate window
+    computation, no quadratic growth.
+
+    The new compilation strategy uses windowed totals carried through
+    the per-group aggregation rather than cross-joined totals tables,
+    so the rendered SQL has *zero* ``CROSS JOIN`` operations and one
+    ``OVER (...)`` window per AllOf-referenced measure. Locking the
+    "one totals per measure" property guards against an O(n²) regression.
     """
     from boring_semantic_layer import to_semantic_table
 
@@ -241,10 +246,16 @@ def test_multiple_allof_calcs_share_one_totals_aggregation():
         )
     )
     sql = st.group_by("carrier").aggregate("pct_distance", "pct_passengers").compile()
-    # Both calcs reference totals; the single shared totals aggregation
-    # produces exactly one CROSS JOIN in the rendered SQL. Two separate
-    # totals nodes would produce two cross joins.
-    assert sql.upper().count("CROSS JOIN") == 1
+    sql_upper = sql.upper()
+    # No cross joins under the new strategy.
+    assert sql_upper.count("CROSS JOIN") == 0
+    # One windowed totals per AllOf-referenced base measure (two here).
+    # Each appears as ``SUM(...) OVER (ROWS BETWEEN ...)``.
+    assert sql_upper.count("__BSL_TOTALS__TOTAL_DISTANCE") >= 1
+    assert sql_upper.count("__BSL_TOTALS__TOTAL_PASSENGERS") >= 1
+    # Output schema only has the user-requested columns.
+    result = st.group_by("carrier").aggregate("pct_distance", "pct_passengers")
+    assert set(result.columns) == {"carrier", "pct_distance", "pct_passengers"}
 
 
 def test_apply_calc_measures_join_with_mean_totals():
