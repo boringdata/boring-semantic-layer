@@ -344,5 +344,55 @@ def test_nested_nunique():
     assert result[result.session_id == 2]["unique_tags"].iloc[0] == 2
 
 
+def test_nest_then_regroup_unnests_struct_field_access():
+    """Re-grouping an aggregate that contains an array-of-struct column
+    auto-unnests on struct field access in a follow-up aggregate.
+
+    Regression for the docs ``query_nest_step2`` pattern: a measure
+    lambda like ``lambda t: t.flights.carrier.nunique()`` against a
+    previously-aggregated table used to fail with
+    ``'ArrayColumn' object has no attribute 'carrier'`` because the
+    post-aggregation lambda ran against the raw ibis table without the
+    ``ColumnScope`` wrapper that produces ``NestedAccessMarker`` values.
+    """
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame(
+        [
+            {"origin": "NYC", "carrier": "AA", "distance": 100},
+            {"origin": "NYC", "carrier": "DL", "distance": 200},
+            {"origin": "NYC", "carrier": "AA", "distance": 100},
+            {"origin": "LAX", "carrier": "UA", "distance": 300},
+        ]
+    )
+    tbl = con.create_table("flights", data)
+    flights_st = to_semantic_table(tbl)
+
+    nested = (
+        flights_st.group_by("origin")
+        .aggregate(
+            flight_count=lambda t: t.count(),
+            nest={"flights": lambda t: t.group_by(["carrier", "distance"])},
+        )
+    )
+
+    result = (
+        nested.group_by("origin")
+        .aggregate(
+            total_flights=lambda t: t.flight_count.sum(),
+            unique_carriers=lambda t: t.flights.carrier.nunique(),
+            avg_distance=lambda t: t.flights.distance.mean(),
+        )
+        .execute()
+        .set_index("origin")
+    )
+
+    assert result.loc["NYC", "total_flights"] == 3
+    assert result.loc["NYC", "unique_carriers"] == 2
+    assert result.loc["NYC", "avg_distance"] == pytest.approx((100 + 200 + 100) / 3)
+    assert result.loc["LAX", "total_flights"] == 1
+    assert result.loc["LAX", "unique_carriers"] == 1
+    assert result.loc["LAX", "avg_distance"] == pytest.approx(300.0)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

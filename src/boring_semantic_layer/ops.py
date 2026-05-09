@@ -1486,6 +1486,18 @@ def _build_aggregation_plan(
         fn = _unwrap(fn_wrapped)
 
         if is_post_agg:
+            # Wrap raw user callables with ColumnScope (via Measure) so a
+            # re-aggregation lambda like ``t.flights.carrier.nunique()``
+            # routes through the NestedAccessMarker pipeline in
+            # _compile_aggregation. Without the wrap, t.flights returns a
+            # raw ArrayColumn and struct-field access blows up before the
+            # marker can be produced.
+            if (
+                callable(fn)
+                and not _is_deferred(fn)
+                and not isinstance(fn, Measure)
+            ):
+                fn = _make_base_measure(fn, None, (), {})
             agg_specs[name] = _make_agg_callable(fn)
             continue
 
