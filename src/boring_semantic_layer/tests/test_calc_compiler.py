@@ -87,32 +87,69 @@ def test_classify_inline_agg_pushable(base_tbl):
 
 
 def test_compile_substitutes_virtual_for_real(base_tbl):
-    """An inline-reduction calc (no ``t.all``) substitutes vt → real_agg."""
-    fn = lambda t: t.distance.sum() / t.passengers.sum()
-    expr, vt, _totals_vt = evaluate_calc_lambda(fn, base_tbl, frozenset())
+    """``compile_calc_measure`` rewrites Field(vt) → Field(real_agg)."""
+    # A pure measure-ref calc: avg_dist references two known measures
+    # on the virtual table. ``compile_calc_measure`` should rebind both
+    # Fields to the actual aggregated table.
+    fn = lambda t: t.total_distance / t.flight_count
+    known = frozenset({"total_distance", "flight_count"})
+    expr, vt, _totals_vt = evaluate_calc_lambda(fn, base_tbl, known)
 
     real_agg = base_tbl.group_by("carrier").aggregate(
         total_distance=base_tbl.distance.sum(),
-        total_passengers=base_tbl.passengers.sum(),
+        flight_count=base_tbl.count(),
     )
-    # When no totals are involved, compile_calc_measure rewrites Fields
-    # on the virtual aggregated table to point at real_agg directly.
-    # (The straight inline-aggregation lift still applies upstream; this
-    # test exercises just the substitution mechanic.)
-    from boring_semantic_layer._xorq import Field
+    compiled = compile_calc_measure(expr, vt, real_agg)
 
-    rewritten = expr.op().replace(
-        {
-            expr.op()
-            .__args__[0]: Field(real_agg.op(), "total_distance")  # type: ignore[index]
-        }
+    # Walk the compiled op tree; every Field reference should land on
+    # real_agg, none on the synthetic vt.
+    real_op = real_agg.op()
+    vt_op = vt.op()
+    rels: list[int] = []
+    seen: set[int] = set()
+    stack: list = [compiled.op()]
+    while stack:
+        cur = stack.pop()
+        if id(cur) in seen:
+            continue
+        seen.add(id(cur))
+        rel = getattr(cur, "rel", None)
+        if rel is not None:
+            rels.append(id(rel))
+        for child in getattr(cur, "__args__", ()) or ():
+            if hasattr(child, "__args__") or hasattr(child, "rel"):
+                stack.append(child)
+    assert id(real_op) in rels, "compiled expression should reference real_agg"
+    assert id(vt_op) not in rels, "compiled expression must not reference virtual vt"
+
+    # End-to-end: the table should execute and produce the expected ratio.
+    final = real_agg.mutate(avg_dist=compiled).execute().sort_values("carrier")
+    # AA: 300/2 = 150; UA: 400/2 = 200; DL: 300/1 = 300
+    by_carrier = dict(zip(final["carrier"], final["avg_dist"], strict=True))
+    assert pytest.approx(by_carrier["AA"]) == 150.0
+    assert pytest.approx(by_carrier["UA"]) == 200.0
+    assert pytest.approx(by_carrier["DL"]) == 300.0
+
+
+def test_apply_calc_measures_raises_when_totals_unavailable(base_tbl):
+    """Clear error when t.all(...) is referenced but no totals can be built."""
+    from boring_semantic_layer.calc_compiler import (
+        TotalsNotAvailableError,
+        apply_calc_measures,
     )
-    # Smoke-test that the resulting op tree carries the real relation.
-    assert any(
-        id(getattr(n, "rel", None)) == id(real_agg.op())
-        for n in [rewritten, *getattr(rewritten, "__args__", ())]
-        if hasattr(n, "rel")
+
+    fn = lambda t: t.flight_count / t.all(t.flight_count)
+    real_agg = base_tbl.group_by("carrier").aggregate(
+        flight_count=base_tbl.count(),
     )
+    # No agg_specs and no real_totals_tbl — the totals build can't run.
+    with pytest.raises(TotalsNotAvailableError, match="t.all"):
+        apply_calc_measures(
+            real_agg,
+            base_tbl,
+            {"pct": fn},
+            frozenset({"flight_count"}),
+        )
 
 
 def test_compile_pct_calc_measure_end_to_end(base_tbl):
@@ -169,3 +206,86 @@ def test_compile_multiple_calc_measures(base_tbl):
     assert "pct" in df.columns
     assert "avg_dist" in df.columns
     assert pytest.approx(df["pct"].sum()) == 1.0
+
+
+def test_multiple_allof_calcs_share_one_totals_aggregation():
+    """Two t.all-referencing calcs share a single totals aggregation node.
+
+    The orchestration in ``_compile_aggregation`` builds the totals
+    table once and cross-joins it; both calcs should resolve their
+    ``Field(totals_vt, ...)`` references to the same prefixed columns.
+    Inspecting the rendered SQL is the easiest way to lock this down:
+    if we built two totals aggs we'd see two ``GROUP BY ()`` (or
+    flatter equivalents) in the query.
+    """
+    from boring_semantic_layer import to_semantic_table
+
+    con = xo.duckdb.connect()
+    df = pd.DataFrame(
+        {
+            "carrier": ["AA", "AA", "UA", "UA"],
+            "distance": [100, 200, 300, 400],
+            "passengers": [10, 20, 30, 40],
+        }
+    )
+    tbl = con.create_table("flights_share_totals", df)
+    st = (
+        to_semantic_table(tbl, "flights_share_totals")
+        .with_measures(
+            total_distance=lambda t: t.distance.sum(),
+            total_passengers=lambda t: t.passengers.sum(),
+        )
+        .with_measures(
+            pct_distance=lambda t: t.total_distance / t.all(t.total_distance),
+            pct_passengers=lambda t: t.total_passengers / t.all(t.total_passengers),
+        )
+    )
+    sql = st.group_by("carrier").aggregate("pct_distance", "pct_passengers").compile()
+    # Both calcs reference totals; the single shared totals aggregation
+    # produces exactly one CROSS JOIN in the rendered SQL. Two separate
+    # totals nodes would produce two cross joins.
+    assert sql.upper().count("CROSS JOIN") == 1
+
+
+def test_apply_calc_measures_join_with_mean_totals():
+    """Joined model: t.all over a non-sum measure recomputes totals from base."""
+    from boring_semantic_layer import to_semantic_table
+
+    con = xo.duckdb.connect()
+    flights = pd.DataFrame(
+        {
+            "carrier_code": ["AA", "AA", "UA", "UA"],
+            "distance": [100, 200, 300, 400],
+        }
+    )
+    carriers = pd.DataFrame(
+        {"code": ["AA", "UA"], "carrier_name": ["American", "United"]}
+    )
+    f_tbl = con.create_table("join_flights", flights)
+    c_tbl = con.create_table("join_carriers", carriers)
+
+    flights_st = to_semantic_table(f_tbl, "flights").with_measures(
+        avg_distance=lambda t: t.distance.mean(),
+    )
+    carriers_st = to_semantic_table(c_tbl, "carriers").with_dimensions(
+        carrier_name=lambda t: t.carrier_name,
+    )
+    joined = flights_st.join_one(
+        carriers_st,
+        on=lambda left, right: left.carrier_code == right.code,
+    ).with_measures(
+        ratio=lambda t: t.avg_distance / t.all(t.avg_distance),
+    )
+
+    df = (
+        joined.group_by("carrier_name")
+        .aggregate("avg_distance", "ratio")
+        .execute()
+        .sort_values("carrier_name")
+        .reset_index(drop=True)
+    )
+
+    # AA mean=150, UA mean=350; overall mean=250 (NOT 150+350=500).
+    by_name = dict(zip(df["carrier_name"], df["ratio"], strict=True))
+    assert pytest.approx(by_name["American"]) == 150 / 250
+    assert pytest.approx(by_name["United"]) == 350 / 250

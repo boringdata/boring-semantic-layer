@@ -11,37 +11,30 @@ curated-AST node types.
 Architecture
 ------------
 
-A calc-measure lambda is evaluated against an :class:`IbisCalcScope`,
-which dispatches name lookups to two tables:
+A calc-measure lambda is evaluated against an :class:`IbisCalcScope`
+that dispatches name lookups to three tables:
 
 - ``base_tbl`` for raw columns (used by inline aggregations like
   ``t.distance.sum()`` inside a calc measure).
 - ``virtual_agg_tbl`` for measure references (a synthetic ibis table
   whose schema mirrors the post-aggregation result).
+- ``totals_virtual_agg_tbl`` for ``t.all(measure_ref)`` — a parallel
+  synthetic table representing the same measures computed without
+  group_by. Compile-time substitution swaps it with a real totals
+  aggregation cross-joined into the result so non-sum measures get
+  correct overall values.
 
-When a name exists on *both* (e.g. user defines a measure called
-``distance`` and the base table also has a ``distance`` column), the
-base column wins. This matches the historical curated-AST behavior
-where ``t.distance.sum()`` always meant "sum the base column" even when
-``distance`` was registered as a measure.
-
-The lambda returns one ibis expression that may reference *both*
-tables. The analyzer walks the resulting tree to record pushability,
-totals patterns, and dependencies. At compile time, references to the
-virtual aggregated table are substituted with the real aggregated
-table via ``op.replace({...})``.
-
-The ``t.all(x)`` API emits ``x.sum().over(window())`` — an empty window
-over a reduction. The analyzer recognizes this structural shape as the
-"totals" pattern; compilation lets the windowed-reduction shape pass
-through unchanged so the SQL backend evaluates it as the windowed sum
-of the post-aggregated column.
+When a column name exists on both ``base_tbl`` and ``virtual_agg_tbl``,
+the base column wins — historical curated-AST behavior where
+``t.distance.sum()`` meant "sum the base column" even when ``distance``
+was registered as a measure.
 """
 
 from __future__ import annotations
 
 import difflib
 import hashlib
+import logging
 from typing import Any
 
 from ._xorq import Deferred, Field, Node
@@ -55,6 +48,53 @@ from .calc_analyzer import (
     virtual_agg_table,
 )
 from .measure_scope import UnknownMeasureRefError
+
+logger = logging.getLogger(__name__)
+
+
+TOTALS_PREFIX = "__bsl_totals__"
+"""Column prefix applied to totals-table columns when cross-joined into
+the per-group result. Any column on a result table starting with this
+prefix represents the same-named measure computed over the totals
+aggregation; calc-measure compilation rewrites
+``Field(totals_vt, name)`` references to point at these prefixed
+columns."""
+
+
+class TotalsNotAvailableError(RuntimeError):
+    """Raised when a calc measure references ``t.all(measure_ref)`` but
+    no totals table can be constructed in the current compilation context.
+
+    Two situations produce this error:
+
+    * The compilation path lacks the per-base aggregation specs needed
+      to recompute totals (``apply_calc_measures`` called without
+      ``agg_specs`` and no ``real_totals_tbl``).
+    * The aggregation involves nested-array measures, which are
+      computed at multiple grains and joined; building a totals table
+      that respects all grains is not yet supported.
+    """
+
+
+def _to_op(x):
+    """Return ``x.op()`` if ``x`` is an ibis expression-like, else ``x``.
+
+    BSL accepts both expressions (``Table``/``Column``/...) and bare
+    ops in many places. Centralizing the duck-type lets call sites
+    stay focused on the substitution logic.
+    """
+    op = getattr(x, "op", None)
+    return op() if callable(op) else x
+
+
+def _drop_totals_columns(tbl, totals_prefix: str = TOTALS_PREFIX):
+    """Project ``tbl`` to columns that do not carry the totals prefix.
+
+    Used after a calc-measure ``mutate`` on a cross-joined
+    ``real_with_totals`` table so the user-visible result no longer
+    exposes the synthetic totals columns.
+    """
+    return tbl.select([c for c in tbl.columns if not c.startswith(totals_prefix)])
 
 
 class IbisCalcScope:
@@ -88,7 +128,7 @@ class IbisCalcScope:
         object.__setattr__(self, "_base_tbl", base_tbl)
         object.__setattr__(self, "_virtual_agg_tbl", virtual_agg_tbl)
         if totals_virtual_agg_tbl is None:
-            vt_op = virtual_agg_tbl.op() if hasattr(virtual_agg_tbl, "op") else virtual_agg_tbl
+            vt_op = _to_op(virtual_agg_tbl)
             schema = (
                 dict(vt_op.schema.items())
                 if hasattr(vt_op, "schema")
@@ -207,15 +247,9 @@ class IbisCalcScope:
         # compiler can substitute in a properly re-aggregated value.
         if hasattr(x, "op") and callable(x.op):
             try:
-                from ._xorq import Field as _Field
-
                 op = x.op()
-                if isinstance(op, _Field):
-                    vt_op = self._virtual_agg_tbl.op() if hasattr(
-                        self._virtual_agg_tbl, "op"
-                    ) else self._virtual_agg_tbl
-                    if id(op.rel) == id(vt_op):
-                        return self._totals_virtual_agg_tbl[op.name]
+                if isinstance(op, Field) and id(op.rel) == id(_to_op(self._virtual_agg_tbl)):
+                    return self._totals_virtual_agg_tbl[op.name]
 
                 Reduction = getattr(ibis_ops, "Reduction", None)
                 if Reduction is not None:
@@ -223,8 +257,8 @@ class IbisCalcScope:
                         return x.over(ibis_mod.window())
                     if any(isinstance(n, Reduction) for n in _walk(op)):
                         return x.over(ibis_mod.window())
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("IbisCalcScope.all() reduction-detection swallowed: %s", exc)
 
         if hasattr(x, "sum"):
             return x.sum().over(ibis_mod.window())
@@ -257,7 +291,7 @@ def evaluate_calc_lambda(
         virtual_agg_schema = {"__bsl_unused__": "int64"}
 
     vt = virtual_agg_table(virtual_agg_schema)
-    totals_vt = ibis_mod.table(virtual_agg_schema, name="__bsl_virtual_totals__")
+    totals_vt = ibis_mod.table(dict(virtual_agg_schema), name="__bsl_virtual_totals__")
     scope = IbisCalcScope(base_tbl, vt, known_measures, totals_virtual_agg_tbl=totals_vt)
 
     if hasattr(fn, "_resolver") and hasattr(fn, "resolve"):
@@ -286,25 +320,13 @@ def classify_calc_lambda(
     expr, vt, totals_vt = evaluate_calc_lambda(
         fn, base_tbl, known_measures, virtual_agg_schema
     )
-    base_op = base_tbl.op() if hasattr(base_tbl, "op") and callable(base_tbl.op) else None
-    totals_op = (
-        totals_vt.op() if hasattr(totals_vt, "op") and callable(totals_vt.op) else totals_vt
-    )
     analysis = analyze_calc_expr(
         expr,
         known_measures=known_measures,
-        base_table_op=base_op,
-        totals_vt_op=totals_op,
+        base_table_op=_to_op(base_tbl),
+        totals_vt_op=_to_op(totals_vt),
     )
     return expr, analysis
-
-
-def _substitute_table(expr_or_op, old_tbl, new_tbl):
-    """Replace references to ``old_tbl`` with ``new_tbl`` in an ibis op tree."""
-    op = expr_or_op.op() if hasattr(expr_or_op, "op") and callable(expr_or_op.op) else expr_or_op
-    old_op = old_tbl.op() if hasattr(old_tbl, "op") and callable(old_tbl.op) else old_tbl
-    new_op = new_tbl.op() if hasattr(new_tbl, "op") and callable(new_tbl.op) else new_tbl
-    return op.replace({old_op: new_op}).to_expr()
 
 
 def compile_calc_measure(
@@ -313,7 +335,7 @@ def compile_calc_measure(
     real_agg_tbl,
     totals_virtual_agg_tbl=None,
     real_with_totals=None,
-    totals_prefix: str = "__bsl_totals__",
+    totals_prefix: str = TOTALS_PREFIX,
 ):
     """Compile a calc-measure ibis expression against the real agg table.
 
@@ -328,31 +350,14 @@ def compile_calc_measure(
     (``real_agg_tbl`` for non-totals calcs, ``real_with_totals`` for
     totals-using calcs).
     """
-    op = expr.op() if hasattr(expr, "op") and callable(expr.op) else expr
-    vt_op = (
-        virtual_agg_tbl.op()
-        if hasattr(virtual_agg_tbl, "op") and callable(virtual_agg_tbl.op)
-        else virtual_agg_tbl
-    )
-    real_op = (
-        real_agg_tbl.op()
-        if hasattr(real_agg_tbl, "op") and callable(real_agg_tbl.op)
-        else real_agg_tbl
-    )
+    op = _to_op(expr)
+    vt_op = _to_op(virtual_agg_tbl)
+    real_op = _to_op(real_agg_tbl)
     subs: dict = {vt_op: real_op}
 
     if totals_virtual_agg_tbl is not None and real_with_totals is not None:
-        totals_vt_op = (
-            totals_virtual_agg_tbl.op()
-            if hasattr(totals_virtual_agg_tbl, "op")
-            and callable(totals_virtual_agg_tbl.op)
-            else totals_virtual_agg_tbl
-        )
-        rwt_op = (
-            real_with_totals.op()
-            if hasattr(real_with_totals, "op") and callable(real_with_totals.op)
-            else real_with_totals
-        )
+        totals_vt_op = _to_op(totals_virtual_agg_tbl)
+        rwt_op = _to_op(real_with_totals)
         totals_schema = (
             dict(totals_vt_op.schema.items()) if hasattr(totals_vt_op, "schema") else {}
         )
@@ -397,7 +402,7 @@ def apply_calc_measures(
     known_measures: frozenset[str],
     real_totals_tbl=None,
     agg_specs: dict[str, Any] | None = None,
-    totals_prefix: str = "__bsl_totals__",
+    totals_prefix: str = TOTALS_PREFIX,
 ):
     """Re-run each calc-measure lambda against the real aggregated table.
 
@@ -413,6 +418,12 @@ def apply_calc_measures(
     and at least one calc actually references totals, we build the
     totals table on first need by re-running ``agg_specs`` on
     ``base_tbl`` without group keys.
+
+    Raises :class:`TotalsNotAvailableError` when a calc references
+    totals but neither ``real_totals_tbl`` nor ``agg_specs`` lets us
+    build one — surfaces the missing-totals condition with a clear
+    message instead of letting the unsubstituted ``Field(totals_vt,
+    ...)`` reach ibis and fail with ``IntegrityError``.
     """
     if not calc_lambdas:
         return real_agg_tbl
@@ -422,6 +433,8 @@ def apply_calc_measures(
     real_with_totals = None
     if real_totals_tbl is not None:
         real_with_totals = _join_totals(real_agg_tbl, real_totals_tbl, totals_prefix)
+
+    base_op = _to_op(base_tbl)
 
     for name in ordered:
         fn = calc_lambdas[name]
@@ -434,13 +447,11 @@ def apply_calc_measures(
         expr, vt, totals_vt = evaluate_calc_lambda(
             fn, base_tbl, cur_known, virtual_schema
         )
-        base_op = base_tbl.op() if hasattr(base_tbl, "op") and callable(base_tbl.op) else None
-        totals_op = totals_vt.op() if hasattr(totals_vt, "op") and callable(totals_vt.op) else None
         analysis = analyze_calc_expr(
             expr,
             known_measures=cur_known,
             base_table_op=base_op,
-            totals_vt_op=totals_op,
+            totals_vt_op=_to_op(totals_vt),
         )
 
         if analysis.references_AllOf:
@@ -454,24 +465,26 @@ def apply_calc_measures(
                         real_agg_tbl, real_totals_tbl, totals_prefix
                     )
 
-            if real_with_totals is not None:
-                compiled = compile_calc_measure(
-                    expr,
-                    vt,
-                    real_with_totals,
-                    totals_virtual_agg_tbl=totals_vt,
-                    real_with_totals=real_with_totals,
-                    totals_prefix=totals_prefix,
+            if real_with_totals is None:
+                raise TotalsNotAvailableError(
+                    f"Calc measure {name!r} references t.all(...) but no totals "
+                    "table could be built. Pass `real_totals_tbl` or `agg_specs` "
+                    "to apply_calc_measures, or define the calc on a model "
+                    "without nested-array measures (which compile at multiple "
+                    "grains and don't yet support totals)."
                 )
-                real_with_totals = real_with_totals.mutate(**{name: compiled})
-                real_agg_tbl = real_with_totals.select(
-                    [
-                        c
-                        for c in real_with_totals.columns
-                        if not c.startswith(totals_prefix)
-                    ]
-                )
-                continue
+
+            compiled = compile_calc_measure(
+                expr,
+                vt,
+                real_with_totals,
+                totals_virtual_agg_tbl=totals_vt,
+                real_with_totals=real_with_totals,
+                totals_prefix=totals_prefix,
+            )
+            real_with_totals = real_with_totals.mutate(**{name: compiled})
+            real_agg_tbl = _drop_totals_columns(real_with_totals, totals_prefix)
+            continue
 
         compiled = compile_calc_measure(expr, vt, real_agg_tbl)
         real_agg_tbl = real_agg_tbl.mutate(**{name: compiled})
@@ -494,87 +507,107 @@ def _join_totals(real_agg_tbl, real_totals_tbl, totals_prefix: str):
     return real_agg_tbl.cross_join(totals_renamed)
 
 
+def classify_calc_lambdas(
+    calc_lambdas: dict[str, Any],
+    base_tbl,
+    known_measures: frozenset[str],
+) -> dict[str, CalcExprAnalysis]:
+    """Run the analyzer once per calc lambda; return ``{name → analysis}``.
+
+    Lets multiple passes (topological order, totals-build filtering,
+    apply loop) read the same classification record without
+    re-evaluating each lambda. Lambdas that fail evaluation get an
+    empty ``CalcExprAnalysis`` (post_agg_only=True, no deps) so the
+    surrounding orchestration still terminates.
+    """
+    base_op = _to_op(base_tbl)
+    out: dict[str, CalcExprAnalysis] = {}
+    for name, fn in calc_lambdas.items():
+        try:
+            virtual_schema = {n: "float64" for n in known_measures}
+            expr, _vt, totals_vt = evaluate_calc_lambda(
+                fn, base_tbl, known_measures, virtual_schema
+            )
+            out[name] = analyze_calc_expr(
+                expr,
+                known_measures=known_measures,
+                base_table_op=base_op,
+                totals_vt_op=_to_op(totals_vt),
+            )
+        except Exception as exc:
+            logger.debug("calc-measure classification failed for %r: %s", name, exc)
+            out[name] = CalcExprAnalysis(
+                pushable=False,
+                references_AllOf=False,
+                has_window=False,
+                post_agg_only=True,
+            )
+    return out
+
+
 def _build_totals_from_agg_specs(
     base_tbl,
     agg_specs: dict[str, Any] | None,
     calc_lambdas: dict[str, Any],
     known_measures: frozenset[str],
+    classifications: dict[str, CalcExprAnalysis] | None = None,
 ):
     """Build a no-group-by totals table when callers passed ``agg_specs``.
 
     Re-runs each base-aggregation callable on ``base_tbl`` without group
     keys, then applies the non-AllOf calc lambdas so calc-of-calc chains
     see correctly-recomputed dependencies. Returns ``None`` when there
-    is no way to construct totals (no ``agg_specs`` supplied).
+    is no way to construct totals (no ``agg_specs`` supplied or the
+    specs fail to evaluate against the base).
     """
     if not agg_specs:
         return None
     try:
         totals_aggs = {n: f(base_tbl) for n, f in agg_specs.items()}
-    except Exception:
+    except Exception as exc:
+        logger.debug("totals aggregation failed to evaluate: %s", exc)
         return None
     real_totals = base_tbl.aggregate(**totals_aggs)
 
-    non_allof: dict[str, Any] = {}
-    for name, fn in calc_lambdas.items():
-        try:
-            virtual_schema = {n: "float64" for n in known_measures}
-            expr, _vt, totals_vt = evaluate_calc_lambda(
-                fn, base_tbl, known_measures, virtual_schema
-            )
-            base_op = base_tbl.op() if hasattr(base_tbl, "op") and callable(base_tbl.op) else None
-            totals_op = (
-                totals_vt.op() if hasattr(totals_vt, "op") and callable(totals_vt.op) else None
-            )
-            analysis = analyze_calc_expr(
-                expr,
-                known_measures=known_measures,
-                base_table_op=base_op,
-                totals_vt_op=totals_op,
-            )
-            if not analysis.references_AllOf:
-                non_allof[name] = fn
-        except Exception:
-            continue
-
+    if classifications is None:
+        classifications = classify_calc_lambdas(calc_lambdas, base_tbl, known_measures)
+    non_allof = {
+        name: fn
+        for name, fn in calc_lambdas.items()
+        if not classifications.get(name, _EMPTY_ANALYSIS).references_AllOf
+    }
     if non_allof:
-        real_totals = apply_calc_measures(
-            real_totals, base_tbl, non_allof, known_measures
-        )
+        real_totals = apply_calc_measures(real_totals, base_tbl, non_allof, known_measures)
     return real_totals
+
+
+_EMPTY_ANALYSIS = CalcExprAnalysis(
+    pushable=False,
+    references_AllOf=False,
+    has_window=False,
+    post_agg_only=True,
+)
 
 
 def _topological_order(
     calc_lambdas: dict[str, Any],
     base_tbl,
     known_measures: frozenset[str],
+    classifications: dict[str, CalcExprAnalysis] | None = None,
 ) -> list[str]:
     """Order calc measures so dependencies are compiled before their consumers.
 
-    Runs the analyzer once per lambda to read ``depends_on``. Cycles fall
-    back to the original insertion order with a debug log; the substitution
-    pass will surface a clear error if the cycle was real.
+    Reads ``depends_on`` off each calc's ``CalcExprAnalysis``. Cycles
+    fall back to insertion order; the substitution pass surfaces a
+    clear error if the cycle was real.
     """
-    deps: dict[str, set[str]] = {}
-    for name, fn in calc_lambdas.items():
-        try:
-            virtual_schema = {n: "float64" for n in known_measures}
-            expr, _vt, totals_vt = evaluate_calc_lambda(
-                fn, base_tbl, known_measures, virtual_schema
-            )
-            base_op = base_tbl.op() if hasattr(base_tbl, "op") and callable(base_tbl.op) else None
-            totals_op = (
-                totals_vt.op() if hasattr(totals_vt, "op") and callable(totals_vt.op) else None
-            )
-            analysis = analyze_calc_expr(
-                expr,
-                known_measures=known_measures,
-                base_table_op=base_op,
-                totals_vt_op=totals_op,
-            )
-            deps[name] = set(analysis.depends_on) & set(calc_lambdas.keys())
-        except Exception:
-            deps[name] = set()
+    if classifications is None:
+        classifications = classify_calc_lambdas(calc_lambdas, base_tbl, known_measures)
+    calc_keys = set(calc_lambdas.keys())
+    deps: dict[str, set[str]] = {
+        name: set(classifications.get(name, _EMPTY_ANALYSIS).depends_on) & calc_keys
+        for name in calc_lambdas
+    }
 
     ordered: list[str] = []
     visited: set[str] = set()
@@ -624,25 +657,16 @@ def lift_inline_reductions(expr, virtual_agg_tbl, base_tbl, totals_virtual_agg_t
     expression. The caller adds those reductions to both the per-group
     aggregation and the totals aggregation.
     """
-    op = expr.op() if hasattr(expr, "op") and callable(expr.op) else expr
-    vt_op = (
-        virtual_agg_tbl.op()
-        if hasattr(virtual_agg_tbl, "op") and callable(virtual_agg_tbl.op)
-        else virtual_agg_tbl
-    )
+    op = _to_op(expr)
+    vt_op = _to_op(virtual_agg_tbl)
     if totals_virtual_agg_tbl is None:
         totals_schema = dict(vt_op.schema.items()) if hasattr(vt_op, "schema") else {}
         totals_virtual_agg_tbl = ibis_mod.table(
             totals_schema or {"__bsl_unused__": "int64"},
             name="__bsl_virtual_totals__",
         )
-    totals_vt_op = (
-        totals_virtual_agg_tbl.op()
-        if hasattr(totals_virtual_agg_tbl, "op")
-        and callable(totals_virtual_agg_tbl.op)
-        else totals_virtual_agg_tbl
-    )
-    base_op = base_tbl.op() if hasattr(base_tbl, "op") and callable(base_tbl.op) else base_tbl
+    totals_vt_op = _to_op(totals_virtual_agg_tbl)
+    base_op = _to_op(base_tbl)
 
     Reduction = getattr(ibis_ops, "Reduction", None)
     WindowFunction = getattr(ibis_ops, "WindowFunction", None)
