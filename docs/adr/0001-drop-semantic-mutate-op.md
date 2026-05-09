@@ -1,20 +1,18 @@
 # ADR 0001: Unify calculated measures and post-aggregation `mutate` on a single ibis-expression primitive
 
-- **Status:** Proposed (revised 2026-05-08; supersedes the earlier "drop `SemanticMutateOp`" framing)
-- **Date:** 2026-05-08
+- **Status:** Partially implemented — Phases 1+2 landed on `hussain/feat/calc-measure-analyzer`; Phase 3 outstanding.
+- **Date:** 2026-05-08 (revised 2026-05-09 to reflect landed work)
 - **Deciders:** BSL maintainers
-- **Related code:** `src/boring_semantic_layer/ops.py` (`SemanticTableOp.calc_measures`, `SemanticMutateOp`, `_to_untagged_with_preagg`, `collect_mutates_to_join`, `has_prior_aggregate`, `mutated_gb_keys`), `src/boring_semantic_layer/expr.py` (`SemanticMutate`, `.mutate()` chained API), `src/boring_semantic_layer/measure_scope.py` (`MeasureRef`, `AllOf`, `BinOp`, `MethodCall`, `validate_calc_ast`), `src/boring_semantic_layer/compile_all.py` (`compile_grouped_with_all`, `infer_calc_dtype`), `src/boring_semantic_layer/serialization/extract.py`, `src/boring_semantic_layer/serialization/reconstruct.py`.
+- **Related code (current state):** `src/boring_semantic_layer/calc_analyzer.py` (new), `src/boring_semantic_layer/calc_compiler.py` (new), `src/boring_semantic_layer/nested_compile.py` (new — extracted from deleted `compile_all.py`), `src/boring_semantic_layer/ops.py` (`CalcMeasure`, `_classify_measure`, `_build_aggregation_plan`, `_compile_aggregation`, `_apply_calc_specs`, `SemanticMutateOp` — still present), `src/boring_semantic_layer/expr.py` (`SemanticMutate`, `.mutate()` chained API — still present), `src/boring_semantic_layer/measure_scope.py` (`MeasureScope`/`ColumnScope` thin proxies; curated AST removed), `src/boring_semantic_layer/serialization/extract.py` (resolver-tree calc serialization).
 
 ## Context
 
-BSL currently has two independent mechanisms for deriving a column that depends on already-aggregated values:
+BSL had two independent mechanisms for deriving a column that depends on already-aggregated values:
 
-1. **Calculated measures** — declared on the model via `with_measures(...)` and classified as `calc` (vs. `base`) by `_classify_measure`. Stored on `SemanticTableOp.calc_measures` and compiled through `compile_grouped_with_all` / `infer_calc_dtype`. The expression language is a curated AST: `MeasureRef | AllOf | BinOp | MethodCall | int | float`, validated by `validate_calc_ast`.
+1. **Calculated measures** — declared on the model via `with_measures(...)` and classified as `calc` (vs. `base`) by `_classify_measure`. Stored on `SemanticTableOp.calc_measures` and compiled through a hand-rolled pipeline. The expression language was a curated AST: `MeasureRef | AllOf | BinOp | MethodCall | int | float`, validated by `validate_calc_ast`.
 2. **`SemanticMutateOp`** — a post-aggregation chain operator built by `SemanticTable.mutate(**post)` and `SemanticAggregate.mutate(**post)`. Runs an arbitrary user lambda over the aggregated result and adds new columns via `ibis.Table.mutate`. The expression language is *all of ibis*.
 
-The two systems were introduced independently. Calc measures came after `SemanticMutateOp` was already wired into the join planner (`collect_mutates_to_join`, `has_prior_aggregate`, `mutated_gb_keys`, `_to_untagged_with_preagg(..., mutates=...)`), into serialization (`serialization/extract.py`, `serialization/reconstruct.py`), and into the public chained API (`SemanticMutate` re-implements much of `SemanticTable`'s surface).
-
-A first reading framed the problem as "two overlapping mechanisms — drop one." Closer inspection shows that **neither system is the right primitive**, because each got two things right and two things wrong, and the right things are *orthogonal*:
+Each system got two things right and two things wrong, and the right things were *orthogonal*:
 
 |                                | Calculated measures                                      | `SemanticMutateOp`                                        |
 |--------------------------------|----------------------------------------------------------|-----------------------------------------------------------|
@@ -23,78 +21,204 @@ A first reading framed the problem as "two overlapping mechanisms — drop one."
 | **Planner integration**        | ✅ pre-agg pushdown, `AllOf` lift, structured tags        | ❌ opaque — special-cased through `collect_mutates_to_join` |
 | **Compilation**                | ❌ hand-rolled (`compile_grouped_with_all`, `infer_calc_dtype`) | ✅ ibis compiles it for free                              |
 
-Calc measures are right about *placement* and *integration*; `SemanticMutateOp` is right about *expression language* and *compilation*. Maintaining both is not just redundant — it enshrines the suboptimal tradeoff on each axis. Growing the calc-measure AST node-by-node (add `Case`, add `Window`, …) chases mutate's expressivity at the cost of a permanently growing hand-rolled compiler. Defanging mutate keeps the curated-AST limitation in place forever.
+Calc measures were right about *placement* and *integration*; `SemanticMutateOp` was right about *expression language* and *compilation*. Maintaining both enshrined the suboptimal tradeoff on each axis. Growing the calc-measure AST node-by-node would have chased mutate's expressivity at the cost of a permanently growing hand-rolled compiler. Defanging mutate would have kept the curated-AST limitation in place forever.
 
 The right primitive is one that combines mutate's expression language with calc measures' placement and integration: **ibis expressions, declared on the model, classified by analysis rather than by AST tag.**
 
 ## Decision
 
-**Unify calculated measures and `mutate` on a single primitive: ibis expressions declared on the model, with planner properties (pushability, `AllOf` lift, post-agg-only) recovered by analysis on the ibis tree rather than by curated-AST tagging.** Drop `SemanticMutateOp` as a chain operator. Keep the `.mutate(**post)` API as sugar that registers an ad-hoc calc measure on a query.
+**Unify calculated measures and `mutate` on a single primitive: ibis expressions declared on the model, with planner properties (pushability, `AllOf` lift, post-agg-only) recovered by analysis on the ibis tree rather than by curated-AST tagging.** Drop `SemanticMutateOp` as a chain operator. Per-query ad-hoc derivations go through the existing `with_measures(...)` method on `SemanticAggregate` (which the Phase 1+2 cutover already wired through the analyzer) — no new method, no parallel registration path.
 
-Concretely:
+The decision is being executed in three phases:
 
-1. **Generalize `with_measures(...)`** to accept ibis expressions / `Deferred`s in addition to (or in place of) the curated AST. The classification `base` vs. `calc` becomes a property of the *expression*, not of the AST node type.
-2. **Replace `validate_calc_ast`** with `analyze_calc_expr`, which walks the ibis tree and returns a classification record: `{pushable: bool, references_AllOf: bool, has_window: bool, post_agg_only: bool, depends_on: set[MeasureName]}`. Anything not classifiable falls back to "post-agg-only, do not push" with a warning — never an error.
-3. **Replace `compile_grouped_with_all` + `infer_calc_dtype`** with ibis compilation plus an `AllOf`-lift pass that pattern-matches the structural shape (an aggregation appearing as a scalar inside another aggregation context) on the ibis tree. Type inference becomes `expr.type()`.
-4. **Remove `SemanticMutateOp` (`ops.py`), `SemanticMutate` (`expr.py`), and the chained `.mutate()` operator.** `SemanticAggregate.mutate(**post)` survives as sugar that calls a new `with_calc(**post)` on the active query — which registers an ad-hoc calc measure scoped to that query and requests it. Same chain ergonomics, no new operator node.
-5. **Remove mutate-aware branches in the join planner**: `collect_mutates_to_join`, the `SemanticMutateOp` arms in `has_prior_aggregate`, `_to_untagged_with_preagg(..., mutates=...)`, and the `mutated_gb_keys` paths. The pre-agg planner reads pushability off the calc measure's classification record directly.
-6. **Remove `SemanticMutateOp` registrations from `serialization/extract.py` and `serialization/reconstruct.py`.** Calc measures serialize as resolver trees through the existing utils.py machinery; the curated-AST-specific fields (`expr_struct` etc.) collapse into one. Old tags containing a `SemanticMutateOp` node fail to deserialize with a clear error pointing at the migration tool.
-7. **`t.all(...)`** keeps its current surface (a method on the resolver proxy) but emits an ibis-tree-recognizable marker instead of an `AllOf` AST node. The analyzer detects the marker and applies the existing window-aggregation lift.
+- **Phase 1 — Analyzer + ibis-native compiler.** Land the structural classifier (`analyze_calc_expr`) and the calc compiler (`IbisCalcScope`, `apply_calc_measures`, `lift_inline_reductions`, `compile_calc_measure`) alongside the curated-AST path.
+- **Phase 2 — Hard cutover.** Replace the curated AST with the analyzer; remove `compile_grouped_with_all`, `validate_calc_ast`, and the curated AST classes. Calc measures are stored as `CalcMeasure(expr=callable)` and re-evaluated against `IbisCalcScope` at query time. `with_measures(...)` on `SemanticTable` *and* on `SemanticAggregate` (`expr.py:1589`) already routes through `_classify_measure`, so the same lambda surface that defines model-level measures also covers query-local ones.
+- **Phase 3 — Drop `SemanticMutateOp`.** Remove the chain operator, its planner branches, and its serialization. The chained `.mutate(**post)` API either (a) is removed and users migrate to `.with_measures(**post).aggregate(..., *post.keys())`, or (b) survives as a thin alias that desugars to exactly that — one line, no operator node, no new method name. **Recommendation: (b)** — preserves chain ergonomics for existing user code while collapsing the operator graph to one path.
+
+## Implementation status
+
+### Phases 1+2 — Landed (branch `hussain/feat/calc-measure-analyzer`)
+
+Net diff: **~-727 lines** in production code. Test suite: 978 passed, 1 preexisting unrelated xorq failure.
+
+What's wired:
+
+- **`calc_analyzer.py`** — `analyze_calc_expr` walks an ibis tree (skipping `Relation` subtrees) and returns `CalcExprAnalysis(pushable, references_AllOf, has_window, post_agg_only, depends_on, inline_aggs)`. Single-pass `_scan_tree` recognizes plain `Reduction`, real `WindowFunction`, and the agg-of-agg / empty-window-over-reduction patterns that mean "totals."
+- **`calc_compiler.py`** — `IbisCalcScope` (dual-table dispatch over base + virtual aggregated + virtual totals), `evaluate_calc_lambda`, `classify_calc_lambda`, `lift_inline_reductions`, `apply_calc_measures`, `compile_calc_measure`. Topological ordering of calc-of-calc chains via `topological_order_from_deps`.
+- **`ops.py`** — `CalcMeasure` is the new storage shape. `_classify_measure` runs the lambda once against `IbisCalcScope`, walks the result, and routes to base or calc. `_build_aggregation_plan` / `_compile_aggregation` replace `compile_grouped_with_all`. The pre-agg path's `_apply_calc_specs` and the deferred-join arm both go through `apply_calc_measures`.
+- **`measure_scope.py`** — curated AST classes (`MeasureRef`, `AllOf`, `BinOp`, `MethodCall`, `AggregationExpr`, `_PendingMethodCall`, `DeferredColumn`, `validate_calc_ast`) deleted. `MeasureScope` and `ColumnScope` survive as thin pass-through proxies for `SemanticMutateOp` (still present) and for nested-access helpers.
+- **`compile_all.py`** — deleted. Nested-array helpers extracted to `nested_compile.py`.
+- **`serialization/extract.py`** — `serialize_calc_measures` walks each `CalcMeasure.expr` via `expr_to_structured` and stores the resolver tree plus `description`, `requires_unnest`, and `depends_on`. `deserialize_calc_measures` rebuilds `CalcMeasure(expr=Deferred(...), depends_on=...)`. Backwards-compat for the old bare-tuple format kept at one site.
+- **`utils.py`** — `serialize_resolver` / `deserialize_resolver` handle the `Item` resolver (needed for `t["prefixed.name"]`). All FrozenSlotted resolvers built via `object.__new__` go through `_finalize_frozen_slotted` so the rebuilt resolver hashes equal to a freshly-constructed one — fixes a latent bug that would surface as `AttributeError: __precomputed_hash__` when a deserialized resolver was used as a dict key.
+
+What this gained beyond literal cutover:
+
+- **Non-sum `t.all(...)` works correctly.** `t.all(measure_ref)` resolves to a `Field(totals_vt, name)`; the compiler builds a real no-group-by totals aggregation by re-running `agg_specs` on the base, applies non-AllOf calc measures to it, cross-joins it with prefixed column names, and rewrites totals references. Non-sum chains (`avg_distance / t.all(avg_distance)`) now match the right answer (overall mean, not sum-of-per-group-means). Pinned by `test_apply_calc_measures_join_with_mean_totals` (mean) and parametrized `test_apply_calc_measures_non_sum_totals` (median, min, max).
+- **Inline reductions inside `t.all(...)`.** `t.value.sum() / t.all(t.value.sum())` compiles end-to-end via `lift_inline_reductions`: each unique reduction over the base is named, added to both per-group and totals aggregations, and rewritten in-place (bare → `Field(vt, anon)`, windowed → `Field(totals_vt, anon)`). Pinned by `test_lift_inline_reductions_routes_window_to_totals`.
+- **Calc-of-calc.** Topologically ordered inside `apply_calc_measures` — each calc is added to the result via its own `mutate(...)` so subsequent calcs see it as a column. `depends_on` is captured at classification time and survives serialization.
+- **Joined models.** `IbisCalcScope` does unique-suffix matching: `t.flight_count` resolves to `flights.flight_count` when there's exactly one such suffix. No need to rewrite stored lambdas for prefixed names.
+- **Clear errors instead of opaque ibis `IntegrityError`.** `TotalsNotAvailableError` when `t.all(...)` is referenced but no totals can be built; post-rewrite assertion in `compile_calc_measure` listing the unresolved column names.
+
+### Phase 3 — Outstanding
+
+`SemanticMutateOp`, the chained `.mutate()` API, and the planner branches that special-case mutate are still in the codebase. Phase 3 work:
+
+1. **Reduce `.mutate(**post)` to a thin alias for `.with_measures(**post).aggregate(*current, *post.keys())`** on `SemanticAggregate`. No new method name, no new operator node, no new storage shape — `with_measures` already routes through `_classify_measure`, which already routes through the analyzer. The mutate method becomes ~3 lines of desugaring; existing user code keeps working unchanged.
+2. **Remove `SemanticMutateOp`** from `ops.py` (currently `ops.py:3307`).
+3. **Remove `SemanticMutate`** from `expr.py` (currently `expr.py:1615`). The three `.mutate()` methods on `SemanticTable` (`expr.py:221`), `SemanticAggregate` (`expr.py:1352`), and `SemanticMutate` (`expr.py:1659`) either get the desugaring described in (1) or are deleted.
+4. **Remove mutate-aware planner branches** (enumerated below).
+5. **Remove `SemanticMutateOp` registrations** from `serialization/extract.py:63,74,140`, `serialization/reconstruct.py:185`, `convert.py:24,400`, `format.py:17,149`, `chart/utils.py:131,137`. Existing tags containing `SemanticMutateOp` will fail to deserialize with an `UnknownTagError` (or equivalent) naming the offending op and pointing users at the `with_measures` equivalent in the deprecation note. No migration tool: tags are re-generated from current model definitions, and users with persisted tags either re-tag or pin the prior BSL version.
+6. **Lint / deprecation pass.** Flag remaining `.mutate(` chained off semantic objects in user code if (3) opts to delete rather than alias; emit the `with_measures` equivalent.
+
+#### Phase 3 readiness checklist — planner branches that go away
+
+Each line is a concrete deletion target. Counts are from current `main`-vs-branch state.
+
+| File:line | What it does | What replaces it |
+|---|---|---|
+| `ops.py:380` | `_semantic_repr` arm for `SemanticMutateOp` | Deleted with the op |
+| `ops.py:2364` | `has_prior_aggregate(SemanticMutateOp)` traversal | Deleted; no node to traverse |
+| `ops.py:2374` | `is_post_agg = has_prior_aggregate(self.source)` driving the post-agg branch in `SemanticAggregateOp.to_untagged` | Stays — but the only mutate-recursion case (line 2364) goes away; remaining cases (`SemanticAggregateOp`, `SemanticGroupByOp`) still apply |
+| `ops.py:2377–2392` | `collect_mutates_to_join` walks the chain collecting `SemanticMutateOp.post` dicts | Deleted; no chained mutates to collect |
+| `ops.py:2433` | `collected_mutates = collect_mutates_to_join(self.source)` | Deleted |
+| `ops.py:2439` | `_to_untagged_with_preagg(..., mutates=collected_mutates)` | Drop the `mutates` parameter |
+| `ops.py:2553–2558` | `mutated_gb_keys` heuristic — group-by keys that aren't dims/measures/calcs are assumed to be mutate-introduced | Deleted; group-by keys with derivations are calc measures via `with_measures`, so they appear in `merged_calc_measures` |
+| `ops.py:2569–2581` | Apply mutate ops to full joined table for dim-bridge use | Deleted |
+| `ops.py:2706–2716` | Apply mutated group-by keys to per-table raw tables for grain computation | Deleted |
+| `ops.py:2768–2770` | Local-dim handling for mutated group-by keys | Deleted |
+| `ops.py:3307–3372` | `SemanticMutateOp` class itself | Deleted |
+| `expr.py:32, 221, 222, 1352, 1353, 1615–1698, 1659, 1660, 1675–1698` | `SemanticMutate` class, `.mutate()` methods, imports | Deleted or reduced to alias |
+| `convert.py:24, 400–402` | `_convert_semantic_mutate` to-ibis conversion | Deleted |
+| `format.py:17, 149–150` | `_format_semantic_mutate` repr | Deleted |
+| `chart/utils.py:131, 137` | Chart introspection skipping `SemanticMutateOp` nodes | Deleted (no nodes to skip) |
+| `serialization/extract.py:63, 74, 140` | Registration + lazy stash for `SemanticMutateOp` tag | Deleted |
+| `serialization/reconstruct.py:185–190` | Reconstructor for `SemanticMutateOp` | Replaced by a clear `UnknownTagError` naming the op and pointing at the `with_measures` equivalent |
+
+The intellectually load-bearing piece — proving you can recover pushability/AllOf-lift/post-agg classification by analyzing an ibis tree — is done. Phase 3 is mechanical deletion guided by the table above plus regression tests for each composition that the deletions touch.
+
+#### Composition gotchas to pin with tests before deletion
+
+Each row is a chained mutate composition that exists today; the right column says how the equivalent `with_measures` chain behaves. None requires new semantics — they all fall out of where `with_measures` already builds its scope — but each needs a regression test before mutate is removed.
+
+| Composition | Today's behavior | After (`with_measures` chain) |
+|---|---|---|
+| `.aggregate(...).mutate(c=lambda t: ...).filter(p)` | Filter sees `c` (mutate runs first by chain order) | `.with_measures(c=...).aggregate(..., "c").filter(p)` — same: filter applies to the aggregated table containing `c` |
+| `.aggregate(...).mutate(a=...).filter(p).mutate(b=...)` | `b` sees filtered table including `a` | `.with_measures(a=...).aggregate(..., "a").filter(p).with_measures(b=...)` — `SemanticFilter.with_measures` (`expr.py:1117`) scopes on `self.op().to_untagged()` which is the filtered table, so `b` sees rows surviving `p` |
+| `.aggregate(...).mutate(c=...).order_by("c")` | OrderBy operates on `c` | `.with_measures(c=...).aggregate(..., "c").order_by("c")` — same: `c` is a column on the aggregated table |
+| `.aggregate(...).mutate(c=...).limit(10)` | Limit applied after `c` is added | Same — limit is post-aggregate either way |
+| `.aggregate(...).mutate(c=...).limit(10).mutate(d=lambda t: t.c * 2)` | `d` sees the post-limit table | `.with_measures(c=...).aggregate(..., "c").limit(10).with_measures(d=...)` — but **note**: `SemanticLimit.with_measures` does *not* exist today (`expr.py` only defines it on `SemanticTable`/`SemanticFilter`/`SemanticAggregate`/`SemanticMutate`). Phase 3 either adds `SemanticLimit.with_measures` or rejects this composition. Recommended: add it, scoped on `self.op().to_untagged()` for consistency with `SemanticFilter.with_measures` |
+| `.mutate(c=...).group_by(...).aggregate(...)` | Mutate runs *before* aggregation; `c` is a dimension-grain column | `.with_measures(c=...).group_by(...).aggregate(..., "c")` — the analyzer classifies pre-agg derivations as `pushable`, so this Just Works on the existing path |
+| `.aggregate(...).mutate(c=...)` followed by use as a join input | Mutate result becomes a `SemanticMutateOp` node the join planner had to special-case | After Phase 3, the result is a `SemanticAggregate` (subclass of `SemanticTable`) with `c` in its measures dict. The join planner already handles `SemanticAggregate`, so the `SemanticMutateOp` arm in `collect_mutates_to_join` simply has nothing to collect |
+| `.join_one(...).mutate(c=...)` (mutate after join, before aggregate) | Mutate adds a column that participates as a group-by candidate via `mutated_gb_keys` | After Phase 3: define `c` via `with_measures` on either side before the join, or on the join result; either way it lands in `merged_calc_measures` and the planner sees it without the `mutated_gb_keys` heuristic |
+
+The `mutated_gb_keys` heuristic at `ops.py:2553` deserves a specific call-out: *the only reason it exists* is that `SemanticMutateOp` introduced columns the planner couldn't classify as dims/measures/calcs. Once mutate columns become calc measures, the heuristic has no work to do — every group-by key resolves through `merged_*` lookups directly. This collapses lines 2553–2770 (~60 LOC of conditional handling for mutated keys) without replacement.
 
 ## Migration
 
-| Today                                                                                                  | After                                                                                                              |
-|--------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
-| `with_measures(avg=lambda t: t.total / t.cnt)` (calc measure today)                                    | Unchanged shape — accepted as an ibis expression; analyzer classifies as `pushable`.                               |
-| `with_measures(share=lambda t: t.x / t.all(t.x))`                                                       | Unchanged — `t.all(...)` keeps its surface; analyzer detects the marker and lifts to a window aggregation.         |
-| `.aggregate("a","b").mutate(c=lambda t: t.a / t.b)`                                                     | Define `c` once on the model; just request it.                                                                     |
-| `.aggregate("c").mutate(bucket=lambda t: xo.case().when(t.c>=3,"hi").else_("lo").end())`                | Define `bucket` as a calc measure with `xo.case` — now permitted (analyzer classifies as `post_agg_only`).         |
-| `.aggregate("x").mutate(rank=lambda t: t.x.rank(), pct=lambda t: t.x.percent_rank())`                   | Define `rank`, `pct` as calc measures — analyzer classifies as `has_window`, `post_agg_only`.                      |
-| `.aggregate("x").mutate(ma=lambda t: t.x.mean().over(window(order_by="d", preceding=2)))`               | Define `ma` as a calc measure with the windowed expression.                                                        |
-| `.aggregate("x").mutate(adhoc=...)` where `adhoc` truly is per-query                                    | `.aggregate("x").with_calc(adhoc=...)` registers an ad-hoc calc measure on the query — same ergonomics, one path.  |
-| Existing serialized tags containing `SemanticMutateOp`                                                  | One-shot rewrite tool (`scripts/migrate_tags.py`) lowers mutate columns to calc measures (now possible because the calc-measure expression language is full ibis). Tags it cannot rewrite fail loudly with the offending expression. |
-
-A short codemod / lint flags remaining `.mutate(` chained off semantic objects and emits the `with_calc` or `with_measures` equivalent.
+| Today                                                                                                  | After Phase 3                                                                                                       |
+|--------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| `with_measures(avg=lambda t: t.total / t.cnt)` (calc measure today)                                    | Already works — landed in Phase 1+2; analyzer classifies as `pushable`.                                             |
+| `with_measures(share=lambda t: t.x / t.all(t.x))`                                                       | Already works — landed in Phase 1+2; the analyzer detects the totals pattern, the compiler builds a real totals table. |
+| `with_measures(avg=lambda t: t.x.mean(), ratio=lambda t: t.avg / t.all(t.avg))` (non-sum totals)        | Already works — landed in Phase 1+2; totals re-aggregation uses the formula, not a windowed sum.                    |
+| `.aggregate("a","b").mutate(c=lambda t: t.a / t.b)`                                                     | Define `c` on the model and request it: `.with_measures(c=...).aggregate("a","b","c")`. Or keep the chained shape if Phase 3 ships `.mutate` as an alias. |
+| `.aggregate("c").mutate(bucket=lambda t: xo.case().when(t.c>=3,"hi").else_("lo").end())`                | `.with_measures(bucket=...).aggregate("c","bucket")` — already permitted in Phase 1+2 (analyzer classifies as `post_agg_only`). |
+| `.aggregate("x").mutate(rank=lambda t: t.x.rank(), pct=lambda t: t.x.percent_rank())`                   | `.with_measures(rank=..., pct=...).aggregate("x","rank","pct")` — already permitted (analyzer classifies as `has_window`). |
+| `.aggregate("x").mutate(ma=lambda t: t.x.mean().over(window(order_by="d", preceding=2)))`               | `.with_measures(ma=...).aggregate("x","ma")` — already permitted.                                                   |
+| `.aggregate("x").mutate(adhoc=...)` where `adhoc` truly is per-query                                    | `.with_measures(adhoc=...).aggregate("x","adhoc")` registers a query-local measure on the temporary aggregated model. Same shape, same lambda. |
+| Existing serialized tags containing `SemanticMutateOp`                                                  | Fail to deserialize with a clear error naming the offending op and pointing at the `with_measures` equivalent. Users re-tag from current model definitions or pin the prior BSL version. No migration tool. |
 
 ## Consequences
 
-### Positive
+### Positive — realized in Phase 1+2
 
-- **One primitive** for post-aggregation derivation. Definition placement is uniform (on the model, or query-local via `with_calc` sugar). One concept to learn, one place to reason about types, dependencies, and pre-agg rewrites.
-- **Full ibis expressivity** is retained. Windows, `xo.case`, and arbitrary post-agg transforms all work declaratively, and *participate in serialization, catalog tooling, and pre-agg analysis* in a way mutate columns never did.
-- **No hand-rolled compiler.** `compile_grouped_with_all` and `infer_calc_dtype` are replaced by ibis compilation plus an analyzer. Type inference becomes `expr.type()`.
-- **Planner branches collapse.** `collect_mutates_to_join`, `has_prior_aggregate`'s mutate arm, `mutated_gb_keys`, and the `_rejoin_one` mutate fixups all go away. Pushability is read off the analyzer's classification record.
-- **Serialization simplifies.** Calc measures serialize through one mechanism (resolver trees). Two parallel formats (curated-AST `expr_struct` vs. opaque mutate resolver) collapse to one.
-- **Catalog visibility for everything mutate previously hid.** Window expressions, bucket labels, and `xo.case` derivations show up in `model.measures` and tooling.
-- **Obviates two would-be follow-up ADRs** (xo.case in calc measures, windows in calc measures). Going to ibis-as-the-language once is strictly less work over time than node-by-node AST extension.
+- **One classification path.** Calc-measure pushability/AllOf-lift/post-agg routing is read off `analyze_calc_expr`. No more parallel "is this a curated AST node" + "what does ibis make of it" reasoning.
+- **Full ibis expressivity for calc measures.** Windows, `xo.case`, `xo.ifelse`, `.fillna(...).cast(...)`, struct/array methods — all work declaratively *and* participate in serialization, catalog tooling, and pre-agg analysis.
+- **No hand-rolled compiler.** `compile_grouped_with_all` and `infer_calc_dtype` deleted. Type inference falls out of `expr.type()` (with a debug-logged fallback for joined-model edge cases).
+- **Serialization simplified.** Calc measures serialize through one mechanism (resolver trees). Two parallel formats collapsed to one.
+- **Catalog visibility for everything mutate previously hid would be the next benefit** — partially realized: anything declarable on the model now shows up in `model.measures`. Phase 3 closes the gap for genuinely per-query derivations.
+- **Obviates two would-be follow-up ADRs** (`xo.case` in calc measures, windows in calc measures). Done in one cut.
 
-### Negative
+### Positive — pending Phase 3
 
-- **The analyzer is harder than tag-matching.** Detecting `AllOf` was `isinstance(node, AllOf)`; detecting "agg-of-agg" requires walking ibis trees and recognizing the structural pattern. The other classifications (window detection, single-table-ref check) are mechanical but not free. This is a genuine new piece of code roughly the size of the existing `validate_calc_ast` plus the AllOf-lift section of `compile_grouped_with_all`.
-- **Migration of existing calc-measure ASTs.** `MeasureRef("x")`, `AllOf(...)`, `BinOp(...)` keep working through a thin compat shim that lowers them to ibis-tree shapes the analyzer recognizes. The shim is deprecated once external users have migrated.
-- **`t.all(...)` mechanic shifts** from "method on proxy returning curated AST node" to "method on proxy returning ibis-recognizable marker." Same external surface; existing user code is unaffected.
-- **Existing tags with `SemanticMutateOp` no longer deserialize** without the migration tool. The tool can rewrite most cases (because the new calc-measure expression language *is* full ibis), but truly opaque cases fail loudly.
-- **Classification at compile time.** The analyzer walks each measure's expression once. Negligible cost for typical models.
+- **Planner branches collapse.** `collect_mutates_to_join`, `has_prior_aggregate`'s mutate arm, `mutated_gb_keys`, and `_to_untagged_with_preagg(..., mutates=...)` all go away.
+- **`expr.py` shrinks.** `SemanticMutate` (entire class) and `SemanticMutateOp` (entire op) disappear. The `.mutate(**post)` method either survives as a 3-line alias for `with_measures(**post).aggregate(...)` or is deleted entirely.
+- **No new public method.** The user-facing surface stays at `with_measures` — already familiar, already analyzer-routed. No `with_calc` to learn.
+- **Serialization simplifies further.** Tags carrying `SemanticMutateOp` go away; the deserializer surfaces a clear error for any old tag that still references it.
+
+### Behavior changes for users
+
+The Phase 1+2 cutover is an internal refactor in shape, but it has three semantic edges users will hit and that the ADR commits to as stable surface area.
+
+1. **Calc lambdas execute twice per query.** Once at definition (classification — `_classify_measure` runs the lambda against `IbisCalcScope` to walk the resulting ibis tree) and once at query time (compilation — `apply_calc_measures` re-runs the lambda against the real aggregated table). Implications:
+   - **Pure expressions** (`lambda t: t.a / t.b`) — no observable change.
+   - **Lambdas that read external state** (config, env, globals) — both reads happen; if the values differ between definition and query they observe the *latter*. In practice the classification result is discarded once the lambda is stored, but the side effects are not.
+   - **Lambdas with side effects** (logging, counters, network calls) — fire twice. **Don't put side effects in calc lambdas.** This was technically also true for `mutate(...)` lambdas (they ran during planning *and* execution if the table was re-executed) but only the analyzer makes the double-execution unconditional and predictable.
+   - The current ``_classify_measure`` swallows generic exceptions and falls through to base classification (`ops.py:790`), so a lambda that raises during classification still gets called at query time. Don't rely on classification-time exceptions to short-circuit anything.
+
+2. **`IbisCalcScope` dispatch order is the public contract** users program against in calc lambdas. The order is:
+   1. **Base column wins on collision.** If `t.foo` matches a column on the base table, it returns the base column — even when `foo` is also registered as a measure. This preserves historical `t.distance.sum()` semantics where `distance` was both a column and a measure name.
+   2. **Then known measure (with suffix matching).** `t.flight_count` resolves to the measure named `flight_count`; on a joined model with prefixed names like `flights.flight_count`, the unique-suffix match bridges the short name automatically.
+   3. **Then ibis Table methods.** `t.count`, `t.filter`, etc. fall through to the underlying table for parity with ibis usage inside calc bodies.
+   4. **Otherwise `UnknownMeasureRefError`** with a `difflib`-derived "did you mean?" suggestion.
+
+   `t.all(x)` follows a separate contract: string measure name → totals reference; string column name → `column.sum().over(window())` with a logger warning saying "use a measure for non-sum semantics"; ibis Reduction → window-wrap; ibis Field on the virtual aggregated table → totals reference.
+
+   **Footgun.** A model defining a measure with the same name as a base column shadows the column inside `t.foo`. This is rarely what users want when defining ratios — `t.distance.mean() / t.all(t.distance.mean())` has clear intent, but if the user wrote `t.distance / t.all(t.distance)` expecting "ratio of mean to total mean," they'd get the column instead. ADR commits to documenting this in user docs and adding a startup-time warning when a measure shadows a column.
+
+3. **Nested-array measures + `t.all(...)` is unsupported.** `apply_calc_measures` raises `TotalsNotAvailableError` (calc_compiler.py:498) when a calc references `t.all(...)` on a model with nested-array measures. Reason: nested-array measures compile at multiple grains and join — there is no single "totals aggregation" that respects all grains. Users hitting this either (a) restructure the calc to reference a flat-grained intermediate measure, or (b) lower it manually via the `to_untagged()` escape hatch. ADR commits to the error rather than a silently-wrong answer; lifting the limitation is future work that requires designing per-grain totals semantics.
+
+### Negative — accepted
+
+- **The analyzer is harder than tag-matching.** Detecting `AllOf` was `isinstance(node, AllOf)`; detecting "agg-of-agg" requires walking ibis trees and recognizing the structural pattern. The analyzer is roughly the size of the deleted `validate_calc_ast` plus the AllOf-lift section of the deleted compiler — net code is still smaller (-727 LOC).
+- **Calc lambdas now run twice.** Once at construction (for classification) and once at query time (against the real table). For typical models this is negligible — calc lambdas are tiny — but lambdas with side effects would be observed twice. Documented as an intentional tradeoff.
+- **`IbisCalcScope` is load-bearing public-ish surface area.** When users write calcs they're effectively programming against the scope's dispatch rules (column-first, then known-measure suffix lookup, then `t.all(...)` totals). Documented.
+- **Hard cutover, no compat shim.** Calc measures using the old curated-AST shapes (`MeasureRef("x")`, `AllOf(...)`, `BinOp(...)`) no longer work directly. In practice the user-facing API was always the lambda form (`lambda t: t.x / t.all(t.x)`); only internal tests touched the AST classes. Test suite migrated in the same branch.
+
+### Negative — pending Phase 3
+
+- **Existing tags with `SemanticMutateOp` will not deserialize.** They fail with a clear error naming the offending op. Users re-tag from current model definitions or pin the prior BSL version. No migration tool — the failure mode is loud and the fix (re-tag) is a one-line script call against the model.
 - **Doc churn.** `query-methods.md`, `bucketing.md`, `sessionized.md`, `windowing.md`, `percentage-total.md`, `reference.md` all need rewrites — but in a *better* direction (declarative on the model rather than chained `.mutate()`).
-- **Test churn.** `test_real_world_scenarios.py`, `test_preagg_stress.py`, `test_malloy_inspired.py`, and the calc-measure tests need updates.
+- **Test churn.** `test_real_world_scenarios.py`, `test_preagg_stress.py`, `test_malloy_inspired.py`, and the mutate-chain tests need updates.
 
 ### Neutral
 
-- Pre-aggregation correctness (formerly the `mutated_gb_keys` machinery) is no longer the operator's responsibility — but it was only the operator's responsibility because `SemanticMutateOp` introduced post-agg derived columns the planner couldn't see into. With analysis-based classification, the planner reads pushability off the calc measure's expression directly; correctness is a property of the analyzer, not of a special-case branch.
+- Pre-aggregation correctness (formerly the `mutated_gb_keys` machinery) is no longer the operator's responsibility — it was only the operator's responsibility because `SemanticMutateOp` introduced post-agg derived columns the planner couldn't see into. With analysis-based classification, the planner reads pushability off the calc measure's expression directly; correctness is a property of the analyzer.
 
 ## Alternatives considered
 
-1. **Keep both, document the split.** Rejected for the same reason as the previous version of this ADR — enshrines a confusing two-axis decision ("is this a measure or a mutate?") that is already a recurring user question.
+1. **Keep both, document the split.** Rejected — enshrines a confusing two-axis decision ("is this a measure or a mutate?") that was already a recurring user question.
 2. **Drop calc measures, keep `mutate`.** Mutate's expression language is right; its placement (query-local, anonymous, not in `model.measures`) is wrong. Rejected.
-3. **Drop `mutate`, keep the curated calc-measure AST** (the previous version of this ADR). Trades the planner cleanup for ergonomic regression on windows and `xo.case`. Rejected because the curated AST has to grow eventually anyway, and growing it is strictly more total work than going to ibis-as-the-language once.
+3. **Drop `mutate`, keep the curated calc-measure AST** (the previous version of this ADR). Trades the planner cleanup for ergonomic regression on windows and `xo.case`. Rejected — the curated AST has to grow eventually anyway, and growing it is strictly more total work than going to ibis-as-the-language once.
 4. **Extend the curated calc-measure AST node-by-node** (add `Case`, `Window`, `When`, …). Each extension requires coordinated changes to `validate_calc_ast`, the compiler, the AllOf-lift pass, and serialization. Strictly more work over time than this unification; rejected.
 5. **Defang `SemanticMutateOp`** to a terminal-only post-agg escape hatch with no chained API and no pre-agg participation. Saves the planner cleanup but keeps two systems and the curated-AST limitation forever. Rejected.
 6. **Keep `SemanticMutateOp` only at the post-aggregation boundary, hide the public `.mutate` API.** Strips the user-facing surface but leaves the planner branches and serialization registrations intact. Rejected.
+7. **Soft cutover with a curated-AST compat shim** (the original Phase 1 plan). Rejected during implementation — the AST classes had no external users in practice (only internal tests), so the shim was pure carrying cost. Hard cutover saved the deprecation cycle.
 
 ## Open questions
 
-- **Analyzer scope for v1.** What patterns does the first cut recognize? Recommendation: (a) "all column refs target one source table and there is no window" → `pushable`; (b) "an aggregation node appears as a scalar inside an enclosing aggregation context" → `references_AllOf`, lift to window aggregation; (c) "any window node anywhere" → `has_window`, `post_agg_only`. Anything not classifiable falls back to `post_agg_only` with a deprecation warning, never an error.
-- **Compat-shim duration for the curated AST.** Recommendation: one minor version of acceptance with a deprecation warning ("`MeasureRef`/`AllOf`/`BinOp` will be removed in vX.Y; use ibis expressions directly"), then removal.
-- **`t.all(...)` API.** Keep the proxy method (current surface) or expose a top-level `xo.all(...)` marker? Recommendation: keep the proxy method; have it emit an ibis-recognizable marker. No user-visible change.
-- **Tag migration tool.** Ship `scripts/migrate_tags.py` that rewrites old tags. Most `SemanticMutateOp` cases lower to calc measures cleanly; the rest fail loudly with the offending expression and a pointer to `to_untagged()` as the explicit escape hatch.
-- **Sequencing.** Recommended order: (1) land the analyzer alongside the curated AST (both paths active, analyzer used for new measures); (2) migrate internal calc measures to ibis expressions, exercise the analyzer in tests; (3) drop `SemanticMutateOp`, planner branches, and serialization registrations; (4) deprecate the curated AST shim; (5) remove the shim one minor version later.
+### Resolved in Phase 1+2
+
+- ~~**Analyzer scope for v1.**~~ Implemented per the recommendation: column-refs-on-one-source → `pushable`; agg-of-agg / empty-window-over-reduction → `references_AllOf`; any window node → `has_window`. Unrecognized inputs warn and fall back to `post_agg_only`.
+- ~~**`t.all(...)` API.**~~ Kept the proxy method (`scope.all(...)`); emits a `Field(totals_vt, ...)` reference the analyzer recognizes. No user-visible change.
+- ~~**`t.all(...)` over non-sum measures.**~~ Resolved with a real totals table. Per-group means cross-joined with overall mean; totals re-aggregation uses the formula, not a windowed sum.
+- ~~**Inline reductions inside `t.all(...)`.**~~ Resolved via `lift_inline_reductions`.
+- ~~**Calc-of-calc dependency ordering.**~~ Topological order from `CalcMeasure.depends_on`, captured at classification time and preserved through serialization.
+- ~~**Compat-shim duration for the curated AST.**~~ Hard cutover; no shim.
+
+### Resolved during ADR review
+
+- ~~**`with_measures` semantics for chained calls after a filter.**~~ Settled. `SemanticFilter.with_measures` (`expr.py:1117`) builds its `MeasureScope` on `self.op().to_untagged()`, which is the *filtered* ibis table; lambdas registered there see the filtered rows. Phase 3's `.mutate(...)` desugaring inherits this — no new semantics to invent. Worth a regression test (`test_with_measures_after_filter_sees_filtered_table`) so the contract is pinned before mutate is removed.
+
+### Resolved during Phase 3 readiness pass
+
+- ~~**`.mutate(...)` chain method: alias or delete?**~~ **Alias.** Keep `.mutate(**post)` as a 3-line desugaring to `self.with_measures(**post).aggregate(*current_aggs, *post.keys())` on `SemanticAggregate`. The composition gotcha table above shows every chained-mutate shape lowers cleanly to the equivalent `with_measures` chain, so the alias is unambiguous. Preserves chain ergonomics; no operator/storage-path divergence. The `.mutate()` method on `SemanticTable` (pre-aggregate) lowers to a slightly different alias — `self.with_measures(**post)` — because pre-aggregate mutate is just "register measures on this model"; calling it as `with_measures` is the rename.
+
+- ~~**Old tag handling.**~~ No migration tool. Tags containing `SemanticMutateOp` raise a clear deserialization error naming the offending op and pointing at the `with_measures` equivalent in the deprecation note. Users either re-tag from their current model definitions or pin the prior BSL version. Rationale: the calc-measure expression language is now full ibis, so re-generating tags from the current model is straightforward; building a tool that introspects arbitrary persisted lambdas would cost more than the user-side re-tag.
+
+- ~~**Pre-agg correctness coverage audit.**~~ Required before deletion. The pre-agg paths (`_to_untagged_with_preagg`, `_to_untagged_with_deferred_joins`) currently special-case mutate via `mutated_gb_keys` and `collect_mutates_to_join`. The audit consists of: (a) enumerate every mutate-aware branch (the planner-readiness table above is this list); (b) for each branch, identify the equivalent `with_measures` test case in `test_real_world_scenarios.py` / `test_preagg_stress.py`; (c) where coverage is missing, add the test *before* deleting the branch. The Phase 1+2 baseline is 978 passing tests (1 preexisting unrelated xorq `read_parquet` failure) — any Phase 3 deletion that doesn't keep that count at 978 or higher blocks the merge. Concrete coverage gaps known today: chained-after-limit (`SemanticLimit.with_measures` doesn't exist yet — Phase 3 must add it), and the `mutated_gb_keys` interaction with cross-table dimension bridges (`ops.py:2566–2581`).
+
+### Open for Phase 3
+
+- **Sequencing inside Phase 3.** Recommended order: (1) ship `SemanticLimit.with_measures` and the regression tests for every composition in the gotcha table — establishes the baseline equivalence; (2) reduce `.mutate()` to the desugaring alias and re-run the test suite — proves the alias is observationally equivalent; (3) drop `SemanticMutateOp`, planner branches, and serialization registrations (the alias's call site changes from "build mutate op" to "extend the aggregate's measure set") — the test suite is the safety net. Update `serialization/reconstruct.py` to raise a clear error for old `SemanticMutateOp` tags; (4) decide whether to keep or delete the alias one minor version later. Each step is independently revertable; (3) is the load-bearing deletion and (1)+(2) exist to make it boring.
+
+- **Classification-result caching.** The analyzer runs once per calc per `_compile_aggregation` call — already memoized within a single query (`classify_calc_lambdas` in `calc_compiler.py:540`). Cross-query caching is out of scope: the classification depends on the model's known-measure set, which varies between models that share calc lambdas (e.g. via copy-paste). Anyone hitting hot-path overhead from re-classification has bigger problems (their model construction is in the request path); the right fix is to cache the *built* `SemanticAggregateOp` tree, not the classification record. ADR commits to no cross-query analyzer cache; the classification-cost story is "negligible for typical models, not the bottleneck for hot paths anyway."
