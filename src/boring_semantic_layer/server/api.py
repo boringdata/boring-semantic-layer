@@ -162,7 +162,7 @@ def _search_dimension_values_response(
             ),
         )
 
-    from boring_semantic_layer.compile_all import _get_ibis_module
+    from boring_semantic_layer.nested_compile import get_ibis_module as _get_ibis_module
 
     dim = dims[dimension_name]
     tbl = model.table

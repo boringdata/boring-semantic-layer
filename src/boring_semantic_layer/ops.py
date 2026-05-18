@@ -45,16 +45,30 @@ from returns.result import Success, safe
 from toolz import curry
 
 from . import projection_utils
-from .compile_all import compile_grouped_with_all
+from .calc_analyzer import analyze_calc_expr, virtual_agg_table
+from .calc_compiler import (
+    TOTALS_PREFIX,
+    IbisCalcScope,
+    TotalsNotAvailableError,
+    UnknownMeasureRefError,
+    _drop_totals_columns,
+    _join_totals,
+    _to_op,
+    apply_calc_measures,
+    attach_calc_totals,
+    attach_windowed_totals,
+    classify_calc_lambdas,
+    compile_calc_measure as _compile_calc_measure_impl,
+    compile_calc_measures,
+    evaluate_calc_lambda,
+    lift_inline_reductions,
+    rename_measure_refs,
+    topological_order_from_deps,
+)
 from .graph_utils import walk_nodes
 from .measure_scope import (
-    AggregationExpr,
-    AllOf,
-    BinOp,
     ColumnScope,
-    MeasureRef,
     MeasureScope,
-    MethodCall,
 )
 from .nested_access import NestedAccessMarker
 
@@ -518,19 +532,6 @@ def _get_merged_fields(all_roots: list, field_type: str) -> dict:
     )
 
 
-def _collect_measure_refs(expr, refs_out: set):
-    if isinstance(expr, MeasureRef):
-        refs_out.add(expr.name)
-    elif isinstance(expr, AllOf):
-        if isinstance(expr.ref, MeasureRef):
-            refs_out.add(expr.ref.name)
-    elif isinstance(expr, BinOp):
-        _collect_measure_refs(expr.left, refs_out)
-        _collect_measure_refs(expr.right, refs_out)
-    elif isinstance(expr, MethodCall):
-        _collect_measure_refs(expr.receiver, refs_out)
-
-
 def _extract_missing_column_name(exc: Exception) -> str | None:
     """Extract a missing column/attribute name from common resolution errors."""
     message = str(exc)
@@ -680,232 +681,125 @@ def _extract_measure_metadata(
         return (fn_or_expr, None, (), {})
 
 
-_AGG_METHODS = frozenset({
-    # Standard reductions
-    "sum", "mean", "avg", "count", "min", "max",
-    # Statistical reductions
-    "var", "std", "median", "quantile",
-    # Approximate reductions
-    "approx_count_distinct", "approx_nunique", "approx_median",
-    # Distinct count
-    "nunique",
-    # Categorical reductions
-    "mode", "first", "last", "arbitrary",
-    # Boolean reductions
-    "any", "all",
-    # Collection reductions
-    "group_concat", "collect",
-})
-
-
-def _is_calculated_measure(val: Any) -> bool:
-    # A MethodCall with an aggregation method on a MeasureRef is a base measure:
-    # the column name matched a known measure name in MeasureScope, but the user
-    # is really defining a column aggregation (e.g. lambda t: t.flight_count.sum()
-    # or t.distance.var()).  ``_AGG_METHODS`` covers the ibis ``Reduction`` ops a
-    # user might reasonably reach for; methods outside the set fall through to
-    # the calc path.
-    if (
-        isinstance(val, MethodCall)
-        and val.method in _AGG_METHODS
-        and isinstance(val.receiver, MeasureRef)
-    ):
-        return False
-    return isinstance(val, MeasureRef | AllOf | BinOp | MethodCall | int | float)
-
-
-def _matches_aggregation_pattern(measure_expr, agg_expr, tbl):
-    if not isinstance(agg_expr, AggregationExpr):
-        return Success(False)
-
-    @curry
-    def evaluate_in_scope(tbl, expr):
-        """Evaluate measure expression in a ColumnScope."""
-        scope = ColumnScope(_tbl=tbl)
-        return (
-            expr.resolve(scope) if _is_deferred(expr) else expr(scope) if callable(expr) else expr
-        )
-
-    @curry
-    def has_matching_operation(agg_expr, result):
-        """Check if the operation matches the expected aggregation.
-
-        All our supported aggregations (Sum, Mean, Count, Min, Max) are ibis operations.
-        """
-        op_name = type(result.op()).__name__.lower()
-        expected_op = "avg" if agg_expr.operation.lower() == "mean" else agg_expr.operation.lower()
-
-        return expected_op in op_name
-
-    @curry
-    def has_matching_column(agg_expr, result):
-        """Check if result's operation references the expected column.
-
-        All supported aggregation operations (Sum, Mean, Count, Min, Max) have:
-        - args[0]: Field operation with .name attribute
-        - args[1]: Optional where clause (typically None)
-        """
-        op = result.op()
-
-        if not isinstance(op.args[0], Field):
-            return False
-
-        return op.args[0].name == agg_expr.column
-
-    def matches_pattern(result):
-        """Check if result matches both operation and column."""
-        return has_matching_operation(agg_expr, result) and has_matching_column(agg_expr, result)
-
-    return safe(lambda: evaluate_in_scope(tbl, measure_expr))().map(matches_pattern)
-
-
-def _find_matching_measure(agg_expr, known_measures: dict, tbl):
-    """Find a measure that matches the aggregation expression pattern.
-
-    Returns Maybe[str] using functional patterns.
-    """
-    if not isinstance(agg_expr, AggregationExpr):
-        return Nothing
-
-    @curry
-    def matches_pattern(agg_expr, tbl, measure_obj):
-        """Check if measure matches the aggregation pattern.
-
-        All measure_obj values are Measure instances with an expr attribute.
-        """
-        result = _matches_aggregation_pattern(measure_obj.expr, agg_expr, tbl)
-        return result.value_or(False)
-
-    for measure_name, measure_obj in known_measures.items():
-        if matches_pattern(agg_expr, tbl, measure_obj):
-            return Some(measure_name)
-
-    return Nothing
-
-
 def _make_base_measure(
     expr: Any,
     description: str | None,
     requires_unnest: tuple,
     metadata: Mapping[str, Any] | None = None,
 ) -> Measure:
-    """Create a base measure with proper callable wrapping using functional patterns."""
+    """Wrap a base-measure callable as a :class:`Measure`.
 
-    @curry
-    def apply_aggregation(operation: str, column):
-        """Apply aggregation operation to a column using functional dispatch."""
-        operations = {
-            "sum": lambda c: c.sum(),
-            "mean": lambda c: c.mean(),
-            "avg": lambda c: c.mean(),
-            "count": lambda c: c.count(),
-            "min": lambda c: c.min(),
-            "max": lambda c: c.max(),
-        }
-
-        return (
-            Maybe.from_optional(operations.get(operation))
-            .map(lambda fn: fn(column))
-            .value_or(
-                (_ for _ in ()).throw(ValueError(f"Unknown aggregation operation: {operation}"))
-            )
-        )
-
-    @curry
-    def evaluate_expr(expr, scope):
-        """Evaluate expression in given scope."""
-        return (
-            expr.resolve(scope) if _is_deferred(expr) else expr(scope) if callable(expr) else expr
-        )
-
-    def convert_aggregation_expr(t, agg_expr: AggregationExpr):
-        """Convert AggregationExpr to ibis expression."""
-        if agg_expr.operation == "count":
-            result = t.count()
-        else:
-            result = apply_aggregation(agg_expr.operation, t[agg_expr.column])
-
-        for method_name, args, kwargs_tuple in agg_expr.post_ops:
-            result = getattr(result, method_name)(*args, **dict(kwargs_tuple))
-
-        return result
-
+    The lambda is invoked against a :class:`ColumnScope` so that nested
+    array columns (``t.hits.count()`` over an array) surface as
+    ``NestedAccessMarker`` values for the nested-aggregation pipeline.
+    Plain reductions (``t.distance.sum()``) flow through unchanged.
+    """
     raw_expr = expr._fn if isinstance(expr, _CallableWrapper) else expr
 
-    if isinstance(expr, AggregationExpr):
-
-        def wrapped_expr(t):
-            """Convert AggregationExpr to ibis expression."""
-            return convert_aggregation_expr(t, expr)
-
-        return Measure(
-            expr=wrapped_expr,
-            description=description,
-            requires_unnest=requires_unnest,
-            original_expr=raw_expr,
-            metadata=dict(metadata or {}),
-        )
-
-    if callable(expr):
-
-        def wrapped_expr(t):
-            """Wrapped expression that handles AggregationExpr conversion."""
-            scope = ColumnScope(_tbl=t)
-            result = evaluate_expr(expr, scope)
-
-            if isinstance(result, AggregationExpr):
-                return convert_aggregation_expr(t, result)
-            return result
-
-        return Measure(
-            expr=wrapped_expr,
-            description=description,
-            requires_unnest=requires_unnest,
-            original_expr=raw_expr,
-            metadata=dict(metadata or {}),
-        )
+    if _is_deferred(expr):
+        wrapped = lambda t, fn=expr: fn.resolve(ColumnScope(_tbl=t))
+    elif callable(expr):
+        wrapped = lambda t, fn=expr: fn(ColumnScope(_tbl=t))
     else:
-        return Measure(
-            expr=lambda t, fn=expr: evaluate_expr(fn, ColumnScope(_tbl=t)),
-            description=description,
-            requires_unnest=requires_unnest,
-            original_expr=raw_expr,
-            metadata=dict(metadata or {}),
-        )
+        wrapped = lambda t, v=expr: v
+
+    return Measure(
+        expr=wrapped,
+        description=description,
+        requires_unnest=requires_unnest,
+        original_expr=raw_expr,
+        metadata=dict(metadata or {}),
+    )
 
 
 def _classify_measure(
     fn_or_expr: Any, scope: Any, measure_name: str | None = None
 ) -> tuple[str, Any]:
-    """Classify measure as 'calc' or 'base' with appropriate handling."""
-    from .measure_scope import UnknownMeasureRefError, validate_calc_ast
+    """Classify a measure lambda as ``base`` or ``calc``.
 
+    Runs the lambda once against an :class:`IbisCalcScope`, then walks
+    the resulting ibis tree with :func:`analyze_calc_expr`. Pushable
+    expressions become base measures (the same lambda runs at agg time
+    against the raw ibis table). Post-aggregation expressions become
+    :class:`CalcMeasure` records that re-evaluate at query time.
+
+    The legacy ``MeasureScope`` is accepted as the scope argument for
+    backwards compatibility with call sites — only its ``tbl`` and
+    ``known`` fields are read.
+    """
     expr, description, requires_unnest, metadata = _extract_measure_metadata(fn_or_expr)
 
-    # ``_resolve_expr`` may raise for legitimate base-measure shapes
-    # (e.g. lambdas that touch ibis methods MeasureScope can't reflect),
-    # so most exceptions are caught and the lambda falls through to
-    # base classification. ``UnknownMeasureRefError`` is the typo case
-    # though — surface it loudly instead of letting the lambda fail with
-    # an opaque error at execute time.
+    base_tbl = getattr(scope, "tbl", None)
+    if base_tbl is None:
+        base_tbl = getattr(scope, "_tbl", None)
+    known = getattr(scope, "known", None)
+    if known is None:
+        known = getattr(scope, "_known", ())
+    known_set = frozenset(known)
+
+    # Pure constants fold into both grouped and ungrouped contexts.
+    if isinstance(expr, (int, float)) and not isinstance(expr, bool):
+        return ("base", _make_base_measure(expr, description, requires_unnest, metadata))
+
+    if base_tbl is None:
+        return ("base", _make_base_measure(expr, description, requires_unnest, metadata))
+
+    # Build virtual aggregated table schema from already-known measures.
+    # The dtypes are placeholders — the analyzer cares about structure.
+    virtual_schema = {name: "float64" for name in known_set}
+
     try:
-        resolved_value = _resolve_expr(expr, scope)
+        ibis_expr, vt, totals_vt = evaluate_calc_lambda(
+            expr, base_tbl, known_set, virtual_schema
+        )
     except UnknownMeasureRefError:
         raise
     except Exception:
-        resolved_value = None
+        # Could not evaluate against the analyzer scope (e.g. lambda
+        # uses backend-specific methods MeasureScope didn't reflect).
+        # Fall back to base classification — the lambda runs verbatim
+        # against the raw ibis table at agg time.
+        if not requires_unnest and callable(expr):
+            inferred_unnest = _infer_unnest(expr, base_tbl)
+            requires_unnest = requires_unnest or inferred_unnest
+        return ("base", _make_base_measure(expr, description, requires_unnest, metadata))
 
-    if resolved_value is not None and _is_calculated_measure(resolved_value):
-        validate_calc_ast(resolved_value, measure_name)
-        return ("calc", resolved_value)
+    base_op = base_tbl.op() if hasattr(base_tbl, "op") and callable(base_tbl.op) else None
+    totals_op = totals_vt.op() if hasattr(totals_vt, "op") and callable(totals_vt.op) else None
+    analysis = analyze_calc_expr(
+        ibis_expr,
+        known_measures=known_set,
+        base_table_op=base_op,
+        totals_vt_op=totals_op,
+    )
 
-    if not requires_unnest and callable(expr):
-        # All scopes (MeasureScope, ColumnScope) have tbl attribute
-        table = scope.tbl
-        inferred_unnest = _infer_unnest(expr, table)
-        requires_unnest = requires_unnest or inferred_unnest
+    if analysis.pushable or analysis.post_agg_only is False:
+        # ``post_agg_only=False`` without ``pushable`` means no window /
+        # AllOf / measure deps but the expression touched multiple source
+        # tables. Routing to base lets the lambda run verbatim at agg
+        # time; if it really does span tables, ibis will surface the
+        # error there. Log so the silent fallthrough is visible.
+        if not analysis.pushable:
+            logger.debug(
+                "calc-measure %r references multiple source tables but no measures; "
+                "routing to base classification — ibis will validate at agg time.",
+                measure_name,
+            )
+        if not requires_unnest and callable(expr):
+            inferred_unnest = _infer_unnest(expr, base_tbl)
+            requires_unnest = requires_unnest or inferred_unnest
+        return ("base", _make_base_measure(expr, description, requires_unnest, metadata))
 
-    return ("base", _make_base_measure(expr, description, requires_unnest, metadata))
+    return (
+        "calc",
+        CalcMeasure(
+            expr=expr,
+            description=description,
+            requires_unnest=requires_unnest,
+            depends_on=analysis.depends_on,
+            metadata=metadata,
+        ),
+    )
 
 
 def _build_json_definition(
@@ -1110,6 +1004,35 @@ class Measure:
         return hash((self.description, self.requires_unnest))
 
 
+@frozen(kw_only=True, slots=True)
+class CalcMeasure:
+    """Stored representation of a calc (post-aggregation) measure.
+
+    Holds the user's original lambda — the analyzer-classified ibis
+    expression is recomputed from the lambda at query time against the
+    actual base table. ``depends_on`` is captured at classification time
+    so the planner can auto-include base-measure dependencies in
+    aggregations even when the user did not request them explicitly.
+    """
+
+    expr: Any  # callable | Deferred
+    description: str | None = None
+    requires_unnest: tuple[str, ...] = ()
+    depends_on: frozenset[str] = field(factory=frozenset, converter=frozenset)
+    metadata: Mapping[str, Any] = field(factory=dict, eq=False, hash=False)
+
+    def to_json(self) -> Mapping[str, Any]:
+        base = {"description": self.description}
+        if self.requires_unnest:
+            base["requires_unnest"] = list(self.requires_unnest)
+        if self.metadata:
+            base.update(self.metadata)
+        return base
+
+    def __hash__(self) -> int:
+        return hash((self.description, self.requires_unnest, self.depends_on))
+
+
 class SemanticTableOp(Relation):
     """Relation with semantic metadata (dimensions and measures).
 
@@ -1170,27 +1093,24 @@ class SemanticTableOp(Relation):
             **{name: enriched[name].op() for name in dims},
             **{name: fn(enriched).op() for name, fn in measures.items()},
         }
-        # Resolve calculated measure types via a dummy table with base measure dtypes.
-        # ``infer_calc_dtype`` mirrors the AggregationExpr rewrite from
-        # ``compile_grouped_with_all`` so calc measures with inline aggregations
-        # (e.g. ``AllOf(AggregationExpr)``) round-trip through type inference.
+        # Calc measures are stored as ``CalcMeasure`` objects holding the
+        # original lambda. Re-run each one against an ``IbisCalcScope``
+        # over ``enriched`` plus a virtual aggregated table whose schema
+        # mirrors the base measures. Type inference falls out of ibis
+        # naturally; failures are best-effort.
         if calc_measures:
-            from .compile_all import _get_ibis_module, infer_calc_dtype
-
             measure_schema = {
                 name: base_values[name].dtype for name in measures if name in base_values
             }
-            ibis_module = _get_ibis_module(enriched)
-            for name, expr in calc_measures.items():
+            known_set = frozenset(measures.keys()) | frozenset(calc_measures.keys())
+            for name, calc in calc_measures.items():
+                fn = calc.expr if isinstance(calc, CalcMeasure) else calc
                 try:
-                    compiled = infer_calc_dtype(
-                        expr, measure_schema, enriched, ibis_module
+                    expr, _vt, _tvt = evaluate_calc_lambda(
+                        fn, enriched, known_set, measure_schema
                     )
-                    base_values[name] = compiled.op()
+                    base_values[name] = expr.op()
                 except Exception as e:
-                    # Joined models with dotted column names, calc measures
-                    # whose inline aggregations don't apply to the dummy schema,
-                    # etc. Type info is best-effort; surface for debugging.
                     logger.debug(
                         "calc-measure type inference failed for %r: %s", name, e
                     )
@@ -1512,191 +1432,23 @@ class _AggregationPlan:
     group_by_cols: tuple[str, ...]
 
 
-def _resolve_aggregation_exprs(
-    expr: Any,
-    merged_base_measures: dict,
-    merged_calc_measures: dict,
-    tbl: ir.Table,
-) -> Any:
-    @curry
-    def find_in_calc_measures(expr, calc_measures):
-        for calc_name, calc_expr in calc_measures.items():
-            if isinstance(calc_expr, AggregationExpr) and (
-                calc_expr.column == expr.column and calc_expr.operation == expr.operation
-            ):
-                return Some(calc_name)
-        return Nothing
-
-    def resolve_aggregation(agg_expr):
-        matched = _find_matching_measure(agg_expr, merged_base_measures, tbl)
-        return matched.map(MeasureRef).value_or(
-            find_in_calc_measures(agg_expr, merged_calc_measures).map(MeasureRef).value_or(agg_expr)
-        )
-
-    if isinstance(expr, AggregationExpr):
-        return resolve_aggregation(expr)
-    elif isinstance(expr, MethodCall):
-        return MethodCall(
-            receiver=_resolve_aggregation_exprs(
-                expr.receiver, merged_base_measures, merged_calc_measures, tbl
-            ),
-            method=expr.method,
-            args=expr.args,
-            kwargs=expr.kwargs,
-        )
-    elif isinstance(expr, BinOp):
-        return BinOp(
-            op=expr.op,
-            left=_resolve_aggregation_exprs(
-                expr.left, merged_base_measures, merged_calc_measures, tbl
-            ),
-            right=_resolve_aggregation_exprs(
-                expr.right, merged_base_measures, merged_calc_measures, tbl
-            ),
-        )
-    elif isinstance(expr, AllOf) and isinstance(expr.ref, AggregationExpr):
-        return AllOf(resolve_aggregation(expr.ref))
-    else:
-        return expr
-
-
-def _create_measure_spec(
-    name: str,
-    fn_wrapped: Any,
-    scope: Any,
-    is_post_agg: bool,
-    merged_base_measures: dict,
-    merged_calc_measures: dict,
-    tbl: ir.Table,
-) -> _MeasureSpec:
-    fn = _unwrap(fn_wrapped)
-    val = _resolve_expr(fn, scope)
-    val = _resolve_aggregation_exprs(val, merged_base_measures, merged_calc_measures, tbl)
-
-    if is_post_agg:
-        return _MeasureSpec(name=name, kind="agg", value=fn)
-
-    if isinstance(val, MeasureRef):
-        ref_name = val.name
-        if ref_name in merged_calc_measures:
-            calc_expr = merged_calc_measures[ref_name]
-            resolved = _resolve_aggregation_exprs(
-                calc_expr, merged_base_measures, merged_calc_measures, tbl
-            )
-            return _MeasureSpec(name=name, kind="calc", value=resolved)
-        elif ref_name in merged_base_measures:
-            return _MeasureSpec(name=name, kind="agg", value=merged_base_measures[ref_name])
-        else:
-            return _MeasureSpec(name=name, kind="calc", value=val)
-
-    if isinstance(val, AllOf | BinOp | MethodCall | int | float):
-        return _MeasureSpec(name=name, kind="calc", value=val)
-
-    return _MeasureSpec(name=name, kind="agg", value=fn)
-
-
 def _make_agg_callable(measure: Any) -> Callable:
+    """Wrap a base-measure value into a callable that returns an ibis aggregation.
+
+    ``Measure.expr`` is already wrapped with ``ColumnScope`` inside
+    :func:`_make_base_measure`, so ``Measure`` instances and raw callables
+    (e.g. lifted-reduction stubs that close over a pre-built ibis op) are
+    invoked with the raw ibis table directly. Only ``Deferred`` values
+    are resolved through ``ColumnScope`` here, since they have no other
+    way to bind to the table.
+    """
     if _is_deferred(measure):
         return lambda t: measure.resolve(ColumnScope(_tbl=t))
-    elif callable(measure):
-        return lambda t: measure(ColumnScope(_tbl=t))
-    else:
+    if isinstance(measure, Measure):
         return lambda t: measure(t)
-
-
-def _collect_all_measure_refs(calc_exprs) -> frozenset[str]:
-    all_refs = set()
-    for expr in calc_exprs:
-        _collect_measure_refs(expr, all_refs)
-    return frozenset(all_refs)
-
-
-def _expand_calc_measure_refs(
-    expr: Any,
-    merged_base_measures: dict,
-    merged_calc_measures: dict,
-    tbl: ir.Table,
-    cache: dict[str, Any] | None = None,
-    path: tuple[str, ...] = (),
-) -> Any:
-    """Inline calc-measure references transitively for multi-layer formulas."""
-    cache = {} if cache is None else cache
-
-    def _lift_to_allof(value: Any) -> Any:
-        """Lift an expanded expression into totals-space via AllOf on refs."""
-        if isinstance(value, MeasureRef):
-            return AllOf(value)
-        if isinstance(value, BinOp):
-            return BinOp(
-                op=value.op,
-                left=_lift_to_allof(value.left),
-                right=_lift_to_allof(value.right),
-            )
-        if isinstance(value, MethodCall):
-            return MethodCall(
-                receiver=_lift_to_allof(value.receiver),
-                method=value.method,
-                args=value.args,
-                kwargs=value.kwargs,
-            )
-        return value
-
-    if isinstance(expr, MeasureRef):
-        ref_name = expr.name
-        if ref_name not in merged_calc_measures:
-            return expr
-        if ref_name in cache:
-            return cache[ref_name]
-        if ref_name in path:
-            cycle = " -> ".join((*path, ref_name))
-            raise ValueError(f"Circular calculated measure dependency detected: {cycle}")
-
-        resolved = _resolve_aggregation_exprs(
-            merged_calc_measures[ref_name], merged_base_measures, merged_calc_measures, tbl
-        )
-        expanded = _expand_calc_measure_refs(
-            resolved,
-            merged_base_measures,
-            merged_calc_measures,
-            tbl,
-            cache,
-            (*path, ref_name),
-        )
-        cache[ref_name] = expanded
-        return expanded
-
-    if isinstance(expr, MethodCall):
-        return MethodCall(
-            receiver=_expand_calc_measure_refs(
-                expr.receiver, merged_base_measures, merged_calc_measures, tbl, cache, path
-            ),
-            method=expr.method,
-            args=expr.args,
-            kwargs=expr.kwargs,
-        )
-
-    if isinstance(expr, BinOp):
-        return BinOp(
-            op=expr.op,
-            left=_expand_calc_measure_refs(
-                expr.left, merged_base_measures, merged_calc_measures, tbl, cache, path
-            ),
-            right=_expand_calc_measure_refs(
-                expr.right, merged_base_measures, merged_calc_measures, tbl, cache, path
-            ),
-        )
-
-    if isinstance(expr, AllOf):
-        if isinstance(expr.ref, MeasureRef):
-            expanded_ref = _expand_calc_measure_refs(
-                expr.ref, merged_base_measures, merged_calc_measures, tbl, cache, path
-            )
-            if isinstance(expanded_ref, MeasureRef):
-                return AllOf(expanded_ref)
-            return _lift_to_allof(expanded_ref)
-        return expr
-
-    return expr
+    if callable(measure):
+        return lambda t: measure(t)
+    return lambda t, v=measure: v
 
 
 def _build_aggregation_plan(
@@ -1708,49 +1460,493 @@ def _build_aggregation_plan(
     merged_calc_measures: dict,
     tbl: ir.Table,
 ) -> _AggregationPlan:
-    specs = [
-        _create_measure_spec(
-            name, fn, scope, is_post_agg, merged_base_measures, merged_calc_measures, tbl
-        )
-        for name, fn in aggs.items()
-    ]
+    """Split requested aggregations into base aggs and calc-measure lambdas.
 
-    agg_specs_list = [s for s in specs if s.kind == "agg"]
-    calc_specs_list = [s for s in specs if s.kind == "calc"]
+    Each entry in ``aggs`` is a callable. We resolve it once against the
+    measure scope to determine whether it refers to a base measure (yields
+    a ``Measure``-like callable that produces an ibis aggregation) or a
+    calc measure (a ``CalcMeasure`` recorded in ``merged_calc_measures``
+    or an inline post-aggregation expression).
 
-    agg_specs = FrozenDict({s.name: _make_agg_callable(s.value) for s in agg_specs_list})
-    calc_specs = FrozenDict({s.name: s.value for s in calc_specs_list})
+    Inline ad-hoc lambdas that look like calc expressions (use
+    ``t.measure_name`` or ``t.all(...)``) are classified on the fly via
+    :func:`_classify_measure` and routed to ``calc_specs``.
+    """
+    agg_specs: dict[str, Callable] = {}
+    calc_specs: dict[str, CalcMeasure] = {}
 
-    calc_cache: dict[str, Any] = {}
-    expanded_calc_specs = FrozenDict(
-        {
-            name: _expand_calc_measure_refs(
-                expr,
-                merged_base_measures,
-                merged_calc_measures,
-                tbl,
-                cache=calc_cache,
-                path=(name,),
-            )
-            for name, expr in calc_specs.items()
-        }
-    )
+    base_tbl = getattr(scope, "tbl", None)
+    if base_tbl is None:
+        base_tbl = getattr(scope, "_tbl", None)
+    if base_tbl is None:
+        base_tbl = tbl
+    known_set = frozenset(merged_base_measures) | frozenset(merged_calc_measures)
 
-    referenced = _collect_all_measure_refs(expanded_calc_specs.values())
-    additional_aggs = {
-        ref: _make_agg_callable(merged_base_measures[ref])
-        for ref in referenced
-        if ref not in agg_specs and ref in merged_base_measures
-    }
+    for name, fn_wrapped in aggs.items():
+        fn = _unwrap(fn_wrapped)
 
-    final_agg_specs = FrozenDict({**agg_specs, **additional_aggs})
+        if is_post_agg:
+            # Wrap raw user callables with ColumnScope (via Measure) so a
+            # re-aggregation lambda like ``t.flights.carrier.nunique()``
+            # routes through the NestedAccessMarker pipeline in
+            # _compile_aggregation. Without the wrap, t.flights returns a
+            # raw ArrayColumn and struct-field access blows up before the
+            # marker can be produced.
+            if (
+                callable(fn)
+                and not _is_deferred(fn)
+                and not isinstance(fn, Measure)
+            ):
+                fn = _make_base_measure(fn, None, (), {})
+            agg_specs[name] = _make_agg_callable(fn)
+            continue
+
+        # Recognize bare-name lambdas (``lambda t, n=name: t[n]``) that
+        # the SemanticAggregate.aggregate API generates for measure
+        # lookups by name. These should resolve to the named measure,
+        # suffix-matching prefixed names on joined models.
+        ref_name = _detect_bare_name_lambda(fn)
+        if ref_name is not None:
+            resolved = _resolve_short_name(ref_name, merged_base_measures, merged_calc_measures)
+            if resolved is not None:
+                if resolved in merged_base_measures:
+                    agg_specs[name] = _make_agg_callable(merged_base_measures[resolved])
+                    continue
+                if resolved in merged_calc_measures:
+                    calc_specs[name] = merged_calc_measures[resolved]
+                    continue
+
+        # Otherwise classify the inline lambda on the fly.
+        kind, value = _classify_measure(fn, scope, name)
+        if kind == "calc":
+            calc_specs[name] = value
+        else:
+            agg_specs[name] = _make_agg_callable(value)
+
+    # Auto-include base-measure dependencies referenced by calc measures
+    # so the aggregation produces the columns the calc lambdas read.
+    # Walk transitively so calc-of-calc chains pull all needed bases.
+    if calc_specs:
+        def _resolve_dep(ref: str) -> str | None:
+            """Resolve a dependency name against base/calc measures.
+
+            On joined models, calc measures captured ``depends_on`` with
+            short names (``flight_count``); the merged dictionaries hold
+            prefixed names (``flights.flight_count``). Suffix-match when
+            the exact name is missing.
+            """
+            if ref in merged_base_measures or ref in merged_calc_measures:
+                return ref
+            suffix = f".{ref}"
+            base_matches = [k for k in merged_base_measures if k.endswith(suffix)]
+            calc_matches = [k for k in merged_calc_measures if k.endswith(suffix)]
+            matches = base_matches + calc_matches
+            if len(matches) == 1:
+                return matches[0]
+            return None
+
+        worklist = list(calc_specs.values())
+        seen_calcs: set[str] = set(calc_specs.keys())
+        while worklist:
+            cm = worklist.pop()
+            for ref in cm.depends_on:
+                resolved_ref = _resolve_dep(ref)
+                if resolved_ref is None or resolved_ref in agg_specs:
+                    continue
+                if resolved_ref in merged_base_measures:
+                    agg_specs[resolved_ref] = _make_agg_callable(
+                        merged_base_measures[resolved_ref]
+                    )
+                elif resolved_ref in merged_calc_measures and resolved_ref not in seen_calcs:
+                    dep_cm = merged_calc_measures[resolved_ref]
+                    calc_specs[resolved_ref] = dep_cm
+                    seen_calcs.add(resolved_ref)
+                    if isinstance(dep_cm, CalcMeasure):
+                        worklist.append(dep_cm)
 
     return _AggregationPlan(
-        agg_specs=final_agg_specs,
-        calc_specs=expanded_calc_specs,
+        agg_specs=FrozenDict(agg_specs),
+        calc_specs=FrozenDict(calc_specs),
         requested_measures=tuple(aggs.keys()),
         group_by_cols=tuple(keys),
     )
+
+
+def _compile_aggregation(
+    base_tbl,
+    by_cols: list[str],
+    agg_specs: dict[str, Callable],
+    calc_specs: dict[str, CalcMeasure],
+    known_measures: frozenset[str],
+    requested_measures: list[str] | None = None,
+):
+    """Run base aggregations on ``base_tbl``, then apply calc measures.
+
+    Replaces the legacy ``compile_grouped_with_all`` pipeline. Calc
+    measures are recomputed at query time by re-running their lambda
+    against an :class:`IbisCalcScope` over ``base_tbl`` plus a virtual
+    aggregated table that mirrors the real result schema. Nested-array
+    aggregations surface as :class:`NestedAccessMarker` values and are
+    routed through :func:`_compile_aggregation_with_nested`.
+    """
+    # --- Pre-process calc specs ---------------------------------------
+    # Run the analyzer once per calc, then route inline reductions
+    # through the lift pass. ``lifted_calc_specs[name]`` carries the
+    # rewritten expression and the virtual tables it references;
+    # ``classifications[name]`` carries the structural analysis.
+    # ``None`` lift means the lambda blew up — we'll re-evaluate from
+    # scratch in the apply loop.
+    #
+    # Build the virtual schema with *real* dtypes derived from the base
+    # aggregations. Using a placeholder dtype (``float64`` for
+    # everything) lets ibis silently elide ``column.cast(float64)`` as a
+    # no-op during ``evaluate_calc_lambda``; after the substitution
+    # ``Field(virtual_agg) → Field(real_agg)`` the Cast is gone but the
+    # real column is int64, so ``int / int * 100`` returns 0. Probing
+    # ``agg_specs[n](base_tbl).type()`` gives the analyzer the same
+    # dtype the user's calc will see at compile time.
+    base_op = _to_op(base_tbl)
+    virtual_schema_real: dict[str, Any] = {}
+    for n in known_measures:
+        if n in agg_specs:
+            try:
+                virtual_schema_real[n] = agg_specs[n](base_tbl).type()
+            except Exception as exc:
+                logger.debug(
+                    "could not probe dtype for measure %r; falling back to float64: %s",
+                    n,
+                    exc,
+                )
+                virtual_schema_real[n] = "float64"
+        else:
+            virtual_schema_real[n] = "float64"
+
+    lifted_calc_specs: dict[str, tuple[Any, Any, Any] | None] = {}
+    classifications: dict[str, Any] = {}
+    preproc_errors: dict[str, Exception] = {}
+    needs_totals = False
+    if calc_specs:
+        for name, cm in calc_specs.items():
+            try:
+                virtual_schema = dict(virtual_schema_real)
+                expr, vt, totals_vt = evaluate_calc_lambda(
+                    cm.expr, base_tbl, known_measures, virtual_schema
+                )
+                new_expr, new_vt, new_totals_vt, lifted = lift_inline_reductions(
+                    expr, vt, base_tbl, totals_virtual_agg_tbl=totals_vt
+                )
+                analysis = analyze_calc_expr(
+                    new_expr,
+                    known_measures=known_measures,
+                    base_table_op=base_op,
+                    totals_vt_op=_to_op(new_totals_vt),
+                )
+                lifted_calc_specs[name] = (new_expr, new_vt, new_totals_vt)
+                classifications[name] = analysis
+                if analysis.references_AllOf:
+                    needs_totals = True
+                for anon_name, reduction_expr in lifted.items():
+                    if anon_name not in agg_specs:
+                        agg_specs[anon_name] = lambda t, r=reduction_expr: r
+            except Exception as exc:
+                logger.debug(
+                    "calc-measure lift/classify failed for %r; will re-evaluate "
+                    "at apply time: %s",
+                    name,
+                    exc,
+                )
+                lifted_calc_specs[name] = None
+                preproc_errors[name] = exc
+
+    nested_marker_specs: dict[str, Any] = {}
+    regular_specs: dict[str, Callable] = {}
+    for name, fn in agg_specs.items():
+        try:
+            probe = fn(base_tbl)
+        except Exception:
+            regular_specs[name] = fn
+            continue
+        if isinstance(probe, NestedAccessMarker):
+            nested_marker_specs[name] = probe
+        else:
+            regular_specs[name] = fn
+
+    # --- Attach windowed totals to base ------------------------------
+    # When any calc references ``t.all(measure_ref)``, compute that
+    # measure's formula as a window function over the entire base
+    # *before* group_by, then carry it through the per-group aggregation
+    # via ``arbitrary()``. This expresses "ungrouped aggregate alongside
+    # grouped one" as a single-pass query — no cross-join, no
+    # shared-ancestor collapse, compiles to SQL on every backend
+    # supporting window functions. Skipped on the nested-array path:
+    # totals across multiple grains aren't well-defined; we surface a
+    # clear error in the apply loop.
+    #
+    # Calc-of-calc-AllOf (an AllOf-using calc that references a calc,
+    # not a base measure — e.g. ``t.all(t.avg_distance)`` where
+    # ``avg_distance`` is itself a calc) is handled in two passes:
+    # first transitively expand to the base measures; attach window
+    # totals for those; then post-aggregation derive the calc's totals
+    # value via :func:`attach_calc_totals`.
+    totals_arbitrary_specs: dict[str, Callable] = {}
+    if needs_totals and regular_specs and not nested_marker_specs:
+        totals_for_base: set[str] = set()
+        # Transitive expansion: for AllOf-using calcs, follow calc deps
+        # through ``classifications`` until we land on base measures.
+        work: list[str] = []
+        for cn, c in classifications.items():
+            if c.references_AllOf:
+                for d in c.depends_on:
+                    if d in regular_specs:
+                        totals_for_base.add(d)
+                    elif d in calc_specs:
+                        work.append(d)
+        seen: set[str] = set()
+        while work:
+            calc_dep = work.pop()
+            if calc_dep in seen:
+                continue
+            seen.add(calc_dep)
+            cls = classifications.get(calc_dep)
+            if cls is None:
+                continue
+            for d in cls.depends_on:
+                if d in regular_specs:
+                    totals_for_base.add(d)
+                elif d in calc_specs:
+                    work.append(d)
+
+        if totals_for_base:
+            base_tbl, totals_arbitrary_specs = attach_windowed_totals(
+                base_tbl, regular_specs, totals_for_base, TOTALS_PREFIX
+            )
+
+    if not nested_marker_specs:
+        if by_cols or regular_specs or totals_arbitrary_specs:
+            agg_exprs = {n: f(base_tbl) for n, f in regular_specs.items()}
+            for tn, tf in totals_arbitrary_specs.items():
+                agg_exprs[tn] = tf(base_tbl)
+            if by_cols:
+                real_agg_tbl = base_tbl.group_by([base_tbl[c] for c in by_cols]).aggregate(
+                    **agg_exprs
+                )
+            else:
+                real_agg_tbl = base_tbl.aggregate(**agg_exprs)
+        else:
+            real_agg_tbl = base_tbl.aggregate()
+    else:
+        real_agg_tbl = _compile_aggregation_with_nested(
+            base_tbl, by_cols, regular_specs, nested_marker_specs
+        )
+
+    # --- Derive calc-of-calc totals ----------------------------------
+    # If any AllOf-using calc references another calc (transitively),
+    # the windowed-totals pass attached only the base totals. Now that
+    # ``real_agg_tbl`` has those base totals as columns, we evaluate
+    # each needed calc lambda against the totals columns to derive the
+    # calc's totals value (constant across rows).
+    if calc_specs and totals_arbitrary_specs:
+        real_agg_tbl = attach_calc_totals(
+            real_agg_tbl, calc_specs, classifications, TOTALS_PREFIX
+        )
+
+    # --- Apply calc measures -----------------------------------------
+    if calc_specs:
+        # ``real_agg_tbl`` already carries ``__bsl_totals__<name>``
+        # columns when totals were attached above. Calc compilation
+        # rewrites ``Field(totals_vt, name) → Field(real_agg, "__bsl_totals__<name>")``
+        # directly; no separate cross-joined table is needed.
+        real_with_totals = real_agg_tbl if totals_arbitrary_specs else None
+        cur_known = known_measures | frozenset(calc_specs.keys())
+
+        ordered = _topological_calc_order(calc_specs, base_tbl, known_measures)
+        for name in ordered:
+            spec = lifted_calc_specs.get(name)
+            if spec is None:
+                # Lift failed at preprocessing; re-evaluate AND re-lift so
+                # inline base reductions (``t.distance.sum() / t.all(...)``)
+                # don't reach _compile_calc_measure_impl as bare base
+                # reductions ibis can't compile through mutate.
+                fn = calc_specs[name].expr
+                virtual_schema = {
+                    col: real_agg_tbl[col].type()
+                    for col in real_agg_tbl.columns
+                    if col in cur_known
+                }
+                expr0, vt0, totals_vt0 = evaluate_calc_lambda(
+                    fn, base_tbl, cur_known, virtual_schema
+                )
+                rewritten_expr, rewritten_vt, rewritten_totals_vt, lifted = (
+                    lift_inline_reductions(
+                        expr0, vt0, base_tbl, totals_virtual_agg_tbl=totals_vt0
+                    )
+                )
+                if lifted:
+                    # The lift produced anonymous base reductions that
+                    # would need to be added to the per-group aggregation,
+                    # but that has already been built. Surface the original
+                    # preprocessing failure rather than letting unbound
+                    # Field references reach ibis.
+                    orig = preproc_errors.get(name)
+                    raise RuntimeError(
+                        f"Calc measure {name!r} contains inline base reductions "
+                        "that could not be lifted at preprocessing time."
+                    ) from orig
+                analysis = analyze_calc_expr(
+                    rewritten_expr,
+                    known_measures=known_measures,
+                    base_table_op=base_op,
+                    totals_vt_op=_to_op(rewritten_totals_vt),
+                )
+            else:
+                rewritten_expr, rewritten_vt, rewritten_totals_vt = spec
+                analysis = classifications[name]
+
+            if analysis.references_AllOf:
+                if real_with_totals is None:
+                    raise TotalsNotAvailableError(
+                        f"Calc measure {name!r} references t.all(...) but no totals "
+                        "columns were attached. This typically means the model contains "
+                        "nested-array measures (which compile at multiple grains and "
+                        "don't yet support totals), or the AllOf reference targets a "
+                        "calc measure rather than a base measure (calc-of-calc-totals "
+                        "is not yet supported via the windowed-totals path)."
+                    )
+                compiled = _compile_calc_measure_impl(
+                    rewritten_expr,
+                    rewritten_vt,
+                    real_agg_tbl,
+                    totals_virtual_agg_tbl=rewritten_totals_vt,
+                    real_with_totals=real_agg_tbl,
+                )
+                real_agg_tbl = real_agg_tbl.mutate(**{name: compiled})
+                real_with_totals = real_agg_tbl
+            else:
+                compiled = _compile_calc_measure_impl(
+                    rewritten_expr, rewritten_vt, real_agg_tbl
+                )
+                real_agg_tbl = real_agg_tbl.mutate(**{name: compiled})
+                if real_with_totals is not None:
+                    real_with_totals = real_agg_tbl
+
+    # Drop the synthetic ``__bsl_totals__<name>`` columns so the
+    # result schema only carries user-requested measures.
+    if calc_specs:
+        real_agg_tbl = _drop_totals_columns(real_agg_tbl, TOTALS_PREFIX)
+
+    if requested_measures is not None:
+        select_cols = list(
+            dict.fromkeys(
+                list(by_cols) + list(requested_measures) + list(calc_specs.keys())
+            )
+        )
+        available = frozenset(real_agg_tbl.columns)
+        select_cols = [c for c in select_cols if c in available]
+        if select_cols:
+            real_agg_tbl = real_agg_tbl.select([real_agg_tbl[c] for c in select_cols])
+
+    return real_agg_tbl
+
+
+def _compile_aggregation_with_nested(
+    base_tbl,
+    by_cols: list[str],
+    regular_specs: dict[str, Callable],
+    nested_specs: dict[str, Any],
+):
+    """Compile aggregations when nested-array measures are present.
+
+    Each array path is unnested in isolation, aggregated at its own
+    grain, and joined back to the session-level table on ``by_cols``.
+    The new calc-compiler path layers on top of the resulting joined
+    table via :func:`apply_calc_measures`.
+    """
+    from .nested_compile import (
+        build_nested_level_table,
+        build_session_table,
+        join_tables,
+    )
+
+    nested_by_path: dict[tuple[str, ...], dict[str, tuple]] = {}
+    for name, marker in nested_specs.items():
+        nested_by_path.setdefault(marker.array_path, {})[name] = (
+            regular_specs.get(name) or (lambda t, m=marker: m),
+            marker,
+        )
+
+    result_tables: list = []
+    if regular_specs:
+        regular_results = {n: (f, f(base_tbl)) for n, f in regular_specs.items()}
+        session_table = build_session_table(base_tbl, by_cols, regular_results)
+        if session_table is not None:
+            result_tables.append(session_table)
+
+    for array_path, measures in nested_by_path.items():
+        level_table = build_nested_level_table(base_tbl, by_cols, array_path, measures)
+        result_tables.append(level_table)
+
+    if not result_tables:
+        if by_cols:
+            return base_tbl.group_by([base_tbl[c] for c in by_cols]).aggregate()
+        return base_tbl.aggregate()
+
+    return join_tables(by_cols, result_tables)
+
+
+def _resolve_short_name(
+    name: str,
+    merged_base_measures: dict,
+    merged_calc_measures: dict,
+) -> str | None:
+    """Match ``name`` against merged measure dicts, allowing suffix lookup."""
+    if name in merged_base_measures or name in merged_calc_measures:
+        return name
+    suffix = f".{name}"
+    matches = [k for k in merged_base_measures if k.endswith(suffix)]
+    matches += [k for k in merged_calc_measures if k.endswith(suffix)]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _topological_calc_order(
+    calc_specs: dict[str, CalcMeasure],
+    base_tbl,
+    known_measures: frozenset[str],
+) -> list[str]:
+    """Order calc measures by ``CalcMeasure.depends_on`` so deps compile first."""
+    deps = {name: set(cm.depends_on) for name, cm in calc_specs.items()}
+    return topological_order_from_deps(calc_specs, deps)
+
+
+def _detect_bare_name_lambda(fn: Any) -> str | None:
+    """Return the captured name when ``fn`` was generated by ``make_bare_ref_lambda``.
+
+    Read the ``_bsl_bare_ref`` sentinel attribute set at the API site —
+    sniffing ``__defaults__`` was unreliable because user lambdas with
+    arbitrary string defaults (e.g. ``lambda t, c=col, op=op: getattr(...)
+    ``) collide with the trivial ``lambda t, n=name: t[n]`` shape and
+    silently misroute as bare references.
+    """
+    if not callable(fn):
+        return None
+    name = getattr(fn, "_bsl_bare_ref", None)
+    if isinstance(name, str):
+        return name
+    return None
+
+
+def make_bare_ref_lambda(name: str):
+    """Build a ``lambda t: t[name]`` tagged for fast-path measure lookup.
+
+    Use this anywhere the BSL surface needs to construct a measure-name
+    passthrough callable: it sets ``_bsl_bare_ref`` so
+    :func:`_detect_bare_name_lambda` can route the call straight to the
+    referenced base or calc measure without re-running the analyzer.
+    """
+    fn = lambda t, _n=name: t[_n]  # noqa: E731
+    fn._bsl_bare_ref = name
+    return fn
 
 
 # ---------------------------------------------------------------------------
@@ -2403,16 +2599,14 @@ class SemanticAggregateOp(Relation):
             tbl=tbl,
         )
 
-        if plan.calc_specs or plan.group_by_cols:
-            return compile_grouped_with_all(
-                tbl,
-                list(plan.group_by_cols),
-                dict(plan.agg_specs),
-                dict(plan.calc_specs),
-                requested_measures=list(plan.requested_measures),
-            )
-        else:
-            return tbl.aggregate({name: fn(tbl) for name, fn in plan.agg_specs.items()})
+        return _compile_aggregation(
+            tbl,
+            list(plan.group_by_cols),
+            dict(plan.agg_specs),
+            dict(plan.calc_specs),
+            known_measures=frozenset(merged_base_measures) | frozenset(merged_calc_measures),
+            requested_measures=list(plan.requested_measures),
+        )
 
     def _to_untagged_with_preagg(
         self,
@@ -2943,9 +3137,14 @@ class SemanticAggregateOp(Relation):
 
         # Handle calculated measures
         if plan.calc_specs:
-            from .compile_all import compile_calc_measures
-
-            result = compile_calc_measures(result, plan.calc_specs)
+            calc_lambdas = {
+                name: cm.expr if isinstance(cm, CalcMeasure) else cm
+                for name, cm in plan.calc_specs.items()
+            }
+            known = frozenset(merged_base_measures) | frozenset(merged_calc_measures)
+            result = apply_calc_measures(
+                result, core_tbl, calc_lambdas, known, agg_specs=dict(plan.agg_specs)
+            )
 
         # --- 3. LEFT JOIN deferred dimension tables ---
         for d in deferrable:
@@ -3020,7 +3219,7 @@ class SemanticAggregateOp(Relation):
 
         ``decomposed_means`` and ``reagg_ops`` are tuples of (key, value) pairs.
         """
-        from .compile_all import _join_tables
+        from .nested_compile import join_tables as _join_tables
 
         reagg_map = dict(reagg_ops)
         # Include decomposed auxiliary columns in measure names
@@ -3104,7 +3303,7 @@ class SemanticAggregateOp(Relation):
 
         ``decomposed_means`` and ``reagg_ops`` are tuples of (key, value) pairs.
         """
-        from .compile_all import _join_tables
+        from .nested_compile import join_tables as _join_tables
 
         reagg_map = dict(reagg_ops)
         aux_cols = frozenset(c for _, (sc, cc) in decomposed_means for c in (sc, cc))
@@ -3167,25 +3366,31 @@ class SemanticAggregateOp(Relation):
 
     @staticmethod
     def _apply_calc_specs(result, plan, tbl):
-        """Apply calculated measure specs (ratios, percent-of-total, etc.)."""
-        from .compile_all import _collect_all_refs, _compile_formula
+        """Apply calculated measure specs to the pre-aggregated result.
 
-        needed_totals: set[str] = set()
-        for ast in plan.calc_specs.values():
-            _collect_all_refs(ast, needed_totals)
-
-        if needed_totals:
-            totals_aggs = {ref: result[ref].sum() for ref in needed_totals if ref in result.columns}
-            all_tbl = result.aggregate(**totals_aggs) if totals_aggs else None
-        else:
-            all_tbl = None
-
-        out = result.cross_join(all_tbl) if all_tbl is not None else result
-        calc_cols = {
-            name: _compile_formula(ast, out, all_tbl, tbl if tbl is not None else out)
-            for name, ast in plan.calc_specs.items()
+        Each calc spec is a :class:`CalcMeasure` whose lambda is
+        re-evaluated against the post-aggregation result via the
+        ibis-native compiler. ``t.all(measure_ref)`` patterns trigger a
+        no-group-by totals aggregation that gets cross-joined into the
+        result so non-sum measures (mean/quantile/…) get correct overall
+        values; ``apply_calc_measures`` builds the totals lazily on
+        first use.
+        """
+        calc_lambdas = {
+            name: cm.expr if isinstance(cm, CalcMeasure) else cm
+            for name, cm in plan.calc_specs.items()
         }
-        return out.mutate(**calc_cols)
+        if not calc_lambdas:
+            return result
+        base_for_calc = tbl if tbl is not None else result
+        known = frozenset(plan.agg_specs.keys()) | frozenset(plan.calc_specs.keys())
+        return apply_calc_measures(
+            result,
+            base_for_calc,
+            calc_lambdas,
+            known,
+            agg_specs=dict(plan.agg_specs),
+        )
 
 
 class SemanticMutateOp(Relation):
@@ -4713,43 +4918,6 @@ def _build_join_depth_map(node: Any) -> dict[str, int]:
     return depth_map
 
 
-def _update_measure_refs_in_calc(expr, prefix_map: dict[str, str]):
-    """
-    Recursively update MeasureRef names in a calculated measure expression.
-
-    Args:
-        expr: A MeasureExpr (MeasureRef, AllOf, BinOp, MethodCall, or literal)
-        prefix_map: Mapping from old name to new prefixed name
-
-    Returns:
-        Updated expression with prefixed MeasureRef names
-    """
-    if isinstance(expr, MeasureRef):
-        # Update the measure reference name if it's in the map
-        new_name = prefix_map.get(expr.name, expr.name)
-        return MeasureRef(new_name)
-    elif isinstance(expr, AllOf):
-        # Update the inner MeasureRef
-        updated_ref = _update_measure_refs_in_calc(expr.ref, prefix_map)
-        return AllOf(updated_ref)
-    elif isinstance(expr, MethodCall):
-        updated_receiver = _update_measure_refs_in_calc(expr.receiver, prefix_map)
-        return MethodCall(
-            receiver=updated_receiver,
-            method=expr.method,
-            args=expr.args,
-            kwargs=expr.kwargs,
-        )
-    elif isinstance(expr, BinOp):
-        # Recursively update left and right
-        updated_left = _update_measure_refs_in_calc(expr.left, prefix_map)
-        updated_right = _update_measure_refs_in_calc(expr.right, prefix_map)
-        return BinOp(op=expr.op, left=updated_left, right=updated_right)
-    else:
-        # Literal number or other - return as-is
-        return expr
-
-
 def _extract_join_key_column_names(source: Relation) -> set[str]:
     """
     Extract column names that ibis will merge (coalesce) during joins.
@@ -4962,21 +5130,13 @@ def _merge_fields_with_prefixing(
 
     merged_fields = {}
 
-    is_calc_measures = False
     is_dimensions = False
     if all_roots:
         sample_fields = field_accessor(all_roots[0])
         if sample_fields:
-            from .measure_scope import AllOf, BinOp, MeasureRef, MethodCall
-
             first_val = next(iter(sample_fields.values()), None)
-            is_calc_measures = isinstance(
-                first_val,
-                MeasureRef | AllOf | BinOp | MethodCall | int | float,
-            )
             is_dimensions = isinstance(first_val, Dimension)
 
-    # For dimensions, build a column rename map to handle Ibis join conflicts
     column_rename_map = {}
     if is_dimensions:
         column_rename_map = _build_column_rename_map(all_roots, field_accessor, source)
@@ -4985,36 +5145,17 @@ def _merge_fields_with_prefixing(
         root_name = root.name
         fields_dict = field_accessor(root)
 
-        if is_calc_measures and root_name:
-            base_map = (
-                {k: f"{root_name}.{k}" for k in root.get_measures()}
-                if hasattr(root, "get_measures")
-                else {}
-            )
-            calc_map = (
-                {k: f"{root_name}.{k}" for k in root.get_calculated_measures()}
-                if hasattr(root, "get_calculated_measures")
-                else {}
-            )
-            prefix_map = {**base_map, **calc_map}
-
         for field_name, field_value in fields_dict.items():
             if root_name:
-                # Always use prefixed name with . separator
                 prefixed_name = f"{root_name}.{field_name}"
 
-                # If it's a calculated measure, update internal MeasureRefs
-                if is_calc_measures:
-                    field_value = _update_measure_refs_in_calc(field_value, prefix_map)
-                # If it's a dimension that needs column renaming, wrap the callable
-                elif is_dimensions and prefixed_name in column_rename_map:
+                if is_dimensions and prefixed_name in column_rename_map:
                     field_value = _wrap_dimension_for_renamed_column(
                         field_value, column_rename_map[prefixed_name]
                     )
 
                 merged_fields[prefixed_name] = field_value
             else:
-                # Fallback to original name if no root name
                 merged_fields[field_name] = field_value
 
     return FrozenDict(merged_fields)
