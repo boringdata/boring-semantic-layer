@@ -109,12 +109,14 @@ _BLOCKED_IBIS_METHODS = [
 
 
 def to_untagged(expr):
+    from .ops import _rebind_to_canonical_backend
+
     if isinstance(expr, SemanticTable):
-        return expr.op().to_untagged()
+        return _rebind_to_canonical_backend(expr.op().to_untagged())
 
     result = safe(lambda: expr.to_untagged())()
     if isinstance(result, Success):
-        return result.unwrap()
+        return _rebind_to_canonical_backend(result.unwrap())
 
     raise TypeError(f"Cannot convert {type(expr)} to Ibis expression")
 

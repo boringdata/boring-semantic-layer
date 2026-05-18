@@ -2510,7 +2510,13 @@ class SemanticAggregateOp(Relation):
             )
 
         # --- 3. Partition agg_specs by source table ---
-        partitioned = _partition_agg_specs_by_source(dict(plan.agg_specs), all_roots)
+        # Partition by the join's per-table roots, not ``all_roots``. When a
+        # wrapper SemanticTableOp from ``SemanticJoin.with_measures()`` /
+        # ``with_dimensions()`` is in the tree, ``all_roots`` collapses to a
+        # single name=None root, so prefixed aggregates would all fall into the
+        # unprefixed bucket and bypass per-grain pre-aggregation.
+        partition_roots = _find_all_root_models(join_op)
+        partitioned = _partition_agg_specs_by_source(dict(plan.agg_specs), partition_roots)
 
         # --- 4. Pre-aggregate each source table on its raw table ---
         _preagg_results: list = []
