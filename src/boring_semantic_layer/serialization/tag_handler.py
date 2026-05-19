@@ -103,9 +103,13 @@ def reemit(tag_node, rebuild_subexpr):
 
     Re-stamping uses ``hashing_tag`` (not ``tag``) so the rebuilt expression
     keeps the same hash-contribution guarantee as ``to_tagged`` — see #263.
+
+    Precondition: ``tag_node`` is a BSL-tagged xorq tag op (HashingTag/Tag).
+    xorq's dispatch only routes here when ``tag_node.metadata["tag"]``
+    resolves to this handler, and xorq's op definition declares
+    ``parent: Relation`` (non-null) — so by construction
+    ``tag_node.parent`` is always a valid relation.
     """
-    if tag_node.parent is None:
-        raise ValueError("tag_node has no parent; cannot rebuild a root tag node")
     new_source = rebuild_subexpr(tag_node.parent.to_expr())
     meta = dict(tag_node.metadata)
     tag_name = meta.pop("tag")
