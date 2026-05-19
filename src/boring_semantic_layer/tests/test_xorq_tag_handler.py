@@ -208,3 +208,112 @@ def test_ls_builder_dispatches_to_handler(simple_model):
 
     assert set(recovered.dimensions) == {"a", "b"}
     assert set(recovered.measures) == {"sum_b", "avg_b"}
+
+
+# ---------------------------------------------------------------------------
+# Hash contribution — regression for issue #263
+# ---------------------------------------------------------------------------
+#
+# Before the fix, ``to_tagged()`` and ``reemit()`` wrapped expressions in a
+# plain ``Tag`` node, which xorq's ``opaque_node_replacer`` strips during
+# content-hash computation. ``source`` and ``source.tag("bsl", **metadata)``
+# produced identical hashes, so two ``xorq build`` invocations on the same
+# source (one bare, one BSL-tagged) silently overwrote each other under
+# ``builds/<hash>/``. The fix is to use ``HashingTag``, which is tokenized
+# as ``(parent_expr, metadata)``.
+#
+# Two related hash regressions are covered by pre-existing tests in
+# ``test_xorq_convert.py``:
+#   - ``test_different_measures_produce_different_hashes``
+#   - ``test_same_model_produces_same_hash``
+# We avoid duplicating those here.
+
+
+def test_tagged_op_is_hashing_tag(simple_model):
+    """``to_tagged`` wraps the expression in a HashingTag (not a plain Tag).
+
+    HashingTag is a Tag subclass, so existing ``isinstance(op, Tag)`` checks
+    in the reconstruct path continue to work; only the concrete class
+    matters for the hash contract.
+    """
+    from xorq.expr.relations import HashingTag, Tag
+
+    tag_node = _tag_node(to_tagged(simple_model))
+
+    assert isinstance(tag_node, Tag)
+    assert type(tag_node) is HashingTag
+
+
+def test_tagged_hash_differs_from_untagged_source(simple_model):
+    """A BSL-tagged expression hashes differently from its bare source.
+
+    Without HashingTag both sides hash identically — ``xorq build`` would
+    collide BSL artifacts with their underlying source under the same
+    ``builds/<hash>/`` directory.
+    """
+    from xorq.caching.strategy import SnapshotStrategy
+    from xorq.common.utils.node_utils import compute_expr_hash
+
+    from boring_semantic_layer.expr import to_untagged
+
+    untagged = to_untagged(simple_model)
+    tagged = to_tagged(simple_model)
+    strategy = SnapshotStrategy()
+
+    assert compute_expr_hash(untagged, strategy=strategy) != compute_expr_hash(
+        tagged, strategy=strategy
+    )
+
+
+def test_reemit_preserves_hashing_tag(simple_model):
+    """``reemit`` must re-stamp the rebuilt expression with a HashingTag.
+
+    Sister regression to ``to_tagged``: catalog replay / rebuild paths call
+    ``reemit`` to translate the inner source, then re-apply the BSL tag on
+    top. If ``reemit`` used the plain ``.tag()`` here, the rebuilt
+    expression would lose the hash-contribution guarantee — re-introducing
+    issue #263 specifically on rebuilt artifacts.
+    """
+    from xorq.expr.relations import HashingTag
+
+    from boring_semantic_layer.serialization.tag_handler import reemit
+
+    tag_node = _tag_node(to_tagged(simple_model))
+    rebuilt = reemit(tag_node, rebuild_subexpr=lambda e: e)
+
+    assert type(_tag_node(rebuilt)) is HashingTag
+
+
+def test_reemit_hash_distinguishes_metadata():
+    """A reemitted BSL expression hashes by its metadata (#263 across rebuild).
+
+    Two ``to_tagged → reemit`` round-trips on the same underlying ibis table
+    but with different BSL metadata must produce different content hashes.
+    This pins that ``reemit`` keeps the HashingTag semantics end-to-end.
+    """
+    from xorq.caching.strategy import SnapshotStrategy
+    from xorq.common.utils.node_utils import compute_expr_hash
+
+    from boring_semantic_layer.serialization.tag_handler import reemit
+
+    table = ibis.memtable({"a": [1, 2, 3], "b": [4, 5, 6]})
+    model_a = SemanticModel(
+        table=table,
+        dimensions={"a": lambda t: t.a},
+        measures={"sum_b": lambda t: t.b.sum()},
+        name="model_a",
+    )
+    model_b = SemanticModel(
+        table=table,
+        dimensions={"b": lambda t: t.b},
+        measures={"avg_b": lambda t: t.b.mean()},
+        name="model_b",
+    )
+
+    rebuilt_a = reemit(_tag_node(to_tagged(model_a)), rebuild_subexpr=lambda e: e)
+    rebuilt_b = reemit(_tag_node(to_tagged(model_b)), rebuild_subexpr=lambda e: e)
+    strategy = SnapshotStrategy()
+
+    assert compute_expr_hash(rebuilt_a, strategy=strategy) != compute_expr_hash(
+        rebuilt_b, strategy=strategy
+    )

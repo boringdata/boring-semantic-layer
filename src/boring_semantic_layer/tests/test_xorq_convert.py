@@ -220,7 +220,6 @@ def test_from_xorq_with_tagged_table():
 
 
 @pytest.mark.skipif(not xorq, reason="xorq not available")
-@pytest.mark.xfail(reason="xorq 0.3.12 tag() does not contribute metadata to content hash (hashing_tag removed)")
 def test_different_measures_produce_different_hashes():
     """Two SemanticModels on the same table with different measures should hash differently."""
     import ibis

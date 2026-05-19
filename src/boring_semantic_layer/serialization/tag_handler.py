@@ -100,13 +100,16 @@ def reemit(tag_node, rebuild_subexpr):
     metadata to reproduce the original query.  This function works from the
     tag node directly: it rebuilds the source subtree and re-stamps the
     original tag metadata on top.
+
+    Re-stamping uses ``hashing_tag`` (not ``tag``) so the rebuilt expression
+    keeps the same hash-contribution guarantee as ``to_tagged`` — see #263.
     """
     if tag_node.parent is None:
         raise ValueError("tag_node has no parent; cannot rebuild a root tag node")
     new_source = rebuild_subexpr(tag_node.parent.to_expr())
     meta = dict(tag_node.metadata)
     tag_name = meta.pop("tag")
-    return new_source.tag(tag=tag_name, **meta)
+    return new_source.hashing_tag(tag=tag_name, **meta)
 
 
 _handler_kwargs = dict(
