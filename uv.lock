@@ -175,7 +175,7 @@ wheels = [
 
 [[package]]
 name = "boring-semantic-layer"
-version = "0.3.12"
+version = "0.3.14"
 source = { editable = "." }
 dependencies = [
     { name = "attrs" },
