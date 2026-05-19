@@ -175,7 +175,7 @@ wheels = [
 
 [[package]]
 name = "boring-semantic-layer"
-version = "0.3.12"
+version = "0.3.13"
 source = { editable = "." }
 dependencies = [
     { name = "attrs" },
@@ -283,7 +283,7 @@ requires-dist = [
     { name = "urllib3", marker = "extra == 'dev'", specifier = ">=2.2.3" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.30.0" },
     { name = "vl-convert-python", marker = "extra == 'viz-altair'", specifier = ">=1.0.0" },
-    { name = "xorq", specifier = ">=0.3.19" },
+    { name = "xorq", specifier = ">=0.3.24" },
     { name = "xorq", marker = "extra == 'examples'" },
     { name = "xorq", extras = ["duckdb"], marker = "extra == 'examples'", specifier = ">=0.3.4" },
 ]
@@ -4391,7 +4391,7 @@ wheels = [
 
 [[package]]
 name = "xorq"
-version = "0.3.19"
+version = "0.3.24"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "atpublic" },
@@ -4430,9 +4430,9 @@ dependencies = [
     { name = "uv" },
     { name = "xorq-datafusion" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d4/5f/17f6fe75773c313c688728a5273e818890a3307a009e54a69f0565a76079/xorq-0.3.19.tar.gz", hash = "sha256:3e0c46246db2bcd7653c0f581b7264fe49d48bfcda1ae40dcbea050581145726", size = 1964477, upload-time = "2026-04-14T13:14:23.58Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/e9/ba1a5e763c78cc2665fef73733c538e13a1f176aaf2c5944a6a97e2c2214/xorq-0.3.24.tar.gz", hash = "sha256:19508c6d03d055fc0bdb5f27349b688ebc032d4fc76d73804e146e7b94940243", size = 1745557, upload-time = "2026-05-12T07:42:09.935Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/38/04/aa60dc5f4fb30e12debbac2354b534c3f336467cc93db6769902f68ab312/xorq-0.3.19-py3-none-any.whl", hash = "sha256:eb55e59202c70f471be295882828f09e6728f43c7b04291c8013ca89b2ca5e69", size = 1898204, upload-time = "2026-04-14T13:14:21.966Z" },
+    { url = "https://files.pythonhosted.org/packages/56/6d/86fa9abbdf631fdf99048c0694afcc3f5d605fdbde3a2575aaccfcc48208/xorq-0.3.24-py3-none-any.whl", hash = "sha256:7a7ecb1bd5f3904edecb4fcfd0244ca0e5dfe2200f4321bcb46016402099f390", size = 1686214, upload-time = "2026-05-12T07:42:07.955Z" },
 ]
 
 [package.optional-dependencies]
