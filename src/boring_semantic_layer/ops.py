@@ -4314,19 +4314,22 @@ class SemanticJoinOp(Relation):
         Uses ``op.replace()`` (ibis graph rewriting) to swap out the
         ``source`` field on every ``DatabaseTable`` node in the right tree.
 
-        For plain ibis expressions (backends xorq doesn't wrap, e.g.
-        BigQuery), ``walk_nodes`` can't traverse the tree — fall back to
-        returning the inputs unchanged so ibis executes the join natively.
+        For plain ibis backends (e.g. Snowflake, Databricks, BigQuery)
+        that xorq doesn't wrap, ``walk_nodes`` can't traverse the tree —
+        fall back to returning the inputs unchanged so ibis executes the
+        join natively. Rebinding is only needed for xorq-vendored backends.
         """
         try:
             from ._xorq import relations as xorq_rel, walk_nodes
-        except Exception:
+        except ImportError:
             return left_tbl, right_tbl
 
-        # Find a canonical backend from the left tree.
+        # Find a canonical backend from the left tree. Plain ibis Table
+        # objects raise ValueError/TypeError ("Don't know how to handle
+        # type ...") inside xorq's walk_nodes — skip rebinding for them.
         try:
             db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), left_tbl))
-        except Exception:
+        except (ValueError, TypeError):
             return left_tbl, right_tbl
         canonical = db_tables[0].source if db_tables else None
 
