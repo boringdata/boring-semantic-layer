@@ -5,7 +5,7 @@ from __future__ import annotations
 try:
     from ibis.expr.format import fmt, render_fields
 except ImportError:
-    from xorq.vendor.ibis.expr.format import fmt, render_fields
+    from ._xorq import fmt, render_fields
 
 from boring_semantic_layer.ops import (
     SemanticAggregateOp,

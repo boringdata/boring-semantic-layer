@@ -243,6 +243,46 @@ class TestPlainIbisJoins:
         assert result_l.execute() is not None
         assert result_r.execute() is not None
 
+    def test_join_one_unsupported_backend(
+        self, flights_table, carriers_table, monkeypatch
+    ):
+        """Simulate a backend xorq cannot wrap (e.g. BigQuery) by forcing
+        ``_ensure_xorq_table`` to return the plain ibis table. The join
+        must still execute natively rather than crashing inside
+        ``_rebind_join_backends``. See issue #242.
+
+        Conversion happens at ``SemanticModel`` construction, so the
+        monkeypatch must be active before models are built.
+        """
+        from boring_semantic_layer import ops
+
+        monkeypatch.setattr(ops, "_ensure_xorq_table", lambda table: table)
+
+        flights = (
+            to_semantic_table(flights_table, name="flights")
+            .with_dimensions(
+                carrier=lambda t: t.carrier,
+                origin=lambda t: t.origin,
+                dest=lambda t: t.dest,
+            )
+            .with_measures(flight_count=lambda t: t.count())
+        )
+        carriers = (
+            to_semantic_table(carriers_table, name="carriers")
+            .with_dimensions(
+                code=lambda t: t.code,
+                name=lambda t: t.name,
+            )
+        )
+
+        joined = flights.join_one(
+            carriers,
+            on=lambda f, c: f.carrier == c.code,
+        )
+        result = joined.group_by("name").aggregate("flight_count").execute()
+        assert len(result) == 3
+        assert "name" in result.columns
+
     def test_yaml_join_unsupported_backend(self, plain_ibis_con, monkeypatch):
         """Regression test for issue #221 using the YAML join flow.
 

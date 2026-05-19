@@ -82,11 +82,13 @@ def _reconstruct_semantic_table(
         return _unwrap_xorq_wrappers(expr, strip_remote=False)
 
     def _reconstruct_table():
-        from xorq.common.utils.graph_utils import walk_nodes
-        from xorq.common.utils.ibis_utils import from_ibis
-        from xorq.expr.relations import Read
-        from xorq.vendor import ibis
-        from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+        from .._xorq import (
+            Read,
+            from_ibis,
+            ibis,
+            relations as xorq_rel,
+            walk_nodes,
+        )
 
         unwrapped_expr = _unwrap_cached_nodes(xorq_expr)
 
@@ -95,9 +97,13 @@ def _reconstruct_semantic_table(
         read_ops = list(walk_nodes((Read,), unwrapped_expr))
         in_memory_tables = list(walk_nodes((xorq_rel.InMemoryTable,), unwrapped_expr))
         db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), unwrapped_expr))
+        unbound_tables = list(walk_nodes((xorq_rel.UnboundTable,), unwrapped_expr))
 
         total_leaf_tables = (
-            len(read_ops) + len(in_memory_tables) + (len(db_tables) if not read_ops else 0)
+            len(read_ops)
+            + len(in_memory_tables)
+            + (len(db_tables) if not read_ops else 0)
+            + len(unbound_tables)
         )
         if total_leaf_tables > 1:
             expr = (
@@ -117,6 +123,10 @@ def _reconstruct_semantic_table(
             base = db_tables[0].to_expr()
             return base.view() if is_self_ref else base
 
+        if unbound_tables:
+            base = unbound_tables[0].to_expr()
+            return base.view() if is_self_ref else base
+
         return xorq_expr.to_expr()
 
     dim_meta = context.parse_field(metadata, "dimensions")
@@ -133,6 +143,7 @@ def _reconstruct_semantic_table(
         measures=measures,
         calc_measures=calc_measures,
         name=metadata.get("name"),
+        description=metadata.get("description"),
     )
 
 
@@ -238,8 +249,7 @@ def _reconstruct_limit(
 def _reconstruct_join(
     metadata: dict, xorq_expr, source, context: BSLSerializationContext
 ):
-    from xorq.common.utils.graph_utils import walk_nodes
-    from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+    from .._xorq import relations as xorq_rel, walk_nodes
 
     from .. import expr as bsl_expr
 
@@ -294,7 +304,7 @@ def _reconstruct_join(
 
 def _unwrap_xorq_wrappers(expr, *, strip_remote: bool = False):
     """Walk past Tag, CachedNode, and optionally RemoteTable wrappers."""
-    from xorq.expr.relations import CachedNode, RemoteTable, Tag
+    from .._xorq import CachedNode, RemoteTable, Tag
 
     op = expr.op()
     if isinstance(op, Tag):
@@ -310,7 +320,7 @@ def _unwrap_xorq_wrappers(expr, *, strip_remote: bool = False):
 
 def _unwrap_join_ref(expr):
     """If expr is a JoinReference, return the underlying table."""
-    from xorq.vendor.ibis.expr.operations.relations import JoinReference
+    from .._xorq import JoinReference
 
     if isinstance(expr.op(), JoinReference):
         return expr.op().parent.to_expr()
@@ -318,23 +328,19 @@ def _unwrap_join_ref(expr):
 
 
 def _rebind_to_backend(expr, target_backend):
-    """Rebind all DatabaseTable ops in *expr* to use *target_backend*."""
-    from xorq.common.utils.graph_utils import replace_nodes
-    from xorq.vendor.ibis.expr.operations import relations as xorq_rel
+    """Rebind every ``DatabaseTable`` op in *expr* to *target_backend*.
 
-    def replacer(op, _kwargs):
-        if isinstance(op, xorq_rel.DatabaseTable) and op.source is not target_backend:
-            kwargs = dict(zip(op.__argnames__, op.__args__, strict=False))
-            kwargs["source"] = target_backend
-            return op.__recreate__(kwargs)
-        return op
+    Thin re-export of the primitive defined in ``ops`` so callers in this
+    module don't have to reach across the package layer.
+    """
+    from ..ops import _rebind_to_backend as _impl
 
-    return replace_nodes(replacer, expr).to_expr()
+    return _impl(expr, target_backend)
 
 
 def _split_join_expr(xorq_expr):
     """Extract left and right table expressions from a joined xorq expression."""
-    from xorq.vendor.ibis.expr.operations.relations import JoinChain
+    from .._xorq import JoinChain
 
     expr = _unwrap_xorq_wrappers(xorq_expr, strip_remote=True)
     op = expr.op()
@@ -368,7 +374,7 @@ def _split_join_expr(xorq_expr):
 
 def extract_xorq_metadata(xorq_expr) -> dict[str, Any] | None:
     """Walk a xorq expression tree to find BSL tag metadata."""
-    from xorq.expr.relations import Tag
+    from .._xorq import Tag
 
     @safe
     def get_op(expr):

@@ -101,6 +101,8 @@ def _extract_semantic_table(op, context: BSLSerializationContext) -> dict[str, A
         metadata["calc_measures"] = calc_data
     if op.name:
         metadata["name"] = op.name
+    if op.description:
+        metadata["description"] = op.description
     return metadata
 
 
@@ -302,76 +304,85 @@ def serialize_measures(measures: Mapping[str, Any]) -> Result[dict, Exception]:
 
 
 def serialize_calc_measures(calc_measures: Mapping[str, Any]) -> Result[dict, Exception]:
+    """Serialize calc measures (``CalcMeasure`` objects) by resolver-tree.
+
+    Each calc measure stores the original user lambda. We run it once
+    against a fresh ``Deferred`` variable to capture the structural shape
+    (calls to ``.all(...)``, attribute access, arithmetic ...) and
+    serialize the resulting resolver tree.
+    """
+    from ..utils import expr_to_structured
+
     @safe
     def do_serialize():
-        from ..measure_scope import AggregationExpr, AllOf, BinOp, MeasureRef, MethodCall
-
-        def _serialize_calc_expr(expr):
-            if isinstance(expr, MeasureRef):
-                return ("measure_ref", expr.name)
-            if isinstance(expr, AggregationExpr):
-                return ("agg_expr", expr.column, expr.operation, expr.post_ops)
-            if isinstance(expr, AllOf):
-                return ("all_of", _serialize_calc_expr(expr.ref))
-            if isinstance(expr, MethodCall):
-                return (
-                    "method_call",
-                    _serialize_calc_expr(expr.receiver),
-                    expr.method,
-                    tuple(expr.args),
-                    tuple(expr.kwargs),
-                )
-            if isinstance(expr, BinOp):
-                return (
-                    "calc_binop",
-                    expr.op,
-                    _serialize_calc_expr(expr.left),
-                    _serialize_calc_expr(expr.right),
-                )
-            if isinstance(expr, int | float):
-                return ("num", expr)
-            return None
-
-        result = {}
-        for name, expr in calc_measures.items():
-            serialized = _serialize_calc_expr(expr)
-            if serialized is not None:
-                result[name] = serialized
+        result: dict[str, Any] = {}
+        for name, calc in calc_measures.items():
+            fn = getattr(calc, "expr", calc)
+            struct_result = expr_to_structured(fn)
+            entry: dict[str, Any] = {}
+            match struct_result:
+                case Success():
+                    entry["expr_struct"] = struct_result.unwrap()
+                case _:
+                    continue
+            description = getattr(calc, "description", None)
+            if description is not None:
+                entry["description"] = description
+            requires_unnest = getattr(calc, "requires_unnest", ())
+            if requires_unnest:
+                entry["requires_unnest"] = list(requires_unnest)
+            depends_on = getattr(calc, "depends_on", None)
+            if depends_on:
+                entry["depends_on"] = sorted(depends_on)
+            result[name] = entry
         return result
 
     return do_serialize()
 
 
 def deserialize_calc_measures(calc_data: Mapping[str, Any]) -> dict[str, Any]:
-    from ..measure_scope import AggregationExpr, AllOf, BinOp, MeasureRef, MethodCall
+    """Reconstruct calc measures from their serialized resolver trees.
+
+    Returns a dict mapping ``name → CalcMeasure``. Each entry's expression
+    is a Deferred whose resolver mirrors the original lambda's structural
+    shape; at query time the planner runs it against an
+    ``IbisCalcScope`` exactly like a user-supplied lambda.
+    """
+    from ..ops import CalcMeasure
+    from ..utils import structured_to_expr
 
     from .freeze import list_to_tuple
 
-    def _deserialize_calc_expr(data):
-        if isinstance(data, int | float):
-            return data
-        tag = data[0]
-        if tag == "measure_ref":
-            return MeasureRef(data[1])
-        if tag == "agg_expr":
-            return AggregationExpr(
-                column=data[1],
-                operation=data[2],
-                post_ops=list_to_tuple(data[3]) if data[3] else (),
-            )
-        if tag == "all_of":
-            return AllOf(_deserialize_calc_expr(data[1]))
-        if tag == "method_call":
-            return MethodCall(
-                receiver=_deserialize_calc_expr(data[1]),
-                method=data[2],
-                args=tuple(data[3]) if data[3] else (),
-                kwargs=tuple(data[4]) if data[4] else (),
-            )
-        if tag == "calc_binop":
-            return BinOp(data[1], _deserialize_calc_expr(data[2]), _deserialize_calc_expr(data[3]))
-        if tag == "num":
-            return data[1]
-        raise ValueError(f"Unknown calc measure tag: {tag}")
+    out: dict[str, Any] = {}
+    for name, data in calc_data.items():
+        if isinstance(data, dict):
+            entry = data
+            struct = entry.get("expr_struct")
+            description = entry.get("description")
+            requires_unnest = tuple(entry.get("requires_unnest", ()) or ())
+            depends_on = frozenset(entry.get("depends_on", ()) or ())
+        else:
+            # Backwards-compat: old curated-AST tags arrive as bare tuples.
+            struct = data
+            description = None
+            requires_unnest = ()
+            depends_on = frozenset()
 
-    return {name: _deserialize_calc_expr(expr) for name, expr in calc_data.items()}
+        if struct is None:
+            continue
+        # ``thaw`` converts the resolver tuple into a list of lists; the
+        # resolver deserializer expects nested tuples, so convert back.
+        struct = list_to_tuple(struct)
+        result = structured_to_expr(struct)
+        match result:
+            case Success():
+                expr = result.unwrap()
+            case _:
+                continue
+        out[name] = CalcMeasure(
+            expr=expr,
+            description=description,
+            requires_unnest=requires_unnest,
+            depends_on=depends_on,
+        )
+    return out

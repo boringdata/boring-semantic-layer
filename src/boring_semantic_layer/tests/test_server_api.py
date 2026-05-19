@@ -229,6 +229,34 @@ def test_query_supports_per_dimension_time_grains(client):
     assert data["records"][0]["flight_count"] > 0
 
 
+def test_compare_periods_endpoint(client):
+    response = client.post(
+        "/compare-periods",
+        json={
+            "model_name": "flights",
+            "dimensions": ["carrier"],
+            "measures": ["flight_count"],
+            "current_time_range": {"start": "2024-01-11", "end": "2024-01-20"},
+            "previous_time_range": {"start": "2024-01-01", "end": "2024-01-10"},
+            "get_chart": False,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["columns"] == [
+        "carrier",
+        "flight_count_current",
+        "flight_count_previous",
+        "flight_count_delta",
+        "flight_count_pct_change",
+    ]
+    aa_row = next(row for row in data["records"] if row["carrier"] == "AA")
+    assert aa_row["flight_count_current"] == 3
+    assert aa_row["flight_count_previous"] == 4
+    assert aa_row["flight_count_delta"] == -1
+
+
 def test_query_rejects_both_time_grain_and_time_grains(client):
     """Specifying both time_grain and time_grains is an error."""
     response = client.post(

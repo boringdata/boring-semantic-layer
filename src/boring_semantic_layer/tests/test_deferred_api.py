@@ -1530,7 +1530,14 @@ class TestDeeplyNestedJoins:
         assert df["shops.total_revenue"].iloc[0] == 2000
 
 def test_all_with_aggregation_expr_post_ops():
-    """Test t.all() with inline AggregationExpr that includes post-ops."""
+    """``t.all()`` over an inline aggregation with post-ops works end-to-end.
+
+    The analyzer-based compiler now lifts inline reductions into anonymous
+    base measures so patterns like ``t.value.sum().coalesce(0) /
+    t.all(t.value.sum().coalesce(0))`` compile correctly: each unique
+    inline reduction becomes a column on the post-aggregation table, and
+    the ``t.all(...)`` call wraps that column in a windowed sum.
+    """
     con = ibis.duckdb.connect(":memory:")
     events = pd.DataFrame(
         {

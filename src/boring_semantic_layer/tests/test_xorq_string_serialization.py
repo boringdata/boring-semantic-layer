@@ -487,6 +487,38 @@ def test_serialize_resolver_case_expr():
     assert resolved.execute() == 1
 
 
+def test_serialize_resolver_item_subscript_roundtrips_and_hashes():
+    """``_["flights.flight_count"]`` round-trips and the rebuilt resolver is hashable.
+
+    The deserializer rebuilds resolvers via ``object.__new__`` +
+    ``__setattr__`` to bypass FrozenSlotted validation; missing
+    ``__precomputed_hash__`` would surface as ``AttributeError`` the
+    first time a deserialized resolver is hashed (e.g. when used as a
+    dict key inside ibis op replacement). Calc measures that look up
+    prefixed names via subscript depend on this round-trip.
+    """
+    from boring_semantic_layer.utils import deserialize_resolver, serialize_resolver
+
+    from xorq.vendor.ibis import _
+    from xorq.vendor.ibis.common.deferred import Deferred
+
+    d = _["flights.flight_count"]
+    data = serialize_resolver(d._resolver)
+    assert data[0] == "item"
+
+    r = deserialize_resolver(data)
+    d2 = Deferred(r)
+    assert repr(d2) == repr(d)
+
+    # Hashing the rebuilt resolver must not raise. ``hash(r)`` exercises
+    # the path that surfaces missing ``__precomputed_hash__``.
+    hash(r)
+    # An equal resolver built fresh (via ``__init__``) should hash to
+    # the same value — proving the precomputed hash matches normal
+    # construction, not just any arbitrary value.
+    assert hash(r) == hash(d._resolver)
+
+
 def test_serialize_resolver_ifelse():
     """xo.ifelse(_.distance < 200, 1, 0).sum() round-trips."""
     import xorq.api as xo
@@ -1696,6 +1728,99 @@ def test_tagged_roundtrip_join_derived_dimension_on_root():
     assert list(result["flights_dd.flight_count"]) == list(baseline["flights_dd.flight_count"])
 
 
+def test_tagged_roundtrip_join_one_preserves_cardinality():
+    """join_one cardinality survives to_tagged → from_tagged round-trip.
+
+    Regression: _reconstruct_join always used join_many, changing cardinality
+    from "one" to "many". This caused the aggregate to take the pre-agg path
+    which computed wrong grain for derived dimensions.
+    """
+    import pandas as pd
+
+    from boring_semantic_layer import Dimension, Measure
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
+
+    con = ibis.duckdb.connect(":memory:")
+    flights = pd.DataFrame(
+        {
+            "origin": ["SEA", "SEA", "LAX", "LAX", "ORD"],
+            "dep_time": pd.to_datetime(
+                [
+                    "2024-01-15 08:00",
+                    "2024-02-15 14:00",
+                    "2024-01-15 08:00",
+                    "2024-02-15 20:00",
+                    "2024-03-15 14:00",
+                ]
+            ),
+            "carrier": ["AA", "UA", "AA", "DL", "UA"],
+        }
+    )
+    carriers = pd.DataFrame(
+        {
+            "code": ["AA", "UA", "DL"],
+            "nickname": ["American", "United", "Delta"],
+        }
+    )
+    f_tbl = con.create_table("flights_card", flights)
+    c_tbl = con.create_table("carriers_card", carriers)
+
+    flights_st = (
+        to_semantic_table(f_tbl, name="flights_card")
+        .with_dimensions(
+            origin=Dimension(expr=lambda t: t.origin, description="Origin"),
+            dep_month=Dimension(
+                expr=lambda t: t.dep_time.truncate("M"), description="Dep month"
+            ),
+        )
+        .with_measures(
+            flight_count=Measure(expr=lambda t: t.count(), description="Count"),
+        )
+    )
+    carriers_st = (
+        to_semantic_table(c_tbl, name="carriers_card")
+        .with_dimensions(
+            code=Dimension(expr=lambda t: t.code, description="Code"),
+            nickname=Dimension(expr=lambda t: t.nickname, description="Nickname"),
+        )
+        .with_measures(
+            carrier_count=Measure(expr=lambda t: t.count(), description="Count"),
+        )
+    )
+
+    joined = flights_st.join_one(carriers_st, on=lambda f, c: f.carrier == c.code)
+
+    # Baseline: group by derived dimension + prefixed measure before round-trip
+    baseline = (
+        joined.group_by("flights_card.dep_month")
+        .aggregate("flights_card.flight_count")
+        .order_by("flights_card.dep_month")
+        .execute()
+    )
+
+    # Round-trip
+    tagged = to_tagged(joined)
+    reconstructed = from_tagged(tagged)
+
+    # Verify cardinality is preserved
+    assert reconstructed.op().cardinality == "one"
+
+    result = (
+        reconstructed.group_by("flights_card.dep_month")
+        .aggregate("flights_card.flight_count")
+        .order_by("flights_card.dep_month")
+        .execute()
+    )
+
+    assert len(result) == len(baseline)
+    assert list(result["flights_card.dep_month"]) == list(baseline["flights_card.dep_month"])
+    assert list(result["flights_card.flight_count"]) == list(
+        baseline["flights_card.flight_count"]
+    )
+    # Verify total is correct (should sum to 5)
+    assert result["flights_card.flight_count"].sum() == 5
+
+
 @pytest.mark.parametrize(
     "n_joins",
     [2, 3, 4],
@@ -1817,3 +1942,26 @@ def test_tagged_roundtrip_join_chain_shared_column_names(n_joins):
     assert len(result) == len(baseline)
     assert list(result["carriers.nickname"]) == list(baseline["carriers.nickname"])
     assert list(result["flights.flight_count"]) == list(baseline["flights.flight_count"])
+
+
+def test_tagged_roundtrip_unbound_table():
+    """Round-trip serialization works for tables backed by an UnboundTable (no concrete data source)."""
+    from xorq.vendor import ibis
+
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
+
+    t = ibis.table(
+        {"origin": "string", "destination": "string", "distance": "int64"},
+        name="flights",
+    )
+    flights = (
+        to_semantic_table(t, name="flights")
+        .with_dimensions(origin=lambda t: t.origin)
+        .with_measures(total_distance=lambda t: t.distance.sum())
+    )
+
+    tagged = to_tagged(flights)
+    reconstructed = from_tagged(tagged)
+
+    assert set(reconstructed.op().get_dimensions().keys()) == {"origin"}
+    assert set(reconstructed.op().get_measures().keys()) == {"total_distance"}

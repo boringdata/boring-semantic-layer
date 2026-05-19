@@ -233,7 +233,16 @@ def test_inline_measure_with_different_reference_styles():
 
 
 def test_all_of_multilayer_calc_measure():
-    """t.all() should work when pointing at a calculated measure chain."""
+    """``t.all()`` over a calc-of-calc chain re-aggregates from the base.
+
+    The compiler builds a totals table by re-running the same aggregation
+    without group_by, applies non-AllOf calc measures to it, and
+    cross-joins it into the per-group result so ``t.all(measure_ref)``
+    references the totals column directly. For non-sum-style chains
+    (e.g. ``avg_distance + 1``) this matches the curated-AST behavior:
+    the ``+ 1`` participates in the totals computation exactly once,
+    not once per group.
+    """
     con = ibis.duckdb.connect(":memory:")
     flights = pd.DataFrame(
         {
@@ -258,9 +267,53 @@ def test_all_of_multilayer_calc_measure():
 
     df = flights_st.group_by("carrier").aggregate("pct_of_total").execute()
 
+    # AA avg_distance = 300/2 = 150, +1 = 151
+    # UA avg_distance = 700/2 = 350, +1 = 351
+    # Totals (re-aggregated from base): avg_distance = 1000/4 = 250, +1 = 251
     assert len(df) == 2
     assert "pct_of_total" in df.columns
     assert pytest.approx(sorted(df.pct_of_total.tolist())) == sorted([151 / 251, 351 / 251])
+
+
+def test_all_of_non_sum_measure_uses_totals_table():
+    """``t.all(mean_measure)`` re-aggregates from base, not sum-of-means.
+
+    The bug: emitting ``column.sum().over(window())`` for ``t.all(...)``
+    is correct for sum-style measures (sum of per-group sums = overall
+    sum) but wrong for ``mean`` (sum of per-group means != overall mean).
+    The fix builds a totals table by re-aggregating from base without
+    group_by, then references the totals column.
+    """
+    con = ibis.duckdb.connect(":memory:")
+    flights = pd.DataFrame(
+        {
+            "carrier": ["AA", "AA", "UA", "UA"],
+            "distance": [100, 200, 300, 400],
+        }
+    )
+    f_tbl = con.create_table("flights_avg", flights)
+
+    flights_st = (
+        to_semantic_table(f_tbl, "flights_avg")
+        .with_measures(avg_distance=lambda t: t.distance.mean())
+        .with_measures(
+            ratio=lambda t: t.avg_distance / t.all(t.avg_distance),
+        )
+    )
+
+    df = (
+        flights_st.group_by("carrier")
+        .aggregate("avg_distance", "ratio")
+        .execute()
+        .sort_values("carrier")
+        .reset_index(drop=True)
+    )
+
+    # AA avg = 150, UA avg = 350, overall avg = 250 (NOT 150+350=500).
+    aa = df[df.carrier == "AA"].iloc[0]
+    ua = df[df.carrier == "UA"].iloc[0]
+    assert pytest.approx(aa.ratio) == 150 / 250
+    assert pytest.approx(ua.ratio) == 350 / 250
 
 
 # --- Tests for .values / .schema / .columns with calc measures ---
@@ -475,28 +528,156 @@ def test_method_call_fillna_on_calc_measure():
 
 
 def test_method_call_serialization_roundtrip():
-    """MethodCall should survive serialize/deserialize roundtrip."""
-    from boring_semantic_layer.measure_scope import BinOp, MeasureRef, MethodCall
-    from boring_semantic_layer.serialization import (
-        deserialize_calc_measures,
-        serialize_calc_measures,
+    """A method-call calc measure survives serialize/deserialize roundtrip.
+
+    Replaces the legacy curated-AST direct construction with the
+    behavioral round-trip through ``to_tagged`` / ``from_tagged``.
+    """
+    from boring_semantic_layer import to_semantic_table
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
+
+    con = ibis.duckdb.connect(":memory:")
+    df = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100.0, 200.0, 300.0]})
+    tbl = con.create_table("flights_ms", df)
+
+    st = to_semantic_table(tbl, "flights_ms").with_measures(
+        total_distance=lambda t: t.distance.sum(),
+        flight_count=lambda t: t.count(),
+        avg_distance=lambda t: (t.total_distance / t.flight_count).round(2),
+    )
+    reconstructed = from_tagged(to_tagged(st))
+    df_orig = st.group_by("carrier").aggregate("avg_distance").execute().sort_values("carrier")
+    df_round = (
+        reconstructed.group_by("carrier")
+        .aggregate("avg_distance")
+        .execute()
+        .sort_values("carrier")
+    )
+    pd.testing.assert_frame_equal(
+        df_orig.reset_index(drop=True),
+        df_round.reset_index(drop=True),
     )
 
-    # Build: (total_distance / flight_count).round(2)
-    expr = MethodCall(
-        receiver=BinOp("div", MeasureRef("total_distance"), MeasureRef("flight_count")),
-        method="round",
-        args=(2,),
-        kwargs=(),
+
+def test_calc_dtype_inference_with_inline_aggregation():
+    """``schema`` should know the dtype of a calc measure built with t.all(t.col.sum())."""
+    con = ibis.duckdb.connect(":memory:")
+    events = pd.DataFrame({"grp": ["a", "b"], "value": [1.0, 2.0]})
+    tbl = con.create_table("events", events)
+
+    st = to_semantic_table(tbl, "events").with_measures(
+        pct_of_total=lambda t: t.value.sum() / t.all(t.value.sum()),
+    )
+    # Before infer_calc_dtype handled the rewrite path, this was silently
+    # dropped from values and the dtype was unknown.
+    assert "pct_of_total" in st.schema.names
+
+
+# ---------------------------------------------------------------------------
+# Broader base-measure recognition (#1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "method, expected_kind",
+    [
+        ("var", "base"),
+        ("std", "base"),
+        ("median", "base"),
+        ("nunique", "base"),
+        ("approx_nunique", "base"),
+        ("first", "base"),
+        ("last", "base"),
+    ],
+)
+def test_extra_reductions_classified_as_base(method, expected_kind):
+    """Measures named the same as a column then aggregated with a non-sum/mean
+    reduction should still be classified as base, not silently routed through
+    the calc compiler.
+    """
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame({"carrier": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
+    tbl = con.create_table(f"flights_{method}", data)
+
+    # Define a measure named ``distance`` (matching the column name) so that
+    # ``t.distance.<method>()`` resolves through the MeasureRef path that
+    # ``_AGG_METHODS`` guards.
+    st = to_semantic_table(tbl, f"flights_{method}").with_measures(
+        distance=lambda t: t.distance.sum(),
+    )
+    st = st.with_measures(
+        derived=lambda t, _m=method: getattr(t.distance, _m)(),
     )
 
-    calc_measures = {"avg_distance": expr}
-    serialized = serialize_calc_measures(calc_measures).unwrap()
-    deserialized = deserialize_calc_measures(serialized)
+    op = st.op()
+    base_names = set(op.get_measures().keys())
+    calc_names = set(op.get_calculated_measures().keys())
+    assert "derived" in base_names, (
+        f"{method!r} measure should classify as base, got calc"
+    )
+    assert "derived" not in calc_names
 
-    result = deserialized["avg_distance"]
-    assert isinstance(result, MethodCall)
-    assert result.method == "round"
-    assert result.args == (2,)
-    assert isinstance(result.receiver, BinOp)
-    assert result.receiver.op == "div"
+
+# ---------------------------------------------------------------------------
+# Typo'd measure references (#2)
+# ---------------------------------------------------------------------------
+
+
+def test_typo_measure_ref_raises_with_suggestion():
+    """A calc-measure lambda referencing a misspelled measure name should
+    fail loudly at construction with a "did you mean?" suggestion."""
+    from boring_semantic_layer.measure_scope import UnknownMeasureRefError
+
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame({"carrier": ["AA"], "distance": [100]})
+    tbl = con.create_table("flights_typo", data)
+
+    st = to_semantic_table(tbl, "flights_typo").with_measures(
+        flight_count=lambda t: t.count(),
+        total_distance=lambda t: t.distance.sum(),
+    )
+
+    with pytest.raises(UnknownMeasureRefError, match="flight_count"):
+        st.with_measures(
+            # ``flight_konut`` typo of ``flight_count``
+            ratio=lambda t: t.flight_konut / t.total_distance,
+        )
+
+
+def test_typo_in_t_all_raises():
+    """Same loud-fail behavior when the typo is the argument to ``t.all``."""
+    from boring_semantic_layer.measure_scope import UnknownMeasureRefError
+
+    con = ibis.duckdb.connect(":memory:")
+    data = pd.DataFrame({"carrier": ["AA"], "distance": [100]})
+    tbl = con.create_table("flights_typo_all", data)
+
+    st = to_semantic_table(tbl, "flights_typo_all").with_measures(
+        flight_count=lambda t: t.count(),
+    )
+
+    with pytest.raises(UnknownMeasureRefError, match="flight_count"):
+        st.with_measures(
+            ratio=lambda t: t.flight_count / t.all(t.flight_konut),
+        )
+
+
+def test_substring_measure_name_does_not_trigger_typo():
+    """Names that are substrings of other measures should not trip the typo
+    detector. Asking for a known measure name returns its column on the
+    virtual aggregated table without firing the typo path.
+    """
+    from boring_semantic_layer.calc_compiler import IbisCalcScope
+    from boring_semantic_layer.calc_analyzer import virtual_agg_table
+    import ibis as i
+
+    tbl = i.table({"col": "int64"}, name="t")
+    vt = virtual_agg_table({"net_revenue": "float64", "total_net_revenue": "float64"})
+    scope = IbisCalcScope(
+        base_tbl=tbl,
+        virtual_agg_tbl=vt,
+        known_measures=frozenset({"net_revenue", "total_net_revenue"}),
+    )
+    assert scope.net_revenue is not None
+    # Asking for 'col' is fine — it's a column.
+    assert scope.col is not None

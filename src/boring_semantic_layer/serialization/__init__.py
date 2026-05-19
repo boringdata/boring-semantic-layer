@@ -86,8 +86,7 @@ def to_tagged(semantic_expr, aggregate_cache_storage=None):
 
         import re
 
-        from xorq.common.utils.node_utils import replace_nodes
-        from xorq.vendor.ibis.expr.operations.relations import DatabaseTable
+        from .._xorq import DatabaseTable, replace_nodes
 
         xorq_table = ibis_expr
 

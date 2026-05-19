@@ -11,20 +11,18 @@ from returns.curry import partial
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Failure, Result, Success, safe
 from toolz import compose
-from xorq.common.utils.graph_utils import (
+from ._xorq import (
+    Expr as XorqExpr,
+    Graph,
+    Node,
     replace_nodes as _xorq_replace_nodes,
-)
-from xorq.common.utils.graph_utils import (
     to_node as _xorq_to_node,
 )
-from xorq.vendor.ibis.common.graph import Graph
-from xorq.vendor.ibis.expr.operations.core import Node
-from xorq.vendor.ibis.expr.types import Expr as XorqExpr
 
 
 def _collect_field_types() -> tuple[type, ...]:
     """Collect all Field types that may appear in expressions."""
-    from xorq.vendor.ibis.expr.operations.relations import Field as XorqField
+    from ._xorq import Field as XorqField
 
     types = [XorqField]
     try:
@@ -337,7 +335,7 @@ def build_dependency_graph(
     Returns:
         Dictionary mapping field names to metadata with "deps" and "type" keys
     """
-    from .ops import _collect_measure_refs
+    from .ops import CalcMeasure
 
     graph = {}
     extended_table = _build_extended_table(base_table, dimensions)
@@ -364,9 +362,11 @@ def build_dependency_graph(
         except Exception:
             graph[name] = {"deps": {}, "type": "dimension" if name in dimensions else "measure"}
 
-    for name, calc_expr in calc_measures.items():
-        refs = set()
-        _collect_measure_refs(calc_expr, refs)
+    for name, calc in calc_measures.items():
+        if isinstance(calc, CalcMeasure):
+            refs = set(calc.depends_on)
+        else:
+            refs = set()
         graph[name] = {"deps": {ref: "measure" for ref in refs}, "type": "calc_measure"}
 
     return graph

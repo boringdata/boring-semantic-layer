@@ -31,3 +31,4 @@ This server provides a semantic layer for querying structured data with support 
 - get_model: get model metadata (dimensions, measures, time dimensions)
 - get_time_range: get available time range for time dimensions
 - query_model: execute queries with time_grain, time_range, and chart_spec support
+- compare_periods: compare two explicit time ranges and return current/previous/delta/pct_change columns

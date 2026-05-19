@@ -7,7 +7,6 @@ Provides parameter-based querying as an alternative to method chaining.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from operator import eq, ge, gt, le, lt, ne
 from typing import Any, ClassVar, Literal
 
 import ibis
@@ -28,7 +27,7 @@ def _get_ibis_api():
     xorq does not support, plain ibis is used as the fallback.
     """
     try:
-        import xorq.api as xo
+        from ._xorq import api as xo
 
         return xo
     except Exception:
@@ -71,68 +70,7 @@ TIME_GRAIN_ORDER: tuple[str, ...] = (
 )
 
 
-# Helper functions using operator module instead of lambdas
-def _ibis_isin(x, y):
-    return x.isin(y)
-
-
-def _ibis_not_isin(x, y):
-    return ~x.isin(y)
-
-
-def _ibis_like(x, y):
-    return x.like(y)
-
-
-def _ibis_not_like(x, y):
-    return ~x.like(y)
-
-
-def _ibis_ilike(x, y):
-    return x.ilike(y)
-
-
-def _ibis_not_ilike(x, y):
-    return ~x.ilike(y)
-
-
-def _ibis_isnull(x, _):
-    return x.isnull()
-
-
-def _ibis_notnull(x, _):
-    return x.notnull()
-
-
-def _ibis_and(x, y):
-    return x & y
-
-
-def _ibis_or(x, y):
-    return x | y
-
-
-# Operator mapping using operator module functions where possible
-OPERATOR_MAPPING: FrozenDict = {
-    "=": eq,
-    "eq": eq,
-    "equals": eq,
-    "!=": ne,
-    ">": gt,
-    ">=": ge,
-    "<": lt,
-    "<=": le,
-    "in": _ibis_isin,
-    "not in": _ibis_not_isin,
-    "like": _ibis_like,
-    "not like": _ibis_not_like,
-    "ilike": _ibis_ilike,
-    "not ilike": _ibis_not_ilike,
-    "is null": _ibis_isnull,
-    "is not null": _ibis_notnull,
-    "AND": _ibis_and,
-    "OR": _ibis_or,
-}
+# Filter parsing and compilation lives in ``boring_semantic_layer.predicate``.
 
 
 @curry
@@ -150,6 +88,12 @@ def _find_time_dimension(semantic_table: Any, dimensions: list[str]) -> str | No
     dims_dict = semantic_table.get_dimensions()
     is_time_dim = _is_time_dimension(dims_dict)
     return next((dim for dim in dimensions if is_time_dim(dim)), None)
+
+
+def _find_any_time_dimension(semantic_table: Any) -> str | None:
+    """Find the first declared time dimension on a semantic table."""
+    dims_dict = semantic_table.get_dimensions()
+    return next((name for name, dim in dims_dict.items() if dim.is_time_dimension), None)
 
 
 @curry
@@ -227,7 +171,6 @@ class Filter:
 
     filter: FrozenDict | str | Callable
 
-    OPERATORS: ClassVar[set] = set(OPERATOR_MAPPING.keys())
     COMPOUND_OPERATORS: ClassVar[set] = {"AND", "OR"}
 
     def __attrs_post_init__(self) -> None:
@@ -255,78 +198,19 @@ class Filter:
         # Not a date/timestamp, return original value
         return value
 
-    def _get_field_expr(self, field: str) -> Any:
-        """Get field expression using ibis._ for unbound reference.
-
-        For prefixed fields (e.g., 'customers.country'), use only the field name
-        since joined tables flatten the columns to the top level.
-        """
-        _ibis = _get_ibis_api()
-        if "." in field:
-            # Extract just the field name, ignoring the table prefix
-            # e.g., 'customers.country' -> 'country'
-            _table_name, field_name = field.split(".", 1)
-            return getattr(_ibis._, field_name)
-        return getattr(_ibis._, field)
-
-    def _parse_json_filter(self, filter_obj: FrozenDict) -> Any:
-        """Parse JSON filter object into ibis expression."""
-        # Compound filters (AND/OR)
-        if filter_obj.get("operator") in self.COMPOUND_OPERATORS:
-            conditions = filter_obj.get("conditions")
-            if not conditions:
-                raise ValueError("Compound filter must have non-empty conditions list")
-            expr = self._parse_json_filter(conditions[0])
-            for cond in conditions[1:]:
-                next_expr = self._parse_json_filter(cond)
-                expr = OPERATOR_MAPPING[filter_obj["operator"]](expr, next_expr)
-            return expr
-
-        # Simple filter
-        field = filter_obj.get("field")
-        op = filter_obj.get("operator")
-        if field is None or op is None:
-            raise KeyError(
-                "Missing required keys in filter: 'field' and 'operator' are required",
-            )
-
-        field_expr = self._get_field_expr(field)
-
-        if op not in self.OPERATORS:
-            raise ValueError(f"Unsupported operator: {op}")
-
-        # List membership operators
-        if op in ("in", "not in"):
-            values = filter_obj.get("values")
-            if values is None:
-                raise ValueError(f"Operator '{op}' requires 'values' field")
-            # Convert each value for date/timestamp support
-            converted_values = [self._convert_filter_value(v) for v in values]
-            return OPERATOR_MAPPING[op](field_expr, converted_values)
-
-        # Null checks
-        if op in ("is null", "is not null"):
-            if any(k in filter_obj for k in ("value", "values")):
-                raise ValueError(
-                    f"Operator '{op}' should not have 'value' or 'values' fields",
-                )
-            return OPERATOR_MAPPING[op](field_expr, None)
-
-        # Single value operators
-        value = filter_obj.get("value")
-        if value is None:
-            raise ValueError(f"Operator '{op}' requires 'value' field")
-        # Convert value for date/timestamp support
-        converted_value = self._convert_filter_value(value)
-        return OPERATOR_MAPPING[op](field_expr, converted_value)
-
     def to_callable(self) -> Callable:
         """Convert filter to callable that can be used with SemanticTable.filter()."""
+        from . import predicate as pred_mod
         from .ops import _ensure_xorq_table
 
         if isinstance(self.filter, dict):
-            expr = self._parse_json_filter(self.filter)
-            return lambda t: expr.resolve(_ensure_xorq_table(t))
+            pred = pred_mod.from_dict(self.filter)
+            ibis_module = _get_ibis_api()
+            return lambda t: pred_mod.compile(
+                pred,
+                ibis_module._,
+                ibis_module=ibis_module,
+            ).resolve(_ensure_xorq_table(t))
         elif isinstance(self.filter, str):
             _ibis = _get_ibis_api()
             expr = safe_eval(
@@ -408,15 +292,11 @@ def _normalize_order_by(
 
 def _extract_filter_fields(filter_spec: dict) -> set[str]:
     """Extract all field names referenced by a dict filter (including compound)."""
+    from . import predicate as pred_mod
+
     if not isinstance(filter_spec, dict):
         return set()
-    if filter_spec.get("operator") in ("AND", "OR"):
-        fields: set[str] = set()
-        for cond in filter_spec.get("conditions", []):
-            fields |= _extract_filter_fields(cond)
-        return fields
-    field = filter_spec.get("field")
-    return {field} if field else set()
+    return pred_mod.fields(pred_mod.from_dict(filter_spec))
 
 
 def _normalize_filter_fields(
@@ -442,40 +322,16 @@ def _normalize_filter_fields(
 
 
 def _build_post_agg_predicate(filter_obj: dict) -> Any:
-    """Build an ibis predicate for post-aggregation filters.
+    """Build an ibis predicate (``Deferred``) for post-aggregation filters.
 
-    Uses bracket access (``t[field]``) instead of attribute access so that
-    dotted column names from joined models (e.g. ``orders.total_amount``)
-    resolve correctly on the aggregated table.
+    Delegates to the ``Predicate`` AST in ``predicate``. Bracket-access
+    field resolution preserves dotted names from joined models (e.g.
+    ``orders.total_amount``) on the aggregated table.
     """
-    if filter_obj.get("operator") in ("AND", "OR"):
-        conditions = filter_obj.get("conditions", [])
-        expr = _build_post_agg_predicate(conditions[0])
-        for cond in conditions[1:]:
-            next_expr = _build_post_agg_predicate(cond)
-            expr = OPERATOR_MAPPING[filter_obj["operator"]](expr, next_expr)
-        return expr
+    from . import predicate as pred_mod
 
-    field = filter_obj["field"]
-    op = filter_obj["operator"]
-    # Use bracket access on ibis._ to preserve dotted names
-    field_expr = ibis._[field]
-
-    if op in ("is null", "is not null"):
-        return OPERATOR_MAPPING[op](field_expr, None)
-    if op in ("in", "not in"):
-        return OPERATOR_MAPPING[op](field_expr, filter_obj.get("values", []))
-
-    value = filter_obj.get("value")
-    # Convert date/timestamp strings
-    if isinstance(value, str):
-        for dtype in ("timestamp", "date"):
-            try:
-                value = ibis.literal(value, type=dtype)
-                break
-            except (ValueError, TypeError):
-                pass
-    return OPERATOR_MAPPING[op](field_expr, value)
+    pred = pred_mod.from_dict(filter_obj)
+    return pred_mod.compile(pred, ibis._, post_agg=True, ibis_module=ibis)
 
 
 def _normalize_post_agg_filter(
@@ -554,6 +410,156 @@ def _split_filter(
         post_agg.append(filter_spec)
     else:
         pre_agg.append(filter_spec)
+
+
+def _build_time_range_filters(semantic_table: Any, time_dimension: str, time_range: Mapping[str, str]) -> list[Callable]:
+    """Build reusable filters for a specific time dimension and range."""
+    if not isinstance(time_range, dict) or "start" not in time_range or "end" not in time_range:
+        raise ValueError("time_range must be a dict with 'start' and 'end' keys")
+
+    from datetime import datetime
+
+    dim_obj = semantic_table.get_dimensions().get(time_dimension)
+    if dim_obj is None:
+        raise ValueError(
+            f"Dimension '{time_dimension}' not found. "
+            f"Available dimensions: {list(semantic_table.get_dimensions().keys())}"
+        )
+    if not dim_obj.is_time_dimension:
+        raise ValueError(
+            f"Dimension '{time_dimension}' is not a time dimension. "
+            "compare_periods and time ranges require a time dimension."
+        )
+
+    start_dt = datetime.fromisoformat(time_range["start"])
+    end_dt = datetime.fromisoformat(time_range["end"])
+    if end_dt < start_dt:
+        raise ValueError("time_range end must be greater than or equal to start")
+    return [
+        lambda t, dim=dim_obj, start=start_dt: dim(t) >= start,
+        lambda t, dim=dim_obj, end=end_dt: dim(t) <= end,
+    ]
+
+
+def compare_periods(
+    semantic_table: Any,
+    dimensions: Sequence[str] | None = None,
+    measures: Sequence[str] | None = None,
+    current_time_range: Mapping[str, str] | None = None,
+    previous_time_range: Mapping[str, str] | None = None,
+    filters: Sequence[dict[str, Any] | str | Callable | Filter] | None = None,
+    time_dimension: str | None = None,
+    time_grain: TimeGrain | None = None,
+    time_grains: Mapping[str, TimeGrain] | None = None,
+    order_by: Sequence[tuple[str, str]] | None = None,
+    limit: int | None = None,
+) -> Any:
+    """Compare two time ranges and return current/previous/delta columns."""
+    from .api import to_semantic_table
+
+    dimensions = list(dimensions or [])
+    measures = list(measures or [])
+    filters = list(filters or [])
+
+    if not measures:
+        raise ValueError("compare_periods requires at least one measure")
+    if current_time_range is None or previous_time_range is None:
+        raise ValueError(
+            "compare_periods requires both 'current_time_range' and 'previous_time_range'"
+        )
+
+    dims_dict = semantic_table.get_dimensions()
+    known_dimensions = set(dims_dict)
+    known_measures = set(semantic_table.get_measures()) | set(semantic_table.get_calculated_measures())
+    model_name = getattr(semantic_table, "name", None)
+
+    dimensions = _normalize_fields(dimensions, known_dimensions, expected_prefix=model_name)
+    measures = _normalize_fields(measures, known_measures, expected_prefix=model_name)
+
+    resolved_time_dimension = time_dimension
+    if resolved_time_dimension is not None:
+        resolved_time_dimension = _normalize_fields(
+            [resolved_time_dimension], known_dimensions, expected_prefix=model_name
+        )[0]
+    else:
+        resolved_time_dimension = _find_time_dimension(semantic_table, dimensions) or _find_any_time_dimension(
+            semantic_table
+        )
+
+    if resolved_time_dimension is None:
+        raise ValueError(
+            "compare_periods requires a time dimension. Mark one with "
+            ".with_dimensions(dim_name={'expr': ..., 'is_time_dimension': True}) "
+            "or pass time_dimension explicitly."
+        )
+
+    current_result = query(
+        semantic_table=semantic_table,
+        dimensions=dimensions,
+        measures=measures,
+        filters=[*filters, *_build_time_range_filters(semantic_table, resolved_time_dimension, current_time_range)],
+        time_grain=time_grain,
+        time_grains=time_grains,
+    )
+    previous_result = query(
+        semantic_table=semantic_table,
+        dimensions=dimensions,
+        measures=measures,
+        filters=[*filters, *_build_time_range_filters(semantic_table, resolved_time_dimension, previous_time_range)],
+        time_grain=time_grain,
+        time_grains=time_grains,
+    )
+
+    current_tbl = current_result.as_table().table.rename(
+        {f"{measure}_current": measure for measure in measures}
+    )
+    previous_tbl = previous_result.as_table().table.rename(
+        {
+            **{f"{measure}_previous": measure for measure in measures},
+            **{f"__previous_{dim}": dim for dim in dimensions},
+        }
+    )
+
+    if dimensions:
+        join_predicates = [current_tbl[dim] == previous_tbl[f"__previous_{dim}"] for dim in dimensions]
+        joined = current_tbl.join(previous_tbl, join_predicates, how="outer")
+        result_tbl = joined.select(
+            *[
+                joined[dim].coalesce(joined[f"__previous_{dim}"]).name(dim)
+                for dim in dimensions
+            ],
+            *[joined[f"{measure}_current"] for measure in measures],
+            *[joined[f"{measure}_previous"] for measure in measures],
+        )
+    else:
+        joined = current_tbl.join(previous_tbl, how="cross")
+        result_tbl = joined.select(
+            *[joined[f"{measure}_current"] for measure in measures],
+            *[joined[f"{measure}_previous"] for measure in measures],
+        )
+
+    pct_mutations = {}
+    delta_mutations = {}
+    for measure in measures:
+        current_col = result_tbl[f"{measure}_current"]
+        previous_col = result_tbl[f"{measure}_previous"]
+        delta_expr = current_col.fill_null(0) - previous_col.fill_null(0)
+        delta_mutations[f"{measure}_delta"] = delta_expr
+        pct_mutations[f"{measure}_pct_change"] = delta_expr / previous_col.nullif(0)
+
+    result_tbl = result_tbl.mutate(**delta_mutations, **pct_mutations)
+
+    if order_by:
+        result_tbl = result_tbl.order_by(
+            [
+                result_tbl[field].desc() if direction.lower() == "desc" else result_tbl[field]
+                for field, direction in order_by
+            ]
+        )
+    if limit is not None:
+        result_tbl = result_tbl.limit(limit)
+
+    return to_semantic_table(result_tbl, name=f"{model_name or 'model'}_period_comparison")
 
 
 def query(
@@ -655,9 +661,6 @@ def query(
 
     # Step 0: Add time_range as a filter if specified
     if time_range:
-        if not isinstance(time_range, dict) or "start" not in time_range or "end" not in time_range:
-            raise ValueError("time_range must be a dict with 'start' and 'end' keys")
-
         time_dim_name = _find_time_dimension(result, dimensions)
         if not time_dim_name:
             raise ValueError(
@@ -667,17 +670,7 @@ def query(
                 ".with_dimensions(dim_name={'expr': lambda t: t.column, 'is_time_dimension': True})"
             )
 
-        # Apply time range filters using the Dimension object directly.
-        # This uses dim(t) which calls Dimension.__call__ and properly resolves
-        # Deferred expressions (ibis._) via: self.expr.resolve(table) if _is_deferred(...)
-        # This is the same pattern used for time_grain transformations.
-        from datetime import datetime
-
-        dim_obj = result.get_dimensions().get(time_dim_name)
-        start_dt = datetime.fromisoformat(time_range["start"])
-        end_dt = datetime.fromisoformat(time_range["end"])
-        filters.append(lambda t, dim=dim_obj, start=start_dt: dim(t) >= start)
-        filters.append(lambda t, dim=dim_obj, end=end_dt: dim(t) <= end)
+        filters.extend(_build_time_range_filters(result, time_dim_name, time_range))
 
     # Step 1: Handle time grain transformations
     if time_grain and time_grains:

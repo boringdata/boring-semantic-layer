@@ -232,6 +232,24 @@ When None, returns only data: `{"records": [...]}`
 }
 ```
 
+## Period-over-Period Comparisons
+
+For WoW, MoM, QoQ, YoY, or custom period-vs-period analysis, prefer the dedicated `compare_periods` tool instead of trying to force everything through `query_model`. It returns `{measure}_current`, `{measure}_previous`, `{measure}_delta`, and `{measure}_pct_change` columns in one response.
+
+Example:
+```python
+compare_periods(
+    model_name="orders",
+    dimensions=["orders.region"],
+    measures=["orders.total_sales"],
+    current_time_range={"start": "2024-02-01", "end": "2024-02-29"},
+    previous_time_range={"start": "2024-01-01", "end": "2024-01-31"},
+    order_by=[["total_sales_delta", "desc"]]
+)
+```
+
+Use `query_model` when you only need a single period or want to build your own windowed analysis.
+
 ## Common Query Patterns
 
 ### Simple Aggregation

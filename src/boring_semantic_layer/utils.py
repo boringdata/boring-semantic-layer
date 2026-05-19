@@ -178,8 +178,7 @@ def _check_closure_vars(fn: Callable) -> Maybe[str]:
 def _try_ibis_introspection(fn: Callable) -> Maybe[str]:
     from returns.result import Success
 
-    from xorq.vendor.ibis import _
-    from xorq.vendor.ibis.common.deferred import Deferred
+    from ._xorq import Deferred, _
 
     result = fn(_)
     if not isinstance(result, Deferred):
@@ -254,8 +253,7 @@ def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
         from ibis import _
 
         try:
-            from xorq import api as xo
-            from xorq.vendor import ibis as xorq_ibis
+            from ._xorq import api as xo, ibis as xorq_ibis
 
             eval_context = {
                 "ibis": ibis,
@@ -284,7 +282,7 @@ def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
 
 def _is_ibis_literal_node(value) -> bool:
     try:
-        from xorq.vendor.ibis.expr.operations.generic import Literal
+        from ._xorq import Literal
         return isinstance(value, Literal)
     except ImportError:
         return False
@@ -292,10 +290,11 @@ def _is_ibis_literal_node(value) -> bool:
 
 def serialize_resolver(resolver) -> tuple:
     """Walk a Resolver tree and produce a hashable nested-tuple representation."""
-    from xorq.vendor.ibis.common.deferred import (
+    from ._xorq import (
         Attr,
         BinaryOperator,
         Call,
+        Item,
         Just,
         JustUnhashable,
         Mapping as MappingResolver,
@@ -334,6 +333,9 @@ def serialize_resolver(resolver) -> tuple:
 
     if isinstance(resolver, Attr):
         return ("attr", serialize_resolver(resolver.obj), serialize_resolver(resolver.name))
+
+    if isinstance(resolver, Item):
+        return ("item", serialize_resolver(resolver.obj), serialize_resolver(resolver.name))
 
     if isinstance(resolver, Call):
         func_tuple = serialize_resolver(resolver.func)
@@ -400,12 +402,29 @@ def _resolve_qualname(module_obj, qualname: str):
     return obj
 
 
+def _finalize_frozen_slotted(obj, *fields) -> None:
+    """Set ``__precomputed_hash__`` on a FrozenSlotted built via ``object.__new__``.
+
+    xorq's vendored ibis FrozenSlotted base implements ``__hash__`` by
+    returning a precomputed value that ``__init__`` would normally set
+    via ``hash((cls, tuple(field_values)))``. When we bypass
+    ``__init__`` to skip validation during deserialization we must
+    mirror that exactly — note the inner ``tuple(...)`` wrap, which is
+    significant: ``hash((cls, *fields))`` produces a different value.
+    Without this the rebuilt resolver raises ``AttributeError`` the
+    first time it is hashed (e.g. as a key in ``op.replace``
+    substitutions).
+    """
+    object.__setattr__(obj, "__precomputed_hash__", hash((type(obj), tuple(fields))))
+
+
 def deserialize_resolver(data: tuple):
     """Reconstruct a Resolver tree from a nested-tuple representation."""
-    from xorq.vendor.ibis.common.deferred import (
+    from ._xorq import (
         Attr,
         BinaryOperator,
         Call,
+        Item,
         Just,
         Mapping as MappingResolver,
         Sequence,
@@ -426,7 +445,7 @@ def deserialize_resolver(data: tuple):
             return Just(func)
 
         case ("ibis_literal", py_value, dtype_str):
-            from xorq.vendor import ibis
+            from ._xorq import ibis
             lit_expr = ibis.literal(py_value, type=ibis.dtype(dtype_str))
             return Just(lit_expr.op())
 
@@ -436,12 +455,22 @@ def deserialize_resolver(data: tuple):
             attr = object.__new__(Attr)
             object.__setattr__(attr, "obj", obj_resolver)
             object.__setattr__(attr, "name", name_resolver)
+            _finalize_frozen_slotted(attr, obj_resolver, name_resolver)
             return attr
+
+        case ("item", obj_data, name_data):
+            obj_resolver = deserialize_resolver(obj_data)
+            name_resolver = deserialize_resolver(name_data)
+            item = object.__new__(Item)
+            object.__setattr__(item, "obj", obj_resolver)
+            object.__setattr__(item, "name", name_resolver)
+            _finalize_frozen_slotted(item, obj_resolver, name_resolver)
+            return item
 
         case ("call", func_data, args_data, kwargs_data):
             func_resolver = deserialize_resolver(func_data)
             args_resolvers = tuple(deserialize_resolver(a) for a in args_data)
-            from xorq.vendor.ibis.common.collections import FrozenDict
+            from ._xorq import FrozenDict
             kwargs_resolvers = FrozenDict(
                 {k: deserialize_resolver(v) for k, v in kwargs_data}
             )
@@ -449,6 +478,7 @@ def deserialize_resolver(data: tuple):
             object.__setattr__(call, "func", func_resolver)
             object.__setattr__(call, "args", args_resolvers)
             object.__setattr__(call, "kwargs", kwargs_resolvers)
+            _finalize_frozen_slotted(call, func_resolver, args_resolvers, kwargs_resolvers)
             return call
 
         case ("binop", op_name, left_data, right_data):
@@ -461,6 +491,7 @@ def deserialize_resolver(data: tuple):
             object.__setattr__(binop, "func", func)
             object.__setattr__(binop, "left", left)
             object.__setattr__(binop, "right", right)
+            _finalize_frozen_slotted(binop, func, left, right)
             return binop
 
         case ("unop", op_name, arg_data):
@@ -471,6 +502,7 @@ def deserialize_resolver(data: tuple):
             unop = object.__new__(UnaryOperator)
             object.__setattr__(unop, "func", func)
             object.__setattr__(unop, "arg", arg)
+            _finalize_frozen_slotted(unop, func, arg)
             return unop
 
         case ("seq", type_name, items_data):
@@ -479,17 +511,19 @@ def deserialize_resolver(data: tuple):
             seq = object.__new__(Sequence)
             object.__setattr__(seq, "typ", typ)
             object.__setattr__(seq, "values", values)
+            _finalize_frozen_slotted(seq, typ, values)
             return seq
 
         case ("map", type_name, items_data):
             typ = {"dict": dict}[type_name]
-            from xorq.vendor.ibis.common.collections import FrozenDict
+            from ._xorq import FrozenDict
             values = FrozenDict(
                 {k: deserialize_resolver(v) for k, v in items_data}
             )
             mapping = object.__new__(MappingResolver)
             object.__setattr__(mapping, "typ", typ)
             object.__setattr__(mapping, "values", values)
+            _finalize_frozen_slotted(mapping, typ, values)
             return mapping
 
         case _:
@@ -503,11 +537,11 @@ def _is_deferred(obj) -> bool:
 
 def expr_to_structured(fn: Callable) -> Result[tuple, Exception]:
     """Convert a callable/Deferred expression to a structured tuple representation."""
-    from xorq.vendor.ibis.common.deferred import Deferred as XorqDeferred
+    from ._xorq import Deferred as XorqDeferred
 
     @safe
     def do_convert():
-        from xorq.vendor.ibis import _
+        from ._xorq import _
 
         if isinstance(fn, XorqDeferred):
             return serialize_resolver(fn._resolver)
@@ -528,7 +562,7 @@ def expr_to_structured(fn: Callable) -> Result[tuple, Exception]:
 
 def structured_to_expr(data: tuple) -> Result:
     """Reconstruct a Deferred from a structured tuple representation."""
-    from xorq.vendor.ibis.common.deferred import Deferred
+    from ._xorq import Deferred
 
     @safe
     def do_convert():
@@ -545,7 +579,7 @@ def join_predicate_to_structured(fn: Callable) -> Result[tuple, Exception]:
     calling the function with two named Deferred variables (``left``, ``right``)
     and serializing the resulting resolver tree.
     """
-    from xorq.vendor.ibis.common.deferred import Deferred, Variable
+    from ._xorq import Deferred, Variable
 
     @safe
     def do_convert():
@@ -566,7 +600,7 @@ def join_predicate_to_structured(fn: Callable) -> Result[tuple, Exception]:
 
 def structured_to_join_predicate(data: tuple) -> Result[Callable, Exception]:
     """Reconstruct a binary join predicate from a structured tuple representation."""
-    from xorq.vendor.ibis.common.deferred import Deferred
+    from ._xorq import Deferred
 
     @safe
     def do_convert():

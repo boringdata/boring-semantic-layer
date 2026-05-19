@@ -12,12 +12,14 @@ from ibis.expr import types as ir
 from ibis.expr.types.groupby import GroupedTable as IbisGroupedTable
 from ibis.expr.types.relations import Table as IbisTable
 from returns.result import Success, safe
-from xorq.vendor.ibis.expr.types import Table
-from xorq.vendor.ibis.expr.types.generic import Column as XorqColumn
-from xorq.vendor.ibis.expr.types.groupby import GroupedTable
+from ._xorq import (
+    Column as XorqColumn,
+    GroupedTable,
+    Table,
+)
 
 from .chart import chart as create_chart
-from .measure_scope import AggregationExpr, MeasureScope
+from .measure_scope import MeasureScope
 from .ops import (
     Dimension,
     Measure,
@@ -38,7 +40,9 @@ from .ops import (
     _is_deferred,
     _normalize_join_predicate,
     _normalize_to_name,
+    make_bare_ref_lambda,
 )
+from .query import compare_periods as build_compare_periods
 from .query import query as build_query
 
 _JOIN_REMOVED_MESSAGE = (
@@ -106,12 +110,14 @@ _BLOCKED_IBIS_METHODS = [
 
 
 def to_untagged(expr):
+    from .ops import _rebind_to_canonical_backend
+
     if isinstance(expr, SemanticTable):
-        return expr.op().to_untagged()
+        return _rebind_to_canonical_backend(expr.op().to_untagged())
 
     result = safe(lambda: expr.to_untagged())()
     if isinstance(result, Success):
-        return result.unwrap()
+        return _rebind_to_canonical_backend(result.unwrap())
 
     raise TypeError(f"Cannot convert {type(expr)} to Ibis expression")
 
@@ -255,19 +261,19 @@ class SemanticTable(ir.Table):
 
     def execute(self, **kwargs):
         # Accept kwargs for ibis compatibility (params, limit, etc)
-        from .ops import _unify_backends
+        from .ops import _rebind_to_canonical_backend
 
-        return _unify_backends(to_untagged(self)).execute(**kwargs)
+        return _rebind_to_canonical_backend(to_untagged(self)).execute(**kwargs)
 
     def compile(self, **kwargs):
-        from .ops import _unify_backends
+        from .ops import _rebind_to_canonical_backend
 
-        return _unify_backends(to_untagged(self)).compile(**kwargs)
+        return _rebind_to_canonical_backend(to_untagged(self)).compile(**kwargs)
 
     def sql(self, **kwargs):
-        from .ops import _unify_backends
+        from .ops import _rebind_to_canonical_backend
 
-        return ibis.to_sql(_unify_backends(to_untagged(self)), **kwargs)
+        return ibis.to_sql(_rebind_to_canonical_backend(to_untagged(self)), **kwargs)
 
     def to_pandas(self, **kwargs):
         return self.to_untagged().to_pandas(**kwargs)
@@ -331,6 +337,7 @@ def _create_dimension(expr: Dimension | Callable | dict) -> Dimension:
             is_time_dimension=expr.get("is_time_dimension", False),
             smallest_time_grain=expr.get("smallest_time_grain"),
             derived_dimensions=tuple(expr.get("derived_dimensions") or ()),
+            metadata=dict(expr.get("metadata") or {}),
         )
     return Dimension(expr=expr, description=None)
 
@@ -487,7 +494,12 @@ class SemanticModel(SemanticTable):
         description: str | None = None,
         _source_join: Any | None = None,
     ) -> None:
-        # Keep tables in regular ibis - only convert to xorq at execution time if needed
+        # Convert ibis → xorq once at the boundary; internal code paths can
+        # then assume xorq-vendored tables when the backend is supported.
+        # Falls back to the plain ibis table on backends xorq can't wrap.
+        from .ops import _ensure_xorq_table
+
+        table = _ensure_xorq_table(table)
 
         dims = _expand_derived_dimensions(dimensions)
 
@@ -590,7 +602,7 @@ class SemanticModel(SemanticTable):
         scope = MeasureScope(_tbl=base_tbl, _known=all_measure_names)
 
         for name, fn_or_expr in meas.items():
-            kind, value = _classify_measure(fn_or_expr, scope)
+            kind, value = _classify_measure(fn_or_expr, scope, name)
             (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
 
         return SemanticModel(
@@ -762,6 +774,33 @@ class SemanticModel(SemanticTable):
             time_grains=time_grains,
             time_range=time_range,
             having=having,
+        )
+
+    def compare_periods(
+        self,
+        dimensions: Sequence[str] | None = None,
+        measures: Sequence[str] | None = None,
+        current_time_range: dict[str, str] | None = None,
+        previous_time_range: dict[str, str] | None = None,
+        filters: list | None = None,
+        time_dimension: str | None = None,
+        time_grain: str | None = None,
+        time_grains: dict[str, str] | None = None,
+        order_by: Sequence[tuple[str, str]] | None = None,
+        limit: int | None = None,
+    ):
+        return build_compare_periods(
+            semantic_table=self,
+            dimensions=dimensions,
+            measures=measures,
+            current_time_range=current_time_range,
+            previous_time_range=previous_time_range,
+            filters=filters,
+            time_dimension=time_dimension,
+            time_grain=time_grain,
+            time_grains=time_grains,
+            order_by=order_by,
+            limit=limit,
         )
 
 
@@ -956,7 +995,7 @@ class SemanticJoin(SemanticTable):
             dict(self.get_calculated_measures()),
         )
         for name, fn_or_expr in meas.items():
-            kind, value = _classify_measure(fn_or_expr, scope)
+            kind, value = _classify_measure(fn_or_expr, scope, name)
             (new_calc if kind == "calc" else new_base)[name] = value
 
         return SemanticModel(
@@ -1093,7 +1132,7 @@ class SemanticFilter(SemanticTable):
         scope = MeasureScope(_tbl=self.op().to_untagged(), _known=all_measure_names)
 
         for name, fn_or_expr in meas.items():
-            kind, value = _classify_measure(fn_or_expr, scope)
+            kind, value = _classify_measure(fn_or_expr, scope, name)
             (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
 
         return SemanticModel(
@@ -1180,12 +1219,12 @@ class SemanticGroupBy(SemanticTable):
             if _is_deferred(item):
                 try:
                     name = _normalize_to_name(item)
-                    aggs[name] = lambda t, n=name: t[n]
+                    aggs[name] = make_bare_ref_lambda(name)
                 except TypeError:
                     # Complex Deferred (e.g. _.distance.sum()) — treat as callable
                     aggs[f"_measure_{id(item)}"] = item
             elif isinstance(item, str):
-                aggs[item] = lambda t, n=item: t[n]
+                aggs[item] = make_bare_ref_lambda(item)
             elif callable(item):
                 aggs[f"_measure_{id(item)}"] = item
             else:
@@ -1194,18 +1233,6 @@ class SemanticGroupBy(SemanticTable):
                     f"got {type(item)}",
                 )
 
-        def wrap_aggregation_expr(expr):
-            if isinstance(expr, AggregationExpr):
-
-                def wrapped(t):
-                    if expr.operation == "count":
-                        return t.count()
-                    return getattr(t[expr.column], expr.operation)()
-
-                return wrapped
-            return expr
-
-        aliased = {k: wrap_aggregation_expr(v) for k, v in aliased.items()}
         aggs.update(aliased)
 
         if nest:
@@ -1219,7 +1246,7 @@ class SemanticGroupBy(SemanticTable):
                     # each can only infer types from columns of its own module
                     first_col = next(iter(struct_dict.values()))
                     if isinstance(first_col, XorqColumn):
-                        import xorq.vendor.ibis as xibis
+                        from ._xorq import ibis as xibis
 
                         return xibis.struct(struct_dict).collect()
                     return ibis.struct(struct_dict).collect()
@@ -1576,7 +1603,7 @@ class SemanticUnnest(SemanticTable):
         scope = MeasureScope(_tbl=self, _known=all_measure_names)
 
         for name, fn_or_expr in meas.items():
-            kind, value = _classify_measure(fn_or_expr, scope)
+            kind, value = _classify_measure(fn_or_expr, scope, name)
             (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
 
         return SemanticModel(
@@ -1662,7 +1689,7 @@ class SemanticMutate(SemanticTable):
         scope = MeasureScope(_tbl=self, _known=all_measure_names)
 
         for name, fn_or_expr in meas.items():
-            kind, value = _classify_measure(fn_or_expr, scope)
+            kind, value = _classify_measure(fn_or_expr, scope, name)
             (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
 
         return SemanticModel(
