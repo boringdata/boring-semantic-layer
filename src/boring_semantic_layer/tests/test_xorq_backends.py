@@ -269,7 +269,7 @@ class TestXorqBackendFeatures:
             df.to_parquet(temp_path)
 
             # Read back with xorq
-            read_back = xo.read_parquet(temp_path)
+            read_back = xo.deferred_read_parquet(temp_path)
             df_back = xo.execute(read_back)
 
             assert len(df_back) == 3
