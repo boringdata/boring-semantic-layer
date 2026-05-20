@@ -10,7 +10,7 @@ BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
 
 
 def main():
-    flights_tbl = xo.read_parquet(f"{BASE_URL}/flights.parquet")
+    flights_tbl = xo.deferred_read_parquet(f"{BASE_URL}/flights.parquet")
 
     flights = (
         to_semantic_table(flights_tbl, name="flights")
