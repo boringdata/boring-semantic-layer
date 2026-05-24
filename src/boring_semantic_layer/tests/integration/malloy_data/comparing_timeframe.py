@@ -41,8 +41,8 @@ query_3 = (
     flight_st_with_year.group_by("dep_year")
     .aggregate(flight_count=lambda t: t.count())
     .mutate(
-        last_year=lambda t: t.flight_count.lag(1),
-        growth=lambda t: (t.flight_count.lag(1) - t.flight_count) / t.flight_count.lag(1),
+        last_year=lambda t: t.flight_count.lag(1).over(order_by="dep_year"),
+        growth=lambda t: (t.flight_count.lag(1).over(order_by="dep_year") - t.flight_count) / t.flight_count.lag(1).over(order_by="dep_year"),
     )
     .order_by("dep_year")
 )
