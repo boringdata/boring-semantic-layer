@@ -14,7 +14,6 @@ from returns.result import safe
 
 from .context import BSLSerializationContext
 from .extract import deserialize_calc_measures
-from .helpers import deserialize_structured
 
 
 # ---------------------------------------------------------------------------

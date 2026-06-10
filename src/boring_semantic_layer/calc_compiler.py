@@ -37,13 +37,12 @@ import logging
 from collections.abc import Iterable
 from typing import Any
 
-from ._xorq import Deferred, Field, Node
+from ._xorq import Field
 from ._xorq import ibis as ibis_mod
 from ._xorq import operations as ibis_ops
 from .calc_analyzer import (
     CalcExprAnalysis,
     _walk,
-    _walk_children,
     analyze_calc_expr,
     virtual_agg_table,
 )

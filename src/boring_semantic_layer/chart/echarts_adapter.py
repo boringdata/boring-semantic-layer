@@ -172,7 +172,6 @@ class EChartsAdapter(ChartBackend):
         # Handle multiple measures by folding/transforming
         if len(measures) > 1 and len(dimensions) == 1:
             # Transform data to long format for multiple measures
-            import pandas as pd
             df_long = df.melt(
                 id_vars=dimensions,
                 value_vars=measures,

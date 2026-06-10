@@ -13,7 +13,7 @@ from ibis.common.deferred import Deferred
 from ibis.expr import datatypes as dt
 from ibis.expr import operations as ibis_ops
 from ibis.expr import types as ir
-from ibis.expr.operations.relations import Field, Relation
+from ibis.expr.operations.relations import Relation
 from ibis.expr.schema import Schema
 
 from ._xorq import (
@@ -40,9 +40,7 @@ def _reductions_for_expr(expr):
         return xorq_ops.reductions
     return ibis_ops.reductions
 
-from returns.maybe import Maybe, Nothing, Some
-from returns.result import Success, safe
-from toolz import curry
+from returns.result import safe
 
 from . import projection_utils
 from .calc_analyzer import (
@@ -51,25 +49,19 @@ from .calc_analyzer import (
     _to_node,
     _walk as _walk_calc_expr,
     analyze_calc_expr,
-    virtual_agg_table,
 )
 from .calc_compiler import (
     TOTALS_PREFIX,
-    IbisCalcScope,
     TotalsNotAvailableError,
     UnknownMeasureRefError,
     _drop_totals_columns,
-    _join_totals,
     _to_op,
     apply_calc_measures,
     attach_calc_totals,
     attach_windowed_totals,
-    classify_calc_lambdas,
     compile_calc_measure as _compile_calc_measure_impl,
-    compile_calc_measures,
     evaluate_calc_lambda,
     lift_inline_reductions,
-    rename_measure_refs,
     topological_order_from_deps,
 )
 from .graph_utils import walk_nodes
