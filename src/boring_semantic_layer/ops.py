@@ -45,7 +45,14 @@ from returns.result import Success, safe
 from toolz import curry
 
 from . import projection_utils
-from .calc_analyzer import analyze_calc_expr, virtual_agg_table
+from .calc_analyzer import (
+    _is_reduction,
+    _is_window,
+    _to_node,
+    _walk as _walk_calc_expr,
+    analyze_calc_expr,
+    virtual_agg_table,
+)
 from .calc_compiler import (
     TOTALS_PREFIX,
     IbisCalcScope,
@@ -1455,13 +1462,11 @@ def _is_dimension_grain_expr(expr: Any) -> bool:
     dereferences group-key field references onto the result table.
     Non-ibis probe values (constants) keep the aggregate path.
     """
-    from .calc_analyzer import _is_reduction, _is_window, _to_node, _walk
-
     op = _to_node(expr)
     if op is None:
         return False
     try:
-        return not any(_is_reduction(n) or _is_window(n) for n in _walk(op))
+        return not any(_is_reduction(n) or _is_window(n) for n in _walk_calc_expr(op))
     except Exception:
         return False
 

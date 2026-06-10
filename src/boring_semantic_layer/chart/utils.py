@@ -107,20 +107,22 @@ def extract_aggregate_metadata(
     semantic_aggregate: Any,
 ) -> tuple[list[str], list[str], list[str], Any]:
     """
-    Extract dimensions, measures, mutated columns, and aggregate op.
+    Extract dimensions, measures, and the aggregate op.
 
-    Traverses the operation chain to find aggregate and mutate operations.
+    Walks the operation chain down to the aggregate operation.
+    Mutate-derived columns live in the aggregate's ``aggs`` since the
+    ADR 0001 unification, so they appear in ``measures`` directly.
 
     Args:
         semantic_aggregate: SemanticAggregate object
 
     Returns:
-        Tuple of (dimensions, measures, mutated_columns, aggregate_op)
+        Tuple of (dimensions, measures, mutated_columns, aggregate_op).
+        ``mutated_columns`` is always empty; the slot is retained so
+        existing 4-tuple unpacking call sites keep working.
     """
     aggregate_op = semantic_aggregate.op()
 
-    # Mutate-derived columns live in the aggregate's ``aggs`` since the
-    # ADR 0001 unification — walk down to the aggregate operation.
     mutated_columns: list[str] = []
     current_op = aggregate_op
 

@@ -194,7 +194,14 @@ def _reconstruct_aggregate(
     names: list[str] = []
     aliased: dict = {}
     for name, data in aggs_struct.items():
-        is_known = name in known or any(k.endswith(f".{name}") for k in known)
+        # Mirror _resolve_short_name semantics: a bare name replays only
+        # when it matches a model measure exactly or by a UNIQUE suffix.
+        # Ambiguous suffixes fall through to struct deserialization,
+        # which rebuilds the exact expression.
+        is_known = (
+            name in known
+            or sum(1 for k in known if k.endswith(f".{name}")) == 1
+        )
         if is_known or data is None:
             names.append(name)
         else:
