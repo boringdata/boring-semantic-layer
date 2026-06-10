@@ -179,13 +179,40 @@ def _reconstruct_aggregate(
     aggs_struct = context.parse_structured_dict(metadata.get("aggs_struct", ()))
     if not aggs_struct:
         raise ValueError("SemanticAggregateOp has no aggs_struct")
-    return source.aggregate(*aggs_struct.keys())
+
+    # Model-declared measures replay by name; query-local entries (e.g.
+    # derivations folded in by ``.mutate()``) are not on the model, so
+    # rebuild their expressions from the serialized resolver structs.
+    known: set[str] = set()
+    source_op = source.op()
+    for getter in ("get_measures", "get_calculated_measures"):
+        try:
+            known |= set(getattr(source_op, getter)().keys())
+        except Exception:
+            pass
+
+    names: list[str] = []
+    aliased: dict = {}
+    for name, data in aggs_struct.items():
+        is_known = name in known or any(k.endswith(f".{name}") for k in known)
+        if is_known or data is None:
+            names.append(name)
+        else:
+            aliased[name] = context.deserialize_expr(data, f"Aggregate({name})")
+    return source.aggregate(*names, **aliased)
 
 
 @register_reconstructor("SemanticMutateOp")
 def _reconstruct_mutate(
     metadata: dict, xorq_expr, source, context: BSLSerializationContext
 ):
+    """Backward compat for tags written before SemanticMutateOp was removed.
+
+    ``SemanticMutateOp`` no longer exists (ADR 0001 Phase 3); new tags
+    fold post-aggregation derivations into ``SemanticAggregateOp``. Old
+    tags still deserialize because ``.mutate(**post)`` survives as a
+    desugaring alias onto the unified ``with_measures`` path.
+    """
     if source is None:
         raise ValueError("SemanticMutateOp requires source")
 

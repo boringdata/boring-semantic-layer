@@ -21,7 +21,6 @@ from boring_semantic_layer.ops import (
     SemanticGroupByOp,
     SemanticJoinOp,
     SemanticLimitOp,
-    SemanticMutateOp,
     SemanticOrderByOp,
     SemanticProjectOp,
     SemanticTableOp,
@@ -130,22 +129,6 @@ class _AggResolver:
 
     def __getitem__(self, key: str):
         return getattr(self._t, key)
-
-
-@frozen
-class _AggProxy:
-    """Proxy for post-aggregation mutations.
-
-    Provides simple attribute/item access to aggregated columns.
-    """
-
-    _t: ir.Table
-
-    def __getattr__(self, key: str):
-        return self._t[key]
-
-    def __getitem__(self, key: str):
-        return self._t[key]
 
 
 # ============================================================================
@@ -395,18 +378,6 @@ def _convert_semantic_aggregate(node: SemanticAggregateOp, catalog, *args):
     metrics = FrozenOrderedDict({expr.get_name(): expr for expr in meas_exprs})
 
     return tbl.group_by(group_exprs).aggregate(metrics) if group_exprs else tbl.aggregate(metrics)
-
-
-@convert.register(SemanticMutateOp)
-def _convert_semantic_mutate(node: SemanticMutateOp, catalog, *args):
-    """Convert SemanticMutateOp to Ibis mutate.
-
-    Adds computed columns to the result of an aggregation or other operation.
-    """
-    agg_tbl = convert(node.source, catalog=catalog)
-    proxy = _AggProxy(agg_tbl)
-    new_cols = [fn(proxy).name(name) for name, fn in node.post.items()]
-    return agg_tbl.mutate(new_cols) if new_cols else agg_tbl
 
 
 @convert.register(SemanticOrderByOp)

@@ -29,7 +29,6 @@ from .ops import (
     SemanticIndexOp,
     SemanticJoinOp,
     SemanticLimitOp,
-    SemanticMutateOp,
     SemanticOrderByOp,
     SemanticProjectOp,
     SemanticTableOp,
@@ -220,8 +219,58 @@ class SemanticTable(ir.Table):
 
     agg = aggregate
 
-    def mutate(self, **post) -> SemanticMutate:
-        return SemanticMutate(source=self.op(), post=post)
+    def mutate(self, **post):
+        """Add derived columns (ADR 0001: desugars to the unified measure path).
+
+        Pre-aggregation, the derivations are row-grain expressions —
+        they register as dimensions on the model (usable as group-by
+        keys and in downstream queries). Post-aggregation (chained after
+        ``filter``/``order_by``/``limit`` on an aggregate), the
+        derivations are resolved against the current result table in
+        chain order and materialized, preserving the historical
+        ``.mutate()`` semantics without a dedicated operator node.
+        """
+        from .ops import SemanticJoinOp, SemanticTableOp, _has_prior_aggregate, _resolve_expr
+
+        if _has_prior_aggregate(self.op()):
+            tbl = self.op().to_untagged()
+            for name, fn in post.items():
+                proxy = MeasureScope(_tbl=tbl, _known=[], _post_agg=True)
+                resolved = _resolve_expr(fn, proxy)
+                tbl = tbl.mutate(resolved.name(name))
+            all_roots = _find_all_root_models(self.op())
+            return _build_semantic_model_from_roots(tbl, all_roots)
+
+        def contains_join(node) -> bool:
+            if isinstance(node, SemanticJoinOp):
+                return True
+            if isinstance(node, SemanticTableOp):
+                return getattr(node, "_source_join", None) is not None
+            source = getattr(node, "source", None)
+            return contains_join(source) if source is not None else False
+
+        if contains_join(self.op()):
+            # Register lazily so the join structure (and the pre-agg
+            # fan-out machinery behind it) stays intact; the dimension
+            # materializes per-table or via the dimension bridge at
+            # aggregation time.
+            with_dims = getattr(self, "with_dimensions", None)
+            if with_dims is None:
+                raise TypeError(
+                    f".mutate() is not supported on {type(self).__name__}; "
+                    "use with_dimensions()/with_measures() on the model instead."
+                )
+            return with_dims(**post)
+
+        # Flat model: materialize the columns in chain order (so they are
+        # visible on direct execute) and register them as dimensions.
+        tbl = self.op().to_untagged()
+        for name, fn in post.items():
+            resolved = _resolve_expr(fn, tbl)
+            tbl = tbl.mutate(resolved.name(name))
+        all_roots = _find_all_root_models(self.op())
+        model = _build_semantic_model_from_roots(tbl, all_roots)
+        return model.with_dimensions(**{n: make_bare_ref_lambda(n) for n in post})
 
     def order_by(self, *keys: str | ir.Value | Callable):
         return SemanticOrderBy(source=self.op(), keys=keys)
@@ -1351,8 +1400,22 @@ class SemanticAggregate(SemanticTable):
     def nested_columns(self):
         return self.op().nested_columns
 
-    def mutate(self, **post) -> SemanticMutate:
-        return SemanticMutate(source=self.op(), post=post)
+    def mutate(self, **post) -> SemanticAggregate:
+        """Add post-aggregation derived columns (ADR 0001 desugaring).
+
+        Folds the derivations into this aggregation's measure set: each
+        lambda is classified by the calc analyzer (measure references,
+        windows, and ``t.all(...)`` become calc measures; expressions
+        over group keys are applied to the aggregated result). The chain
+        stays a single ``SemanticAggregateOp`` — no separate operator.
+        """
+        op = self.op()
+        return SemanticAggregate(
+            source=op.source,
+            keys=op.keys,
+            aggs={**dict(op.aggs), **post},
+            nested_columns=op.nested_columns,
+        )
 
     def join_one(
         self,
@@ -1611,120 +1674,6 @@ class SemanticUnnest(SemanticTable):
             dimensions=existing_dims,
             measures=new_base_meas,
             calc_measures=new_calc_meas,
-        )
-
-
-class SemanticMutate(SemanticTable):
-    def __init__(self, source: SemanticTableOp, post: dict[str, Any] | None = None) -> None:
-        op = SemanticMutateOp(source=source, post=post)
-        super().__init__(op)
-
-    @property
-    def source(self):
-        return self.op().source
-
-    @property
-    def post(self):
-        return self.op().post
-
-    @property
-    def values(self):
-        return self.op().values
-
-    @property
-    def schema(self):
-        return self.op().schema
-
-    @property
-    def nested_columns(self):
-        return self.op().nested_columns
-
-    @property
-    def dimensions(self):
-        return tuple(self.op().get_dimensions().keys())
-
-    @property
-    def measures(self):
-        return tuple(self.op().get_measures().keys()) + tuple(
-            self.op().get_calculated_measures().keys()
-        )
-
-    def get_dimensions(self):
-        return self.op().get_dimensions()
-
-    def get_measures(self):
-        return self.op().get_measures()
-
-    def get_calculated_measures(self):
-        return self.op().get_calculated_measures()
-
-    def mutate(self, **post) -> SemanticMutate:
-        return SemanticMutate(source=self.op(), post=post)
-
-    def with_dimensions(self, **dims) -> SemanticModel:
-        all_roots = _find_all_root_models(self.source)
-        existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
-        existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
-        existing_calc = _get_merged_fields(all_roots, "calc_measures") if all_roots else {}
-
-        return SemanticModel(
-            table=self,
-            dimensions={**existing_dims, **dims},
-            measures=existing_meas,
-            calc_measures=existing_calc,
-        )
-
-    def with_measures(self, **meas) -> SemanticModel:
-        all_roots = _find_all_root_models(self.source)
-        existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
-        existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
-        existing_calc = _get_merged_fields(all_roots, "calc_measures") if all_roots else {}
-
-        new_base_meas = dict(existing_meas)
-        new_calc_meas = dict(existing_calc)
-
-        all_measure_names = (
-            tuple(new_base_meas.keys()) + tuple(new_calc_meas.keys()) + tuple(meas.keys())
-        )
-        scope = MeasureScope(_tbl=self, _known=all_measure_names)
-
-        for name, fn_or_expr in meas.items():
-            kind, value = _classify_measure(fn_or_expr, scope, name)
-            (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
-
-        return SemanticModel(
-            table=self,
-            dimensions=existing_dims,
-            measures=new_base_meas,
-            calc_measures=new_calc_meas,
-        )
-
-    def group_by(self, *keys: str | Deferred) -> SemanticGroupBy:
-        normalized = tuple(_normalize_to_name(k) for k in keys)
-        source_with_unnests = reduce(
-            lambda src, col: SemanticUnnestOp(source=src, column=col),
-            self.nested_columns,
-            self.op(),
-        )
-
-        return SemanticGroupBy(source=source_with_unnests, keys=normalized)
-
-    def chart(
-        self,
-        spec: dict[str, Any] | None = None,
-        backend: str = "echarts",
-        format: str = "static",
-    ):
-        """Create a chart from the mutated aggregate."""
-        # Pass the expression to preserve mutations in the chart
-        return create_chart(self, spec=spec, backend=backend, format=format)
-
-    def as_table(self) -> SemanticModel:
-        return SemanticModel(
-            table=self.op().to_untagged(),
-            dimensions={},
-            measures={},
-            calc_measures={},
         )
 
 

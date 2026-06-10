@@ -380,11 +380,6 @@ def _format_op_summary(op: Relation) -> str:
                 pred_name = unwrapped.__name__
         return f"Filter(\u03bb {pred_name})"
 
-    if isinstance(op, SemanticMutateOp):
-        post = object.__getattribute__(op, "post")
-        cols = list(post.keys())
-        return f"Mutate({', '.join(cols)})"
-
     if isinstance(op, SemanticGroupByOp):
         keys = object.__getattribute__(op, "keys")
         return f"GroupBy({', '.join(keys)})"
@@ -1451,6 +1446,26 @@ def _make_agg_callable(measure: Any) -> Callable:
     return lambda t, v=measure: v
 
 
+def _is_dimension_grain_expr(expr: Any) -> bool:
+    """True when a probed agg expression is a plain column-grain expression.
+
+    Dimension-grain expressions (e.g. ``t.carrier.upper()``) contain no
+    reduction or window; they cannot go through ``Table.aggregate`` and
+    are instead applied to the aggregated result via ``mutate`` — ibis
+    dereferences group-key field references onto the result table.
+    Non-ibis probe values (constants) keep the aggregate path.
+    """
+    from .calc_analyzer import _is_reduction, _is_window, _to_node, _walk
+
+    op = _to_node(expr)
+    if op is None:
+        return False
+    try:
+        return not any(_is_reduction(n) or _is_window(n) for n in _walk(op))
+    except Exception:
+        return False
+
+
 def _build_aggregation_plan(
     aggs: dict,
     keys: tuple,
@@ -1481,6 +1496,23 @@ def _build_aggregation_plan(
     if base_tbl is None:
         base_tbl = tbl
     known_set = frozenset(merged_base_measures) | frozenset(merged_calc_measures)
+
+    # Query-local entries can reference each other (e.g. a derived
+    # column built on a sibling derivation from the same aggregate /
+    # chained mutate) and the group-by keys (which are columns of the
+    # result table — windows order by them). Make both resolvable
+    # during inline classification by augmenting the scope's
+    # known-measure set, which also seeds the virtual aggregated
+    # table's schema.
+    if not is_post_agg:
+        local_names = tuple(n for n in aggs if not n.startswith("_measure_"))
+        scope_known = tuple(getattr(scope, "known", ()) or ())
+        classify_scope = MeasureScope(
+            _tbl=base_tbl,
+            _known=tuple(dict.fromkeys(scope_known + local_names + tuple(keys))),
+        )
+    else:
+        classify_scope = scope
 
     for name, fn_wrapped in aggs.items():
         fn = _unwrap(fn_wrapped)
@@ -1517,7 +1549,7 @@ def _build_aggregation_plan(
                     continue
 
         # Otherwise classify the inline lambda on the fly.
-        kind, value = _classify_measure(fn, scope, name)
+        kind, value = _classify_measure(fn, classify_scope, name)
         if kind == "calc":
             calc_specs[name] = value
         else:
@@ -1621,6 +1653,19 @@ def _compile_aggregation(
         else:
             virtual_schema_real[n] = "float64"
 
+    # Group-by keys are columns of the result table; calc expressions
+    # may reference them (windows ordering by a key, derived-dimension
+    # references). Surface them on the virtual aggregated table so the
+    # lambda evaluates, and in the known set so non-column keys (derived
+    # dimensions) resolve to virtual fields.
+    for c in by_cols:
+        if c not in virtual_schema_real:
+            try:
+                virtual_schema_real[c] = base_tbl[c].type()
+            except Exception:
+                virtual_schema_real[c] = "string"
+    known_with_keys = frozenset(known_measures) | frozenset(by_cols)
+
     lifted_calc_specs: dict[str, tuple[Any, Any, Any] | None] = {}
     classifications: dict[str, Any] = {}
     preproc_errors: dict[str, Exception] = {}
@@ -1630,7 +1675,7 @@ def _compile_aggregation(
             try:
                 virtual_schema = dict(virtual_schema_real)
                 expr, vt, totals_vt = evaluate_calc_lambda(
-                    cm.expr, base_tbl, known_measures, virtual_schema
+                    cm.expr, base_tbl, known_with_keys, virtual_schema
                 )
                 new_expr, new_vt, new_totals_vt, lifted = lift_inline_reductions(
                     expr, vt, base_tbl, totals_virtual_agg_tbl=totals_vt
@@ -1660,6 +1705,7 @@ def _compile_aggregation(
 
     nested_marker_specs: dict[str, Any] = {}
     regular_specs: dict[str, Callable] = {}
+    dimension_grain_specs: dict[str, Callable] = {}
     for name, fn in agg_specs.items():
         try:
             probe = fn(base_tbl)
@@ -1668,6 +1714,12 @@ def _compile_aggregation(
             continue
         if isinstance(probe, NestedAccessMarker):
             nested_marker_specs[name] = probe
+        elif by_cols and _is_dimension_grain_expr(probe):
+            # Column-grain expression (no reduction/window) — cannot go
+            # through Table.aggregate. Apply to the aggregated result
+            # instead: ibis dereferences group-key fields onto it, so
+            # expressions over group keys (e.g. t.carrier.upper()) work.
+            dimension_grain_specs[name] = fn
         else:
             regular_specs[name] = fn
 
@@ -1739,6 +1791,13 @@ def _compile_aggregation(
             base_tbl, by_cols, regular_specs, nested_marker_specs
         )
 
+    # --- Apply dimension-grain specs ---------------------------------
+    # Evaluated against the current base table (after any windowed-totals
+    # mutation) and added to the result via mutate; ibis dereferences
+    # group-key field references onto the aggregated table.
+    for name, fn in dimension_grain_specs.items():
+        real_agg_tbl = real_agg_tbl.mutate(**{name: fn(base_tbl)})
+
     # --- Derive calc-of-calc totals ----------------------------------
     # If any AllOf-using calc references another calc (transitively),
     # the windowed-totals pass attached only the base totals. Now that
@@ -1757,7 +1816,7 @@ def _compile_aggregation(
         # rewrites ``Field(totals_vt, name) → Field(real_agg, "__bsl_totals__<name>")``
         # directly; no separate cross-joined table is needed.
         real_with_totals = real_agg_tbl if totals_arbitrary_specs else None
-        cur_known = known_measures | frozenset(calc_specs.keys())
+        cur_known = known_with_keys | frozenset(calc_specs.keys())
 
         ordered = _topological_calc_order(calc_specs, base_tbl, known_measures)
         for name in ordered:
@@ -2440,39 +2499,8 @@ class SemanticAggregateOp(Relation):
                 # SemanticTableOp always has _source_join attribute
                 join_op = grouped_source._source_join
 
-        def has_prior_aggregate(node):
-            """Recursively check if there's a SemanticAggregateOp before any mutate."""
-            if isinstance(node, SemanticAggregateOp):
-                return True
-            if isinstance(node, SemanticMutateOp):
-                return has_prior_aggregate(node.source)
-            if isinstance(node, SemanticGroupByOp):
-                return has_prior_aggregate(node.source)
-            if isinstance(node, SemanticTableOp | SemanticJoinOp):
-                return False
-            if hasattr(node, "source"):
-                return has_prior_aggregate(node.source)
-            return False
-
-        is_post_agg = has_prior_aggregate(self.source)
+        is_post_agg = _has_prior_aggregate(self.source)
         collected_filters = collect_filters_to_join(self.source)
-
-        def collect_mutates_to_join(node):
-            """Collect SemanticMutateOp.post dicts between here and the join."""
-            mutates = []
-            current = node
-            while current is not None:
-                match current:
-                    case SemanticMutateOp():
-                        mutates.append(current.post)
-                        current = current.source
-                    case SemanticJoinOp() | SemanticTableOp():
-                        break
-                    case _ if hasattr(current, "source"):
-                        current = current.source
-                    case _:
-                        break
-            return tuple(mutates)
 
         # Dimension-only shortcut: when no measures are requested and all
         # dimensions originate from a single joined table, query that table
@@ -2513,13 +2541,11 @@ class SemanticAggregateOp(Relation):
         if join_op is not None and not is_post_agg:
             join_tree_info = _collect_join_tree_info(join_op)
             if join_tree_info.has_join_many:
-                collected_mutates = collect_mutates_to_join(self.source)
                 return self._to_untagged_with_preagg(
                     all_roots,
                     join_op,
                     join_tree_info,
                     filters=collected_filters,
-                    mutates=collected_mutates,
                 )
 
             # Deferred join path: when join_one dimension tables can be
@@ -2604,7 +2630,10 @@ class SemanticAggregateOp(Relation):
             list(plan.group_by_cols),
             dict(plan.agg_specs),
             dict(plan.calc_specs),
-            known_measures=frozenset(merged_base_measures) | frozenset(merged_calc_measures),
+            known_measures=frozenset(merged_base_measures)
+            | frozenset(merged_calc_measures)
+            | frozenset(plan.agg_specs)
+            | frozenset(plan.calc_specs),
             requested_measures=list(plan.requested_measures),
         )
 
@@ -2614,7 +2643,6 @@ class SemanticAggregateOp(Relation):
         join_op: SemanticJoinOp,
         join_tree_info: _JoinTreeInfo,
         filters: list | None = None,
-        mutates: tuple | None = None,
     ):
         """Pre-aggregate each source table's measures at its own grain, then join.
 
@@ -2626,19 +2654,6 @@ class SemanticAggregateOp(Relation):
         group_by_cols = list(self.keys)
 
         filters = filters or []
-        mutates = mutates or ()
-
-        # Identify group-by keys that come from .mutate() rather than
-        # semantic dimensions — these need special handling.  This is a
-        # process-of-elimination heuristic: any key that is not a known
-        # dimension, measure, or calc measure is assumed to originate
-        # from a .mutate() call in the operation chain.
-        mutated_gb_keys = frozenset(
-            k for k in group_by_cols
-            if k not in merged_dimensions
-            and k not in merged_base_measures
-            and k not in merged_calc_measures
-        )
 
         # --- 1. Try to build the full joined table (for scope / dim bridge) ---
         # Pre-agg needs all tables for dimension bridges — no pruning here.
@@ -2649,19 +2664,6 @@ class SemanticAggregateOp(Relation):
                 [k for k in self.keys if k in merged_dimensions],
                 merged_dimensions,
             )
-            # Apply mutate operations so mutated group-by keys are available
-            # on the full joined table (needed for dimension bridges).
-            if mutated_gb_keys:
-                for mutate_post in mutates:
-                    for name, fn_wrapped in mutate_post.items():
-                        if name in mutated_gb_keys:
-                            try:
-                                fn = _unwrap(fn_wrapped)
-                                resolved = _resolve_expr(fn, tbl)
-                                tbl = tbl.mutate(**{name: resolved})
-                            except (TypeError, KeyError, AttributeError,
-                                    ibis.common.exceptions.IbisTypeError):
-                                pass
             # Apply collected filters to the full joined table so that
             # dimension bridges only include rows surviving the filter.
             if filters:
@@ -2790,24 +2792,8 @@ class SemanticAggregateOp(Relation):
                                     raw_tbl = raw_tbl.inner_join(key_bridge, preds).select(raw_tbl)
                                     break
 
-            # Apply mutated group-by keys to this raw table so they can
-            # participate in the per-table grain computation.
-            if mutated_gb_keys:
-                for mutate_post in mutates:
-                    for name, fn_wrapped in mutate_post.items():
-                        if name in mutated_gb_keys and name not in raw_tbl.columns:
-                            try:
-                                fn = _unwrap(fn_wrapped)
-                                resolved = _resolve_expr(fn, raw_tbl)
-                                raw_tbl = raw_tbl.mutate(**{name: resolved})
-                            except (TypeError, KeyError, AttributeError,
-                                    ibis.common.exceptions.IbisTypeError):
-                                pass
-
             table_measures = _get_field_dict(table_op, "measures")
             table_dims = _get_field_dict(table_op, "dimensions")
-            # Captured after mutated-key application above so the grain
-            # computation can see the newly-added columns.
             raw_columns = set(raw_tbl.columns)
 
             # Build agg expressions on the raw table
@@ -2853,11 +2839,7 @@ class SemanticAggregateOp(Relation):
             _local_dims = []
             has_cross_table_gb = False
             for gb_key in group_by_cols:
-                # Mutated columns are already on raw_tbl (applied above)
-                if gb_key in mutated_gb_keys:
-                    if gb_key in raw_columns and gb_key not in _local_dims:
-                        _local_dims.append(gb_key)
-                elif "." in gb_key:
+                if "." in gb_key:
                     prefix, short = gb_key.split(".", 1)
                     if prefix == table_name and short in table_dims:
                         dim_fn = table_dims[short]
@@ -2876,6 +2858,30 @@ class SemanticAggregateOp(Relation):
                                     _local_dims.append(short)
                     elif prefix != table_name:
                         has_cross_table_gb = True
+                elif gb_key in merged_dimensions:
+                    # Unprefixed derived dimension (e.g. registered on the
+                    # join wrapper via with_dimensions, or lowered from a
+                    # pre-aggregation .mutate()). Materialize it on this
+                    # raw table when its expression resolves here so the
+                    # per-table grain matches the requested grouping;
+                    # tables that lack the source columns fall back to
+                    # join keys + the dimension bridge.
+                    if gb_key in raw_columns:
+                        if gb_key not in _local_dims:
+                            _local_dims.append(gb_key)
+                    else:
+                        dim_fn = merged_dimensions[gb_key]
+                        try:
+                            dim_expr = (
+                                dim_fn(raw_tbl) if callable(dim_fn)
+                                else _resolve_expr(dim_fn, raw_tbl)
+                            )
+                            raw_tbl = raw_tbl.mutate(**{gb_key: dim_expr})
+                            raw_columns = set(raw_tbl.columns)
+                            if gb_key not in _local_dims:
+                                _local_dims.append(gb_key)
+                        except Exception:
+                            has_cross_table_gb = True
 
             join_keys = join_tree_info.table_join_keys.get(table_name, set())
             available_jk = tuple(jk for jk in sorted(join_keys) if jk in raw_columns)
@@ -3391,73 +3397,6 @@ class SemanticAggregateOp(Relation):
             known,
             agg_specs=dict(plan.agg_specs),
         )
-
-
-class SemanticMutateOp(Relation):
-    source: Relation
-    post: dict[
-        str,
-        Callable,
-    ]  # Transformed to FrozenDict[str, _CallableWrapper] in __init__
-    nested_columns: tuple[
-        str,
-        ...,
-    ] = ()  # Inherited from source if it has nested columns
-
-    def __init__(
-        self,
-        source: Relation,
-        post: dict[str, Callable] | None,
-        nested_columns: tuple[str, ...] = (),
-    ) -> None:
-        frozen_post = FrozenDict(
-            {name: _ensure_wrapped(fn) for name, fn in (post or {}).items()},
-        )
-        source_nested = nested_columns if nested_columns else getattr(source, "nested_columns", ())
-
-        super().__init__(
-            source=Relation.__coerce__(source),
-            post=frozen_post,
-            nested_columns=source_nested,
-        )
-
-    def __repr__(self) -> str:
-        return _semantic_repr(self)
-
-    @property
-    def values(self) -> FrozenOrderedDict[str, Any]:
-        return self.source.values
-
-    @property
-    def schema(self) -> Schema:
-        return self.source.schema
-
-    def to_untagged(self):
-        agg_tbl = _to_untagged(self.source)
-
-        # Process mutations incrementally so each can reference previous ones
-        # This allows: .mutate(rank=..., is_other=lambda t: t["rank"] > 5)
-        current_tbl = agg_tbl
-        for name, fn_wrapped in self.post.items():
-            proxy = MeasureScope(_tbl=current_tbl, _known=[], _post_agg=True)
-            resolved = _resolve_expr(_unwrap(fn_wrapped), proxy)
-
-            new_col = resolved.name(name)
-            current_tbl = current_tbl.mutate([new_col])
-
-        return current_tbl
-
-    def get_dimensions(self) -> Mapping[str, Dimension]:
-        """Get dictionary of dimensions from source."""
-        return self.source.get_dimensions()
-
-    def get_measures(self) -> Mapping[str, Measure]:
-        """Get dictionary of measures from source."""
-        return self.source.get_measures()
-
-    def get_calculated_measures(self) -> Mapping[str, Any]:
-        """Get dictionary of calculated measures from source."""
-        return self.source.get_calculated_measures()
 
 
 class SemanticUnnestOp(Relation):
@@ -4804,6 +4743,23 @@ def _find_all_root_models(node: Any) -> tuple[SemanticTableOp, ...]:
         roots.extend(_find_all_root_models(node.source))
 
     return roots
+
+
+def _has_prior_aggregate(node: Any) -> bool:
+    """True when a SemanticAggregateOp sits beneath ``node`` in the chain.
+
+    Used to distinguish post-aggregation contexts (filter/order_by/limit
+    applied after an aggregate) from pre-aggregation ones. Stops at leaf
+    table and join boundaries.
+    """
+    if isinstance(node, SemanticAggregateOp):
+        return True
+    if isinstance(node, SemanticTableOp | SemanticJoinOp):
+        return False
+    source = getattr(node, "source", None)
+    if source is not None:
+        return _has_prior_aggregate(source)
+    return False
 
 
 def _dimension_only_source_table(

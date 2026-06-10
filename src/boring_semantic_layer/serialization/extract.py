@@ -60,7 +60,6 @@ def _ensure_registered():
         SemanticGroupByOp,
         SemanticJoinOp,
         SemanticLimitOp,
-        SemanticMutateOp,
         SemanticOrderByOp,
         SemanticProjectOp,
         SemanticTableOp,
@@ -71,7 +70,6 @@ def _ensure_registered():
         "SemanticFilterOp": SemanticFilterOp,
         "SemanticGroupByOp": SemanticGroupByOp,
         "SemanticAggregateOp": SemanticAggregateOp,
-        "SemanticMutateOp": SemanticMutateOp,
         "SemanticProjectOp": SemanticProjectOp,
         "SemanticOrderByOp": SemanticOrderByOp,
         "SemanticLimitOp": SemanticLimitOp,
@@ -135,19 +133,6 @@ def _extract_aggregate(op, context: BSLSerializationContext) -> dict[str, Any]:
             name: expr_to_structured(fn).value_or(None) for name, fn in op.aggs.items()
         }
     return metadata
-
-
-@_register_lazy("SemanticMutateOp")
-def _extract_mutate(op, context: BSLSerializationContext) -> dict[str, Any]:
-    from ..utils import expr_to_structured
-
-    if not op.post:
-        return {}
-    return {
-        "post_struct": {
-            name: expr_to_structured(fn).value_or(None) for name, fn in op.post.items()
-        }
-    }
 
 
 @_register_lazy("SemanticProjectOp")

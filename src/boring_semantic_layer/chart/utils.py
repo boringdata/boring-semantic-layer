@@ -119,33 +119,17 @@ def extract_aggregate_metadata(
     """
     aggregate_op = semantic_aggregate.op()
 
-    # Handle mutate operations - they wrap the aggregate
-    mutated_columns = []
+    # Mutate-derived columns live in the aggregate's ``aggs`` since the
+    # ADR 0001 unification — walk down to the aggregate operation.
+    mutated_columns: list[str] = []
     current_op = aggregate_op
 
-    # Unwrap to find mutate operation
-    while (
-        hasattr(current_op, "source")
-        and not hasattr(current_op, "aggs")
-        and not (
-            hasattr(current_op, "__class__") and current_op.__class__.__name__ == "SemanticMutateOp"
-        )
-    ):
-        current_op = current_op.source
-
-    # Extract mutated columns
-    if hasattr(current_op, "__class__") and current_op.__class__.__name__ == "SemanticMutateOp":
-        if hasattr(current_op, "post"):
-            mutated_columns = list(current_op.post.keys())
-        current_op = current_op.source
-
-    # Find aggregate operation
     while hasattr(current_op, "source") and not hasattr(current_op, "aggs"):
         current_op = current_op.source
 
     aggregate_op = current_op
     dimensions = list(aggregate_op.keys)
-    measures = list(aggregate_op.aggs.keys()) + mutated_columns
+    measures = list(aggregate_op.aggs.keys())
 
     return dimensions, measures, mutated_columns, aggregate_op
 

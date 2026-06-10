@@ -542,15 +542,17 @@ def test_graph_accessible_from_all_node_types():
     assert "revenue" in limited_graph
     assert "total_revenue" in limited_graph
 
-    # Test graph on SemanticMutate
+    # Test graph after .mutate() — registers the derivation as a
+    # dimension on the model (ADR 0001), so the graph gains a node.
     mutated = sm.mutate(double_qty=lambda t: t.quantity * 2)
     mutated_graph = mutated.get_graph()
     assert "revenue" in mutated_graph
     assert "total_revenue" in mutated_graph
+    assert "double_qty" in mutated_graph
 
     # All graphs should be the same (pass-through nodes)
     assert model_graph == filtered_graph == grouped_graph == aggregated_graph
-    assert model_graph == ordered_graph == limited_graph == mutated_graph
+    assert model_graph == ordered_graph == limited_graph
 
 
 def test_bfs_nonexistent_node():
