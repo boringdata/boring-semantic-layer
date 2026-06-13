@@ -14,21 +14,11 @@ from __future__ import annotations
 import pytest
 
 from boring_semantic_layer import SemanticModel
-from boring_semantic_layer.serialization import from_tagged, to_tagged, try_import_xorq
+from boring_semantic_layer.serialization import from_tagged, to_tagged
 
-# Check if xorq is available
-try:
-    try_import_xorq()
-    import xorq.api as xo
-
-    xorq_available = True
-    xorq_skip_reason = ""
-except ImportError:
-    xorq_available = False
-    xorq_skip_reason = "xorq not installed"
+xo = pytest.importorskip("xorq.api", reason="xorq not installed")
 
 
-@pytest.mark.skipif(not xorq_available, reason=xorq_skip_reason)
 class TestXorqDuckDBBackend:
     """Test BSL with xorq's DuckDB backend."""
 
@@ -123,7 +113,6 @@ class TestXorqDuckDBBackend:
         assert all_data == list(range(100))
 
 
-@pytest.mark.skipif(not xorq_available, reason=xorq_skip_reason)
 class TestXorqDataFusionBackend:
     """Test BSL with xorq's DataFusion backend."""
 
@@ -162,7 +151,6 @@ class TestXorqDataFusionBackend:
         assert set(df["grp"]) == {"A", "B"}
 
 
-@pytest.mark.skipif(not xorq_available, reason=xorq_skip_reason)
 class TestXorqPandasBackend:
     """Test BSL with xorq's Pandas backend."""
 
@@ -192,7 +180,6 @@ class TestXorqPandasBackend:
         assert list(df["y"]) == [4, 5, 6]
 
 
-@pytest.mark.skipif(not xorq_available, reason=xorq_skip_reason)
 class TestXorqBackendSwitching:
     """Test switching between different xorq backends."""
 
@@ -223,7 +210,6 @@ class TestXorqBackendSwitching:
         assert backend2 is not None
 
 
-@pytest.mark.skipif(not xorq_available, reason=xorq_skip_reason)
 class TestXorqBackendFeatures:
     """Test xorq-specific backend features with BSL."""
 
