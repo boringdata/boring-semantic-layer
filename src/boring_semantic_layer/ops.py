@@ -316,6 +316,14 @@ def _rebind_to_canonical_backend(expr):
 
     No-op on plain ibis expressions (not xorq-vendored).
     """
+    from ._xorq import HAS_XORQ
+
+    # Without xorq there is only ever one backend, so there is nothing to
+    # rebind; returning *expr* unchanged also avoids the shim's plain-ibis
+    # walk/replace rebuilding an equal-but-distinct expression for no benefit.
+    if not HAS_XORQ:
+        return expr
+
     try:
         from ._xorq import relations as xorq_rel, walk_nodes
     except Exception:
@@ -4319,6 +4327,16 @@ class SemanticJoinOp(Relation):
         fall back to returning the inputs unchanged so ibis executes the
         join natively. Rebinding is only needed for xorq-vendored backends.
         """
+        from ._xorq import HAS_XORQ
+
+        # Without xorq, ``from_ibis()`` is an identity, so both tables already
+        # share their natural backends — there is nothing to rebind. Return the
+        # inputs unchanged so callers get identical objects back (the shim's
+        # plain-ibis ``walk_nodes``/``replace`` would otherwise rebuild an
+        # equal-but-distinct expression for no benefit).
+        if not HAS_XORQ:
+            return left_tbl, right_tbl
+
         try:
             from ._xorq import relations as xorq_rel, walk_nodes
         except ImportError:
@@ -4854,6 +4872,14 @@ def _dimension_only_source_table(
                     tbl_cols = frozenset(tbl.columns) | frozenset(root_dims)
                     for flt in filters:
                         fn = _unwrap(flt) if hasattr(flt, "unwrap") else flt
+                        # Dict/string filters resolve through the backend
+                        # (deferred); their columns can't be statically
+                        # introspected, so disable the shortcut. This keeps
+                        # results consistent whether or not xorq is installed
+                        # (without xorq the tracking proxy would spuriously
+                        # appear to succeed). See query.Filter.to_callable.
+                        if getattr(fn, "__bsl_deferred_resolution__", False):
+                            return None
                         extraction = _extract_columns_from_callable(fn, tbl)
                         if extraction.extraction_failed:
                             return None  # Can't determine — bail out
