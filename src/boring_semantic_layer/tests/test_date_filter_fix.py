@@ -222,8 +222,6 @@ class TestSQLGeneration:
 
     def test_trino_sql_generation(self):
         """Test that Trino/Athena SQL uses proper date functions."""
-        from xorq.vendor import ibis as xibis
-
         con = ibis.duckdb.connect(":memory:")
         t = con.create_table(
             "test",
@@ -234,15 +232,13 @@ class TestSQLGeneration:
         filter_obj = Filter(filter={"field": "date_col", "operator": ">=", "value": "2024-01-01"})
         filtered = filter_obj.to_callable()(t)
 
-        sql = xibis.to_sql(filtered, dialect="trino")
+        sql = ibis.to_sql(filtered, dialect="trino")
 
         # Should contain Trino date function
         assert "FROM_ISO8601_TIMESTAMP" in sql
 
     def test_duckdb_sql_generation(self):
         """Test that DuckDB SQL uses proper date functions."""
-        from xorq.vendor import ibis as xibis
-
         con = ibis.duckdb.connect(":memory:")
         t = con.create_table(
             "test",
@@ -253,7 +249,7 @@ class TestSQLGeneration:
         filter_obj = Filter(filter={"field": "date_col", "operator": ">=", "value": "2024-01-01"})
         filtered = filter_obj.to_callable()(t)
 
-        sql = xibis.to_sql(filtered, dialect="duckdb")
+        sql = ibis.to_sql(filtered, dialect="duckdb")
 
         # Should contain DuckDB date function
         assert "MAKE_TIMESTAMP" in sql or "MAKE_DATE" in sql
@@ -266,17 +262,13 @@ class TestFilterValueConversion:
         """Test conversion of date string."""
         f = Filter(filter={"field": "x", "operator": "=", "value": "2024-01-01"})
         result = f._convert_filter_value("2024-01-01")
-        from xorq.vendor.ibis.expr.types.temporal import TimestampScalar as XTimestampScalar
-
-        assert isinstance(result, (ibis.expr.types.temporal.TimestampScalar, XTimestampScalar))
+        assert isinstance(result, ibis.expr.types.temporal.TimestampScalar)
 
     def test_convert_timestamp_string(self):
         """Test conversion of timestamp string."""
-        from xorq.vendor.ibis.expr.types.temporal import TimestampScalar as XTimestampScalar
-
         f = Filter(filter={"field": "x", "operator": "=", "value": "2024-01-01"})
         result = f._convert_filter_value("2024-01-01T12:00:00")
-        assert isinstance(result, (ibis.expr.types.temporal.TimestampScalar, XTimestampScalar))
+        assert isinstance(result, ibis.expr.types.temporal.TimestampScalar)
 
     def test_non_date_string_passthrough(self):
         """Test that non-date strings pass through unchanged."""
