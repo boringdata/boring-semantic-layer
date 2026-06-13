@@ -73,13 +73,13 @@ jobs:
           enable-cache: true
 
       - name: Install without xorq
-        run: uv pip install --system ".[test-core]"
+        run: uv sync --all-extras --no-extra xorq --no-extra examples --no-extra dev
 
       - name: Verify import works without xorq
-        run: python -c "import boring_semantic_layer; print('import OK')"
+        run: uv run python -c "import boring_semantic_layer; print('import OK')"
 
       - name: Run tests (xorq tests should skip, not error)
-        run: pytest src/boring_semantic_layer/tests/ -x -q --ignore=src/boring_semantic_layer/tests/integration
+        run: uv run pytest --ignore=src/boring_semantic_layer/tests/integration
 
   # Deploy docs to GitHub Pages (only on release - keep docs in sync with PyPI package)
   deploy-docs:
