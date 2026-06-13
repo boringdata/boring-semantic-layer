@@ -19,9 +19,45 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'release' }}
 
 jobs:
-  # Run tests, examples, and build docs
+  # Run the test suite with and without the xorq extra. The no-xorq leg
+  # verifies xorq is truly optional (its tests skip, not error).
   test:
-    name: Test & Build
+    name: Test (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: full
+            sync: uv sync --all-extras
+            pytest_args: ""
+          - name: no-xorq
+            sync: uv sync --all-extras --no-extra xorq --no-extra examples
+            pytest_args: --ignore=src/boring_semantic_layer/tests/integration
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (${{ matrix.name }})
+        run: ${{ matrix.sync }}
+
+      - name: Verify import works
+        run: uv run python -c "import boring_semantic_layer; print('import OK')"
+
+      - name: Run tests
+        run: uv run pytest ${{ matrix.pytest_args }}
+
+  # Build examples, docs, and skills (require the full env incl. Node).
+  build:
+    name: Build (examples + docs + skills)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,8 +83,14 @@ jobs:
           uv sync --all-extras
           cd docs/web && npm ci
 
-      - name: Run all checks (tests + examples + docs build)
-        run: make check
+      - name: Run examples
+        run: make examples
+
+      - name: Build docs
+        run: make docs-build
+
+      - name: Check skills are up to date
+        run: make skills-check
 
       - name: Upload docs artifact
         if: github.event_name == 'release'
@@ -56,36 +98,11 @@ jobs:
         with:
           path: ./docs/web/dist
 
-  # Verify xorq is truly optional: install without it and run the core suite
-  test-no-xorq:
-    name: Test (no xorq)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Install without xorq
-        run: uv sync --all-extras --no-extra xorq --no-extra examples
-
-      - name: Verify import works without xorq
-        run: uv run python -c "import boring_semantic_layer; print('import OK')"
-
-      - name: Run tests (xorq tests should skip, not error)
-        run: uv run pytest --ignore=src/boring_semantic_layer/tests/integration
-
   # Deploy docs to GitHub Pages (only on release - keep docs in sync with PyPI package)
   deploy-docs:
     name: Deploy Docs
     if: github.event_name == 'release'
-    needs: [test, test-no-xorq]
+    needs: [test, build]
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -99,7 +116,7 @@ jobs:
   release-pypi:
     name: Release to PyPI
     if: github.event_name == 'release'
-    needs: [test, test-no-xorq]
+    needs: [test, build]
     runs-on: ubuntu-latest
     environment:
       name: release
