@@ -6,6 +6,11 @@ import pytest
 
 from boring_semantic_layer import to_semantic_table
 
+# BSL's to_untagged() returns xorq-vendored ibis when xorq is installed, and
+# those expressions reject a plain ibis.window (LegacyWindowBuilder). Build the
+# window from the matching flavor via the shim (plain ibis when xorq is absent).
+from boring_semantic_layer._xorq import ibis as xibis
+
 
 @pytest.fixture(scope="module")
 def con():
@@ -386,7 +391,7 @@ class TestChartWithFilters:
             .order_by("flight_week")
             .mutate(
                 rolling_avg=lambda t: t.flight_count.mean().over(
-                    ibis.window(rows=(-2, 0), order_by="flight_week")
+                    xibis.window(rows=(-2, 0), order_by="flight_week")
                 )
             )
         )
