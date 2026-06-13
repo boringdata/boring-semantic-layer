@@ -22,7 +22,9 @@ import pandas as pd
 import pytest
 
 import ibis as plain_ibis
-from xorq.common.utils.ibis_utils import from_ibis
+
+pytest.importorskip("xorq", reason="xorq not installed")
+from xorq.common.utils.ibis_utils import from_ibis  # noqa: E402
 
 
 def _make_table(flavor: str, name: str, df: pd.DataFrame):

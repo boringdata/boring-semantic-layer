@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .._xorq import TagHandler
+from .._xorq import HAS_XORQ, TagHandler
 
 from . import (
     BSLSerializationContext,
@@ -117,15 +117,17 @@ def reemit(tag_node, rebuild_subexpr):
     return new_source.hashing_tag(tag=tag_name, **meta)
 
 
-_handler_kwargs = dict(
-    tag_names=("bsl",),
-    extract_metadata=extract_metadata,
-    from_tag_node=from_tag_node,
-)
-if "reemit" in {a.name for a in TagHandler.__attrs_attrs__}:
-    _handler_kwargs["reemit"] = reemit
-
-bsl_tag_handler = TagHandler(**_handler_kwargs)
+if HAS_XORQ:
+    _handler_kwargs = dict(
+        tag_names=("bsl",),
+        extract_metadata=extract_metadata,
+        from_tag_node=from_tag_node,
+    )
+    if "reemit" in {a.name for a in TagHandler.__attrs_attrs__}:
+        _handler_kwargs["reemit"] = reemit
+    bsl_tag_handler = TagHandler(**_handler_kwargs)
+else:
+    bsl_tag_handler = None
 
 
 __all__ = [

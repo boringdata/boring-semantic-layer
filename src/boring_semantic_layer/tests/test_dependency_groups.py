@@ -5,13 +5,14 @@ Verifies that when users try to use features requiring optional dependencies,
 they receive clear error messages indicating which dependency group to install.
 
 Dependency groups in pyproject.toml:
+- xorq: For tagged-expression serialization (to_tagged/from_tagged), caching
 - mcp: For MCP semantic model functionality (MCPSemanticModel)
 - agent: For LangChain-based query agents
 - viz-altair: For Altair visualization (chart with backend="altair")
 - viz-plotly: For Plotly visualization (chart with backend="plotly")
 - examples: For running examples (includes xorq and duckdb)
 
-Note: xorq is a core dependency (not optional) for window compatibility.
+Note: xorq is an optional dependency; core BSL works without it.
 """
 
 import sys
@@ -46,6 +47,7 @@ class TestDependencyGroupDocumentation:
         optional_deps = pyproject["project"]["optional-dependencies"]
 
         # Verify all expected groups exist
+        assert "xorq" in optional_deps, "xorq dependency group missing"
         assert "mcp" in optional_deps, "mcp dependency group missing"
         assert "agent" in optional_deps, "agent dependency group missing"
         assert "viz-altair" in optional_deps, "viz-altair dependency group missing"
@@ -53,6 +55,7 @@ class TestDependencyGroupDocumentation:
         assert "examples" in optional_deps, "examples dependency group missing"
 
         # Verify key dependencies in each group
+        assert any("xorq" in dep for dep in optional_deps["xorq"])
         assert any("fastmcp" in dep for dep in optional_deps["mcp"])
         assert any("langchain" in dep for dep in optional_deps["agent"])
         assert any("altair" in dep for dep in optional_deps["viz-altair"])
@@ -85,9 +88,9 @@ class TestDependencyGroupDocumentation:
 
         assert len(dev_with_extras) > 0, "Dev should include boring-semantic-layer with extras"
 
-        # The first dev dependency should include all the optional groups (not xorq, it's required)
         if dev_with_extras:
             first_dep = dev_with_extras[0]
+            assert "xorq" in first_dep
             assert "mcp" in first_dep
             assert "examples" in first_dep
             assert "agent" in first_dep
@@ -228,7 +231,9 @@ class TestDependencyGroupCoverage:
 
         # Get all optional dependency group names (excluding dev itself and examples)
         optional_deps = pyproject["project"]["optional-dependencies"]
-        optional_groups = [group for group in optional_deps if group not in ["dev", "examples"]]
+        optional_groups = [
+            group for group in optional_deps if group not in ["dev", "examples", "test-core"]
+        ]
 
         # Dev dependencies string
         dev_deps_str = str(pyproject["project"]["optional-dependencies"]["dev"])
@@ -261,19 +266,19 @@ class TestIntegrationWithRealDependencies:
             assert callable(to_tagged)
             assert callable(from_tagged)
         else:
-            # xorq not installed, verify we get helpful error
-            with pytest.raises((ImportError, AttributeError)) as exc_info:
+            # xorq not installed, verify we get helpful error with a
+            # schema-only table (avoids pandas/pyarrow dependency)
+            with pytest.raises(ImportError) as exc_info:
                 import ibis
 
                 from boring_semantic_layer import SemanticModel
                 from boring_semantic_layer.serialization import to_tagged
 
-                table = ibis.memtable({"a": [1]})
+                table = ibis.table({"a": "int64"}, "test")
                 model = SemanticModel(table=table, dimensions={}, measures={})
                 to_tagged(model)
 
-            # Should mention xorq in the error
-            assert "xorq" in str(exc_info.value).lower() or "xorq" in str(exc_info.typename).lower()
+            assert "xorq" in str(exc_info.value).lower()
 
     def test_mcp_available_if_installed(self):
         """Verify MCPSemanticModel works when fastmcp is installed."""

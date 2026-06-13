@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import pytest
 
-from boring_semantic_layer.serialization import from_tagged, to_tagged, try_import_xorq
+from boring_semantic_layer.serialization import from_tagged, to_tagged
 
 # Check if xorq is available
 try:
-    try_import_xorq()
+    import xorq as _xorq_mod  # noqa: F401
+
     xorq_available = True
     xorq_skip_reason = ""
 except ImportError:

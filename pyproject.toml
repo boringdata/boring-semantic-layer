@@ -11,7 +11,6 @@ dependencies = [
     "pyyaml>=6.0",
     "returns>=0.26.0",
     "toolz>=1.0.0",
-    "xorq>=0.3.25",
 ]
 urls = { Homepage = "https://github.com/boringdata/boring-semantic-layer/tree/main" }
 license = "MIT"
@@ -26,6 +25,7 @@ bsl = "boring_semantic_layer.agents.cli:main"
 bsl = "boring_semantic_layer.serialization.tag_handler:bsl_tag_handler"
 
 [project.optional-dependencies]
+xorq = ["xorq>=0.3.25"]
 examples = ["xorq[duckdb]>=0.3.4", "xorq", "duckdb<1.4"]
 
 # Visualization backends
@@ -51,8 +51,16 @@ server = [
     "uvicorn[standard]>=0.30.0",
 ]
 
+test-core = [
+    "ibis-framework[duckdb]>=11.0.0",
+    "pyarrow>=14.0.0",
+    "pytest",
+    "pandas>=2.3.0",
+    "pytest-asyncio",
+]
+
 dev = [
-    "boring-semantic-layer[agent,mcp,server,examples,viz-altair,viz-plotly,viz-plotext]",
+    "boring-semantic-layer[agent,mcp,server,examples,viz-altair,viz-plotly,viz-plotext,xorq]",
     "openai>=1.0.0",
     "langchain-openai>=0.3.0",
     "langchain-anthropic>=0.3.0",

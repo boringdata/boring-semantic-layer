@@ -56,6 +56,31 @@ jobs:
         with:
           path: ./docs/web/dist
 
+  # Verify xorq is truly optional: install without it and run the core suite
+  test-no-xorq:
+    name: Test (no xorq)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install without xorq
+        run: uv pip install --system ".[test-core]"
+
+      - name: Verify import works without xorq
+        run: python -c "import boring_semantic_layer; print('import OK')"
+
+      - name: Run tests (xorq tests should skip, not error)
+        run: pytest src/boring_semantic_layer/tests/ -x -q --ignore=src/boring_semantic_layer/tests/integration
+
   # Deploy docs to GitHub Pages (only on release - keep docs in sync with PyPI package)
   deploy-docs:
     name: Deploy Docs
