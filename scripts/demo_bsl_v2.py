@@ -14,7 +14,6 @@ from pathlib import Path
 import sys
 
 import ibis
-import xorq.api as xo
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -117,7 +116,7 @@ def main():
         .with_measures(sum_val=lambda t: t.value.sum())
     )
 
-    rolling_window = xo.window(order_by="date", preceding=1, following=1)
+    rolling_window = ibis.window(order_by="date", preceding=1, following=1)
     expr4 = (
         ts_st.group_by("date")
         .aggregate("sum_val")
