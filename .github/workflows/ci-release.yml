@@ -85,7 +85,7 @@ jobs:
   deploy-docs:
     name: Deploy Docs
     if: github.event_name == 'release'
-    needs: test
+    needs: [test, test-no-xorq]
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -99,7 +99,7 @@ jobs:
   release-pypi:
     name: Release to PyPI
     if: github.event_name == 'release'
-    needs: test
+    needs: [test, test-no-xorq]
     runs-on: ubuntu-latest
     environment:
       name: release
