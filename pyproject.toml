@@ -59,10 +59,11 @@ test-core = [
 ]
 
 dev = [
-    "boring-semantic-layer[agent,mcp,server,examples,viz-altair,viz-plotly,viz-plotext,xorq]",
+    # LLM provider clients needed to test agent backends (not user-facing extras)
     "openai>=1.0.0",
     "langchain-openai>=0.3.0",
     "langchain-anthropic>=0.3.0",
+    # Developer tooling
     "ruff>=0.6.7",
     "pre-commit>=4.2.0",
     "pytest",
