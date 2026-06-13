@@ -16,14 +16,14 @@ from pathlib import Path
 import ibis
 import pytest
 
-from boring_semantic_layer import SemanticModel
-from boring_semantic_layer.serialization import to_tagged
-from boring_semantic_layer.serialization.tag_handler import (
+xorq = pytest.importorskip("xorq", reason="xorq not installed")
+
+from boring_semantic_layer import SemanticModel  # noqa: E402
+from boring_semantic_layer.serialization import to_tagged  # noqa: E402
+from boring_semantic_layer.serialization.tag_handler import (  # noqa: E402
     bsl_tag_handler,
     reemit,
 )
-
-xorq = pytest.importorskip("xorq", reason="xorq not installed")
 
 from xorq.expr.builders import TagHandler as _TagHandler
 
