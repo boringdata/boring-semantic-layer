@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 from ibis import BaseBackend
@@ -113,6 +114,31 @@ def _load_from_file(yaml_file: Path, profile_name: str | None = None) -> BaseBac
     return _create_connection_from_config(config)
 
 
+_ENV_VAR_PATTERN = re.compile(r"\$\{(\w+)\}|\$(\w+)")
+
+
+def _expand_env_vars(value: str) -> str:
+    """Expand ``${VAR}``/``$VAR`` references, raising on undefined variables.
+
+    Unlike ``os.path.expandvars``, which silently leaves unresolved
+    references in place (so ``database: ${MISSING}`` would create a file
+    literally named ``${MISSING}``), this mirrors xorq's strict behavior and
+    fails loudly. Keeps env-var handling consistent whether or not xorq is
+    installed.
+    """
+
+    def _replace(match: re.Match) -> str:
+        name = match.group(1) or match.group(2)
+        try:
+            return os.environ[name]
+        except KeyError:
+            raise ProfileError(
+                f"Environment variable '{name}' referenced in profile is not set."
+            ) from None
+
+    return _ENV_VAR_PATTERN.sub(_replace, value)
+
+
 def _connect_plain_ibis(ibis, config: dict, conn_type: str) -> BaseBackend:
     """Connect using plain ibis.<backend>.connect() with manual env-var expansion."""
     connect_fn = getattr(ibis, conn_type, None)
@@ -120,7 +146,7 @@ def _connect_plain_ibis(ibis, config: dict, conn_type: str) -> BaseBackend:
         raise ProfileError(f"Unknown backend type: '{conn_type}'")
     connect_kwargs = {k: v for k, v in config.items() if k != "type"}
     connect_kwargs = {
-        k: os.path.expandvars(v) if isinstance(v, str) else v
+        k: _expand_env_vars(v) if isinstance(v, str) else v
         for k, v in connect_kwargs.items()
     }
     return connect_fn.connect(**connect_kwargs)
