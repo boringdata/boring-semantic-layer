@@ -15,7 +15,10 @@ import pytest
 
 from boring_semantic_layer import to_semantic_table, to_untagged
 
-# Projection pushdown disabled for xorq compatibility
+# Projection pushdown is disabled in BSL (for xorq vendored ibis compatibility),
+# so these tests xfail regardless of whether xorq is installed. A few incidentally
+# xpass under plain ibis where the emitted SQL happens to match; that is not the
+# feature working, so the marker is intentionally unconditional and non-strict.
 pytestmark = pytest.mark.xfail(
     reason="Projection pushdown disabled for xorq vendored ibis compatibility"
 )

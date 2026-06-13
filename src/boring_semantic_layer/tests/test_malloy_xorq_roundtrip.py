@@ -12,18 +12,9 @@ import pytest
 
 from boring_semantic_layer.serialization import from_tagged, to_tagged
 
-# Check if xorq is available
-try:
-    import xorq as _xorq_mod  # noqa: F401
-
-    xorq_available = True
-    xorq_skip_reason = ""
-except ImportError:
-    xorq_available = False
-    xorq_skip_reason = "xorq not installed"
+pytest.importorskip("xorq", reason="xorq not installed")
 
 
-@pytest.mark.skipif(not xorq_available, reason=xorq_skip_reason)
 class TestMalloyModelsRoundTrip:
     """Test round-trip conversion for all Malloy-inspired BSL models."""
 
@@ -386,7 +377,6 @@ class TestMalloyModelsRoundTrip:
         assert len(reconstructed_data) == 3
 
 
-@pytest.mark.skipif(not xorq_available, reason=xorq_skip_reason)
 class TestMalloyXorqFeatures:
     """Test that xorq-specific features work with Malloy-style BSL models."""
 
