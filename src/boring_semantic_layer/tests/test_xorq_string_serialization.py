@@ -3,6 +3,8 @@ from __future__ import annotations
 import ibis
 import pytest
 
+pytest.importorskip("xorq", reason="xorq not installed")
+
 from boring_semantic_layer import to_semantic_table
 
 

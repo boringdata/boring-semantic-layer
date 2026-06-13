@@ -17,6 +17,8 @@ import importlib.metadata
 import ibis
 import pytest
 
+pytest.importorskip("xorq", reason="xorq not installed")
+
 from boring_semantic_layer import SemanticModel, to_semantic_table
 from boring_semantic_layer.serialization import to_tagged
 from boring_semantic_layer.serialization.tag_handler import (
