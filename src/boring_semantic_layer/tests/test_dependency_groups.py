@@ -63,7 +63,7 @@ class TestDependencyGroupDocumentation:
         assert any("xorq" in dep for dep in optional_deps["examples"])
 
     def test_all_dependency_groups_in_dev(self):
-        """Verify dev dependency group includes all optional dependencies."""
+        """Verify dev dependency group contains developer tooling (not a self-referential bundle)."""
         # Use tomllib (Python 3.11+) or tomli (Python 3.10)
         if sys.version_info >= (3, 11):
             import tomllib
@@ -81,22 +81,21 @@ class TestDependencyGroupDocumentation:
             pyproject = tomllib.load(f)
 
         dev_deps = pyproject["project"]["optional-dependencies"]["dev"]
+        dev_deps_str = str(dev_deps)
 
-        # Dev should include all optional dependency groups
-        # Check for the pattern boring-semantic-layer[...] in dev deps
-        dev_with_extras = [dep for dep in dev_deps if "boring-semantic-layer[" in dep]
+        # Dev should NOT use a self-referential boring-semantic-layer[...] bundle;
+        # optional extras (xorq, mcp, etc.) are installed separately via --all-extras.
+        dev_with_self_ref = [dep for dep in dev_deps if "boring-semantic-layer[" in dep]
+        assert len(dev_with_self_ref) == 0, (
+            "Dev should not use a self-referential bundle; install extras via --all-extras"
+        )
 
-        assert len(dev_with_extras) > 0, "Dev should include boring-semantic-layer with extras"
-
-        if dev_with_extras:
-            first_dep = dev_with_extras[0]
-            assert "xorq" in first_dep
-            assert "mcp" in first_dep
-            assert "examples" in first_dep
-            assert "agent" in first_dep
-            assert "viz-altair" in first_dep
-            assert "viz-plotly" in first_dep
-            assert "viz-plotext" in first_dep
+        # Dev should contain developer tooling
+        assert any("ruff" in dep for dep in dev_deps), "Dev should include ruff"
+        assert any("pre-commit" in dep for dep in dev_deps), "Dev should include pre-commit"
+        assert any("langchain-anthropic" in dep or "langchain-openai" in dep for dep in dev_deps), (
+            "Dev should include LLM provider clients for testing"
+        )
 
 
 class TestXorqErrorMessages:
@@ -213,7 +212,7 @@ class TestDependencyGroupCoverage:
         assert "viz-plotly" in test_file_content or "plotly" in test_file_content
 
     def test_pyproject_dev_group_is_comprehensive(self):
-        """Verify dev group in pyproject.toml includes all optional dependencies."""
+        """Verify all optional dependency groups are declared in pyproject.toml."""
         # Use tomllib (Python 3.11+) or tomli (Python 3.10)
         if sys.version_info >= (3, 11):
             import tomllib
@@ -229,20 +228,14 @@ class TestDependencyGroupCoverage:
         with open(pyproject_path, "rb") as f:
             pyproject = tomllib.load(f)
 
-        # Get all optional dependency group names (excluding dev itself and examples)
         optional_deps = pyproject["project"]["optional-dependencies"]
-        optional_groups = [
-            group for group in optional_deps if group not in ["dev", "examples", "test-core"]
-        ]
 
-        # Dev dependencies string
-        dev_deps_str = str(pyproject["project"]["optional-dependencies"]["dev"])
-
-        # Check that dev group references all other optional groups
-        # It should have boring-semantic-layer[group1,group2,...]
-        for group in optional_groups:
-            assert group in dev_deps_str, (
-                f"Dev group should include optional dependency group: {group}"
+        # All user-facing extras must exist as top-level optional-dependencies keys.
+        # (Extras are no longer bundled into dev; they are installed via --all-extras in CI.)
+        expected_extras = {"xorq", "mcp", "agent", "viz-altair", "viz-plotly", "viz-plotext"}
+        for group in expected_extras:
+            assert group in optional_deps, (
+                f"Optional dependency group '{group}' missing from pyproject.toml"
             )
 
 
