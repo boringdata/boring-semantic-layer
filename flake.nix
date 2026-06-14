@@ -189,6 +189,35 @@
             );
         });
 
+        # git-annex (a transitive dep of xorq) only publishes a
+        # `macosx_14_0_arm64` wheel for arm64, but nixpkgs aarch64-darwin
+        # targets darwinMinVersion 11.3, so uv2nix's selectWheels rejects it
+        # ("No compatible wheel, nor sdist found"). Referencing prev.git-annex
+        # throws eagerly (the `format` assert fires), so we rebuild the package
+        # from the wheel directly, bypassing the platform check.
+        git-annex =
+          if pkgs.stdenv.isDarwin
+          then
+            pkgs.stdenv.mkDerivation {
+              pname = "git-annex";
+              version = "10.20260316";
+              src = pkgs.fetchurl {
+                url = "https://files.pythonhosted.org/packages/e5/09/8a6fe029eae7c86ef36e123aa01e849245feac95d5088a34d7136fee8d9c/git_annex-10.20260316-py3-none-macosx_14_0_arm64.whl";
+                hash = "sha256-Fx4OCWt1Ucvt99wE61JUch28350YcG/H6SZEOvund9w=";
+              };
+              dontStrip = true;
+              passthru = {
+                dependencies = {};
+                optional-dependencies = {};
+                dependency-groups = {};
+                format = "wheel";
+              };
+              # No darwinMinVersionHook needed: this is a prebuilt binary wheel,
+              # the install phase only unzips it (nothing is compiled).
+              nativeBuildInputs = [final.pyprojectWheelHook];
+            }
+          else prev.git-annex;
+
         # Custom package override for xorq
         xorq = prev.xorq.overrideAttrs (old: {
           nativeBuildInputs =
