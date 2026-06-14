@@ -9,13 +9,20 @@ from ibis.expr.operations.core import Node as IbisNode
 from ibis.expr.types import Expr as IbisExpr
 from returns.curry import partial
 from returns.maybe import Maybe, Nothing, Some
-from returns.result import Failure, Result, Success, safe
+from returns.result import Result, Success, safe
 from toolz import compose
+
 from ._xorq import (
     Expr as XorqExpr,
+)
+from ._xorq import (
     Graph,
     Node,
+)
+from ._xorq import (
     replace_nodes as _xorq_replace_nodes,
+)
+from ._xorq import (
     to_node as _xorq_to_node,
 )
 
@@ -160,17 +167,15 @@ def replace_nodes(replacer, expr):
     )(expr)
 
 
-def to_node_safe(maybe_expr: Any) -> Result[Node, ValueError]:
+@safe(exceptions=(ValueError,))
+def to_node_safe(maybe_expr: Any) -> Node:
     """
     Safely convert to node, returning Result.
 
     Public API that only catches ValueError since that's the expected
     error type for invalid expression inputs from user code.
     """
-    try:
-        return Success(to_node(maybe_expr))
-    except ValueError as e:
-        return Failure(e)
+    return to_node(maybe_expr)
 
 
 def try_to_node(child: Any) -> Maybe[Node]:

@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable, Mapping
 from typing import Any
 
 from attrs import frozen
-from returns.result import Failure, Success
+from returns.result import Failure, Success, safe
+
 from ._xorq import types as ir
-
 from .graph_utils import walk_nodes
-
-logger = logging.getLogger(__name__)
 
 
 @frozen
@@ -61,7 +58,8 @@ class TableRequirements:
         return f"TableRequirements({', '.join(items)})"
 
 
-def extract_column_names(expr: ir.Expr) -> Success[frozenset[str]] | Failure[Exception]:
+@safe
+def extract_column_names(expr: ir.Expr) -> frozenset[str]:
     """Extract column names referenced in an Ibis expression.
 
     Uses graph traversal to find all Field operations.
@@ -69,20 +67,17 @@ def extract_column_names(expr: ir.Expr) -> Success[frozenset[str]] | Failure[Exc
     Returns:
         Result with frozenset of column names or exception
     """
-    try:
-        from ibis.expr import operations as ops
+    from ibis.expr import operations as ops
 
-        field_nodes = walk_nodes(ops.Field, expr)
-        return Success(frozenset(field.name for field in field_nodes))
-    except Exception as e:
-        logger.debug(f"Failed to extract column names: {e}")
-        return Failure(e)
+    field_nodes = walk_nodes(ops.Field, expr)
+    return frozenset(field.name for field in field_nodes)
 
 
+@safe
 def extract_columns_from_callable(
     fn: Callable[[ir.Table], Any],
     table: ir.Table,
-) -> Success[frozenset[str]] | Failure[Exception]:
+) -> frozenset[str]:
     """Extract column names that a callable (dimension/measure) uses.
 
     Calls the function with the table and inspects the resulting expression
@@ -95,21 +90,10 @@ def extract_columns_from_callable(
     Returns:
         Result with frozenset of column names or exception
     """
-    try:
-        result = fn(table)
-        if isinstance(result, ir.Expr):
-            return extract_column_names(result)
-        return Success(frozenset())
-    except AttributeError as e:
-        # If the error is about dimension validation, preserve it
-        if "Dimension expression references non-existent column" in str(e):
-            logger.debug(f"Dimension expression error (preserved): {e}")
-            return Failure(e)
-        logger.debug(f"Failed to extract columns from callable: {e}")
-        return Failure(e)
-    except Exception as e:
-        logger.debug(f"Failed to extract columns from callable: {e}")
-        return Failure(e)
+    result = fn(table)
+    if isinstance(result, ir.Expr):
+        return extract_column_names(result).unwrap()
+    return frozenset()
 
 
 def extract_columns_from_callable_safe(
