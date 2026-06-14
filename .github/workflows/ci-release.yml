@@ -30,10 +30,8 @@ jobs:
         include:
           - name: full
             sync: uv sync --all-extras
-            pytest_args: ""
           - name: no-xorq
             sync: uv sync --all-extras --no-extra xorq --no-extra examples
-            pytest_args: --ignore=src/boring_semantic_layer/tests/integration
     steps:
       - uses: actions/checkout@v4
 
@@ -53,7 +51,7 @@ jobs:
         run: uv run python -c "import boring_semantic_layer; print('import OK')"
 
       - name: Run tests
-        run: uv run pytest ${{ matrix.pytest_args }}
+        run: uv run pytest
 
   # Build examples, docs, and skills (require the full env incl. Node).
   build:
