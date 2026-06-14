@@ -194,6 +194,15 @@ class SemanticTable(ir.Table):
         # Fallback to empty graph
         return {}
 
+    def chart(
+        self,
+        spec: dict[str, Any] | None = None,
+        backend: str = "echarts",
+        format: str = "static",
+    ):
+        """Create a chart from this semantic result."""
+        return create_chart(self, spec=spec, backend=backend, format=format)
+
     def filter(self, predicate: Callable) -> SemanticFilter:
         return SemanticFilter(source=self.op(), predicate=predicate)
 
@@ -237,8 +246,7 @@ class SemanticTable(ir.Table):
                 proxy = MeasureScope(_tbl=tbl, _known=[], _post_agg=True)
                 resolved = _resolve_expr(fn, proxy)
                 tbl = tbl.mutate(resolved.name(name))
-            all_roots = _find_all_root_models(self.op())
-            return _build_semantic_model_from_roots(tbl, all_roots)
+            return _build_post_aggregate_model(self.op(), tbl)
 
         def contains_join(node) -> bool:
             if isinstance(node, SemanticJoinOp):
@@ -477,6 +485,45 @@ def _build_semantic_model_from_roots(
         measures=all_measures,
         calc_measures=all_calc,
     )
+
+
+def _build_post_aggregate_model(source_op, ibis_table: ir.Table) -> SemanticModel:
+    """Wrap a materialized post-aggregate table as a flat semantic model.
+
+    A ``.mutate()`` chained after ``order_by``/``limit``/``filter`` on an
+    aggregate materializes the result (the new column is computed against
+    the post-wrapper table, preserving window/rank semantics). The base
+    model's dimensions reference *source* columns that no longer exist on
+    the aggregated table, so reattaching them (via roots) makes
+    ``schema``/``values`` raise when something — e.g. chart introspection —
+    forces field resolution. Instead expose the materialized columns
+    directly: group-by keys become identity dimensions (preserving time
+    metadata), every other column an identity measure.
+    """
+    from .ops import Dimension, SemanticAggregateOp
+
+    agg = source_op
+    while agg is not None and not isinstance(agg, SemanticAggregateOp):
+        agg = getattr(agg, "source", None)
+    key_names = set(agg.keys) if agg is not None else set()
+
+    root_dims = _get_merged_fields(_find_all_root_models(source_op), "dimensions")
+
+    dimensions: dict[str, Dimension] = {}
+    measures: dict[str, Callable] = {}
+    for col in ibis_table.columns:
+        if col in key_names:
+            rd = root_dims.get(col)
+            dimensions[col] = Dimension(
+                expr=(lambda t, c=col: t[c]),
+                is_time_dimension=getattr(rd, "is_time_dimension", False) if rd else False,
+                is_event_timestamp=getattr(rd, "is_event_timestamp", False) if rd else False,
+                smallest_time_grain=getattr(rd, "smallest_time_grain", None) if rd else None,
+            )
+        else:
+            measures[col] = lambda t, c=col: t[c]
+
+    return SemanticModel(table=ibis_table, dimensions=dimensions, measures=measures)
 
 
 def _get_entity_dims(op) -> frozenset[str]:
@@ -1468,14 +1515,6 @@ class SemanticAggregate(SemanticTable):
             calc_measures={},
         )
 
-    def chart(
-        self,
-        spec: dict[str, Any] | None = None,
-        backend: str = "echarts",
-        format: str = "static",
-    ):
-        return create_chart(self, spec=spec, backend=backend, format=format)
-
 
 class SemanticOrderBy(SemanticTable):
     def __init__(
@@ -1522,16 +1561,6 @@ class SemanticOrderBy(SemanticTable):
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.source)
         return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
-
-    def chart(
-        self,
-        spec: dict[str, Any] | None = None,
-        backend: str = "echarts",
-        format: str = "static",
-    ):
-        """Create a chart from the ordered aggregate."""
-        # Pass the expression to preserve order_by in the chart
-        return create_chart(self, spec=spec, backend=backend, format=format)
 
 
 class SemanticLimit(SemanticTable):
@@ -1581,16 +1610,6 @@ class SemanticLimit(SemanticTable):
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.source)
         return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
-
-    def chart(
-        self,
-        spec: dict[str, Any] | None = None,
-        backend: str = "echarts",
-        format: str = "static",
-    ):
-        """Create a chart from the limited aggregate."""
-        # Pass the expression to preserve limit in the chart
-        return create_chart(self, spec=spec, backend=backend, format=format)
 
 
 class SemanticUnnest(SemanticTable):

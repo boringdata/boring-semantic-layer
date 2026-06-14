@@ -130,6 +130,17 @@ def extract_aggregate_metadata(
         current_op = current_op.source
 
     aggregate_op = current_op
+
+    if not hasattr(aggregate_op, "aggs"):
+        # Terminal flat model: a ``.mutate()`` chained after
+        # ``order_by``/``limit``/``filter`` materializes the result into a
+        # flat ``SemanticTableOp`` (no aggregate node survives). Group-by
+        # keys are exposed as dimensions and the aggregate/derived columns
+        # as measures, so read those directly.
+        dimensions = list(aggregate_op.get_dimensions().keys())
+        measures = list(aggregate_op.get_measures().keys())
+        return dimensions, measures, mutated_columns, aggregate_op
+
     dimensions = list(aggregate_op.keys)
     measures = list(aggregate_op.aggs.keys())
 
