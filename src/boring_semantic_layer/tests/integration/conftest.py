@@ -13,6 +13,15 @@ import pandas as pd
 import pytest
 from toolz import curry
 
+# The Malloy comparison fixtures load BSL query modules (``malloy_data/*.py``)
+# that import ``xorq.api`` directly, so the whole directory requires xorq. Skip
+# collecting it when xorq is absent (the no-xorq CI leg) rather than relying on a
+# ``--ignore`` CLI flag, so the gate lives with the tests that need it.
+try:
+    import xorq  # noqa: F401
+except ImportError:
+    collect_ignore_glob = ["*"]
+
 TEST_CASES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("comparing_timeframe", "query_1", ()),
     ("comparing_timeframe", "query_2", ()),
