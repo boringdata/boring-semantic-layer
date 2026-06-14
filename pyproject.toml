@@ -59,6 +59,7 @@ dev = [
     "ruff>=0.6.7",
     "pre-commit>=4.2.0",
     "pytest",
+    "hypothesis>=6.0.0",
     "pandas>=2.3.0",
     "urllib3>=2.2.3",
     "pytest-asyncio",

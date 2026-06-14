@@ -684,6 +684,7 @@ class SemanticModel(SemanticTable):
             calc_measures=self.get_calculated_measures(),
             name=self.name,
             description=self.description,
+            _source_join=self.op()._source_join,
         )
 
     def with_measures(self, **meas) -> SemanticModel:
@@ -707,6 +708,7 @@ class SemanticModel(SemanticTable):
             calc_measures=new_calc_meas,
             name=self.name,
             description=self.description,
+            _source_join=self.op()._source_join,
         )
 
     def join_one(

@@ -177,6 +177,25 @@ def detect_time_dimension(
     while hasattr(aggregate_op, "source") and not hasattr(aggregate_op, "aggs"):
         aggregate_op = aggregate_op.source
 
+    if not hasattr(aggregate_op, "aggs"):
+        # Post-aggregate chains such as ``aggregate().limit().mutate(...)``
+        # materialize into a flat SemanticTableOp. In that shape there is
+        # no aggregate source to inspect, but dimensions already carry the
+        # time metadata directly on the flat model.
+        try:
+            dims_dict = aggregate_op.get_dimensions()
+        except AttributeError:
+            dims_dict = {}
+
+        for dim_name in dimensions:
+            dim_obj = dims_dict.get(dim_name)
+            if hasattr(dim_obj, "is_time_dimension") and dim_obj.is_time_dimension:
+                return dim_name
+
+        if df is not None:
+            return detect_time_dimension_from_dtype(df, dimensions)
+        return None
+
     all_roots = _find_all_root_models(aggregate_op.source)
     if not all_roots:
         return None

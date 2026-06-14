@@ -3,7 +3,7 @@
 Each test pins the observable behavior of a composition from the ADR's
 "composition gotchas" table so that the ``.mutate()`` desugaring (alias to
 the ``with_measures``/aggregate path) can be verified observationally
-equivalent before ``SemanticMutateOp`` is deleted.
+equivalent after ``SemanticMutateOp`` is deleted.
 """
 
 import ibis
@@ -79,7 +79,7 @@ def joined_model():
         )
         .with_measures(total_balance=lambda t: t.balance.sum())
     )
-    return cust_model.join_many(acct_model, on=lambda l, r: l.cid == r.cid)
+    return cust_model.join_many(acct_model, on=lambda left, right: left.cid == right.cid)
 
 
 class TestMutateAfterAggregate:
@@ -158,6 +158,37 @@ class TestMutateAfterAggregate:
             .reset_index(drop=True)
         )
         assert df["tripled_plus"].tolist() == (df["flight_count"] * 3).tolist()
+
+    def test_mutate_alias_beats_same_named_source_column(self):
+        """A later post-agg mutate reads prior aliases, not raw columns."""
+        con = ibis.duckdb.connect(":memory:")
+        df = pd.DataFrame(
+            {
+                "carrier": ["AA", "AA", "UA"],
+                "doubled": [100, 200, 300],
+            }
+        )
+        tbl = con.create_table("alias_collision_flights", df)
+        model = (
+            to_semantic_table(tbl, "flights")
+            .with_dimensions(carrier=lambda t: t.carrier)
+            .with_measures(flight_count=lambda t: t.count())
+        )
+
+        actual = (
+            model.group_by("carrier")
+            .aggregate("flight_count")
+            .mutate(
+                doubled=lambda t: t.flight_count * 2,
+                quadrupled=lambda t: t.doubled * 2,
+            )
+            .execute()
+            .sort_values("carrier")
+            .reset_index(drop=True)
+        )
+
+        assert actual["doubled"].tolist() == (actual["flight_count"] * 2).tolist()
+        assert actual["quadrupled"].tolist() == (actual["flight_count"] * 4).tolist()
 
     def test_mutate_with_percent_of_total(self, flights_model):
         df = (
@@ -312,6 +343,65 @@ class TestPreAggregateMutate:
         assert len(df) == 2
         assert df["accounts.total_balance"].tolist() == [400, 600]
 
+    def test_chained_mutate_on_join_preserves_preagg_path(self):
+        """Chained pre-agg mutate keeps the join reference for fan-out safety."""
+        con = ibis.duckdb.connect(":memory:")
+        customers = con.create_table(
+            "customers_chain_mutate",
+            pd.DataFrame({"cid": [1, 2]}),
+        )
+        accounts = con.create_table(
+            "accounts_chain_mutate",
+            pd.DataFrame(
+                {
+                    "aid": [10, 11, 12],
+                    "cid": [1, 2, 2],
+                    "balance": [100, 200, 300],
+                    "date": pd.to_datetime(["2024-01-05", "2024-02-10", "2024-03-15"]),
+                }
+            ),
+        )
+        orders = con.create_table(
+            "orders_chain_mutate",
+            pd.DataFrame(
+                {
+                    "oid": [100, 101, 102],
+                    "cid": [1, 2, 2],
+                    "amount": [10, 20, 30],
+                }
+            ),
+        )
+
+        customer_model = to_semantic_table(customers, "customers").with_dimensions(
+            cid=lambda t: t.cid,
+        )
+        account_model = (
+            to_semantic_table(accounts, "accounts")
+            .with_dimensions(cid=lambda t: t.cid, aid=lambda t: t.aid)
+            .with_measures(total_balance=lambda t: t.balance.sum())
+        )
+        order_model = to_semantic_table(orders, "orders").with_dimensions(
+            cid=lambda t: t.cid,
+            oid=lambda t: t.oid,
+        )
+        joined = customer_model.join_many(
+            account_model,
+            on=lambda left, right: left.cid == right.cid,
+        ).join_many(order_model, on=lambda left, right: left.cid == right.cid)
+
+        actual = (
+            joined.mutate(period=lambda t: t.date.truncate("M"))
+            .mutate(is_large=lambda t: t.balance > 150)
+            .group_by("is_large")
+            .aggregate("accounts.total_balance")
+            .execute()
+            .sort_values("is_large")
+            .reset_index(drop=True)
+        )
+
+        assert actual["is_large"].tolist() == [False, True]
+        assert actual["accounts.total_balance"].tolist() == [100, 500]
+
     def test_with_measures_after_filter_sees_filtered_table(self, flights_model):
         """Pinned per ADR review: filter-then-derive scopes on filtered rows."""
         df = (
@@ -328,6 +418,23 @@ class TestPreAggregateMutate:
 
 
 class TestMutateAsJoinAndSerializationInput:
+    def test_legacy_semantic_mutate_tag_is_rejected(self):
+        """Hard cutoff: old SemanticMutateOp tags are no longer supported."""
+        from boring_semantic_layer.serialization.context import BSLSerializationContext
+        from boring_semantic_layer.serialization.reconstruct import (
+            reconstruct_bsl_operation,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="Unknown BSL operation type: SemanticMutateOp",
+        ):
+            reconstruct_bsl_operation(
+                {"bsl_op_type": "SemanticMutateOp"},
+                None,
+                BSLSerializationContext(),
+            )
+
     def test_mutated_aggregate_roundtrips_through_tagged(self, flights_model):
         expr = (
             flights_model.group_by("carrier")

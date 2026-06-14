@@ -400,3 +400,22 @@ class TestChartWithFilters:
         result.chart(backend="plotext", format="static")
         # Plotext returns None for static format (renders directly)
         # Just verify no exception was raised
+
+    def test_chart_time_detection_after_limit_mutate(self, flights_model):
+        """Post-wrapper mutate preserves time metadata for chart detection."""
+        from boring_semantic_layer.chart.utils import get_chart_detection_params
+
+        result = (
+            flights_model.group_by("flight_date")
+            .aggregate("flight_count")
+            .order_by("flight_date")
+            .limit(3)
+            .mutate(doubled=lambda t: t.flight_count * 2)
+        )
+        df = result.execute()
+
+        dimensions, measures, time_dimension = get_chart_detection_params(result, df)
+
+        assert dimensions == ["flight_date"]
+        assert measures == ["flight_count", "doubled"]
+        assert time_dimension == "flight_date"

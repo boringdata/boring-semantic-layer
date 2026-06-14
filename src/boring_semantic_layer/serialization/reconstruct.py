@@ -8,13 +8,13 @@ source, context)`` and returns a BSL expression.
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import suppress
 from typing import Any
 
 from returns.result import safe
 
 from .context import BSLSerializationContext
 from .extract import deserialize_calc_measures
-
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -85,8 +85,10 @@ def _reconstruct_semantic_table(
             Read,
             from_ibis,
             ibis,
-            relations as xorq_rel,
             walk_nodes,
+        )
+        from .._xorq import (
+            relations as xorq_rel,
         )
 
         unwrapped_expr = _unwrap_cached_nodes(xorq_expr)
@@ -185,10 +187,8 @@ def _reconstruct_aggregate(
     known: set[str] = set()
     source_op = source.op()
     for getter in ("get_measures", "get_calculated_measures"):
-        try:
+        with suppress(Exception):
             known |= set(getattr(source_op, getter)().keys())
-        except Exception:
-            pass
 
     names: list[str] = []
     aliased: dict = {}
@@ -206,32 +206,6 @@ def _reconstruct_aggregate(
         else:
             aliased[name] = context.deserialize_expr(data, f"Aggregate({name})")
     return source.aggregate(*names, **aliased)
-
-
-@register_reconstructor("SemanticMutateOp")
-def _reconstruct_mutate(
-    metadata: dict, xorq_expr, source, context: BSLSerializationContext
-):
-    """Backward compat for tags written before SemanticMutateOp was removed.
-
-    ``SemanticMutateOp`` no longer exists (ADR 0001 Phase 3); new tags
-    fold post-aggregation derivations into ``SemanticAggregateOp``. Old
-    tags still deserialize because ``.mutate(**post)`` survives as a
-    desugaring alias onto the unified ``with_measures`` path.
-    """
-    if source is None:
-        raise ValueError("SemanticMutateOp requires source")
-
-    post_struct = context.parse_structured_dict(metadata.get("post_struct", ()))
-
-    if post_struct:
-        exprs = {
-            name: context.deserialize_expr(data, f"Mutate({name})")
-            for name, data in post_struct.items()
-        }
-        return source.mutate(**exprs)
-    return source
-
 
 @register_reconstructor("SemanticProjectOp")
 def _reconstruct_project(
@@ -282,9 +256,9 @@ def _reconstruct_limit(
 def _reconstruct_join(
     metadata: dict, xorq_expr, source, context: BSLSerializationContext
 ):
-    from .._xorq import relations as xorq_rel, walk_nodes
-
     from .. import expr as bsl_expr
+    from .._xorq import relations as xorq_rel
+    from .._xorq import walk_nodes
 
     left_metadata = context.parse_field(metadata, "left")
     right_metadata = context.parse_field(metadata, "right")

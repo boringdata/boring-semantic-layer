@@ -730,6 +730,10 @@ def _classify_measure(
     if known is None:
         known = getattr(scope, "_known", ())
     known_set = frozenset(known)
+    prefer_known = getattr(scope, "prefer_known", None)
+    if prefer_known is None:
+        prefer_known = getattr(scope, "_prefer_known", ())
+    prefer_known_set = frozenset(prefer_known)
 
     # Pure constants fold into both grouped and ungrouped contexts.
     if isinstance(expr, (int, float)) and not isinstance(expr, bool):
@@ -744,7 +748,11 @@ def _classify_measure(
 
     try:
         ibis_expr, vt, totals_vt = evaluate_calc_lambda(
-            expr, base_tbl, known_set, virtual_schema
+            expr,
+            base_tbl,
+            known_set,
+            virtual_schema,
+            priority_measures=prefer_known_set,
         )
     except UnknownMeasureRefError:
         raise
@@ -791,6 +799,7 @@ def _classify_measure(
             description=description,
             requires_unnest=requires_unnest,
             depends_on=analysis.depends_on,
+            prefer_known=prefer_known_set,
             metadata=metadata,
         ),
     )
@@ -1013,6 +1022,7 @@ class CalcMeasure:
     description: str | None = None
     requires_unnest: tuple[str, ...] = ()
     depends_on: frozenset[str] = field(factory=frozenset, converter=frozenset)
+    prefer_known: frozenset[str] = field(factory=frozenset, converter=frozenset)
     metadata: Mapping[str, Any] = field(factory=dict, eq=False, hash=False)
 
     def to_json(self) -> Mapping[str, Any]:
@@ -1024,7 +1034,9 @@ class CalcMeasure:
         return base
 
     def __hash__(self) -> int:
-        return hash((self.description, self.requires_unnest, self.depends_on))
+        return hash(
+            (self.description, self.requires_unnest, self.depends_on, self.prefer_known)
+        )
 
 
 class SemanticTableOp(Relation):
@@ -1492,7 +1504,6 @@ def _build_aggregation_plan(
         base_tbl = getattr(scope, "_tbl", None)
     if base_tbl is None:
         base_tbl = tbl
-    known_set = frozenset(merged_base_measures) | frozenset(merged_calc_measures)
 
     # Query-local entries can reference each other (e.g. a derived
     # column built on a sibling derivation from the same aggregate /
@@ -1501,15 +1512,13 @@ def _build_aggregation_plan(
     # during inline classification by augmenting the scope's
     # known-measure set, which also seeds the virtual aggregated
     # table's schema.
-    if not is_post_agg:
-        local_names = tuple(n for n in aggs if not n.startswith("_measure_"))
-        scope_known = tuple(getattr(scope, "known", ()) or ())
-        classify_scope = MeasureScope(
-            _tbl=base_tbl,
-            _known=tuple(dict.fromkeys(scope_known + local_names + tuple(keys))),
-        )
-    else:
-        classify_scope = scope
+    scope_known = tuple(getattr(scope, "known", ()) or ())
+    prior_local_names: list[str] = []
+
+    def remember_local_name(local_name: str) -> None:
+        if local_name.startswith("_measure_") or local_name in prior_local_names:
+            return
+        prior_local_names.append(local_name)
 
     for name, fn_wrapped in aggs.items():
         fn = _unwrap(fn_wrapped)
@@ -1528,6 +1537,7 @@ def _build_aggregation_plan(
             ):
                 fn = _make_base_measure(fn, None, (), {})
             agg_specs[name] = _make_agg_callable(fn)
+            remember_local_name(name)
             continue
 
         # Recognize bare-name lambdas (``lambda t, n=name: t[n]``) that
@@ -1540,17 +1550,28 @@ def _build_aggregation_plan(
             if resolved is not None:
                 if resolved in merged_base_measures:
                     agg_specs[name] = _make_agg_callable(merged_base_measures[resolved])
+                    remember_local_name(name)
                     continue
                 if resolved in merged_calc_measures:
                     calc_specs[name] = merged_calc_measures[resolved]
+                    remember_local_name(name)
                     continue
 
         # Otherwise classify the inline lambda on the fly.
+        if not is_post_agg:
+            classify_scope = MeasureScope(
+                _tbl=base_tbl,
+                _known=tuple(dict.fromkeys(scope_known + tuple(prior_local_names) + tuple(keys))),
+                _prefer_known=tuple(prior_local_names),
+            )
+        else:
+            classify_scope = scope
         kind, value = _classify_measure(fn, classify_scope, name)
         if kind == "calc":
             calc_specs[name] = value
         else:
             agg_specs[name] = _make_agg_callable(value)
+        remember_local_name(name)
 
     # Auto-include base-measure dependencies referenced by calc measures
     # so the aggregation produces the columns the calc lambdas read.
@@ -1672,7 +1693,11 @@ def _compile_aggregation(
             try:
                 virtual_schema = dict(virtual_schema_real)
                 expr, vt, totals_vt = evaluate_calc_lambda(
-                    cm.expr, base_tbl, known_with_keys, virtual_schema
+                    cm.expr,
+                    base_tbl,
+                    known_with_keys,
+                    virtual_schema,
+                    priority_measures=cm.prefer_known,
                 )
                 new_expr, new_vt, new_totals_vt, lifted = lift_inline_reductions(
                     expr, vt, base_tbl, totals_virtual_agg_tbl=totals_vt
@@ -1830,7 +1855,11 @@ def _compile_aggregation(
                     if col in cur_known
                 }
                 expr0, vt0, totals_vt0 = evaluate_calc_lambda(
-                    fn, base_tbl, cur_known, virtual_schema
+                    fn,
+                    base_tbl,
+                    cur_known,
+                    virtual_schema,
+                    priority_measures=calc_specs[name].prefer_known,
                 )
                 rewritten_expr, rewritten_vt, rewritten_totals_vt, lifted = (
                     lift_inline_reductions(
@@ -3140,13 +3169,13 @@ class SemanticAggregateOp(Relation):
 
         # Handle calculated measures
         if plan.calc_specs:
-            calc_lambdas = {
-                name: cm.expr if isinstance(cm, CalcMeasure) else cm
-                for name, cm in plan.calc_specs.items()
-            }
             known = frozenset(merged_base_measures) | frozenset(merged_calc_measures)
             result = apply_calc_measures(
-                result, core_tbl, calc_lambdas, known, agg_specs=dict(plan.agg_specs)
+                result,
+                core_tbl,
+                dict(plan.calc_specs),
+                known,
+                agg_specs=dict(plan.agg_specs),
             )
 
         # --- 3. LEFT JOIN deferred dimension tables ---
@@ -3379,18 +3408,14 @@ class SemanticAggregateOp(Relation):
         values; ``apply_calc_measures`` builds the totals lazily on
         first use.
         """
-        calc_lambdas = {
-            name: cm.expr if isinstance(cm, CalcMeasure) else cm
-            for name, cm in plan.calc_specs.items()
-        }
-        if not calc_lambdas:
+        if not plan.calc_specs:
             return result
         base_for_calc = tbl if tbl is not None else result
         known = frozenset(plan.agg_specs.keys()) | frozenset(plan.calc_specs.keys())
         return apply_calc_measures(
             result,
             base_for_calc,
-            calc_lambdas,
+            dict(plan.calc_specs),
             known,
             agg_specs=dict(plan.agg_specs),
         )

@@ -112,6 +112,11 @@ class MeasureScope:
     known: tuple[str, ...] = field(converter=tuple, alias="_known")
     known_set: frozenset[str] = field(init=False, alias="_known_set")
     post_agg: bool = field(default=False, alias="_post_agg")
+    prefer_known: tuple[str, ...] = field(
+        factory=tuple,
+        converter=tuple,
+        alias="_prefer_known",
+    )
 
     def __attrs_post_init__(self):
         object.__setattr__(self, "known_set", frozenset(self.known))
