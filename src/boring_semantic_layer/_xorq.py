@@ -161,9 +161,12 @@ except ImportError:
         return node.replace(lambda n, kwargs: replacer(n, kwargs if kwargs is not None else {}))
 
     def walk_nodes(*args, **kwargs):
-        # Reachable only with xorq (from_ibis-wrapped graphs); without it the
-        # plain-ibis paths use graph_utils.walk_nodes and every other caller is
-        # xorq-gated, so this should never run.
+        # Defined so the shim's symbol surface stays symmetric: every name the
+        # xorq branch exports is importable from this branch too, so the
+        # function-local ``from ._xorq import walk_nodes`` at xorq-gated call
+        # sites resolves. Those call sites all bail on ``HAS_XORQ`` first, so the
+        # body never runs without xorq; the raise is a clear signal if a future
+        # un-gated caller ever reaches it.
         raise ImportError(
             "xorq is required for walk_nodes; "
             "install with: pip install 'boring-semantic-layer[xorq]'"
