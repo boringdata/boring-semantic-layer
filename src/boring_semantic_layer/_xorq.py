@@ -149,42 +149,24 @@ except ImportError:
             return maybe_expr
         if isinstance(maybe_expr, Expr):
             return maybe_expr.op()
-        raise ValueError(
-            f"Cannot convert {type(maybe_expr).__name__!r} to an expression node"
-        )
-
-    def walk_nodes(node_types, expr):
-        """Walk the expression graph depth-first, yielding nodes of given types."""
-        start = to_node(expr)
-        visited = set()
-        stack = [start]
-        types_ = node_types if isinstance(node_types, tuple) else (node_types,)
-        while stack:
-            node = stack.pop()
-            if node in visited:
-                continue
-            visited.add(node)
-            if isinstance(node, types_):
-                yield node
-            children = getattr(node, "__children__", ())
-            for child in children:
-                try:
-                    child_node = to_node(child)
-                    if child_node not in visited:
-                        stack.append(child_node)
-                except (ValueError, AttributeError):
-                    pass
+        raise ValueError(f"Cannot convert {type(maybe_expr).__name__!r} to an expression node")
 
     def replace_nodes(replacer, node):
-        """Replace nodes in the expression tree using ibis Node.replace.
+        """Replace nodes in the tree via ibis ``Node.replace``.
 
-        The xorq replacer signature is ``(node, kwargs) -> node`` where kwargs
-        is a dict of the node's arguments (possibly with already-replaced
-        children). ibis's Node.replace passes ``None`` when no children were
-        replaced; we normalise that to ``{}`` to match xorq's contract.
+        The xorq replacer signature is ``(node, kwargs) -> node``; ibis passes
+        ``None`` for kwargs when no children changed, which we normalise to
+        ``{}`` to match xorq's contract.
         """
-        return node.replace(
-            lambda n, kwargs: replacer(n, kwargs if kwargs is not None else {})
+        return node.replace(lambda n, kwargs: replacer(n, kwargs if kwargs is not None else {}))
+
+    def walk_nodes(*args, **kwargs):
+        # Reachable only with xorq (from_ibis-wrapped graphs); without it the
+        # plain-ibis paths use graph_utils.walk_nodes and every other caller is
+        # xorq-gated, so this should never run.
+        raise ImportError(
+            "xorq is required for walk_nodes; "
+            "install with: pip install 'boring-semantic-layer[xorq]'"
         )
 
 
