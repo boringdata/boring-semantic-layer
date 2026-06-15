@@ -811,7 +811,14 @@ def classify_calc_lambdas(
     """
     base_op = _to_op(base_tbl)
     out: dict[str, CalcExprAnalysis] = {}
-    for name, fn in calc_lambdas.items():
+    for name, spec in calc_lambdas.items():
+        # Callers may pass ``CalcMeasure`` specs (holding the lambda in
+        # ``.expr``) or bare callables; ``evaluate_calc_lambda`` only
+        # understands the latter. Extracting here keeps classification in
+        # sync with ``apply_calc_measures`` — otherwise a spec slips
+        # through as a non-callable, the analyzer fails, and the calc is
+        # misclassified as not referencing ``t.all(...)`` (breaking totals).
+        fn = getattr(spec, "expr", spec)
         try:
             virtual_schema = {n: "float64" for n in known_measures}
             expr, _vt, totals_vt = evaluate_calc_lambda(
