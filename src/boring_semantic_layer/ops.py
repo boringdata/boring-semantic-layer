@@ -1629,6 +1629,7 @@ def _compile_aggregation(
     calc_specs: dict[str, CalcMeasure],
     known_measures: frozenset[str],
     requested_measures: list[str] | None = None,
+    is_post_agg: bool = False,
 ):
     """Run base aggregations on ``base_tbl``, then apply calc measures.
 
@@ -1728,11 +1729,22 @@ def _compile_aggregation(
     nested_marker_specs: dict[str, Any] = {}
     regular_specs: dict[str, Callable] = {}
     dimension_grain_specs: dict[str, Callable] = {}
+    post_agg_deriv_specs: dict[str, Callable] = {}
     for name, fn in agg_specs.items():
         try:
             probe = fn(base_tbl)
         except Exception:
-            regular_specs[name] = fn
+            # On a post-aggregate aggregation, a folded ``.mutate()``
+            # derivation may reference sibling aggregate outputs (e.g.
+            # ``session_end_min - session_start_min``) that don't exist on
+            # ``base_tbl`` — they are produced by this aggregation. Such a
+            # spec can't go through ``Table.aggregate``; evaluate it against
+            # the built result instead (historical post-agg ``.mutate()``
+            # semantics). Non-post-agg failures keep the base-spec path.
+            if is_post_agg:
+                post_agg_deriv_specs[name] = fn
+            else:
+                regular_specs[name] = fn
             continue
         if isinstance(probe, NestedAccessMarker):
             nested_marker_specs[name] = probe
@@ -1820,6 +1832,14 @@ def _compile_aggregation(
     for name, fn in dimension_grain_specs.items():
         real_agg_tbl = real_agg_tbl.mutate(**{name: fn(base_tbl)})
 
+    # --- Apply post-aggregate derivations ----------------------------
+    # Specs that reference sibling aggregate outputs (and so could not be
+    # probed against ``base_tbl``) are evaluated against the built result,
+    # where those columns now exist. Applied in insertion order so a
+    # derivation may build on an earlier one in the same call.
+    for name, fn in post_agg_deriv_specs.items():
+        real_agg_tbl = real_agg_tbl.mutate(**{name: fn(real_agg_tbl)})
+
     # --- Derive calc-of-calc totals ----------------------------------
     # If any AllOf-using calc references another calc (transitively),
     # the windowed-totals pass attached only the base totals. Now that
@@ -1844,6 +1864,37 @@ def _compile_aggregation(
         for name in ordered:
             spec = lifted_calc_specs.get(name)
             if spec is None:
+                # Preprocessing could not classify this calc against the
+                # virtual-aggregate scope. The common cause is a window
+                # that references both a prior derived measure and a
+                # group-key/base column: the virtual scope resolves the
+                # former onto the virtual table and the latter onto the
+                # base table, so ibis cannot bind the mixed-relation window
+                # and yields a bare Deferred. By this point the calcs are
+                # processed in dependency order, so every name the lambda
+                # needs already exists as a real column on ``real_agg_tbl``.
+                # Evaluate it there directly (the historical post-aggregate
+                # ``.mutate()`` semantics) and move on. Falls through to the
+                # re-lift path below only when that fails — e.g. a genuine
+                # inline base reduction over a column consumed by the
+                # aggregation.
+                try:
+                    post_scope = MeasureScope(
+                        _tbl=real_agg_tbl, _known=[], _post_agg=True
+                    )
+                    resolved = _resolve_expr(calc_specs[name].expr, post_scope)
+                    real_agg_tbl = real_agg_tbl.mutate(resolved.name(name))
+                    if real_with_totals is not None:
+                        real_with_totals = real_agg_tbl
+                    continue
+                except Exception as exc:
+                    logger.debug(
+                        "post-aggregate fallback for calc %r failed; "
+                        "re-lifting against base: %s",
+                        name,
+                        exc,
+                    )
+
                 # Lift failed at preprocessing; re-evaluate AND re-lift so
                 # inline base reductions (``t.distance.sum() / t.all(...)``)
                 # don't reach _compile_calc_measure_impl as bare base
@@ -2661,6 +2712,7 @@ class SemanticAggregateOp(Relation):
             | frozenset(plan.agg_specs)
             | frozenset(plan.calc_specs),
             requested_measures=list(plan.requested_measures),
+            is_post_agg=is_post_agg,
         )
 
     def _to_untagged_with_preagg(
