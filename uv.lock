@@ -214,6 +214,9 @@ viz-altair = [
     { name = "altair" },
     { name = "vl-convert-python" },
 ]
+viz-perspective = [
+    { name = "pyarrow" },
+]
 viz-plotext = [
     { name = "plotext" },
 ]
@@ -255,6 +258,7 @@ requires-dist = [
     { name = "plotext", marker = "extra == 'viz-plotext'", specifier = ">=5.0.0" },
     { name = "plotly", marker = "extra == 'viz-plotly'", specifier = ">=6.3.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.2.0" },
+    { name = "pyarrow", marker = "extra == 'viz-perspective'", specifier = ">=14.0.0" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'test-core'" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
@@ -271,7 +275,7 @@ requires-dist = [
     { name = "xorq", marker = "extra == 'xorq'", specifier = ">=0.3.31" },
     { name = "xorq", extras = ["duckdb"], marker = "extra == 'examples'", specifier = ">=0.3.31" },
 ]
-provides-extras = ["xorq", "examples", "viz-altair", "viz-plotly", "viz-plotext", "agent", "mcp", "server", "test-core", "dev"]
+provides-extras = ["xorq", "examples", "viz-altair", "viz-plotly", "viz-plotext", "viz-perspective", "agent", "mcp", "server", "test-core", "dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "ipython", specifier = ">=8.38.0" }]

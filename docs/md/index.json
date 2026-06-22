@@ -75,6 +75,11 @@
       "description": "ASCII charts for terminal/CLI with Plotext backend",
       "source": "prompts/chart/plotext.md"
     },
+    "perspective": {
+      "title": "Perspective.js Integration",
+      "description": "Export BSL query results as Perspective-compatible datasets and artifacts",
+      "source": "doc/perspective.md"
+    },
     "sessionized": {
       "title": "Sessionized Data",
       "description": "Working with session-based data and user journey analysis",

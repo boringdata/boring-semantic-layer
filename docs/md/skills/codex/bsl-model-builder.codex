@@ -261,6 +261,8 @@ flights_st = flights_st.with_measures(
   - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/prompts/chart/plotly.md
 - **Terminal Charts**: ASCII charts for terminal/CLI with Plotext backend
   - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/prompts/chart/plotext.md
+- **Perspective.js Integration**: Export BSL query results as Perspective-compatible datasets and artifacts
+  - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/doc/perspective.md
 - **Sessionized Data**: Working with session-based data and user journey analysis
   - URL: https://github.com/boringdata/boring-semantic-layer/blob/main/docs/md/doc/sessionized.md
 - **Comparison Queries**: Period-over-period comparisons and trend analysis
