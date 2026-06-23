@@ -1057,6 +1057,46 @@ class TestTimeDimensions:
         assert d_row["total_amount_previous"] == 70
         assert d_row["total_amount_delta"] == -70
 
+    def test_compare_periods_order_by_model_prefixed_field(self, con):
+        """order_by with model-prefixed field names must not raise ColumnNotFoundError (#251)."""
+        tbl = con.create_table(
+            "period_compare_prefixed",
+            pd.DataFrame(
+                {
+                    "created_at": pd.to_datetime(
+                        ["2024-01-05", "2024-01-06", "2024-02-05", "2024-02-06"]
+                    ),
+                    "category": ["A", "B", "A", "B"],
+                    "amount": [20, 10, 30, 40],
+                }
+            ),
+            overwrite=True,
+        )
+        st = (
+            to_semantic_table(tbl, "lineitems_movements")
+            .with_dimensions(
+                created_at={
+                    "expr": lambda t: t.created_at,
+                    "is_time_dimension": True,
+                    "smallest_time_grain": "day",
+                },
+                category=lambda t: t.category,
+            )
+            .with_measures(total=lambda t: t.amount.sum())
+        )
+
+        # Pass order_by with the model-prefixed form — should not raise
+        result = st.compare_periods(
+            dimensions=["category"],
+            measures=["lineitems_movements.total"],
+            current_time_range={"start": "2024-02-01", "end": "2024-02-28"},
+            previous_time_range={"start": "2024-01-01", "end": "2024-01-31"},
+            order_by=[("lineitems_movements.total_delta", "desc")],
+        ).execute()
+
+        assert list(result["category"]) == ["B", "A"]
+        assert list(result["total_current"]) == [40, 30]
+
 
 class TestFilterErrorHandling:
     """Test error handling in filter validation."""
