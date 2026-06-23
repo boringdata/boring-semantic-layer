@@ -859,6 +859,7 @@ class SemanticModel(SemanticTable):
         time_grains: dict[str, str] | None = None,
         time_range: dict[str, str] | None = None,
         having: list | None = None,
+        strict_semantic_boundaries: bool = False,
     ):
         return build_query(
             semantic_table=self,
@@ -871,6 +872,7 @@ class SemanticModel(SemanticTable):
             time_grains=time_grains,
             time_range=time_range,
             having=having,
+            strict_semantic_boundaries=strict_semantic_boundaries,
         )
 
     def compare_periods(
@@ -1047,6 +1049,7 @@ class SemanticJoin(SemanticTable):
         time_grains: dict[str, str] | None = None,
         time_range: dict[str, str] | None = None,
         having: list | None = None,
+        strict_semantic_boundaries: bool = False,
     ):
         return build_query(
             semantic_table=self,
@@ -1059,6 +1062,7 @@ class SemanticJoin(SemanticTable):
             time_grains=time_grains,
             time_range=time_range,
             having=having,
+            strict_semantic_boundaries=strict_semantic_boundaries,
         )
 
     def as_table(self) -> SemanticModel:
