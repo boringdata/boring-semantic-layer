@@ -15,7 +15,9 @@ Dependency groups in pyproject.toml:
 Note: xorq is an optional dependency; core BSL works without it.
 """
 
+import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -81,7 +83,6 @@ class TestDependencyGroupDocumentation:
             pyproject = tomllib.load(f)
 
         dev_deps = pyproject["project"]["optional-dependencies"]["dev"]
-        dev_deps_str = str(dev_deps)
 
         # Dev should NOT use a self-referential boring-semantic-layer[...] bundle;
         # optional extras (xorq, mcp, etc.) are installed separately via --all-extras.
@@ -110,8 +111,61 @@ class TestXorqErrorMessages:
         # Check that to_tagged raises ImportError with helpful message if xorq is not available
         source = inspect.getsource(serialization.to_tagged)
         assert "ImportError" in source
-        # xorq is now a core dependency, so the error message should be generic
-        assert "xorq" in source.lower()
+        # xorq is optional, so the message should name the install extra.
+        assert "boring-semantic-layer[xorq]" in source
+
+    def test_tagged_api_errors_are_helpful_without_xorq(self):
+        """Verify tagged APIs fail cleanly when xorq is not installed."""
+        test_file = Path(__file__)
+        project_root = test_file.parent.parent.parent.parent
+        code = textwrap.dedent(
+            """
+            import importlib.abc
+            import sys
+
+            sys.path.insert(0, "src")
+
+            class BlockXorq(importlib.abc.MetaPathFinder):
+                def find_spec(self, fullname, path=None, target=None):
+                    if fullname == "xorq" or fullname.startswith("xorq."):
+                        raise ImportError("blocked xorq for optional dependency test")
+                    return None
+
+            sys.meta_path.insert(0, BlockXorq())
+
+            import ibis
+
+            from boring_semantic_layer import to_semantic_table
+            from boring_semantic_layer._xorq import HAS_XORQ
+            from boring_semantic_layer.serialization import from_tagged
+
+            assert HAS_XORQ is False
+            table = ibis.table({"a": "int64"}, name="t")
+            model = to_semantic_table(table, name="t").with_dimensions(a=lambda t: t.a)
+
+            errors = []
+            for call in (model.to_tagged, lambda: from_tagged(object())):
+                try:
+                    call()
+                except ImportError as exc:
+                    errors.append(str(exc))
+                else:
+                    raise AssertionError("tagged API unexpectedly succeeded without xorq")
+
+            assert len(errors) == 2
+            for message in errors:
+                assert "xorq" in message.lower()
+                assert "optional dependency" in message.lower()
+                assert "boring-semantic-layer[xorq]" in message
+            """
+        )
+        subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=project_root,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
 
 
 class TestMCPErrorMessages:

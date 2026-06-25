@@ -25,8 +25,8 @@ bsl = "boring_semantic_layer.agents.cli:main"
 bsl = "boring_semantic_layer.serialization.tag_handler:bsl_tag_handler"
 
 [project.optional-dependencies]
-xorq = ["xorq>=0.3.25"]
-examples = ["xorq[duckdb]>=0.3.25", "duckdb<1.4"]
+xorq = ["xorq>=0.3.31"]
+examples = ["xorq[duckdb]>=0.3.31", "duckdb<1.4"]
 
 # Visualization backends
 viz-altair = ["altair>=5.0.0", "vl-convert-python>=1.0.0"]
