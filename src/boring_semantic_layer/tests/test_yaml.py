@@ -1436,6 +1436,53 @@ def test_yaml_calculated_measures_simple_format(duckdb_conn):
     assert "ratio" in df.columns
 
 
+def test_yaml_calculated_measures_prefer_same_named_measures(duckdb_conn):
+    """YAML calculated measures resolve colliding names to measures, not raw columns."""
+    tbl = duckdb_conn.create_table(
+        "calc_meas_collision_tbl",
+        {
+            "phase": ["approved", "approved", "review"],
+            "required_people": [10, 20, 5],
+            "scheduled_people": [12, 18, 10],
+            "target_cells": [2, 3, 1],
+        },
+    )
+
+    config = {
+        "targets": {
+            "table": "calc_meas_collision_tbl",
+            "dimensions": {"phase": "_.phase"},
+            "measures": {
+                "target_cells": "_.target_cells.sum()",
+                "required_people": "_.required_people.sum()",
+                "scheduled_people": "_.scheduled_people.sum()",
+            },
+            "calculated_measures": {
+                "coverage_ratio": "_.scheduled_people / _.required_people",
+                "avg_required_per_cell": "_.required_people / _.target_cells",
+            },
+        },
+    }
+
+    model = from_config(config, tables={"calc_meas_collision_tbl": tbl})["targets"]
+    assert set(model.get_calculated_measures()) == {
+        "coverage_ratio",
+        "avg_required_per_cell",
+    }
+
+    df = (
+        model.query(
+            dimensions=("phase",),
+            measures=("coverage_ratio", "avg_required_per_cell"),
+        )
+        .execute()
+        .sort_values("phase")
+        .reset_index(drop=True)
+    )
+    assert df["coverage_ratio"].tolist() == pytest.approx([1.0, 2.0])
+    assert df["avg_required_per_cell"].tolist() == pytest.approx([6.0, 5.0])
+
+
 # ---------------------------------------------------------------------------
 # Issue #115: .all() for window aggregations in YAML
 # ---------------------------------------------------------------------------
