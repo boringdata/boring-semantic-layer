@@ -18,7 +18,7 @@ Make profile management pure BSL by default:
 
 - BSL profile YAML/dict configs are parsed and normalized by BSL.
 - BSL profile configs create plain `ibis.<backend>.connect(**kwargs)` connections by default, regardless of whether xorq is installed.
-- xorq profile-directory compatibility remains available only through an explicit, isolated `xorq_dir` lookup path.
+- xorq profile-directory compatibility remains available as a lazy fallback when xorq is installed, preserving current profile discovery behavior without making pure-BSL profile loading depend on xorq.
 - Environment-variable expansion and parquet table bootstrap behavior are implemented and validated in BSL.
 
 ## Current PR #278 profile state
@@ -35,10 +35,10 @@ Make profile management pure BSL by default:
 ## Acceptance criteria
 
 - `profile.py` does not import `._xorq` at module import time for normal BSL profile loading.
-- `get_connection()` uses default search locations `['bsl_dir', 'local']` unless the caller explicitly includes `xorq_dir`.
+- `get_connection()` keeps current default search locations `['bsl_dir', 'local', 'xorq_dir']` for feature compatibility, but `xorq_dir` is lazy and skipped when xorq is not installed.
 - `search_locations=[]` is respected and does not fall back to defaults.
 - BSL YAML/dict profiles connect via plain ibis by default even when xorq is installed.
-- `xorq_dir` lookup lazy-imports xorq only when explicitly requested.
+- `xorq_dir` lookup lazy-imports xorq only when search reaches that fallback location.
 - `xorq_dir` skips only no-xorq / known not-found cases; malformed profiles, auth failures, or backend connection failures surface as `ProfileError`.
 - Profile config normalization is separated from connection effects through a small internal normalized spec.
 - Env-var expansion is recursive for connection kwargs and table sources, with clear `ProfileError` messages for unresolved vars.
@@ -52,20 +52,16 @@ Make profile management pure BSL by default:
 File: `src/boring_semantic_layer/profile.py`
 
 1. Remove top-level `from ._xorq import HAS_XORQ, Profile as XorqProfile`.
-2. Change default search handling from:
-
-   ```python
-   search_locations = search_locations or ["bsl_dir", "local", "xorq_dir"]
-   ```
-
-   to:
+2. Preserve current default search order for feature compatibility, but stop using truthiness so explicit `[]` is respected:
 
    ```python
    if search_locations is None:
-       search_locations = ["bsl_dir", "local"]
+       search_locations = ["bsl_dir", "local", "xorq_dir"]
    ```
 
-3. Add a private lazy compatibility adapter:
+   This keeps xorq profile-directory lookup as a fallback for users who have xorq installed, while avoiding any xorq import until BSL/local profiles have missed.
+
+3. Add a private lazy compatibility adapter for the fallback location:
 
    ```python
    def _load_from_xorq_profile_dir(name: str) -> BaseBackend | None:
@@ -175,9 +171,9 @@ tables:
 
 Add or update profile tests for:
 
-- default search locations do not include `xorq_dir`;
+- default search locations preserve `xorq_dir` as a final fallback but do not import xorq unless BSL/local profiles miss;
 - `search_locations=[]` is respected;
-- explicit `search_locations=["xorq_dir"]` is the only path that imports xorq profile compatibility;
+- explicit `search_locations=["xorq_dir"]` imports xorq profile compatibility directly;
 - BSL YAML/dict profile configs use plain ibis even when xorq is installed;
 - missing env vars fail with `ProfileError` and include variable/path context;
 - env vars expand inside parquet table sources;
@@ -198,8 +194,8 @@ Update profile docs to say:
 
 - BSL profile files use ibis connections by default.
 - `type` maps to an ibis backend name.
-- `xorq_dir` lookup is explicit compatibility for users who opt into xorq profile storage.
-- The default search order is now BSL config dir, then local `profiles.yml`.
+- `xorq_dir` lookup is a lazy compatibility fallback when xorq is installed.
+- The default search order remains BSL config dir, local `profiles.yml`, then xorq profile dir fallback.
 
 ## Out of scope
 
