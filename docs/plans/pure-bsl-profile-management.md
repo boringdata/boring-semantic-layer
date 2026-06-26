@@ -41,9 +41,10 @@ Make profile management pure BSL by default:
 - `xorq_dir` lookup lazy-imports xorq only when search reaches that fallback location.
 - `xorq_dir` skips only no-xorq / known not-found cases; malformed profiles, auth failures, or backend connection failures surface as `ProfileError`.
 - Profile config normalization is separated from connection effects through a small internal normalized spec.
-- Env-var expansion is recursive for connection kwargs and table sources, with clear `ProfileError` messages for unresolved vars.
-- Table bootstrap config is normalized before loading; malformed `tables` entries raise `ProfileError` instead of being silently skipped.
+- Env-var expansion is recursive for connection kwargs and table sources, with clear `ProfileError` messages for unresolved braced placeholders like `${VAR}`. Bare `$` in credentials/URLs is not rejected unless the implementation deliberately supports and tests `$VAR` strict expansion safely.
+- Table bootstrap config is normalized before loading; malformed `tables` entries raise `ProfileError` instead of being silently skipped, with this compatibility change documented.
 - Profile docs mention that BSL profiles use ibis by default and `xorq_dir` is explicit compatibility.
+- Before implementation, run a xorq-installed compatibility probe proving plain-ibis profile connections still work with BSL semantic construction/tagging paths that current xorq users rely on, or narrow the ibis-first change if the probe fails.
 
 ## Implementation plan
 
@@ -73,16 +74,24 @@ File: `src/boring_semantic_layer/profile.py`
            return None
 
        try:
-           return XorqProfile.load(name).get_con()
-       except FileNotFoundError:
+           xorq_profile = XorqProfile.load(name)
+       except _KNOWN_XORQ_PROFILE_NOT_FOUND_ERRORS:
            return None
-       except KeyError:
+       except Exception:
+           # If the xorq not-found probe is inconclusive, preserve search-fallback
+           # behavior by treating load() failures as a miss. Do not apply this to
+           # get_con(): once a profile loads, connection failures are real errors.
            return None
+
+       try:
+           return xorq_profile.get_con()
        except Exception as exc:
-           raise ProfileError(f"Failed to load xorq profile {name!r}") from exc
+           raise ProfileError(f"Failed to connect using xorq profile {name!r}") from exc
    ```
 
-4. Before finalizing exception handling, inspect xorq’s real “profile not found” exception. Only known not-found cases should return `None`; all other failures should be visible.
+4. Hard gate before implementation: identify xorq’s real “profile not found” exception(s) from `XorqProfile.load(name)`. Do not ship the guessed `FileNotFoundError` / `KeyError` list without this probe.
+
+   If the probe is inconclusive, preserve search UX by treating unknown `load()` exceptions in the search-fallback path as `None`/continue so a genuinely missing profile still reaches the aggregate `Profile '<name>' not found...` error. Keep `.get_con()` failures strict: once a xorq profile loads, connection/auth/backend failures are real and should surface as `ProfileError`.
 
 ### Phase 2 — Normalize profile config once
 
@@ -122,12 +131,21 @@ Rules:
 - All other keys become ibis connection kwargs.
 - Env expansion applies to connection kwargs and parquet table sources.
 - Non-string scalar values are preserved.
-- Missing `$VAR` / `${VAR}` raises `ProfileError` with the variable name and profile path, e.g. `database` or `tables.flights.source`.
-- Literal-dollar behavior should be tested. The env regex should only reject valid env placeholder patterns, not every `$` character.
+- Missing `${VAR}` raises `ProfileError` with the variable name and profile path, e.g. `database` or `tables.flights.source`.
+- Bare `$` characters in passwords/URLs must remain valid literals unless the implementation explicitly supports `$VAR` substitution with an escape rule and tests. Preferred safe policy: strict expansion for `${VAR}` only; leave bare `$word` untouched to avoid breaking credentials.
 
-### Phase 3 — Make connection creation ibis-first
+### Phase 3 — Make connection creation ibis-first after compatibility probe
 
-Replace xorq-first `_create_connection_from_config()` with a direct BSL flow:
+Before changing connection creation, run a xorq-installed compatibility probe:
+
+- a BSL/local DuckDB profile loads through plain ibis;
+- at least one non-DuckDB backend used by current xorq-profile users is checked or explicitly documented as not covered by the compatibility probe;
+- `SemanticModel` construction still accepts the resulting tables and applies the existing `_ensure_xorq_table()` boundary when xorq is installed;
+- existing xorq serialization/tagging smoke paths still work or fail with a known pre-existing limitation.
+
+If this probe shows plain-ibis profile connections break a current xorq user workflow, adjust the implementation to preserve a documented opt-in xorq connection mode rather than silently regressing compatibility.
+
+Then replace xorq-first `_create_connection_from_config()` with a direct BSL flow:
 
 ```python
 spec = _profile_connection_spec(config)
@@ -142,7 +160,7 @@ if spec.parquet_tables:
 return connection
 ```
 
-`_get_ibis_connect()` should resolve `ibis.<backend>.connect` and raise `ProfileError` for unknown backend types.
+`_get_ibis_connect()` should resolve `ibis.<backend>.connect` and raise `ProfileError` for unknown backend types. Reuse/refactor PR #278's existing `_connect_plain_ibis` logic instead of duplicating backend-resolution helpers.
 
 ### Phase 4 — Make parquet table loading effect-only
 
@@ -175,7 +193,9 @@ Add or update profile tests for:
 - `search_locations=[]` is respected;
 - explicit `search_locations=["xorq_dir"]` imports xorq profile compatibility directly;
 - BSL YAML/dict profile configs use plain ibis even when xorq is installed;
-- missing env vars fail with `ProfileError` and include variable/path context;
+- xorq-installed semantic/tagging smoke paths remain compatible with plain-ibis profile connections, or an opt-in xorq connection mode is documented;
+- missing `${VAR}` env refs fail with `ProfileError` and include variable/path context;
+- bare `$` in credentials remains literal under the chosen env expansion policy;
 - env vars expand inside parquet table sources;
 - malformed `tables` config raises `ProfileError`;
 - supported string and `{source: ...}` table configs still work;
