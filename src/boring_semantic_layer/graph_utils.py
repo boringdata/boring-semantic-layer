@@ -2,15 +2,12 @@
 
 from collections.abc import Callable, Sequence
 from functools import reduce as functools_reduce
-from operator import methodcaller
 from typing import Any
 
 from ibis.expr.operations.core import Node as IbisNode
 from ibis.expr.types import Expr as IbisExpr
-from returns.curry import partial
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Result, Success, safe
-from toolz import compose
 
 from ._xorq import (
     Expr as XorqExpr,
@@ -159,12 +156,21 @@ def walk_nodes(node_types, expr):
 
 
 def replace_nodes(replacer, expr):
-    """Replace nodes in expression tree using functional composition."""
-    return compose(
-        methodcaller("to_expr"),
-        partial(_xorq_replace_nodes, replacer),
-        to_node,
-    )(expr)
+    """Replace nodes in an expression tree.
+
+    xorq's ``replace_nodes`` only understands xorq's vendored-ibis nodes and
+    raises on plain-ibis ones. Since BSL coexists with both flavors, dispatch
+    plain-ibis nodes to ibis's native ``Node.replace`` (normalising the
+    ``None`` kwargs ibis passes for unchanged children to ``{}`` to match the
+    xorq replacer contract) and xorq nodes to xorq's ``replace_nodes``.
+    """
+    node = to_node(expr)
+    if isinstance(node, IbisNode):
+        new_node = node.replace(
+            lambda n, kwargs: replacer(n, kwargs if kwargs is not None else {})
+        )
+        return new_node.to_expr()
+    return _xorq_replace_nodes(replacer, node).to_expr()
 
 
 @safe(exceptions=(ValueError,))
