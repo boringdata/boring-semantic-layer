@@ -436,6 +436,7 @@ class TestMutateAsJoinAndSerializationInput:
             )
 
     def test_mutated_aggregate_roundtrips_through_tagged(self, flights_model):
+        pytest.importorskip("xorq", reason="xorq not installed")
         expr = (
             flights_model.group_by("carrier")
             .aggregate("flight_count", "total_distance")
