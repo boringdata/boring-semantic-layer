@@ -13,10 +13,11 @@ import pandas as pd
 import pytest
 from toolz import curry
 
-# The Malloy comparison fixtures load BSL query modules (``malloy_data/*.py``)
-# that import ``xorq.api`` directly, so the whole directory requires xorq. Skip
-# collecting it when xorq is absent (the no-xorq CI leg) rather than relying on a
-# ``--ignore`` CLI flag, so the gate lives with the tests that need it.
+# Several Malloy comparison query modules under ``malloy_data/*.py`` import
+# ``xorq.api`` directly, and the parametrized integration suite includes those
+# modules. Skip collecting the integration directory when xorq is absent (the
+# no-xorq CI leg) rather than relying on a ``--ignore`` CLI flag, so the gate
+# lives with the tests that need it.
 try:
     import xorq  # noqa: F401
 except ImportError:

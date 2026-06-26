@@ -12,7 +12,6 @@ This script showcases:
 
 import ibis
 import pandas as pd
-import xorq.api as xo
 
 from boring_semantic_layer import to_semantic_table
 
@@ -112,7 +111,7 @@ def main():
         .with_measures(sum_val=lambda t: t.value.sum())
     )
 
-    rolling_window = xo.window(order_by="date", rows=(1, 1))
+    rolling_window = ibis.window(order_by="date", rows=(1, 1))
     expr4 = (
         ts_st.group_by("date")
         .aggregate("sum_val")

@@ -6,7 +6,7 @@ Malloy: https://docs.malloydata.dev/documentation/patterns/other
 
 from pathlib import Path
 
-import xorq.api as xo
+import ibis
 from ibis import _
 
 from boring_semantic_layer import from_yaml
@@ -28,13 +28,13 @@ def main():
             nest={"data": lambda t: t.group_by(["code", "elevation"])},
         )
         .mutate(
-            rank=lambda t: xo.row_number().over(
-                xo.window(order_by=xo.desc(t.avg_elevation)),
+            rank=lambda t: ibis.row_number().over(
+                ibis.window(order_by=ibis.desc(t.avg_elevation)),
             ),
         )
         .mutate(
             is_other=lambda t: t.rank > 4,
-            state_grouped=lambda t: xo.ifelse(t.rank > 4, "OTHER", t.state),
+            state_grouped=lambda t: ibis.ifelse(t.rank > 4, "OTHER", t.state),
         )
         .group_by("state_grouped")
         .aggregate(
