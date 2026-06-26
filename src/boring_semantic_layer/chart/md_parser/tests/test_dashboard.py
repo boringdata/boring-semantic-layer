@@ -1,7 +1,6 @@
 """Tests for dashboard parsing and rendering."""
 
 from pathlib import Path
-from unittest.mock import patch
 
 from boring_semantic_layer.chart.md_parser.dashboard import (
     _clean_label,

@@ -141,6 +141,9 @@ docs-archive/
 builds/
 .direnv
 
+# Nix build result symlink
+result
+
 # Cached example data
 examples/data/
 examples/*.local.yml

@@ -37,13 +37,12 @@ import logging
 from collections.abc import Iterable
 from typing import Any
 
-from ._xorq import Deferred, Field, Node
+from ._xorq import Field
 from ._xorq import ibis as ibis_mod
 from ._xorq import operations as ibis_ops
 from .calc_analyzer import (
     CalcExprAnalysis,
     _walk,
-    _walk_children,
     analyze_calc_expr,
     virtual_agg_table,
 )
@@ -123,7 +122,13 @@ class IbisCalcScope:
     overall values rather than a windowed sum of per-group results.
     """
 
-    __slots__ = ("_base_tbl", "_virtual_agg_tbl", "_totals_virtual_agg_tbl", "_known_measures")
+    __slots__ = (
+        "_base_tbl",
+        "_virtual_agg_tbl",
+        "_totals_virtual_agg_tbl",
+        "_known_measures",
+        "_priority_measures",
+    )
 
     def __init__(
         self,
@@ -131,6 +136,7 @@ class IbisCalcScope:
         virtual_agg_tbl,
         known_measures,
         totals_virtual_agg_tbl=None,
+        priority_measures=(),
     ):
         object.__setattr__(self, "_base_tbl", base_tbl)
         object.__setattr__(self, "_virtual_agg_tbl", virtual_agg_tbl)
@@ -146,6 +152,7 @@ class IbisCalcScope:
             totals_virtual_agg_tbl = ibis_mod.table(schema, name="__bsl_virtual_totals__")
         object.__setattr__(self, "_totals_virtual_agg_tbl", totals_virtual_agg_tbl)
         object.__setattr__(self, "_known_measures", frozenset(known_measures))
+        object.__setattr__(self, "_priority_measures", frozenset(priority_measures))
 
     @property
     def tbl(self):
@@ -190,9 +197,25 @@ class IbisCalcScope:
             return matches[0]
         return None
 
+    def _resolve_priority_measure_name(self, name: str) -> str | None:
+        if name in self._priority_measures and name in self._known_measures:
+            return name
+        suffix = f".{name}"
+        matches = tuple(
+            k
+            for k in self._priority_measures
+            if k in self._known_measures and k.endswith(suffix)
+        )
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
     def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(name)
+        resolved = self._resolve_priority_measure_name(name)
+        if resolved is not None:
+            return self._virtual_agg_tbl[resolved]
         if self._has_column(name):
             return self._base_tbl[name]
         resolved = self._resolve_measure_name(name)
@@ -210,6 +233,9 @@ class IbisCalcScope:
             raise
 
     def __getitem__(self, name: str):
+        resolved = self._resolve_priority_measure_name(name)
+        if resolved is not None:
+            return self._virtual_agg_tbl[resolved]
         if self._has_column(name):
             return self._base_tbl[name]
         resolved = self._resolve_measure_name(name)
@@ -285,6 +311,7 @@ def evaluate_calc_lambda(
     base_tbl,
     known_measures: frozenset[str],
     virtual_agg_schema: dict[str, Any] | None = None,
+    priority_measures: frozenset[str] | None = None,
 ):
     """Run a calc-measure lambda and return the ibis expression it builds.
 
@@ -306,7 +333,13 @@ def evaluate_calc_lambda(
 
     vt = virtual_agg_table(virtual_agg_schema)
     totals_vt = ibis_mod.table(dict(virtual_agg_schema), name="__bsl_virtual_totals__")
-    scope = IbisCalcScope(base_tbl, vt, known_measures, totals_virtual_agg_tbl=totals_vt)
+    scope = IbisCalcScope(
+        base_tbl,
+        vt,
+        known_measures,
+        totals_virtual_agg_tbl=totals_vt,
+        priority_measures=priority_measures or frozenset(),
+    )
 
     if hasattr(fn, "_resolver") and hasattr(fn, "resolve"):
         return fn.resolve(scope), vt, totals_vt
@@ -475,7 +508,18 @@ def apply_calc_measures(
     if not calc_lambdas:
         return real_agg_tbl
 
-    ordered = _topological_order(calc_lambdas, base_tbl, known_measures)
+    calc_specs = dict(calc_lambdas)
+    calc_exprs = {name: getattr(spec, "expr", spec) for name, spec in calc_specs.items()}
+    priority = {
+        name: frozenset(getattr(spec, "prefer_known", ()) or ())
+        for name, spec in calc_specs.items()
+    }
+
+    if all(hasattr(spec, "depends_on") for spec in calc_specs.values()):
+        deps = {name: set(getattr(spec, "depends_on", ()) or ()) for name, spec in calc_specs.items()}
+        ordered = topological_order_from_deps(calc_exprs, deps)
+    else:
+        ordered = _topological_order(calc_exprs, base_tbl, known_measures)
 
     real_with_totals = None
     if real_totals_tbl is not None:
@@ -484,7 +528,7 @@ def apply_calc_measures(
     base_op = _to_op(base_tbl)
 
     for name in ordered:
-        fn = calc_lambdas[name]
+        fn = calc_exprs[name]
         cur_known = known_measures | frozenset(real_agg_tbl.columns)
         virtual_schema = {
             col: real_agg_tbl[col].type()
@@ -492,7 +536,11 @@ def apply_calc_measures(
             if col in cur_known
         }
         expr, vt, totals_vt = evaluate_calc_lambda(
-            fn, base_tbl, cur_known, virtual_schema
+            fn,
+            base_tbl,
+            cur_known,
+            virtual_schema,
+            priority_measures=priority[name],
         )
         analysis = analyze_calc_expr(
             expr,
@@ -763,7 +811,14 @@ def classify_calc_lambdas(
     """
     base_op = _to_op(base_tbl)
     out: dict[str, CalcExprAnalysis] = {}
-    for name, fn in calc_lambdas.items():
+    for name, spec in calc_lambdas.items():
+        # Callers may pass ``CalcMeasure`` specs (holding the lambda in
+        # ``.expr``) or bare callables; ``evaluate_calc_lambda`` only
+        # understands the latter. Extracting here keeps classification in
+        # sync with ``apply_calc_measures`` — otherwise a spec slips
+        # through as a non-callable, the analyzer fails, and the calc is
+        # misclassified as not referencing ``t.all(...)`` (breaking totals).
+        fn = getattr(spec, "expr", spec)
         try:
             virtual_schema = {n: "float64" for n in known_measures}
             expr, _vt, totals_vt = evaluate_calc_lambda(

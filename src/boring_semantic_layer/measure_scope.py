@@ -5,9 +5,9 @@ This module is the legacy compatibility surface for ``MeasureScope`` and
 curated calc-measure AST (``MeasureRef``, ``AllOf``, ``BinOp`` …) used to
 live here too; it has been removed in favor of the analyzer-based path
 in :mod:`boring_semantic_layer.calc_compiler`. ``MeasureScope`` is now a
-thin pass-through that returns ibis values directly, kept around for the
-post-aggregation ``SemanticMutateOp`` path which still constructs a
-scope to evaluate ad-hoc mutate lambdas.
+thin pass-through that returns ibis values directly, kept around for
+post-aggregation chain contexts (``.mutate()`` after a filter/order_by/
+limit) which construct a scope to evaluate ad-hoc lambdas.
 """
 
 from __future__ import annotations
@@ -103,15 +103,20 @@ class MeasureScope:
 
     Compared with :class:`~boring_semantic_layer.calc_compiler.IbisCalcScope`,
     this scope is a thin pass-through to the underlying ibis table. It is
-    still used by the post-aggregation ``SemanticMutateOp`` path (where
-    ``post_agg=True``) and by callers that want suffix-resolution of
-    measure names without virtual aggregated tables.
+    still used by post-aggregation chain contexts (where ``post_agg=True``)
+    and by callers that want suffix-resolution of measure names without
+    virtual aggregated tables.
     """
 
     tbl: Any = field(alias="_tbl")
     known: tuple[str, ...] = field(converter=tuple, alias="_known")
     known_set: frozenset[str] = field(init=False, alias="_known_set")
     post_agg: bool = field(default=False, alias="_post_agg")
+    prefer_known: tuple[str, ...] = field(
+        factory=tuple,
+        converter=tuple,
+        alias="_prefer_known",
+    )
 
     def __attrs_post_init__(self):
         object.__setattr__(self, "known_set", frozenset(self.known))

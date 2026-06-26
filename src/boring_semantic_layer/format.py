@@ -14,7 +14,6 @@ from boring_semantic_layer.ops import (
     SemanticIndexOp,
     SemanticJoinOp,
     SemanticLimitOp,
-    SemanticMutateOp,
     SemanticOrderByOp,
     SemanticProjectOp,
     SemanticTableOp,
@@ -144,17 +143,6 @@ def _format_semantic_orderby(op: SemanticOrderByOp, source=None, **kwargs):
 def _format_semantic_limit(op: SemanticLimitOp, source=None, **kwargs):
     top = "Limit\n" if source is None else f"Limit[{source}]\n"
     return top + render_fields({"n": op.n}, 1)
-
-
-@fmt.register(SemanticMutateOp)
-def _format_semantic_mutate(op: SemanticMutateOp, source=None, **kwargs):
-    post = object.__getattribute__(op, "post")
-    top = "Mutate\n" if source is None else f"Mutate[{source}]\n"
-
-    exprs_to_show = list(post.keys())[:3]
-    if len(post) > 3:
-        exprs_to_show.append(f"... and {len(post) - 3} more")
-    return top + render_fields({"new_columns": exprs_to_show}, 1)
 
 
 @fmt.register(SemanticUnnestOp)

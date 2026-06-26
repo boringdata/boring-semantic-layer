@@ -8,11 +8,10 @@ Public API:
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 from attrs import frozen
-from returns.result import Failure, Result, Success, safe
+from returns.result import Failure, Result, safe
 
 from .context import BSLSerializationContext
 from .extract import (

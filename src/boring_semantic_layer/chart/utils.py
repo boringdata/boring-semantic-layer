@@ -107,45 +107,42 @@ def extract_aggregate_metadata(
     semantic_aggregate: Any,
 ) -> tuple[list[str], list[str], list[str], Any]:
     """
-    Extract dimensions, measures, mutated columns, and aggregate op.
+    Extract dimensions, measures, and the aggregate op.
 
-    Traverses the operation chain to find aggregate and mutate operations.
+    Walks the operation chain down to the aggregate operation.
+    Mutate-derived columns live in the aggregate's ``aggs`` since the
+    ADR 0001 unification, so they appear in ``measures`` directly.
 
     Args:
         semantic_aggregate: SemanticAggregate object
 
     Returns:
-        Tuple of (dimensions, measures, mutated_columns, aggregate_op)
+        Tuple of (dimensions, measures, mutated_columns, aggregate_op).
+        ``mutated_columns`` is always empty; the slot is retained so
+        existing 4-tuple unpacking call sites keep working.
     """
     aggregate_op = semantic_aggregate.op()
 
-    # Handle mutate operations - they wrap the aggregate
-    mutated_columns = []
+    mutated_columns: list[str] = []
     current_op = aggregate_op
 
-    # Unwrap to find mutate operation
-    while (
-        hasattr(current_op, "source")
-        and not hasattr(current_op, "aggs")
-        and not (
-            hasattr(current_op, "__class__") and current_op.__class__.__name__ == "SemanticMutateOp"
-        )
-    ):
-        current_op = current_op.source
-
-    # Extract mutated columns
-    if hasattr(current_op, "__class__") and current_op.__class__.__name__ == "SemanticMutateOp":
-        if hasattr(current_op, "post"):
-            mutated_columns = list(current_op.post.keys())
-        current_op = current_op.source
-
-    # Find aggregate operation
     while hasattr(current_op, "source") and not hasattr(current_op, "aggs"):
         current_op = current_op.source
 
     aggregate_op = current_op
+
+    if not hasattr(aggregate_op, "aggs"):
+        # Terminal flat model: a ``.mutate()`` chained after
+        # ``order_by``/``limit``/``filter`` materializes the result into a
+        # flat ``SemanticTableOp`` (no aggregate node survives). Group-by
+        # keys are exposed as dimensions and the aggregate/derived columns
+        # as measures, so read those directly.
+        dimensions = list(aggregate_op.get_dimensions().keys())
+        measures = list(aggregate_op.get_measures().keys())
+        return dimensions, measures, mutated_columns, aggregate_op
+
     dimensions = list(aggregate_op.keys)
-    measures = list(aggregate_op.aggs.keys()) + mutated_columns
+    measures = list(aggregate_op.aggs.keys())
 
     return dimensions, measures, mutated_columns, aggregate_op
 
@@ -179,6 +176,25 @@ def detect_time_dimension(
     # Unwrap to find aggregate
     while hasattr(aggregate_op, "source") and not hasattr(aggregate_op, "aggs"):
         aggregate_op = aggregate_op.source
+
+    if not hasattr(aggregate_op, "aggs"):
+        # Post-aggregate chains such as ``aggregate().limit().mutate(...)``
+        # materialize into a flat SemanticTableOp. In that shape there is
+        # no aggregate source to inspect, but dimensions already carry the
+        # time metadata directly on the flat model.
+        try:
+            dims_dict = aggregate_op.get_dimensions()
+        except AttributeError:
+            dims_dict = {}
+
+        for dim_name in dimensions:
+            dim_obj = dims_dict.get(dim_name)
+            if hasattr(dim_obj, "is_time_dimension") and dim_obj.is_time_dimension:
+                return dim_name
+
+        if df is not None:
+            return detect_time_dimension_from_dtype(df, dimensions)
+        return None
 
     all_roots = _find_all_root_models(aggregate_op.source)
     if not all_roots:

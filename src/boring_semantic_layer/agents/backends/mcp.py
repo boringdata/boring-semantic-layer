@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any
 
-import ibis
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 from pydantic import Field
