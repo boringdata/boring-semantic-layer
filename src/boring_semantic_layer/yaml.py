@@ -84,6 +84,12 @@ def _parse_calc_measure(name: str, config: str | dict) -> Measure:
     def _make_calc_fn(source: str):
         def calc_fn(scope):
             return safe_eval(source, context={"_": scope}).unwrap()
+
+        # YAML ``calculated_measures`` are documented as expressions over
+        # measures, not raw columns. Prefer known measure names during calc
+        # classification so a measure named like its source column (the common
+        # ``revenue: _.revenue.sum()`` shape) resolves to the aggregate output.
+        calc_fn.__bsl_prefer_known__ = True
         return calc_fn
 
     measure_kwargs = {"metadata": extra_kwargs["metadata"]} if "metadata" in extra_kwargs else {}
