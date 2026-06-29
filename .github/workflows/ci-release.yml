@@ -53,6 +53,10 @@ jobs:
       - name: Run tests
         run: uv run pytest
 
+      - name: Run no-xorq-compatible examples
+        if: matrix.name == 'no-xorq'
+        run: make examples-core
+
   # Build examples, docs, and skills (require the full env incl. Node).
   build:
     name: Build (examples + docs + skills)

@@ -740,7 +740,12 @@ def _classify_measure(
     if prefer_known is None:
         prefer_known = getattr(scope, "_prefer_known", ())
     prefer_known_set = frozenset(prefer_known)
-    expr_prefer_known = getattr(expr, "__bsl_prefer_known__", ())
+    try:
+        # Use object.__getattribute__ so ibis Deferred.__getattr__ does not
+        # synthesize a resolver for this private marker.
+        expr_prefer_known = object.__getattribute__(expr, "__bsl_prefer_known__")
+    except AttributeError:
+        expr_prefer_known = ()
     if expr_prefer_known is True:
         prefer_known_set = prefer_known_set | known_set
     else:
