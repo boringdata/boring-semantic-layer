@@ -15,6 +15,7 @@ help:
 	@echo "  make test IBIS_VERSION=all             - Run tests with all ibis versions (9.5.0, 10.8.0, 11.0.0)"
 	@echo "  make test IBIS_VERSION=10.8.0          - Run tests with specific ibis version"
 	@echo "  make examples                          - Run all example scripts"
+	@echo "  make examples-core                     - Run no-xorq-compatible examples"
 	@echo "  make examples IBIS_VERSION=all         - Run examples with all ibis versions"
 	@echo "  make examples IBIS_VERSION=10.8.0      - Run examples with specific ibis version"
 	@echo "  make docs-build                        - Build documentation"
@@ -104,6 +105,19 @@ else
 	done
 	@echo "✓ All examples passed!"
 endif
+
+examples-core:
+	@echo "Running no-xorq-compatible examples..."
+	@for file in \
+		scripts/demo_bsl_v2.py \
+		examples/quickstart.py \
+		examples/window_functions.py \
+		examples/bucketing_with_other.py \
+		examples/sessionized_data.py; do \
+		echo "Running $$file..."; \
+		uv run --with . "$$file" || exit 1; \
+	done
+	@echo "✓ No-xorq-compatible examples passed!"
 
 # Build docs
 docs-build:
