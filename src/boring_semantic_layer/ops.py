@@ -315,6 +315,12 @@ def _rebind_to_canonical_backend(expr):
 
     No-op on plain ibis expressions (not xorq-vendored).
     """
+    from ._xorq import HAS_XORQ
+
+    # Without xorq there is only one backend, so there is nothing to rebind.
+    if not HAS_XORQ:
+        return expr
+
     try:
         from ._xorq import relations as xorq_rel, walk_nodes
     except Exception:
@@ -734,6 +740,16 @@ def _classify_measure(
     if prefer_known is None:
         prefer_known = getattr(scope, "_prefer_known", ())
     prefer_known_set = frozenset(prefer_known)
+    try:
+        # Use object.__getattribute__ so ibis Deferred.__getattr__ does not
+        # synthesize a resolver for this private marker.
+        expr_prefer_known = object.__getattribute__(expr, "__bsl_prefer_known__")
+    except AttributeError:
+        expr_prefer_known = ()
+    if expr_prefer_known is True:
+        prefer_known_set = prefer_known_set | known_set
+    else:
+        prefer_known_set = prefer_known_set | frozenset(expr_prefer_known or ())
 
     # Pure constants fold into both grouped and ungrouped contexts.
     if isinstance(expr, (int, float)) and not isinstance(expr, bool):
@@ -4332,6 +4348,13 @@ class SemanticJoinOp(Relation):
         fall back to returning the inputs unchanged so ibis executes the
         join natively. Rebinding is only needed for xorq-vendored backends.
         """
+        from ._xorq import HAS_XORQ
+
+        # Without xorq, from_ibis() is an identity, so both sides already share
+        # their backends — nothing to rebind (see _rebind_to_canonical_backend).
+        if not HAS_XORQ:
+            return left_tbl, right_tbl
+
         try:
             from ._xorq import relations as xorq_rel, walk_nodes
         except ImportError:
@@ -4884,6 +4907,12 @@ def _dimension_only_source_table(
                     tbl_cols = frozenset(tbl.columns) | frozenset(root_dims)
                     for flt in filters:
                         fn = _unwrap(flt) if hasattr(flt, "unwrap") else flt
+                        # Dict/string filters resolve deferred through the
+                        # backend; their columns can't be statically
+                        # introspected, so disable the shortcut rather than
+                        # risk a wrong source table. See query.Filter.to_callable.
+                        if getattr(fn, "__bsl_deferred_resolution__", False):
+                            return None
                         extraction = _extract_columns_from_callable(fn, tbl)
                         if extraction.extraction_failed:
                             return None  # Can't determine — bail out

@@ -206,18 +206,32 @@ class Filter:
         if isinstance(self.filter, dict):
             pred = pred_mod.from_dict(self.filter)
             ibis_module = _get_ibis_api()
-            return lambda t: pred_mod.compile(
-                pred,
-                ibis_module._,
-                ibis_module=ibis_module,
-            ).resolve(_ensure_xorq_table(t))
+
+            def _dict_filter(t):
+                return pred_mod.compile(
+                    pred,
+                    ibis_module._,
+                    ibis_module=ibis_module,
+                ).resolve(_ensure_xorq_table(t))
+
+            # Deferred resolution: columns can't be statically introspected
+            # (see ops._dimension_only_source_table). Marked so callers can opt
+            # out of static-column optimizations consistently regardless of
+            # whether xorq is installed.
+            _dict_filter.__bsl_deferred_resolution__ = True
+            return _dict_filter
         elif isinstance(self.filter, str):
             _ibis = _get_ibis_api()
             expr = safe_eval(
                 self.filter,
                 context={"_": _ibis._, "ibis": _ibis},
             ).unwrap()
-            return lambda t: expr.resolve(_ensure_xorq_table(t))
+
+            def _str_filter(t):
+                return expr.resolve(_ensure_xorq_table(t))
+
+            _str_filter.__bsl_deferred_resolution__ = True
+            return _str_filter
         elif callable(self.filter):
             return self.filter
         raise ValueError("Filter must be a dict, string, or callable")

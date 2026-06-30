@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 from ibis import BaseBackend
-from ._xorq import Profile as XorqProfile
+
+from ._xorq import HAS_XORQ, Profile as XorqProfile
 
 from .utils import read_yaml_file
 
@@ -83,7 +85,7 @@ def _search_profile(name: str, search_locations: list[str]) -> BaseBackend:
             return _load_from_file(bsl_profile, name)
         if location == "local" and local_profile.exists():
             return _load_from_file(local_profile, name)
-        if location == "xorq_dir":
+        if location == "xorq_dir" and HAS_XORQ:
             try:
                 return XorqProfile.load(name).get_con()
             except Exception:
@@ -112,12 +114,50 @@ def _load_from_file(yaml_file: Path, profile_name: str | None = None) -> BaseBac
     return _create_connection_from_config(config)
 
 
+_ENV_VAR_PATTERN = re.compile(r"\$\{(\w+)\}|\$(\w+)")
+
+
+def _expand_env_vars(value: str) -> str:
+    """Expand ``${VAR}``/``$VAR`` references, raising on undefined variables.
+
+    Unlike ``os.path.expandvars``, which silently leaves unresolved
+    references in place (so ``database: ${MISSING}`` would create a file
+    literally named ``${MISSING}``), this mirrors xorq's strict behavior and
+    fails loudly. Keeps env-var handling consistent whether or not xorq is
+    installed.
+    """
+
+    def _replace(match: re.Match) -> str:
+        name = match.group(1) or match.group(2)
+        try:
+            return os.environ[name]
+        except KeyError:
+            raise ProfileError(
+                f"Environment variable '{name}' referenced in profile is not set."
+            ) from None
+
+    return _ENV_VAR_PATTERN.sub(_replace, value)
+
+
+def _connect_plain_ibis(ibis, config: dict, conn_type: str) -> BaseBackend:
+    """Connect using plain ibis.<backend>.connect() with manual env-var expansion."""
+    connect_fn = getattr(ibis, conn_type, None)
+    if connect_fn is None or not callable(getattr(connect_fn, "connect", None)):
+        raise ProfileError(f"Unknown backend type: '{conn_type}'")
+    connect_kwargs = {k: v for k, v in config.items() if k != "type"}
+    connect_kwargs = {
+        k: _expand_env_vars(v) if isinstance(v, str) else v
+        for k, v in connect_kwargs.items()
+    }
+    return connect_fn.connect(**connect_kwargs)
+
+
 def _create_connection_from_config(config: dict) -> BaseBackend:
     """Create database connection from config dict with 'type' field.
 
-    Tries xorq first (which handles env var substitution automatically),
-    then falls back to plain ``ibis.<backend>.connect()`` for backends
-    not registered in xorq (e.g. Databricks).
+    When xorq is installed, tries xorq first (handles env-var substitution
+    automatically) and falls back to plain ibis for unsupported backends.
+    When xorq is absent, uses plain ``ibis.<backend>.connect()`` directly.
     """
     import ibis
 
@@ -128,23 +168,16 @@ def _create_connection_from_config(config: dict) -> BaseBackend:
 
     parquet_tables = config.pop("tables", None)
 
-    # Try xorq first (handles env var substitution automatically)
-    try:
-        kwargs_tuple = tuple(sorted((k, v) for k, v in config.items() if k != "type"))
-        xorq_profile = XorqProfile(con_name=conn_type, kwargs_tuple=kwargs_tuple)
-        connection = xorq_profile.get_con()
-    except AssertionError:
-        # Backend not supported by xorq (e.g. Databricks) — fall back to plain ibis
-        connect_fn = getattr(ibis, conn_type, None)
-        if connect_fn is None or not callable(getattr(connect_fn, "connect", None)):
-            raise ProfileError(f"Unknown backend type: '{conn_type}'")
-        connect_kwargs = {k: v for k, v in config.items() if k != "type"}
-        # Expand env vars in string values (xorq does this automatically)
-        connect_kwargs = {
-            k: os.path.expandvars(v) if isinstance(v, str) else v
-            for k, v in connect_kwargs.items()
-        }
-        connection = connect_fn.connect(**connect_kwargs)
+    if HAS_XORQ:
+        # Try xorq first (handles env var substitution automatically)
+        try:
+            kwargs_tuple = tuple(sorted((k, v) for k, v in config.items() if k != "type"))
+            xorq_profile = XorqProfile(con_name=conn_type, kwargs_tuple=kwargs_tuple)
+            connection = xorq_profile.get_con()
+        except AssertionError:
+            connection = _connect_plain_ibis(ibis, config, conn_type)
+    else:
+        connection = _connect_plain_ibis(ibis, config, conn_type)
 
     # Load parquet tables if specified
     if parquet_tables:

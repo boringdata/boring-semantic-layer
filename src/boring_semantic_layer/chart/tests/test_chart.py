@@ -3,9 +3,12 @@
 import ibis
 import pandas as pd
 import pytest
-import xorq.api as xo
 
 from boring_semantic_layer import to_semantic_table
+
+# Match BSL's active ibis flavor: plain ibis without xorq, xorq-vendored ibis
+# with xorq installed. Plain-ibis users can write `import ibis` directly.
+from boring_semantic_layer._xorq import ibis as xibis
 
 
 @pytest.fixture(scope="module")
@@ -387,7 +390,7 @@ class TestChartWithFilters:
             .order_by("flight_week")
             .mutate(
                 rolling_avg=lambda t: t.flight_count.mean().over(
-                    xo.window(rows=(-2, 0), order_by="flight_week")
+                    xibis.window(rows=(-2, 0), order_by="flight_week")
                 )
             )
         )

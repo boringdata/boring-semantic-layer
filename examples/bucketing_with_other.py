@@ -6,8 +6,12 @@ Malloy: https://docs.malloydata.dev/documentation/patterns/other
 
 from pathlib import Path
 
-import xorq.api as xo
+import ibis
 from ibis import _
+
+# CI runs this example with and without xorq. xibis matches BSL's active ibis
+# flavor in both modes; users who are not using xorq can simply use `import ibis`.
+from boring_semantic_layer._xorq import ibis as xibis
 
 from boring_semantic_layer import from_yaml
 
@@ -28,13 +32,13 @@ def main():
             nest={"data": lambda t: t.group_by(["code", "elevation"])},
         )
         .mutate(
-            rank=lambda t: xo.row_number().over(
-                xo.window(order_by=xo.desc(t.avg_elevation)),
+            rank=lambda t: xibis.row_number().over(
+                xibis.window(order_by=xibis.desc(t.avg_elevation)),
             ),
         )
         .mutate(
             is_other=lambda t: t.rank > 4,
-            state_grouped=lambda t: xo.ifelse(t.rank > 4, "OTHER", t.state),
+            state_grouped=lambda t: xibis.ifelse(t.rank > 4, "OTHER", t.state),
         )
         .group_by("state_grouped")
         .aggregate(

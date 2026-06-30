@@ -8,19 +8,11 @@ from __future__ import annotations
 import pytest
 
 from boring_semantic_layer import SemanticModel
-from boring_semantic_layer.serialization import from_tagged, to_tagged, try_import_xorq
+from boring_semantic_layer.serialization import from_tagged, to_tagged
 
-# Check if xorq is available
-try:
-    try_import_xorq()
-    xorq_available = True
-    xorq_skip_reason = ""
-except ImportError:
-    xorq_available = False
-    xorq_skip_reason = "xorq not installed"
+pytest.importorskip("xorq", reason="xorq not installed")
 
 
-@pytest.mark.skipif(not xorq_available, reason=xorq_skip_reason)
 class TestXorqIntegration:
     """Integration tests for xorq conversion."""
 
@@ -204,7 +196,6 @@ class TestXorqIntegration:
         assert min(df["a"]) > 2
 
 
-@pytest.mark.skipif(not xorq_available, reason=xorq_skip_reason)
 class TestXorqFeatures:
     """Test xorq-specific features that aren't available in regular ibis."""
 

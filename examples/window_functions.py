@@ -2,8 +2,11 @@
 """Window Functions - Rolling Averages, Rankings, Running Totals, and t.all()."""
 
 import ibis
-import xorq.api as xo
 from ibis import _
+
+# CI runs this example with and without xorq. xibis matches BSL's active ibis
+# flavor in both modes; users who are not using xorq can simply use `import ibis`.
+from boring_semantic_layer._xorq import ibis as xibis
 
 from boring_semantic_layer import to_semantic_table
 
@@ -32,13 +35,13 @@ def main():
     result = (
         daily_stats.mutate(
             rolling_avg=lambda t: t.flight_count.mean().over(
-                xo.window(order_by=t.flight_date, preceding=6, following=0),
+                xibis.window(order_by=t.flight_date, preceding=6, following=0),
             ),
-            rank=lambda t: xo.dense_rank().over(
-                xo.window(order_by=xo.desc(t.flight_count)),
+            rank=lambda t: xibis.dense_rank().over(
+                xibis.window(order_by=xibis.desc(t.flight_count)),
             ),
             running_total=lambda t: t.flight_count.sum().over(
-                xo.window(order_by=t.flight_date),
+                xibis.window(order_by=t.flight_date),
             ),
         )
         .order_by("flight_date")
@@ -65,8 +68,8 @@ def main():
 
     result = (
         carrier_stats.mutate(
-            total_flights=lambda t: t.flight_count.sum().over(xo.window()),
-            percent_manual=lambda t: (t.flight_count / t.flight_count.sum().over(xo.window()))
+            total_flights=lambda t: t.flight_count.sum().over(xibis.window()),
+            percent_manual=lambda t: (t.flight_count / t.flight_count.sum().over(xibis.window()))
             * 100,
         )
         .order_by(_.percent_manual.desc())

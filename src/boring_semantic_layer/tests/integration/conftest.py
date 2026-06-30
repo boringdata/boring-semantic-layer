@@ -13,6 +13,16 @@ import pandas as pd
 import pytest
 from toolz import curry
 
+# Several Malloy comparison query modules under ``malloy_data/*.py`` import
+# ``xorq.api`` directly, and the parametrized integration suite includes those
+# modules. Skip collecting the integration directory when xorq is absent (the
+# no-xorq CI leg) rather than relying on a ``--ignore`` CLI flag, so the gate
+# lives with the tests that need it.
+try:
+    import xorq  # noqa: F401
+except ImportError:
+    collect_ignore_glob = ["*"]
+
 TEST_CASES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("comparing_timeframe", "query_1", ()),
     ("comparing_timeframe", "query_2", ()),

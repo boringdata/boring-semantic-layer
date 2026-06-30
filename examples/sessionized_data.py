@@ -12,7 +12,10 @@ from pathlib import Path
 
 import ibis
 import pandas as pd
-import xorq.api as xo
+
+# CI runs this example with and without xorq. xibis matches BSL's active ibis
+# flavor in both modes; users who are not using xorq can simply use `import ibis`.
+from boring_semantic_layer._xorq import ibis as xibis
 
 from boring_semantic_layer import from_yaml, to_untagged
 
@@ -32,7 +35,7 @@ def main():
 
     # Filter for carrier WN on 2002-03-03 and add flight_date column
     filtered_flights = flights.filter(
-        lambda t: (t.carrier == "WN") & (t.dep_time.date() == xo.date(2002, 3, 3)),
+        lambda t: (t.carrier == "WN") & (t.dep_time.date() == xibis.date(2002, 3, 3)),
     ).mutate(flight_date=lambda t: t.dep_time.date())
 
     # Create sessions with nested flight legs
@@ -53,7 +56,7 @@ def main():
                 ]),
             },
         )
-        .mutate(session_id=xo.row_number().over(xo.window()))
+        .mutate(session_id=xibis.row_number().over(xibis.window()))
         .order_by("session_id")
     )
 

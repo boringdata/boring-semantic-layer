@@ -20,7 +20,9 @@ import ibis
 import pandas as pd
 import pytest
 from ibis import _
-import xorq.api as xo
+
+xorq = pytest.importorskip("xorq", reason="xorq not installed")
+import xorq.api as xo  # noqa: E402
 
 from boring_semantic_layer import to_semantic_table
 

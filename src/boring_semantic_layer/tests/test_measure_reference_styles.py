@@ -533,6 +533,7 @@ def test_method_call_serialization_roundtrip():
     Replaces the legacy curated-AST direct construction with the
     behavioral round-trip through ``to_tagged`` / ``from_tagged``.
     """
+    pytest.importorskip("xorq")
     from boring_semantic_layer import to_semantic_table
     from boring_semantic_layer.serialization import from_tagged, to_tagged
 

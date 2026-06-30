@@ -9,6 +9,10 @@ strict backends like Athena.
 import ibis
 import pytest
 
+# BSL builds filter expressions with xorq's vendored ibis when xorq is
+# installed; use the same flavor (plain ibis otherwise) so to_sql can compile
+# the expression that Filter.to_callable produced.
+from boring_semantic_layer._xorq import ibis as xibis
 from boring_semantic_layer.api import to_semantic_table
 from boring_semantic_layer.query import Filter, query
 
@@ -220,10 +224,20 @@ class TestDateFilterConversion:
 class TestSQLGeneration:
     """Test SQL generation for different backends."""
 
-    def test_trino_sql_generation(self):
-        """Test that Trino/Athena SQL uses proper date functions."""
-        from xorq.vendor import ibis as xibis
+    @pytest.mark.parametrize(
+        "dialect, expected_fns",
+        [
+            ("trino", ("FROM_ISO8601_TIMESTAMP",)),
+            ("duckdb", ("MAKE_TIMESTAMP", "MAKE_DATE")),
+        ],
+    )
+    def test_sql_generation_uses_typed_date_functions(self, dialect, expected_fns):
+        """Generated SQL uses proper typed date functions per dialect.
 
+        Compiles the filter expression to a dialect string via ibis/xorq's
+        compiler (no live backend required) and asserts the emitted SQL uses a
+        typed date constructor rather than a raw string literal.
+        """
         con = ibis.duckdb.connect(":memory:")
         t = con.create_table(
             "test",
@@ -234,49 +248,20 @@ class TestSQLGeneration:
         filter_obj = Filter(filter={"field": "date_col", "operator": ">=", "value": "2024-01-01"})
         filtered = filter_obj.to_callable()(t)
 
-        sql = xibis.to_sql(filtered, dialect="trino")
+        sql = xibis.to_sql(filtered, dialect=dialect)
 
-        # Should contain Trino date function
-        assert "FROM_ISO8601_TIMESTAMP" in sql
-
-    def test_duckdb_sql_generation(self):
-        """Test that DuckDB SQL uses proper date functions."""
-        from xorq.vendor import ibis as xibis
-
-        con = ibis.duckdb.connect(":memory:")
-        t = con.create_table(
-            "test",
-            {"date_col": ["2024-01-01", "2024-06-15"]},
-            schema={"date_col": "date"},
-        )
-
-        filter_obj = Filter(filter={"field": "date_col", "operator": ">=", "value": "2024-01-01"})
-        filtered = filter_obj.to_callable()(t)
-
-        sql = xibis.to_sql(filtered, dialect="duckdb")
-
-        # Should contain DuckDB date function
-        assert "MAKE_TIMESTAMP" in sql or "MAKE_DATE" in sql
+        assert any(fn in sql for fn in expected_fns)
 
 
 class TestFilterValueConversion:
     """Test the _convert_filter_value method directly."""
 
-    def test_convert_date_string(self):
-        """Test conversion of date string."""
-        f = Filter(filter={"field": "x", "operator": "=", "value": "2024-01-01"})
-        result = f._convert_filter_value("2024-01-01")
-        from xorq.vendor.ibis.expr.types.temporal import TimestampScalar as XTimestampScalar
-
-        assert isinstance(result, (ibis.expr.types.temporal.TimestampScalar, XTimestampScalar))
-
-    def test_convert_timestamp_string(self):
-        """Test conversion of timestamp string."""
-        from xorq.vendor.ibis.expr.types.temporal import TimestampScalar as XTimestampScalar
-
-        f = Filter(filter={"field": "x", "operator": "=", "value": "2024-01-01"})
-        result = f._convert_filter_value("2024-01-01T12:00:00")
-        assert isinstance(result, (ibis.expr.types.temporal.TimestampScalar, XTimestampScalar))
+    @pytest.mark.parametrize("value", ["2024-01-01", "2024-01-01T12:00:00"])
+    def test_convert_date_string_to_timestamp_literal(self, value):
+        """Date/timestamp strings convert to typed timestamp literals."""
+        f = Filter(filter={"field": "x", "operator": "=", "value": value})
+        result = f._convert_filter_value(value)
+        assert result.type().is_timestamp()
 
     def test_non_date_string_passthrough(self):
         """Test that non-date strings pass through unchanged."""

@@ -156,8 +156,19 @@ def from_tagged(tagged_expr, context: BSLSerializationContext | None = None):
         BSL expression reconstructed from metadata
 
     Raises:
+        ImportError: If xorq is not installed
         ValueError: If no BSL metadata found in expression
     """
+    result = try_import_xorq()
+    if isinstance(result, Failure):
+        error = result.failure()
+        if isinstance(error, ImportError):
+            raise ImportError(
+                "Xorq conversion requires the 'xorq' optional dependency. "
+                "Install with: pip install 'boring-semantic-layer[xorq]'"
+            ) from error
+        raise error
+
     if context is None:
         context = BSLSerializationContext()
 

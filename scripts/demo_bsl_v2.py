@@ -10,16 +10,19 @@ This script showcases:
   - Rolling-window calculations
 """
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import ibis
-import xorq.api as xo
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from boring_semantic_layer import to_semantic_table
+
+# CI runs this demo with and without xorq. xibis matches BSL's active ibis
+# flavor in both modes; users who are not using xorq can simply use `import ibis`.
+from boring_semantic_layer._xorq import ibis as xibis
 
 
 def main():
@@ -117,7 +120,7 @@ def main():
         .with_measures(sum_val=lambda t: t.value.sum())
     )
 
-    rolling_window = xo.window(order_by="date", preceding=1, following=1)
+    rolling_window = xibis.window(order_by="date", preceding=1, following=1)
     expr4 = (
         ts_st.group_by("date")
         .aggregate("sum_val")
