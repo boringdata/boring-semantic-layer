@@ -284,6 +284,48 @@ class TestQueryModel:
             assert "flight_date" in result.content[0].text
 
     @pytest.mark.asyncio
+    async def test_query_with_prefixed_time_grains(self, sample_models):
+        """Test query with model-prefixed per-dimension time grains."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "query_model",
+                {
+                    "model_name": "flights",
+                    "dimensions": ["flights.flight_date"],
+                    "measures": ["flight_count"],
+                    "time_grains": {"flights.flight_date": "month"},
+                    "get_chart": False,
+                },
+            )
+
+            data = json.loads(result.content[0].text)
+            assert "flight_date" in data["columns"]
+
+    @pytest.mark.asyncio
+    async def test_compare_periods_with_prefixed_time_grains(self, sample_models):
+        """Test compare_periods with model-prefixed per-dimension time grains."""
+        mcp = MCPSemanticModel(models=sample_models)
+
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "compare_periods",
+                {
+                    "model_name": "flights",
+                    "dimensions": ["flights.flight_date"],
+                    "measures": ["flight_count"],
+                    "current_time_range": {"start": "2024-01-11", "end": "2024-01-20"},
+                    "previous_time_range": {"start": "2024-01-01", "end": "2024-01-10"},
+                    "time_grains": {"flights.flight_date": "month"},
+                    "get_chart": False,
+                },
+            )
+
+            data = json.loads(result.content[0].text)
+            assert "flight_date" in data["columns"]
+
+    @pytest.mark.asyncio
     async def test_query_with_time_range(self, sample_models):
         """Test query with time range."""
         mcp = MCPSemanticModel(models=sample_models)

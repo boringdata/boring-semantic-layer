@@ -9,12 +9,20 @@ def _opportunities_model():
     source = ibis.memtable(
         {
             "status": ["open", "closed", "open"],
+            "created_at": ["2024-01-01", "2024-01-02", "2024-02-01"],
             "private_amount": [100, 200, 300],
         }
-    )
+    ).mutate(created_at=_.created_at.cast("timestamp"))
     return (
         to_semantic_table(source, name="opportunities")
-        .with_dimensions(status=_.status)
+        .with_dimensions(
+            status=_.status,
+            created_at={
+                "expr": _.created_at,
+                "is_time_dimension": True,
+                "smallest_time_grain": "day",
+            },
+        )
         .with_measures(
             opportunity_count=_.count(),
             pipeline_amount=_.private_amount.sum(),
@@ -58,6 +66,50 @@ def test_strict_semantic_boundaries_allow_model_prefixed_declared_filter():
     assert list(result["status"]) == ["open"]
 
 
+def test_query_normalizes_model_prefixed_time_grains():
+    opportunities = _opportunities_model()
+
+    result = opportunities.query(
+        dimensions=["opportunities.created_at"],
+        measures=["opportunity_count"],
+        time_grains={"opportunities.created_at": "month"},
+        strict_semantic_boundaries=True,
+    ).execute()
+
+    assert "created_at" in result.columns
+    assert result["opportunity_count"].sum() == 3
+
+
+def test_compare_periods_normalizes_model_prefixed_time_grains():
+    opportunities = _opportunities_model()
+
+    result = opportunities.compare_periods(
+        dimensions=["opportunities.created_at"],
+        measures=["opportunity_count"],
+        current_time_range={"start": "2024-02-01", "end": "2024-02-28"},
+        previous_time_range={"start": "2024-01-01", "end": "2024-01-31"},
+        time_grains={"opportunities.created_at": "month"},
+        strict_semantic_boundaries=True,
+    ).execute()
+
+    assert "created_at" in result.columns
+    assert "opportunity_count_current" in result.columns
+
+
+def test_compare_periods_strict_semantic_boundaries_reject_raw_filter_field():
+    opportunities = _opportunities_model()
+
+    with pytest.raises(ValueError, match="private_amount"):
+        opportunities.compare_periods(
+            dimensions=["status"],
+            measures=["opportunity_count"],
+            current_time_range={"start": "2024-02-01", "end": "2024-02-28"},
+            previous_time_range={"start": "2024-01-01", "end": "2024-01-31"},
+            filters=[{"field": "private_amount", "operator": ">=", "value": 200}],
+            strict_semantic_boundaries=True,
+        )
+
+
 def test_index_uses_plain_table_expressions_for_weight_and_value_refs():
     opportunities = _opportunities_model()
 
@@ -83,16 +135,20 @@ def test_profile_constructor_value_error_falls_back_to_plain_ibis(monkeypatch):
 
     monkeypatch.setattr(profile_module, "XorqProfile", RaisingXorqProfile)
     monkeypatch.setattr(ibis_module, "fakebackend", FakeBackend, raising=False)
+    monkeypatch.setenv("FAKE_TOKEN", "secret")
 
     connection = profile_module._create_connection_from_config(
         {"type": "fakebackend", "token": "${FAKE_TOKEN}"}
     )
 
-    assert connection == {"connected_with": {"token": "${FAKE_TOKEN}"}}
+    assert connection == {"connected_with": {"token": "secret"}}
 
 
 def test_profile_connection_value_error_is_not_swallowed(monkeypatch):
     import boring_semantic_layer.profile as profile_module
+
+    if not profile_module.HAS_XORQ:
+        pytest.skip("xorq connection errors only apply when xorq is installed")
 
     class RaisingXorqProfile:
         def __init__(self, *args, **kwargs):

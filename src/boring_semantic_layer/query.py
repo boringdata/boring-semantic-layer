@@ -304,6 +304,20 @@ def _normalize_order_by(
     ]
 
 
+def _normalize_time_grains(
+    time_grains: Mapping[str, TimeGrain] | None,
+    known_dimensions: set[str],
+    expected_prefix: str | None = None,
+) -> dict[str, TimeGrain]:
+    """Normalize per-dimension time grain keys against known semantic dimensions."""
+    if not time_grains:
+        return {}
+    return {
+        _normalize_field_name(dim, known_dimensions, expected_prefix): grain
+        for dim, grain in time_grains.items()
+    }
+
+
 def _raise_unknown_semantic_fields(kind: str, fields: set[str], allowed: set[str]) -> None:
     unknown = sorted(fields - allowed)
     if unknown:
@@ -511,6 +525,7 @@ def compare_periods(
     time_grains: Mapping[str, TimeGrain] | None = None,
     order_by: Sequence[tuple[str, str]] | None = None,
     limit: int | None = None,
+    strict_semantic_boundaries: bool = False,
 ) -> Any:
     """Compare two time ranges and return current/previous/delta columns."""
     from .api import to_semantic_table
@@ -533,6 +548,7 @@ def compare_periods(
 
     dimensions = _normalize_fields(dimensions, known_dimensions, expected_prefix=model_name)
     measures = _normalize_fields(measures, known_measures, expected_prefix=model_name)
+    time_grains = _normalize_time_grains(time_grains, known_dimensions, model_name)
 
     resolved_time_dimension = time_dimension
     if resolved_time_dimension is not None:
@@ -551,21 +567,68 @@ def compare_periods(
             "or pass time_dimension explicitly."
         )
 
+    if strict_semantic_boundaries:
+        comparison_order_fields = set(dimensions)
+        for measure in measures:
+            comparison_order_fields.update(
+                {
+                    f"{measure}_current",
+                    f"{measure}_previous",
+                    f"{measure}_delta",
+                    f"{measure}_pct_change",
+                }
+            )
+        _validate_semantic_boundaries(
+            dimensions=dimensions,
+            measures=measures,
+            filters=filters,
+            having=[],
+            order_by=None,
+            known_dimensions=known_dimensions,
+            known_measures=known_measures,
+            model_name=model_name,
+        )
+        if time_dimension is not None:
+            _raise_unknown_semantic_fields(
+                "time_dimension",
+                {resolved_time_dimension},
+                known_dimensions,
+            )
+        if order_by:
+            normalized_order_by = _normalize_order_by(
+                order_by,
+                comparison_order_fields,
+                expected_prefix=model_name,
+            )
+            _raise_unknown_semantic_fields(
+                "order_by fields",
+                {field for field, _ in normalized_order_by},
+                comparison_order_fields,
+            )
+
     current_result = query(
         semantic_table=semantic_table,
         dimensions=dimensions,
         measures=measures,
-        filters=[*filters, *_build_time_range_filters(semantic_table, resolved_time_dimension, current_time_range)],
+        filters=[
+            *filters,
+            *_build_time_range_filters(semantic_table, resolved_time_dimension, current_time_range),
+        ],
         time_grain=time_grain,
         time_grains=time_grains,
+        strict_semantic_boundaries=strict_semantic_boundaries,
     )
     previous_result = query(
         semantic_table=semantic_table,
         dimensions=dimensions,
         measures=measures,
-        filters=[*filters, *_build_time_range_filters(semantic_table, resolved_time_dimension, previous_time_range)],
+        filters=[
+            *filters,
+            *_build_time_range_filters(semantic_table, resolved_time_dimension, previous_time_range),
+        ],
         time_grain=time_grain,
         time_grains=time_grains,
+        strict_semantic_boundaries=strict_semantic_boundaries,
     )
 
     current_tbl = current_result.as_table().table.rename(
@@ -759,6 +822,7 @@ def query(
     # Build per-dimension grain mapping: either from time_grains directly,
     # or by expanding time_grain to all time dimensions in the query.
     grain_map: dict[str, str] = {}
+    time_grains = _normalize_time_grains(time_grains, known_dimensions, model_name)
     if time_grains:
         grain_map = {dim: _normalize_grain(g) for dim, g in time_grains.items()}
     elif time_grain:
