@@ -297,6 +297,7 @@ def create_app(
             time_grain=payload.time_grain,
             time_grains=payload.time_grains,
             time_range=payload.time_range,
+            strict_semantic_boundaries=True,
         )
         response = json.loads(
             generate_chart_with_data(
@@ -329,6 +330,7 @@ def create_app(
             time_grains=payload.time_grains,
             order_by=payload.order_by,
             limit=payload.limit,
+            strict_semantic_boundaries=True,
         )
         response = json.loads(
             generate_chart_with_data(

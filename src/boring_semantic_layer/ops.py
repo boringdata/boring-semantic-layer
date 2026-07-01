@@ -4542,15 +4542,22 @@ def _get_weight_expr(
     all_roots: list,
     is_string: bool,
 ) -> Any:
-    from ._xorq import api as xo
-
     if not by_measure:
-        return xo._.count()
+        return base_tbl.count()
 
     merged_measures = _get_merged_fields(all_roots, "measures")
-    return (
-        merged_measures[by_measure](base_tbl) if by_measure in merged_measures else xo._.count()
-    )
+    if by_measure in merged_measures:
+        return merged_measures[by_measure](base_tbl)
+    return base_tbl.count()
+
+
+def _literal_for_table(table: Any, value: Any) -> Any:
+    if type(table).__module__.startswith("xorq."):
+        from ._xorq import api as xo
+
+        return xo.literal(value)
+
+    return ibis.literal(value)
 
 
 def _build_string_index_fragment(
@@ -4561,18 +4568,13 @@ def _build_string_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
-    from ._xorq import api as xo
-
-    return (
-        base_tbl.group_by(field_expr.name("value"))
-        .aggregate(weight=weight_expr)
-        .select(
-            fieldName=xo.literal(field_name.split(".")[-1]),
-            fieldPath=xo.literal(field_path),
-            fieldType=xo.literal(type_str),
-            fieldValue=xo._["value"].cast("string"),
-            weight=xo._["weight"],
-        )
+    aggregated = base_tbl.group_by(field_expr.name("value")).aggregate(weight=weight_expr)
+    return aggregated.select(
+        fieldName=_literal_for_table(aggregated, field_name.split(".")[-1]),
+        fieldPath=_literal_for_table(aggregated, field_path),
+        fieldType=_literal_for_table(aggregated, type_str),
+        fieldValue=aggregated["value"].cast("string"),
+        weight=aggregated["weight"],
     )
 
 
@@ -4582,27 +4584,24 @@ def _build_numeric_index_fragment(
     field_name: str,
     field_path: str,
     type_str: str,
-    weight_expr: Any,
+    by_measure: str | None,
+    all_roots: list,
 ) -> Any:
-    from ._xorq import api as xo
-
-    return (
-        base_tbl.select(field_expr.name("value"))
-        .filter(xo._["value"].notnull())
-        .aggregate(
-            min_val=xo._["value"].min(),
-            max_val=xo._["value"].max(),
-            weight=weight_expr,
-        )
-        .select(
-            fieldName=xo.literal(field_name.split(".")[-1]),
-            fieldPath=xo.literal(field_path),
-            fieldType=xo.literal(type_str),
-            fieldValue=(
-                xo._["min_val"].cast("string") + " to " + xo._["max_val"].cast("string")
-            ),
-            weight=xo._["weight"],
-        )
+    values = base_tbl.mutate(value=field_expr).filter(lambda t: t["value"].notnull())
+    weight_expr = _get_weight_expr(values, by_measure, all_roots, is_string=False)
+    aggregated = values.aggregate(
+        min_val=values["value"].min(),
+        max_val=values["value"].max(),
+        weight=weight_expr,
+    )
+    return aggregated.select(
+        fieldName=_literal_for_table(aggregated, field_name.split(".")[-1]),
+        fieldPath=_literal_for_table(aggregated, field_path),
+        fieldType=_literal_for_table(aggregated, type_str),
+        fieldValue=(
+            aggregated["min_val"].cast("string") + " to " + aggregated["max_val"].cast("string")
+        ),
+        weight=aggregated["weight"],
     )
 
 
@@ -4773,7 +4772,8 @@ class SemanticIndexOp(Relation):
                     field_name,
                     field_name,
                     type_str,
-                    weight_expr,
+                    self.by,
+                    all_roots,
                 )
             )
 

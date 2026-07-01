@@ -186,6 +186,22 @@ def test_query_uses_core_bsl_interface(client):
     assert "chart" not in data
 
 
+def test_query_enforces_strict_semantic_boundaries(client):
+    response = client.post(
+        "/query",
+        json={
+            "model_name": "flights",
+            "dimensions": ["carrier"],
+            "measures": ["flight_count"],
+            "filters": [{"field": "dep_delay", "operator": ">=", "value": 5}],
+            "get_chart": False,
+        },
+    )
+
+    assert response.status_code == 400
+    assert "dep_delay" in response.json()["detail"]
+
+
 def test_query_supports_time_grain_and_time_range(client):
     response = client.post(
         "/query",
@@ -211,11 +227,11 @@ def test_query_supports_per_dimension_time_grains(client):
         "/query",
         json={
             "model_name": "flights",
-            "dimensions": ["flight_date", "arrival_date"],
+            "dimensions": ["flights.flight_date", "flights.arrival_date"],
             "measures": ["flight_count"],
             "time_grains": {
-                "flight_date": "month",
-                "arrival_date": "month",
+                "flights.flight_date": "month",
+                "flights.arrival_date": "month",
             },
             "time_range": {"start": "2024-01-01", "end": "2024-01-31"},
             "get_chart": False,
@@ -255,6 +271,42 @@ def test_compare_periods_endpoint(client):
     assert aa_row["flight_count_current"] == 3
     assert aa_row["flight_count_previous"] == 4
     assert aa_row["flight_count_delta"] == -1
+
+
+def test_compare_periods_supports_prefixed_time_grains(client):
+    response = client.post(
+        "/compare-periods",
+        json={
+            "model_name": "flights",
+            "dimensions": ["flights.flight_date"],
+            "measures": ["flight_count"],
+            "current_time_range": {"start": "2024-01-11", "end": "2024-01-20"},
+            "previous_time_range": {"start": "2024-01-01", "end": "2024-01-10"},
+            "time_grains": {"flights.flight_date": "month"},
+            "get_chart": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert "flight_date" in response.json()["columns"]
+
+
+def test_compare_periods_enforces_strict_semantic_boundaries(client):
+    response = client.post(
+        "/compare-periods",
+        json={
+            "model_name": "flights",
+            "dimensions": ["carrier"],
+            "measures": ["flight_count"],
+            "current_time_range": {"start": "2024-01-11", "end": "2024-01-20"},
+            "previous_time_range": {"start": "2024-01-01", "end": "2024-01-10"},
+            "filters": [{"field": "dep_delay", "operator": ">=", "value": 5}],
+            "get_chart": False,
+        },
+    )
+
+    assert response.status_code == 400
+    assert "dep_delay" in response.json()["detail"]
 
 
 def test_query_rejects_both_time_grain_and_time_grains(client):

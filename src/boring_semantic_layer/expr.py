@@ -11,12 +11,14 @@ from ibis.expr import types as ir
 from ibis.expr.types.groupby import GroupedTable as IbisGroupedTable
 from ibis.expr.types.relations import Table as IbisTable
 from returns.result import Success, safe
+
 from ._xorq import (
     Column as XorqColumn,
+)
+from ._xorq import (
     GroupedTable,
     Table,
 )
-
 from .chart import chart as create_chart
 from .measure_scope import MeasureScope
 from .ops import (
@@ -859,6 +861,7 @@ class SemanticModel(SemanticTable):
         time_grains: dict[str, str] | None = None,
         time_range: dict[str, str] | None = None,
         having: list | None = None,
+        strict_semantic_boundaries: bool = False,
     ):
         return build_query(
             semantic_table=self,
@@ -871,6 +874,7 @@ class SemanticModel(SemanticTable):
             time_grains=time_grains,
             time_range=time_range,
             having=having,
+            strict_semantic_boundaries=strict_semantic_boundaries,
         )
 
     def compare_periods(
@@ -885,6 +889,7 @@ class SemanticModel(SemanticTable):
         time_grains: dict[str, str] | None = None,
         order_by: Sequence[tuple[str, str]] | None = None,
         limit: int | None = None,
+        strict_semantic_boundaries: bool = False,
     ):
         return build_compare_periods(
             semantic_table=self,
@@ -898,6 +903,7 @@ class SemanticModel(SemanticTable):
             time_grains=time_grains,
             order_by=order_by,
             limit=limit,
+            strict_semantic_boundaries=strict_semantic_boundaries,
         )
 
 
@@ -1047,6 +1053,7 @@ class SemanticJoin(SemanticTable):
         time_grains: dict[str, str] | None = None,
         time_range: dict[str, str] | None = None,
         having: list | None = None,
+        strict_semantic_boundaries: bool = False,
     ):
         return build_query(
             semantic_table=self,
@@ -1059,6 +1066,7 @@ class SemanticJoin(SemanticTable):
             time_grains=time_grains,
             time_range=time_range,
             having=having,
+            strict_semantic_boundaries=strict_semantic_boundaries,
         )
 
     def as_table(self) -> SemanticModel:

@@ -255,6 +255,7 @@ class MCPSemanticModel(FastMCP):
                 time_grain=time_grain,
                 time_grains=time_grains,
                 time_range=time_range,
+                strict_semantic_boundaries=True,
             )
 
             return generate_chart_with_data(
@@ -391,6 +392,7 @@ class MCPSemanticModel(FastMCP):
                 time_grains=time_grains,
                 order_by=order_by,
                 limit=limit,
+                strict_semantic_boundaries=True,
             )
 
             return generate_chart_with_data(

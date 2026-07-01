@@ -304,6 +304,64 @@ def _normalize_order_by(
     ]
 
 
+def _normalize_time_grains(
+    time_grains: Mapping[str, TimeGrain] | None,
+    known_dimensions: set[str],
+    expected_prefix: str | None = None,
+) -> dict[str, TimeGrain]:
+    """Normalize per-dimension time grain keys against known semantic dimensions."""
+    if not time_grains:
+        return {}
+    return {
+        _normalize_field_name(dim, known_dimensions, expected_prefix): grain
+        for dim, grain in time_grains.items()
+    }
+
+
+def _raise_unknown_semantic_fields(kind: str, fields: set[str], allowed: set[str]) -> None:
+    unknown = sorted(fields - allowed)
+    if unknown:
+        raise ValueError(
+            f"Unknown semantic {kind}: {', '.join(unknown)}. "
+            f"Allowed fields: {', '.join(sorted(allowed)) or 'none'}",
+        )
+
+
+def _filter_semantic_fields(filter_spec: Any) -> set[str]:
+    """Return dict-filter field references that can be boundary-checked."""
+    raw = filter_spec.filter if isinstance(filter_spec, Filter) else filter_spec
+    return _extract_filter_fields(raw) if isinstance(raw, dict) else set()
+
+
+def _validate_semantic_boundaries(
+    *,
+    dimensions: Sequence[str],
+    measures: Sequence[str] | None,
+    filters: Sequence[Any],
+    having: Sequence[Any],
+    order_by: Sequence[tuple[str, str]] | None,
+    known_dimensions: set[str],
+    known_measures: set[str],
+    model_name: str | None = None,
+) -> None:
+    """Ensure structured query fields do not escape the declared semantic model."""
+    semantic_fields = known_dimensions | known_measures
+    _raise_unknown_semantic_fields("dimensions", set(dimensions), known_dimensions)
+    if measures is not None:
+        _raise_unknown_semantic_fields("measures", set(measures), known_measures)
+    if order_by:
+        order_fields = {field for field, _ in order_by}
+        _raise_unknown_semantic_fields("order_by fields", order_fields, semantic_fields)
+
+    filter_fields: set[str] = set()
+    for filter_spec in [*filters, *having]:
+        filter_fields.update(
+            _normalize_field_name(field, semantic_fields, model_name)
+            for field in _filter_semantic_fields(filter_spec)
+        )
+    _raise_unknown_semantic_fields("filter fields", filter_fields, semantic_fields)
+
+
 def _extract_filter_fields(filter_spec: dict) -> set[str]:
     """Extract all field names referenced by a dict filter (including compound)."""
     from . import predicate as pred_mod
@@ -467,6 +525,7 @@ def compare_periods(
     time_grains: Mapping[str, TimeGrain] | None = None,
     order_by: Sequence[tuple[str, str]] | None = None,
     limit: int | None = None,
+    strict_semantic_boundaries: bool = False,
 ) -> Any:
     """Compare two time ranges and return current/previous/delta columns."""
     from .api import to_semantic_table
@@ -489,6 +548,7 @@ def compare_periods(
 
     dimensions = _normalize_fields(dimensions, known_dimensions, expected_prefix=model_name)
     measures = _normalize_fields(measures, known_measures, expected_prefix=model_name)
+    time_grains = _normalize_time_grains(time_grains, known_dimensions, model_name)
 
     resolved_time_dimension = time_dimension
     if resolved_time_dimension is not None:
@@ -507,21 +567,68 @@ def compare_periods(
             "or pass time_dimension explicitly."
         )
 
+    if strict_semantic_boundaries:
+        comparison_order_fields = set(dimensions)
+        for measure in measures:
+            comparison_order_fields.update(
+                {
+                    f"{measure}_current",
+                    f"{measure}_previous",
+                    f"{measure}_delta",
+                    f"{measure}_pct_change",
+                }
+            )
+        _validate_semantic_boundaries(
+            dimensions=dimensions,
+            measures=measures,
+            filters=filters,
+            having=[],
+            order_by=None,
+            known_dimensions=known_dimensions,
+            known_measures=known_measures,
+            model_name=model_name,
+        )
+        if time_dimension is not None:
+            _raise_unknown_semantic_fields(
+                "time_dimension",
+                {resolved_time_dimension},
+                known_dimensions,
+            )
+        if order_by:
+            normalized_order_by = _normalize_order_by(
+                order_by,
+                comparison_order_fields,
+                expected_prefix=model_name,
+            )
+            _raise_unknown_semantic_fields(
+                "order_by fields",
+                {field for field, _ in normalized_order_by},
+                comparison_order_fields,
+            )
+
     current_result = query(
         semantic_table=semantic_table,
         dimensions=dimensions,
         measures=measures,
-        filters=[*filters, *_build_time_range_filters(semantic_table, resolved_time_dimension, current_time_range)],
+        filters=[
+            *filters,
+            *_build_time_range_filters(semantic_table, resolved_time_dimension, current_time_range),
+        ],
         time_grain=time_grain,
         time_grains=time_grains,
+        strict_semantic_boundaries=strict_semantic_boundaries,
     )
     previous_result = query(
         semantic_table=semantic_table,
         dimensions=dimensions,
         measures=measures,
-        filters=[*filters, *_build_time_range_filters(semantic_table, resolved_time_dimension, previous_time_range)],
+        filters=[
+            *filters,
+            *_build_time_range_filters(semantic_table, resolved_time_dimension, previous_time_range),
+        ],
         time_grain=time_grain,
         time_grains=time_grains,
+        strict_semantic_boundaries=strict_semantic_boundaries,
     )
 
     current_tbl = current_result.as_table().table.rename(
@@ -588,6 +695,7 @@ def query(
     time_grains: Mapping[str, TimeGrain] | None = None,
     time_range: Mapping[str, str] | None = None,
     having: Sequence[dict[str, Any] | str | Callable | Filter] | None = None,
+    strict_semantic_boundaries: bool = False,
 ) -> Any:  # Returns SemanticModel or SemanticAggregate
     """
     Query semantic table using parameter-based interface with time dimension support.
@@ -611,6 +719,9 @@ def query(
         having: Optional list of post-aggregation filters.  These are always
             applied after group-by/aggregate regardless of field type.  Use
             this for callable/lambda filters that reference measures.
+        strict_semantic_boundaries: When True, structured dimensions, measures,
+            order_by fields, and dict/Filter filters must reference declared
+            dimensions, measures, or calculated measures only.
 
     Returns:
         SemanticAggregate or SemanticTable ready for execution
@@ -673,6 +784,19 @@ def query(
     )
     order_by = _normalize_order_by(order_by, known_order_fields, expected_prefix=model_name)
     filters = list(filters or [])  # Copy to avoid mutating input
+    having = list(having or [])
+
+    if strict_semantic_boundaries:
+        _validate_semantic_boundaries(
+            dimensions=dimensions,
+            measures=measures,
+            filters=filters,
+            having=having,
+            order_by=order_by,
+            known_dimensions=known_dimensions,
+            known_measures=known_measures,
+            model_name=model_name,
+        )
 
     # Step 0: Add time_range as a filter if specified
     if time_range:
@@ -698,6 +822,7 @@ def query(
     # Build per-dimension grain mapping: either from time_grains directly,
     # or by expanding time_grain to all time dimensions in the query.
     grain_map: dict[str, str] = {}
+    time_grains = _normalize_time_grains(time_grains, known_dimensions, model_name)
     if time_grains:
         grain_map = {dim: _normalize_grain(g) for dim, g in time_grains.items()}
     elif time_grain:
@@ -741,7 +866,7 @@ def query(
 
     # Step 2: Apply filters — separate pre-agg (dimension) from post-agg (measure)
     pre_agg_filters = []
-    post_agg_filters = list(having or [])
+    post_agg_filters = list(having)
     for filter_spec in filters:
         _split_filter(filter_spec, known_measures, model_name, pre_agg_filters, post_agg_filters)
 
