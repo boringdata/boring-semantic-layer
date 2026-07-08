@@ -2171,6 +2171,23 @@ class _DeferrableJoin:
     deferred_dims: tuple  # Prefixed dimension names to add post-agg
 
 
+def _table_filter_resolver(raw_tbl, table_op, table_name):
+    """Build a filter resolver scoped to one source table.
+
+    Exposes the table's declared dimensions under both their bare and
+    table-prefixed names (raw columns resolve via the fallback), so
+    ownership checks resolve ``t["orders.status"]`` only against
+    ``orders``.
+    """
+    from .convert import _Resolver
+
+    dims = dict(_get_field_dict(table_op, "dimensions"))
+    if table_name:
+        for dname, dim in list(dims.items()):
+            dims[f"{table_name}.{dname}"] = dim
+    return _Resolver(raw_tbl, dims)
+
+
 def _find_deferrable_joins(
     join_op,
     group_by_keys: tuple[str, ...],
@@ -2195,12 +2212,14 @@ def _find_deferrable_joins(
         if not filters:
             return False
         raw_tbl = _to_untagged(table_op)
+        resolver = _table_filter_resolver(raw_tbl, table_op, table_name)
         for pred in filters:
             pred_fn = _unwrap(pred)
             try:
-                # If the predicate can be resolved against this table,
-                # it references its columns → can't defer
-                pred_fn(raw_tbl)
+                # If the predicate resolves against this table's columns or
+                # dimensions (bare or table-prefixed), it references the
+                # table → can't defer
+                _resolve_expr(pred_fn, resolver)
                 return True
             except Exception:
                 pass
@@ -2555,8 +2574,12 @@ class SemanticAggregateOp(Relation):
             if isinstance(node, SemanticJoinOp):
                 return node
             if isinstance(node, SemanticTableOp):
-                # Leaf operations - no source to traverse
-                return None
+                # Wrapper tables from SemanticJoin.with_measures()/
+                # with_dimensions() carry the join in _source_join; plain
+                # leaf tables carry None. Following it here keeps queries
+                # with filters between the wrapper and the aggregate on
+                # the fan-out-safe pre-aggregation path.
+                return node._source_join
             if node.source is not None:
                 return find_join_in_tree(node.source)
             return None
@@ -2748,6 +2771,7 @@ class SemanticAggregateOp(Relation):
         group_by_cols = list(self.keys)
 
         filters = filters or []
+        filter_fns = [_unwrap(pred) for pred in filters]
 
         # --- 1. Try to build the full joined table (for scope / dim bridge) ---
         # Pre-agg needs all tables for dimension bridges — no pruning here.
@@ -2758,18 +2782,69 @@ class SemanticAggregateOp(Relation):
                 [k for k in self.keys if k in merged_dimensions],
                 merged_dimensions,
             )
-            # Apply collected filters to the full joined table so that
-            # dimension bridges only include rows surviving the filter.
-            if filters:
-                from .convert import _Resolver
-
-                for pred in filters:
-                    pred_fn = _unwrap(pred)
-                    resolver = _Resolver(tbl, merged_dimensions)
-                    pred_expr = _resolve_expr(pred_fn, resolver)
-                    tbl = tbl.filter(pred_expr)
         except Exception:
             tbl = None  # chasm / column collision – work without full join
+
+        # Apply collected filters to the full joined table so that
+        # dimension bridges only include rows surviving the filter. A
+        # filter that fails to resolve here may still be pushed to its
+        # owning source table below; anything handled by neither path
+        # raises instead of silently dropping the filter.
+        filters_on_tbl: set[int] = set()
+        if tbl is not None and filter_fns:
+            from .convert import _Resolver
+
+            for i, pred_fn in enumerate(filter_fns):
+                try:
+                    resolver = _Resolver(tbl, merged_dimensions)
+                    filtered = tbl.filter(_resolve_expr(pred_fn, resolver))
+                except Exception:
+                    continue
+                tbl = filtered
+                filters_on_tbl.add(i)
+
+        # --- 1b. Determine which source table(s) each filter belongs to ---
+        # Ownership resolution uses each table's own dimensions (bare and
+        # table-prefixed) so ``t["orders.status"]`` resolves only against
+        # ``orders``. A filter owned by exactly one table is pushed to that
+        # table's raw table; a filter resolving against several tables is
+        # ambiguous and is only applied through the filtered joined table.
+        raw_tables: dict = {}
+        filter_owners: list[frozenset] = []
+        if filter_fns:
+            for tname, top in join_tree_info.table_ops.items():
+                try:
+                    raw_tables[tname] = _to_untagged(top)
+                except Exception:
+                    continue
+            for pred_fn in filter_fns:
+                owners = set()
+                for tname, top in join_tree_info.table_ops.items():
+                    raw = raw_tables.get(tname)
+                    if raw is None:
+                        continue
+                    try:
+                        _resolve_expr(pred_fn, _table_filter_resolver(raw, top, tname))
+                        owners.add(tname)
+                    except Exception:
+                        pass
+                filter_owners.append(frozenset(owners))
+            for i, owners in enumerate(filter_owners):
+                if i in filters_on_tbl or len(owners) == 1:
+                    continue
+                if len(owners) > 1:
+                    raise ValueError(
+                        f"Filter #{i} is ambiguous: it resolves against multiple "
+                        f"joined tables ({', '.join(sorted(owners))}) and could "
+                        "not be applied to the full joined table. Qualify the "
+                        'field with a table prefix (e.g. t["orders.status"]).'
+                    )
+                raise ValueError(
+                    f"Filter #{i} does not resolve against the joined table or "
+                    "any single source table; it would be silently ignored. "
+                    "Check the dimension/column name, or qualify it with a "
+                    'table prefix (e.g. t["orders.status"]).'
+                )
 
         # --- 2. Build aggregation plan ---
         if tbl is not None:
@@ -2817,12 +2892,17 @@ class SemanticAggregateOp(Relation):
         # Track COUNT DISTINCT measures deferred past pre-aggregation.
         # Value: (table_name, short_name, raw_tbl, measure_fn)
         _deferred_count_distincts: dict[str, tuple] = {}
+        # Fan-out-safe totals sources for t.all(...): per table, the
+        # filtered raw table plus the original (undecomposed) measure
+        # expressions, aggregated at zero grain on first need.
+        _totals_sources: dict = {}
 
         for table_name, measures in partitioned.items():
             if table_name is None:
                 # Unprefixed – aggregate on the full join if available
                 if tbl is not None:
                     agg_exprs = {n: f(tbl) for n, f in measures.items()}
+                    _totals_sources[None] = (tbl, dict(agg_exprs))
                     if group_by_cols:
                         r = tbl.group_by([tbl[c] for c in group_by_cols]).aggregate(**agg_exprs)
                     else:
@@ -2836,21 +2916,25 @@ class SemanticAggregateOp(Relation):
 
             raw_tbl = _to_untagged(table_op)
 
-            # Push applicable filters to per-table raw tables
-            if filters:
-                all_pushed = True
-                for pred in filters:
-                    pred_fn = _unwrap(pred)
-                    try:
-                        pred_expr = pred_fn(raw_tbl)
+            # Push filters owned by this table onto its raw table. Filters
+            # handled elsewhere (applied to the full joined table, or owned
+            # by another table) reach this table via a join-key bridge.
+            if filter_fns:
+                needs_bridge = False
+                for i, pred_fn in enumerate(filter_fns):
+                    if filter_owners[i] == frozenset({table_name}):
+                        pred_expr = _resolve_expr(
+                            pred_fn,
+                            _table_filter_resolver(raw_tbl, table_op, table_name),
+                        )
                         raw_tbl = raw_tbl.filter(pred_expr)
-                    except Exception:
-                        all_pushed = False  # filter references columns not on this table
+                    else:
+                        needs_bridge = True
 
-                # If some filters couldn't be pushed (cross-table filters),
-                # restrict via join keys from the filtered full joined table
-                # or from filtered raw tables that own the filter columns.
-                if not all_pushed:
+                # Filters not pushed here (cross-table, ambiguous, or owned
+                # by another table) restrict via join keys from the filtered
+                # full joined table, or from the owning table's raw table.
+                if needs_bridge:
                     jk = join_tree_info.table_join_keys.get(table_name, set())
                     if tbl is not None:
                         shared = sorted(jk & set(raw_tbl.columns) & set(tbl.columns))
@@ -2859,32 +2943,34 @@ class SemanticAggregateOp(Relation):
                             preds = [raw_tbl[c] == key_bridge[c] for c in shared]
                             raw_tbl = raw_tbl.inner_join(key_bridge, preds).select(raw_tbl)
                     else:
-                        # Chasm fallback: build key bridge from other raw tables
-                        for other_name, other_op in join_tree_info.table_ops.items():
-                            if other_name == table_name:
+                        # Chasm fallback: restrict via each owning table's keys
+                        for i, pred_fn in enumerate(filter_fns):
+                            owners = filter_owners[i]
+                            if table_name in owners or len(owners) != 1:
                                 continue
-                            other_raw = _to_untagged(other_op)
-                            can_filter = False
-                            for pred in filters:
-                                pred_fn = _unwrap(pred)
-                                try:
-                                    pred_expr = pred_fn(other_raw)
-                                    other_raw = other_raw.filter(pred_expr)
-                                    can_filter = True
-                                except Exception:
-                                    pass
-                            if can_filter:
-                                other_jk = join_tree_info.table_join_keys.get(other_name, set())
-                                shared = sorted(
-                                    jk & other_jk & set(raw_tbl.columns) & set(other_raw.columns)
+                            (owner_name,) = owners
+                            owner_op = join_tree_info.table_ops.get(owner_name)
+                            owner_raw = raw_tables.get(owner_name)
+                            if owner_op is None or owner_raw is None:
+                                continue
+                            owner_raw = owner_raw.filter(
+                                _resolve_expr(
+                                    pred_fn,
+                                    _table_filter_resolver(
+                                        owner_raw, owner_op, owner_name
+                                    ),
                                 )
-                                if shared:
-                                    key_bridge = other_raw.select(
-                                        [other_raw[c] for c in shared]
-                                    ).distinct()
-                                    preds = [raw_tbl[c] == key_bridge[c] for c in shared]
-                                    raw_tbl = raw_tbl.inner_join(key_bridge, preds).select(raw_tbl)
-                                    break
+                            )
+                            owner_jk = join_tree_info.table_join_keys.get(owner_name, set())
+                            shared = sorted(
+                                jk & owner_jk & set(raw_tbl.columns) & set(owner_raw.columns)
+                            )
+                            if shared:
+                                key_bridge = owner_raw.select(
+                                    [owner_raw[c] for c in shared]
+                                ).distinct()
+                                preds = [raw_tbl[c] == key_bridge[c] for c in shared]
+                                raw_tbl = raw_tbl.inner_join(key_bridge, preds).select(raw_tbl)
 
             table_measures = _get_field_dict(table_op, "measures")
             table_dims = _get_field_dict(table_op, "dimensions")
@@ -2892,10 +2978,14 @@ class SemanticAggregateOp(Relation):
 
             # Build agg expressions on the raw table
             agg_exprs: dict = {}
+            _tot_exprs: dict = {}
             for mname, _mfn in measures.items():
                 short = mname.split(".", 1)[1] if "." in mname else mname
                 if short in table_measures:
                     expr = table_measures[short](raw_tbl)
+                    # Original expression on the filtered raw table: at zero
+                    # grain this is fan-out-safe, so it powers t.all(...) totals
+                    _tot_exprs[mname] = expr
                     # Decompose MEAN into SUM + COUNT for correct re-aggregation
                     if _is_mean_expr(expr):
                         mean_op = expr.op()
@@ -2913,6 +3003,9 @@ class SemanticAggregateOp(Relation):
                     else:
                         _reagg_ops[mname] = _reagg_op_for_expr(expr)
                         agg_exprs[mname] = expr
+
+            if _tot_exprs:
+                _totals_sources[table_name] = (raw_tbl, _tot_exprs)
 
             if not agg_exprs:
                 continue
@@ -3100,7 +3193,29 @@ class SemanticAggregateOp(Relation):
 
         # --- 6. Apply calc_specs ---
         if plan.calc_specs:
-            result = self._apply_calc_specs(result, plan, tbl)
+
+            def _fanout_safe_totals():
+                """Zero-grain totals from per-table raw aggregates.
+
+                Aggregating each (filtered) source table without grouping
+                cannot fan out, so ``t.all(...)`` denominators stay correct
+                under join_many.
+                """
+                parts = [
+                    src.aggregate(**texprs)
+                    for src, texprs in _totals_sources.values()
+                    if texprs
+                ]
+                if not parts:
+                    return None
+                total = parts[0]
+                for p in parts[1:]:
+                    total = total.cross_join(p)
+                return total
+
+            result = self._apply_calc_specs(
+                result, plan, tbl, totals_builder=_fanout_safe_totals
+            )
 
         # --- 7. Select requested columns ---
         available = frozenset(result.columns)
@@ -3191,18 +3306,26 @@ class SemanticAggregateOp(Relation):
             merged_dimensions,
         )
 
-        # Apply filters
+        # Apply filters — loudly. Filters referencing deferred tables were
+        # already excluded from deferral by _find_deferrable_joins, so a
+        # filter that fails to resolve here is a genuine error, not a
+        # cross-table predicate awaiting another mechanism.
         if filters:
             from .convert import _Resolver
 
-            for pred in filters:
+            for i, pred in enumerate(filters):
                 pred_fn = _unwrap(pred)
                 try:
                     resolver = _Resolver(core_tbl, merged_dimensions)
                     pred_expr = _resolve_expr(pred_fn, resolver)
-                    core_tbl = core_tbl.filter(pred_expr)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    raise ValueError(
+                        f"Filter #{i} does not resolve against the aggregation "
+                        "source table; it would be silently ignored. Check the "
+                        "dimension/column name, or qualify it with a table "
+                        'prefix (e.g. t["orders.status"]).'
+                    ) from exc
+                core_tbl = core_tbl.filter(pred_expr)
 
         # Build aggregation expressions
         scope = MeasureScope(
@@ -3465,7 +3588,7 @@ class SemanticAggregateOp(Relation):
         return result
 
     @staticmethod
-    def _apply_calc_specs(result, plan, tbl):
+    def _apply_calc_specs(result, plan, tbl, totals_builder=None):
         """Apply calculated measure specs to the pre-aggregated result.
 
         Each calc spec is a :class:`CalcMeasure` whose lambda is
@@ -3475,6 +3598,11 @@ class SemanticAggregateOp(Relation):
         result so non-sum measures (mean/quantile/…) get correct overall
         values; ``apply_calc_measures`` builds the totals lazily on
         first use.
+
+        ``totals_builder`` overrides how the base totals table is built.
+        The pre-agg path passes a fan-out-safe builder that aggregates
+        each source table at zero grain — re-running agg specs on the
+        fanned-out join would inflate ``t.all(...)`` denominators.
         """
         if not plan.calc_specs:
             return result
@@ -3486,6 +3614,7 @@ class SemanticAggregateOp(Relation):
             dict(plan.calc_specs),
             known,
             agg_specs=dict(plan.agg_specs),
+            totals_base_builder=totals_builder,
         )
 
 

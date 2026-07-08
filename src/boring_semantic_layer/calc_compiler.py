@@ -474,6 +474,7 @@ def apply_calc_measures(
     real_totals_tbl=None,
     agg_specs: dict[str, Any] | None = None,
     totals_prefix: str = TOTALS_PREFIX,
+    totals_base_builder: Any | None = None,
 ):
     """Re-run each calc-measure lambda against the real aggregated table.
 
@@ -553,7 +554,11 @@ def apply_calc_measures(
             if real_with_totals is None:
                 if real_totals_tbl is None:
                     real_totals_tbl = _build_totals_from_agg_specs(
-                        base_tbl, agg_specs, calc_lambdas, known_measures
+                        base_tbl,
+                        agg_specs,
+                        calc_lambdas,
+                        known_measures,
+                        base_totals_builder=totals_base_builder,
                     )
                 if real_totals_tbl is not None:
                     real_with_totals = _join_totals(
@@ -847,6 +852,7 @@ def _build_totals_from_agg_specs(
     calc_lambdas: dict[str, Any],
     known_measures: frozenset[str],
     classifications: dict[str, CalcExprAnalysis] | None = None,
+    base_totals_builder: Any | None = None,
 ):
     """Build a no-group-by totals table when callers passed ``agg_specs``.
 
@@ -855,15 +861,25 @@ def _build_totals_from_agg_specs(
     see correctly-recomputed dependencies. Returns ``None`` when there
     is no way to construct totals (no ``agg_specs`` supplied or the
     specs fail to evaluate against the base).
+
+    ``base_totals_builder``, when given, replaces the agg-spec re-run as
+    the source of base totals. The pre-agg join path uses it because
+    re-running agg specs on a fanned-out join inflates the totals; the
+    builder aggregates each source table at zero grain instead.
     """
-    if not agg_specs:
-        return None
-    try:
-        totals_aggs = {n: f(base_tbl) for n, f in agg_specs.items()}
-    except Exception as exc:
-        logger.debug("totals aggregation failed to evaluate: %s", exc)
-        return None
-    real_totals = base_tbl.aggregate(**totals_aggs)
+    if base_totals_builder is not None:
+        real_totals = base_totals_builder()
+        if real_totals is None:
+            return None
+    else:
+        if not agg_specs:
+            return None
+        try:
+            totals_aggs = {n: f(base_tbl) for n, f in agg_specs.items()}
+        except Exception as exc:
+            logger.debug("totals aggregation failed to evaluate: %s", exc)
+            return None
+        real_totals = base_tbl.aggregate(**totals_aggs)
 
     if classifications is None:
         classifications = classify_calc_lambdas(calc_lambdas, base_tbl, known_measures)

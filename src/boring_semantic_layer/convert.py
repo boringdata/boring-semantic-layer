@@ -105,7 +105,17 @@ class _Resolver:
         return getattr(self._t, name)
 
     def __getitem__(self, name: str):
-        return getattr(self._t, name)
+        # Materialized columns win (e.g. prefixed columns already present
+        # on a post-aggregation result, where the dimension lambda would
+        # be stale). Fall back to declared dimensions so bracket access
+        # also resolves prefixed names like t["orders.status"] on tables
+        # that don't carry them as literal columns yet.
+        try:
+            return getattr(self._t, name)
+        except AttributeError:
+            if name in self._dims:
+                return self._dims[name](self._t).name(name)
+            raise
 
 
 @frozen
@@ -128,7 +138,18 @@ class _AggResolver:
         return getattr(self._t, key)
 
     def __getitem__(self, key: str):
-        return getattr(self._t, key)
+        # Materialized columns win (a stale dim/measure lambda must not
+        # shadow a column that already exists on the result); fall back
+        # to declared dims/measures for prefixed names like
+        # t["orders.total"] that aren't literal columns yet.
+        try:
+            return getattr(self._t, key)
+        except AttributeError:
+            if key in self._dims:
+                return self._dims[key](self._t)
+            if key in self._meas:
+                return self._meas[key](self._t)
+            raise
 
 
 # ============================================================================
