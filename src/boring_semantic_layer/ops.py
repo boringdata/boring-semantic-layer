@@ -2865,9 +2865,27 @@ class SemanticAggregateOp(Relation):
         if tbl is not None and filter_fns:
             from .convert import _Resolver
 
+            # Bare aliases for prefixed dims: a filter written `t.size`
+            # against a join where exactly one table declares `size` must
+            # resolve on the joined table too — otherwise the dim bridge is
+            # built from the UNFILTERED join and sibling tables' measures
+            # silently ignore the filter. Physical columns keep priority
+            # (aliases are only added for names that are not columns of the
+            # joined table), and ambiguous suffixes get no alias so they
+            # still hit the loud ownership check below.
+            dims_for_tbl = dict(merged_dimensions)
+            tbl_cols = set(tbl.columns)
+            _by_suffix: dict[str, list[str]] = {}
+            for dname in merged_dimensions:
+                if "." in dname:
+                    _by_suffix.setdefault(dname.split(".", 1)[1], []).append(dname)
+            for short, fulls in _by_suffix.items():
+                if short not in dims_for_tbl and short not in tbl_cols and len(fulls) == 1:
+                    dims_for_tbl[short] = merged_dimensions[fulls[0]]
+
             for i, pred_fn in enumerate(filter_fns):
                 try:
-                    resolver = _Resolver(tbl, merged_dimensions)
+                    resolver = _Resolver(tbl, dims_for_tbl)
                     filtered = tbl.filter(_resolve_expr(pred_fn, resolver))
                 except Exception:
                     continue
