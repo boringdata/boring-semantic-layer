@@ -2294,6 +2294,25 @@ def _find_deferrable_joins(
         if not deferred_dims:
             return
 
+        # Deferral attaches dim labels to entity-grain rows WITHOUT
+        # re-aggregating, so it is only sound when the requested group keys
+        # already pin the entity grain. Grouping by a coarser attribute
+        # alone (e.g. customers.region) must go through the pre-agg path,
+        # which re-groups correctly; deferring it returns one row per
+        # entity with duplicated dim values.
+        left_key_names = frozenset(left_cols)
+
+        def _key_covers_entity(entity_name):
+            candidates = {entity_name, f"{right_name}.{entity_name}"}
+            for k in group_by_keys:
+                short = k.split(".", 1)[-1]
+                if k in candidates or short == entity_name or short in left_key_names:
+                    return True
+            return False
+
+        if not all(_key_covers_entity(e) for e in entity_dims):
+            return
+
         deferrable.append(_DeferrableJoin(
             table_name=right_name,
             table_op=right,
@@ -3390,18 +3409,27 @@ class SemanticAggregateOp(Relation):
                     if callable(dim_fn):
                         try:
                             expr = dim_fn(dim_tbl)
-                            col_name = expr.get_name()
-                            if col_name in dim_tbl.columns:
-                                # Direct column — use as-is
-                                dim_cols_to_add.append((dim_name, col_name))
-                            else:
-                                # Derived expression — mutate onto dim table
-                                # Use a temp name to avoid collisions
-                                temp_name = f"__deferred_{short}"
-                                dim_tbl = dim_tbl.mutate(**{temp_name: expr})
-                                dim_cols_to_add.append((dim_name, temp_name))
                         except Exception:
-                            pass
+                            # Derived dims may reference other derived dims;
+                            # materialize dependencies first. Failures beyond
+                            # that raise — silently dropping the requested
+                            # dimension returned unlabeled rows at a hidden
+                            # grain.
+                            dim_tbl = _mutate_dimensions_with_dependencies(
+                                dim_tbl, [short], right_dims
+                            )
+                            dim_cols_to_add.append((dim_name, short))
+                            continue
+                        col_name = expr.get_name()
+                        if col_name in dim_tbl.columns:
+                            # Direct column — use as-is
+                            dim_cols_to_add.append((dim_name, col_name))
+                        else:
+                            # Derived expression — mutate onto dim table
+                            # Use a temp name to avoid collisions
+                            temp_name = f"__deferred_{short}"
+                            dim_tbl = dim_tbl.mutate(**{temp_name: expr})
+                            dim_cols_to_add.append((dim_name, temp_name))
 
             if dim_cols_to_add:
                 # Perform the LEFT JOIN
