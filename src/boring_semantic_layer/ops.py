@@ -4738,14 +4738,31 @@ def _build_numeric_index_fragment(
 def _resolve_selector(
     selector: str | list[str] | Callable | None,
     base_tbl: ir.Table,
+    known_fields=frozenset(),
 ) -> tuple[str, ...]:
     if selector is None:
         return tuple(base_tbl.columns)
-    try:
-        selected = base_tbl.select(selector)
-        return tuple(selected.columns)
-    except Exception:
-        return []
+    names = None
+    if isinstance(selector, str):
+        names = [selector]
+    elif isinstance(selector, (list, tuple)) and all(isinstance(n, str) for n in selector):
+        names = list(selector)
+    if names is not None:
+        known = set(known_fields) | set(base_tbl.columns)
+        unknown = [n for n in names if n not in known]
+        if unknown:
+            raise ValueError(
+                f"index() selector matched no dimension or column: {unknown}. "
+                f"Available fields: {sorted(known)}"
+            )
+        return tuple(names)
+    # Callable / ibis selector: let resolution errors propagate loudly — an
+    # empty fallback here made a failing selector index every field.
+    if callable(selector) and not isinstance(selector, s.Selector):
+        resolved = selector(base_tbl)
+        exprs = resolved if isinstance(resolved, (list, tuple)) else [resolved]
+        return tuple(e.get_name() for e in exprs)
+    return tuple(base_tbl.select(selector).columns)
 
 
 def _get_fields_to_index(
@@ -4756,7 +4773,7 @@ def _get_fields_to_index(
     if selector is None:
         selector = s.all()
 
-    raw_fields = _resolve_selector(selector, base_tbl)
+    raw_fields = _resolve_selector(selector, base_tbl, known_fields=merged_dimensions.keys())
 
     if not raw_fields:
         result = list(merged_dimensions.keys())
