@@ -2327,7 +2327,8 @@ def _find_deferrable_joins(
 
 def _left_join_bridge(left, bridge, common_keys):
     """Left-join *bridge* onto *left*, selecting only new columns from bridge."""
-    preds = [left[c] == bridge[c] for c in common_keys]
+    # Null-safe equality so NULL-valued keys still pair up
+    preds = [left[c].identical_to(bridge[c]) for c in common_keys]
     bridge_only = tuple(c for c in bridge.columns if c not in frozenset(common_keys))
     return left.left_join(bridge, preds).select([left] + [bridge[c] for c in bridge_only])
 
@@ -3511,7 +3512,10 @@ class SemanticAggregateOp(Relation):
             if not common:
                 return pt
 
-            preds = [dim_bridge[c] == pt[c] for c in common]
+            # Null-safe equality: a NULL group key (real NULL dim value, or
+            # minted by the outer join for parents with no children) must
+            # still match its pre-agg row
+            preds = [dim_bridge[c].identical_to(pt[c]) for c in common]
             joined_pt = dim_bridge.left_join(pt, preds).select(
                 [dim_bridge] + [pt[c] for c in pt_meas]
             )

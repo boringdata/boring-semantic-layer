@@ -140,7 +140,10 @@ def join_tables(by_cols: Iterable[str], tables: list) -> Any:
     by_cols_set = set(by_cols)
 
     def join_step(left, right):
-        predicates = [left[c] == right[c] for c in by_cols]
+        # Null-safe equality: group keys can legitimately be NULL (real NULL
+        # dim values, or keys minted by an outer join). Plain == drops those
+        # groups from every table but the first.
+        predicates = [left[c].identical_to(right[c]) for c in by_cols]
         right_cols = [c for c in right.columns if c not in by_cols_set]
         right_select = [right[c] for c in right_cols]
         return left.left_join(right, predicates).select([left] + right_select)
