@@ -2426,11 +2426,17 @@ def _is_count_distinct_expr(expr):
 
 
 def _reagg_op_for_expr(expr):
-    """Return the correct re-aggregation operation name for an ibis expression.
+    """Return the re-aggregation operation name for an ibis expression.
 
-    Additive measures (SUM, COUNT) re-aggregate with ``sum``.
-    MIN and MAX re-aggregate with ``min`` and ``max`` respectively.
-    MEAN should never reach here — it is decomposed by ``_is_mean_expr``.
+    Additive measures (SUM, COUNT) re-aggregate with ``sum``; MIN and MAX
+    with ``min``/``max``. MEAN never reaches here (decomposed by
+    ``_is_mean_expr``), nor does COUNT DISTINCT (deferred).
+
+    Returns ``None`` for everything else — median, stddev, variance,
+    compound expressions like ``sum()/count()`` — which cannot be
+    re-aggregated from a finer pre-aggregate at all. Those measures must
+    be computed at the exact target grain (``_exact_grain_preagg``);
+    the previous ``"sum"`` default silently summed per-key medians.
     """
     op = expr.op()
     reductions = _reductions_for_expr(expr)
@@ -2438,6 +2444,8 @@ def _reagg_op_for_expr(expr):
         return "min"
     if isinstance(op, reductions.Max):
         return "max"
+    if isinstance(op, (reductions.Sum, reductions.Count, reductions.CountStar)):
+        return "sum"
     if isinstance(op, reductions.Mean):
         raise ValueError(
             f"Mean expression {expr.get_name()!r} was not decomposed — "
@@ -2448,12 +2456,55 @@ def _reagg_op_for_expr(expr):
             f"CountDistinct expression {expr.get_name()!r} was not deferred — "
             "this is a bug in the pre-aggregation logic"
         )
-    return "sum"
+    return None
 
 
 def _build_reagg(col_ref, op_name):
     """Apply the correct re-aggregation to a column reference."""
     return getattr(col_ref, op_name)()
+
+
+def _exact_grain_preagg(raw_tbl, tbl, group_by_cols, join_keys, exact_measures):
+    """Aggregate non-decomposable measures at the exact target grain.
+
+    Median, stddev, variance and compound expressions (``sum()/count()``)
+    cannot be re-aggregated from a finer pre-aggregate. Build a
+    (group keys -> join keys) bridge from the joined table and aggregate
+    the raw rows directly per group: each raw row participates once per
+    group-key value it maps to, matching the join-participation semantics
+    of the decomposable path. Raises instead of degrading — the previous
+    behavior summed per-key values silently.
+    """
+    names = ", ".join(sorted(exact_measures))
+    if tbl is None:
+        raise ValueError(
+            f"Cannot compute non-decomposable measure(s) {names} at a "
+            "cross-table grain: the joined table is unavailable."
+        )
+    missing = [c for c in group_by_cols if c not in tbl.columns]
+    if missing:
+        raise ValueError(
+            f"Cannot compute non-decomposable measure(s) {names}: group "
+            f"key(s) {missing} are not materialized on the joined table."
+        )
+    shared_jk = [k for k in join_keys if k in tbl.columns]
+    if not shared_jk:
+        raise ValueError(
+            f"Cannot compute non-decomposable measure(s) {names}: no join "
+            "keys shared with the joined table to bridge the target grain."
+        )
+    # Temp names so bridge group columns can never shadow raw columns the
+    # measure expressions reference
+    tmp = {c: f"__exact_gb_{i}" for i, c in enumerate(group_by_cols)}
+    bridge = tbl.select(
+        [tbl[c].name(tmp[c]) for c in group_by_cols] + [tbl[k] for k in shared_jk]
+    ).distinct()
+    preds = [bridge[k].identical_to(raw_tbl[k]) for k in shared_jk]
+    joined = bridge.inner_join(raw_tbl, preds)
+    aggs = {m: fn(joined) for m, fn in exact_measures.items()}
+    pt = joined.group_by([joined[t] for t in tmp.values()]).aggregate(**aggs)
+    # ibis rename convention: {new_name: old_name}
+    return pt.rename({orig: tmp_name for orig, tmp_name in tmp.items()})
 
 
 def _partition_agg_specs_by_source(
@@ -2999,6 +3050,7 @@ class SemanticAggregateOp(Relation):
             # Build agg expressions on the raw table
             agg_exprs: dict = {}
             _tot_exprs: dict = {}
+            _exact_measures_t: dict = {}
             for mname, _mfn in measures.items():
                 short = mname.split(".", 1)[1] if "." in mname else mname
                 if short in table_measures:
@@ -3026,13 +3078,21 @@ class SemanticAggregateOp(Relation):
                             table_name, short, raw_tbl, table_measures[short],
                         )
                     else:
-                        _reagg_ops[mname] = _reagg_op_for_expr(expr)
-                        agg_exprs[mname] = expr
+                        reagg = _reagg_op_for_expr(expr)
+                        if reagg is None and group_by_cols:
+                            # Non-decomposable (median, stddev, compound
+                            # ratio): computed at the exact target grain
+                            # after the grain decision below
+                            _exact_measures_t[mname] = table_measures[short]
+                        else:
+                            if reagg is not None:
+                                _reagg_ops[mname] = reagg
+                            agg_exprs[mname] = expr
 
             if _tot_exprs:
                 _totals_sources[table_name] = (raw_tbl, _tot_exprs)
 
-            if not agg_exprs:
+            if not agg_exprs and not _exact_measures_t:
                 continue
 
             # --- Compute grain ---
@@ -3111,12 +3171,26 @@ class SemanticAggregateOp(Relation):
                 case _:
                     grain = tuple(_local_dims)
 
-            if grain:
-                _preagg_results.append(
-                    raw_tbl.group_by([raw_tbl[c] for c in grain]).aggregate(**agg_exprs)
-                )
-            else:
-                _preagg_results.append(raw_tbl.aggregate(**agg_exprs))
+            if _exact_measures_t:
+                if not has_cross_table_gb:
+                    # Local grain IS the target grain — aggregate the
+                    # original expressions directly, no re-agg happens
+                    for m, fn in _exact_measures_t.items():
+                        agg_exprs[m] = fn(raw_tbl)
+                else:
+                    _preagg_results.append(
+                        _exact_grain_preagg(
+                            raw_tbl, tbl, group_by_cols, available_jk, _exact_measures_t
+                        )
+                    )
+
+            if agg_exprs:
+                if grain:
+                    _preagg_results.append(
+                        raw_tbl.group_by([raw_tbl[c] for c in grain]).aggregate(**agg_exprs)
+                    )
+                else:
+                    _preagg_results.append(raw_tbl.aggregate(**agg_exprs))
 
         # Freeze mutable accumulators
         preagg_results = tuple(_preagg_results)
