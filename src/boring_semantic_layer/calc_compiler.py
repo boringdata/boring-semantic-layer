@@ -414,9 +414,12 @@ def compile_calc_measure(
         )
         for col_name in totals_schema:
             prefixed = f"{totals_prefix}{col_name}"
-            target_name = prefixed if prefixed in rwt_columns else col_name
-            if target_name in rwt_columns:
-                subs[Field(totals_vt_op, col_name)] = Field(rwt_op, target_name)
+            # Only substitute the real TOTALS column. Falling back to the
+            # unprefixed per-group column silently replaced the grand total
+            # with the group's own value (every share became 1.0) and made
+            # the unresolved-reference guard below unreachable.
+            if prefixed in rwt_columns:
+                subs[Field(totals_vt_op, col_name)] = Field(rwt_op, prefixed)
 
     rewritten = op.replace(subs)
 
@@ -635,21 +638,19 @@ def attach_windowed_totals(
         try:
             agg_expr = agg_specs[name](new_base)
         except Exception as exc:
-            logger.debug(
-                "could not evaluate agg_spec for %r when attaching windowed totals: %s",
-                name,
-                exc,
-            )
-            continue
+            raise TotalsNotAvailableError(
+                f"Could not evaluate the aggregation for {name!r} while "
+                "attaching totals; a skipped totals column would silently "
+                "substitute the per-group value for the grand total."
+            ) from exc
         try:
             windowed = agg_expr.over(ibis_mod.window())
         except Exception as exc:
-            logger.debug(
-                "could not wrap %r in window() for windowed totals: %s",
-                name,
-                exc,
-            )
-            continue
+            raise TotalsNotAvailableError(
+                f"Could not window the aggregation for {name!r} while "
+                "attaching totals; a skipped totals column would silently "
+                "substitute the per-group value for the grand total."
+            ) from exc
         col = f"{totals_prefix}{name}"
         new_base = new_base.mutate(**{col: windowed})
         arbitrary_specs[col] = (lambda t, _c=col: t[_c].arbitrary())
@@ -772,10 +773,11 @@ def attach_calc_totals(
             else:
                 totals_expr = fn
         except Exception as exc:
-            logger.debug(
-                "calc-of-calc totals evaluation failed for %r: %s", calc_name, exc
-            )
-            continue
+            raise TotalsNotAvailableError(
+                f"Could not evaluate totals for calc measure {calc_name!r}; "
+                "a skipped totals column would silently substitute the "
+                "per-group value for the grand total."
+            ) from exc
         col = f"{totals_prefix}{calc_name}"
         real_agg_tbl = real_agg_tbl.mutate(**{col: totals_expr})
 
