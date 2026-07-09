@@ -3009,10 +3009,15 @@ class SemanticAggregateOp(Relation):
                     if _is_mean_expr(expr):
                         mean_op = expr.op()
                         base_col = mean_op.arg.to_expr()
+                        # mean(where=...) must filter both legs, or the
+                        # decomposed mean silently ignores its condition
+                        mean_where = (
+                            mean_op.where.to_expr() if mean_op.where is not None else None
+                        )
                         sum_col = f"_sum__{mname}"
                         count_col = f"_count__{mname}"
-                        agg_exprs[sum_col] = base_col.sum()
-                        agg_exprs[count_col] = base_col.count()
+                        agg_exprs[sum_col] = base_col.sum(where=mean_where)
+                        agg_exprs[count_col] = base_col.count(where=mean_where)
                         _decomposed_means[mname] = (sum_col, count_col)
                     elif _is_count_distinct_expr(expr):
                         # COUNT DISTINCT is immune to fan-out — defer past pre-agg
