@@ -2188,6 +2188,141 @@ def _table_filter_resolver(raw_tbl, table_op, table_name):
     return _Resolver(raw_tbl, dims)
 
 
+_FIELD_TYPES = tuple({ibis_ops.Field, xorq_ops.Field})
+_AND_TYPES = tuple({ibis_ops.And, xorq_ops.And})
+
+
+def _leaf_rel_types():
+    """Base relation classes for both ibis flavors (plus xorq Read)."""
+    from ._xorq import Read as _XorqRead
+
+    types = {
+        ibis_ops.DatabaseTable,
+        ibis_ops.InMemoryTable,
+        xorq_ops.DatabaseTable,
+        xorq_ops.InMemoryTable,
+    }
+    if _XorqRead is not None:
+        types.add(_XorqRead)
+    return tuple(types)
+
+
+def _flatten_and_legs(expr):
+    """Flatten a boolean expression's top-level AND chain into legs."""
+    op = expr.op()
+    if isinstance(op, _AND_TYPES):
+        return _flatten_and_legs(op.left.to_expr()) + _flatten_and_legs(op.right.to_expr())
+    return [expr]
+
+
+def _value_fields(value_op):
+    """Fields referenced by a value op, without descending into relations.
+
+    Descending into a Field's relation would surface every column of the
+    join tree; provenance only wants the fields the value itself reads.
+    """
+    from .graph_utils import gen_children_of
+
+    out, stack, seen = [], [value_op], set()
+    while stack:
+        node = stack.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        if isinstance(node, _FIELD_TYPES):
+            out.append(node)
+            continue
+        if isinstance(node, (Relation, xorq_ops.Relation)):
+            continue
+        stack.extend(gen_children_of(node))
+    return out
+
+
+def _field_base_relations(field_op, leaf_types, guard=0):
+    """Resolve a Field down to the base relation(s) its value derives from."""
+    if guard > 100:
+        return {None}
+    rel, name = field_op.rel, field_op.name
+    if isinstance(rel, leaf_types):
+        return {rel}
+    values = getattr(rel, "values", None)
+    if values is not None and name in values:
+        bases = set()
+        for f in _value_fields(values[name]):
+            bases |= _field_base_relations(f, leaf_types, guard + 1)
+        return bases
+    parent = getattr(rel, "parent", None)
+    if parent is not None:
+        return _field_base_relations(field_op.__class__(parent, name), leaf_types, guard + 1)
+    return {rel}
+
+
+def _base_rel_key(rel):
+    """Structural fingerprint for a base relation.
+
+    Separately-built untagged tables wrap distinct backend instances, so
+    node equality fails even for the same physical table; match on class,
+    table name and schema instead.
+    """
+    try:
+        schema_names = tuple(rel.schema.names)
+    except Exception:
+        schema_names = ()
+    return (type(rel).__name__, getattr(rel, "name", None), schema_names)
+
+
+def _leg_source_tables(leg_expr, base_rel_to_table, leaf_types):
+    """Names of the source tables a filter leg's fields derive from."""
+    sources = set()
+    for f in _value_fields(leg_expr.op()):
+        for base in _field_base_relations(f, leaf_types):
+            sources.add(base_rel_to_table.get(_base_rel_key(base), "__unknown__"))
+    return sources
+
+
+def _inline_to_base_op(node, leaf_types, target_tbl=None, guard=0):
+    """Rewrite a value op so every Field references a base relation.
+
+    Projection/filter chains between the joined table and the base are
+    inlined, producing an expression that can be re-applied to the owning
+    table's raw table (row-precise filter pushdown). When ``target_tbl``
+    is given, base fields are rebased onto it by column name — the join's
+    copy of a base relation wraps a different backend instance, so node
+    identity alone would fail the Filter integrity check.
+    """
+    if guard > 200:
+        raise ValueError("expression too deep to rebind")
+    if isinstance(node, _FIELD_TYPES):
+        rel, name = node.rel, node.name
+        if isinstance(rel, leaf_types):
+            if target_tbl is not None:
+                return target_tbl[name].op()
+            return node
+        values = getattr(rel, "values", None)
+        if values is not None and name in values:
+            return _inline_to_base_op(values[name], leaf_types, target_tbl, guard + 1)
+        parent = getattr(rel, "parent", None)
+        if parent is not None:
+            return _inline_to_base_op(
+                node.__class__(parent, name), leaf_types, target_tbl, guard + 1
+            )
+        return node
+    if isinstance(node, (Relation, xorq_ops.Relation)):
+        raise ValueError("cannot rebind a predicate containing a subquery")
+
+    def _tx(a):
+        if isinstance(a, tuple):
+            return tuple(_tx(x) for x in a)
+        if isinstance(a, _FIELD_TYPES) or hasattr(a, "__argnames__"):
+            return _inline_to_base_op(a, leaf_types, target_tbl, guard + 1)
+        return a
+
+    new_args = [_tx(a) for a in node.args]
+    if all(n is o for n, o in zip(new_args, node.args)):
+        return node
+    return node.__class__(**dict(zip(node.__argnames__, new_args)))
+
+
 def _find_deferrable_joins(
     join_op,
     group_by_keys: tuple[str, ...],
@@ -2862,6 +2997,7 @@ class SemanticAggregateOp(Relation):
         # owning source table below; anything handled by neither path
         # raises instead of silently dropping the filter.
         filters_on_tbl: set[int] = set()
+        tbl_filter_exprs: dict[int, Any] = {}
         if tbl is not None and filter_fns:
             from .convert import _Resolver
 
@@ -2886,11 +3022,13 @@ class SemanticAggregateOp(Relation):
             for i, pred_fn in enumerate(filter_fns):
                 try:
                     resolver = _Resolver(tbl, dims_for_tbl)
-                    filtered = tbl.filter(_resolve_expr(pred_fn, resolver))
+                    pred_expr = _resolve_expr(pred_fn, resolver)
+                    filtered = tbl.filter(pred_expr)
                 except Exception:
                     continue
                 tbl = filtered
                 filters_on_tbl.add(i)
+                tbl_filter_exprs[i] = pred_expr
 
         # --- 1b. Determine which source table(s) each filter belongs to ---
         # Ownership resolution uses each table's own dimensions (bare and
@@ -2934,6 +3072,47 @@ class SemanticAggregateOp(Relation):
                     "Check the dimension/column name, or qualify it with a "
                     'table prefix (e.g. t["orders.status"]).'
                 )
+
+        # --- 1c. Split cross-table conjunctions into per-table legs ---
+        # A compound like (t["orders.status"]=="open") & (t.qty >= 2) has no
+        # single owner, so it used to reach the many side only through a
+        # join-KEY bridge, keeping every item of any qualifying order — the
+        # item-level leg was silently dropped. Split top-level ANDs and track
+        # each leg's source tables via field provenance so legs can be pushed
+        # row-precisely to the table they constrain.
+        filter_legs: dict[int, list] = {}
+        many_side_tables: set[str] = set()
+        if tbl_filter_exprs:
+            leaf_types = _leaf_rel_types()
+            base_rel_to_table: dict = {}
+            for tname, raw in raw_tables.items():
+                for leaf in walk_nodes(leaf_types, raw):
+                    key = _base_rel_key(leaf)
+                    # Same physical table on both sides (self-join): a leg
+                    # can't be attributed to one alias — never match.
+                    if base_rel_to_table.get(key, tname) != tname:
+                        base_rel_to_table[key] = "__ambiguous__"
+                    else:
+                        base_rel_to_table[key] = tname
+            for i, expr in tbl_filter_exprs.items():
+                if filter_owners[i] and len(filter_owners[i]) == 1:
+                    continue  # whole filter pushes to its single owner
+                filter_legs[i] = [
+                    (leg, _leg_source_tables(leg, base_rel_to_table, leaf_types))
+                    for leg in _flatten_and_legs(expr)
+                ]
+
+            def _collect_many_sides(node):
+                if isinstance(node, SemanticJoinOp):
+                    if node.cardinality == "many":
+                        for r in _find_all_root_models(node.right):
+                            if getattr(r, "name", None):
+                                many_side_tables.add(r.name)
+                    _collect_many_sides(node.left)
+                    _collect_many_sides(node.right)
+
+            if filter_legs:
+                _collect_many_sides(join_op)
 
         # --- 2. Build aggregation plan ---
         if tbl is not None:
@@ -3010,6 +3189,7 @@ class SemanticAggregateOp(Relation):
             # by another table) reach this table via a join-key bridge.
             if filter_fns:
                 needs_bridge = False
+                residual_cross_legs = False
                 for i, pred_fn in enumerate(filter_fns):
                     if filter_owners[i] == frozenset({table_name}):
                         pred_expr = _resolve_expr(
@@ -3017,8 +3197,32 @@ class SemanticAggregateOp(Relation):
                             _table_filter_resolver(raw_tbl, table_op, table_name),
                         )
                         raw_tbl = raw_tbl.filter(pred_expr)
-                    else:
-                        needs_bridge = True
+                        continue
+                    needs_bridge = True
+                    # Push this table's legs of a cross-table conjunction at
+                    # row grain; legs spanning tables (cross-table OR) keep
+                    # row-level information the key bridge cannot recover.
+                    for leg_expr, leg_srcs in filter_legs.get(i, ()):
+                        if leg_srcs == {table_name}:
+                            try:
+                                leg_op = _inline_to_base_op(
+                                    leg_expr.op(), _leaf_rel_types(), target_tbl=raw_tbl
+                                )
+                                raw_tbl = raw_tbl.filter(leg_op.to_expr())
+                            except Exception:
+                                residual_cross_legs = True
+                        elif table_name in leg_srcs and len(leg_srcs) > 1:
+                            residual_cross_legs = True
+
+                if residual_cross_legs and table_name in many_side_tables and measures:
+                    raise ValueError(
+                        f"A filter mixes columns of {table_name!r} with other "
+                        "tables in a way that cannot be applied row-precisely "
+                        f"to {table_name!r} (e.g. OR across tables); its "
+                        "measures would be silently inflated to join-key "
+                        "grain. Split the condition into separate .filter() "
+                        "calls, or restate it against a single table."
+                    )
 
                 # Filters not pushed here (cross-table, ambiguous, or owned
                 # by another table) restrict via join keys from the filtered
