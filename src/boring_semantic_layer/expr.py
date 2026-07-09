@@ -1107,7 +1107,7 @@ class SemanticJoin(SemanticTable):
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "inner",
+        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
         return SemanticJoin(
@@ -1243,7 +1243,7 @@ class SemanticFilter(SemanticTable):
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "inner",
+        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
         return SemanticJoin(
@@ -1469,7 +1469,7 @@ class SemanticAggregate(SemanticTable):
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "inner",
+        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
         return SemanticJoin(
