@@ -2854,9 +2854,16 @@ class SemanticAggregateOp(Relation):
                         tbl, unprefixed_keys, root_dims,
                     )
                     # Apply pre-aggregation filters on the dimension table.
+                    # Resolve through the table-scoped resolver so prefixed
+                    # (t["customers.region"]) and derived-dim references
+                    # work the same as bare column access.
                     for flt in dim_filters:
                         fn = _unwrap(flt) if hasattr(flt, "unwrap") else flt
-                        tbl = tbl.filter(fn(tbl))
+                        tbl = tbl.filter(
+                            _resolve_expr(
+                                fn, _table_filter_resolver(tbl, root_op, root_op.name)
+                            )
+                        )
                     result = tbl.select(unprefixed_keys).distinct()
                     # Rename columns to their prefixed (dotted) names so that
                     # downstream consumers see the expected column names.
@@ -5417,7 +5424,17 @@ def _dimension_only_source_table(
                 # columns from other tables we cannot use the shortcut.
                 if filters:
                     tbl = _to_untagged(root)
-                    tbl_cols = frozenset(tbl.columns) | frozenset(root_dims)
+                    # Accept bare and table-prefixed spellings: filters
+                    # written t["customers.region"] (the qualified form
+                    # BSL's own errors recommend) must not silently
+                    # disable the zero-fact-rows guarantee.
+                    tbl_cols = (
+                        frozenset(tbl.columns)
+                        | frozenset(root_dims)
+                        | frozenset(f"{target_prefix}.{d}" for d in root_dims)
+                        | frozenset(f"{target_prefix}.{c}" for c in tbl.columns)
+                    )
+                    resolver = _table_filter_resolver(tbl, root, target_prefix)
                     for flt in filters:
                         fn = _unwrap(flt) if hasattr(flt, "unwrap") else flt
                         # Dict/string filters resolve deferred through the
@@ -5426,7 +5443,7 @@ def _dimension_only_source_table(
                         # risk a wrong source table. See query.Filter.to_callable.
                         if getattr(fn, "__bsl_deferred_resolution__", False):
                             return None
-                        extraction = _extract_columns_from_callable(fn, tbl)
+                        extraction = _extract_columns_from_callable(fn, resolver)
                         if extraction.extraction_failed:
                             return None  # Can't determine — bail out
                         if not extraction.columns <= tbl_cols:
