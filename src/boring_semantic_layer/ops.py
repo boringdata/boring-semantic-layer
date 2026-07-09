@@ -556,6 +556,19 @@ def _mutate_dimensions_with_dependencies(
     """Mutate requested dimensions, recursively materializing derived deps first."""
     resolving: list[str] = []
 
+    # Dim lambdas reference sibling dims by their BARE name (t.region_band),
+    # but merged dimension maps key them by prefixed name on joins
+    # (customers.region_band). Alias unambiguous suffixes so dependency
+    # resolution can materialize them under the name the lambda reads.
+    merged_dimensions = dict(merged_dimensions)
+    _by_suffix: dict[str, list[str]] = {}
+    for _name in merged_dimensions:
+        if "." in _name:
+            _by_suffix.setdefault(_name.split(".", 1)[1], []).append(_name)
+    for _short, _fulls in _by_suffix.items():
+        if _short not in merged_dimensions and len(_fulls) == 1:
+            merged_dimensions[_short] = merged_dimensions[_fulls[0]]
+
     def resolve_one(dim_name: str, current_tbl: ir.Table) -> ir.Table:
         if dim_name not in merged_dimensions:
             return current_tbl
@@ -3338,18 +3351,39 @@ class SemanticAggregateOp(Relation):
                     if prefix == table_name and short in table_dims:
                         dim_fn = table_dims[short]
                         if callable(dim_fn):
-                            dim_expr = dim_fn(raw_tbl)
+                            resolved_via_deps = False
+                            try:
+                                dim_expr = dim_fn(raw_tbl)
+                            except Exception:
+                                # Derived dim referencing other derived dims
+                                raw_tbl = _mutate_dimensions_with_dependencies(
+                                    raw_tbl, [short], table_dims
+                                )
+                                raw_columns = set(raw_tbl.columns)
+                                dim_expr = raw_tbl[short]
+                                resolved_via_deps = True
                             col_name = dim_expr.get_name()
-                            if col_name == short and col_name in raw_columns:
+                            if (
+                                not resolved_via_deps
+                                and col_name == short
+                                and col_name in raw_columns
+                            ):
                                 # Simple column reference — use directly
                                 if col_name not in _local_dims:
                                     _local_dims.append(col_name)
-                            elif col_name in raw_columns or short not in raw_columns:
-                                # Derived dimension — materialize on raw_tbl
-                                raw_tbl = raw_tbl.mutate(**{short: dim_expr})
+                            elif (
+                                col_name in raw_columns
+                                or short not in raw_columns
+                                or resolved_via_deps
+                            ):
+                                # Derived dimension — materialize under the
+                                # requested (prefixed) name so the pre-agg
+                                # grain matches the group-by keys and the
+                                # key column survives into the result
+                                raw_tbl = raw_tbl.mutate(**{gb_key: dim_expr})
                                 raw_columns = set(raw_tbl.columns)
-                                if short not in _local_dims:
-                                    _local_dims.append(short)
+                                if gb_key not in _local_dims:
+                                    _local_dims.append(gb_key)
                     elif prefix != table_name:
                         has_cross_table_gb = True
                 elif gb_key in merged_dimensions:
