@@ -138,6 +138,25 @@ def _reconstruct_semantic_table(
     measures = {name: _create_measure(name, data) for name, data in meas_meta.items()}
     calc_measures = deserialize_calc_measures(calc_meta) if calc_meta else {}
 
+    # Wrapper tables (join.with_measures()/with_dimensions()) must be
+    # rebuilt AROUND the reconstructed join: without _source_join the
+    # model executes on the lowered fanned-out join and the pre-agg
+    # machinery (fan-out-safe sums, t.all() totals, filter pushdown)
+    # never runs.
+    source_join_meta = context.parse_field(metadata, "source_join")
+    if source_join_meta:
+        join_model = reconstruct_bsl_operation(source_join_meta, xorq_expr, context)
+        join_op = join_model.op() if hasattr(join_model, "op") else join_model
+        return bsl_expr.SemanticModel(
+            table=join_op.to_untagged(),
+            dimensions=dimensions,
+            measures=measures,
+            calc_measures=calc_measures,
+            name=metadata.get("name"),
+            description=metadata.get("description"),
+            _source_join=join_op,
+        )
+
     return bsl_expr.SemanticModel(
         table=_reconstruct_table(),
         dimensions=dimensions,

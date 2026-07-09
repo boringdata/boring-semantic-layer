@@ -101,6 +101,13 @@ def _extract_semantic_table(op, context: BSLSerializationContext) -> dict[str, A
         metadata["name"] = op.name
     if op.description:
         metadata["description"] = op.description
+    # Wrapper tables from SemanticJoin.with_measures()/with_dimensions()
+    # carry the join topology in _source_join. Serializing the wrapper
+    # flat loses it, and the reconstructed model then executes on the
+    # lowered (fanned-out) join — bypassing pre-aggregation entirely.
+    source_join = getattr(op, "_source_join", None)
+    if source_join is not None:
+        metadata["source_join"] = extract_op_tree(source_join, context)
     return metadata
 
 
