@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ibis
 from ibis import _
 from returns.result import Failure, Success
 
@@ -41,6 +42,72 @@ def test_safe_eval_allowed_names():
 
 def test_safe_eval_disallowed_names():
     result = safe_eval("x + y", context={"x": 5, "y": 10}, allowed_names={"x"})
+    assert isinstance(result, Failure)
+
+
+def test_safe_eval_blocks_dunder_attribute_escape():
+    result = safe_eval("().__class__.__mro__[1].__subclasses__()")
+    assert isinstance(result, Failure)
+
+
+def test_safe_eval_blocks_dunder_escape_even_with_allowed_names():
+    result = safe_eval(
+        "().__class__.__mro__[1].__subclasses__()",
+        allowed_names={"_"},
+    )
+    assert isinstance(result, Failure)
+
+
+def test_safe_eval_blocks_dunder_inside_lambda_body():
+    result = safe_eval("lambda t: t.__class__")
+    assert isinstance(result, Failure)
+
+
+def test_safe_eval_blocks_private_names_from_context():
+    result = safe_eval("__import__('os')", context={"__import__": __import__})
+    assert isinstance(result, Failure)
+
+
+def test_safe_eval_blocks_effectful_method_calls():
+    class MockModel:
+        def execute(self):
+            raise AssertionError("execute should not be called")
+
+    result = safe_eval("model.execute()", context={"model": MockModel()})
+    assert isinstance(result, Failure)
+
+
+def test_safe_eval_blocks_arbitrary_model_attribute_chains():
+    class MockModel:
+        table = object()
+
+    result = safe_eval("model.table", context={"model": MockModel()})
+    assert isinstance(result, Failure)
+
+
+def test_safe_eval_allows_query_metadata_attributes():
+    class MockModel:
+        dimensions = ("origin", "destination")
+        measures = ("flight_count",)
+
+    dimensions = safe_eval("model.dimensions", context={"model": MockModel()})
+    measures = safe_eval("model.measures", context={"model": MockModel()})
+
+    assert dimensions.unwrap() == ("origin", "destination")
+    assert measures.unwrap() == ("flight_count",)
+
+
+def test_safe_eval_allows_curated_ibis_helpers():
+    result = safe_eval("ibis.literal(1)", context={"ibis": ibis}, allowed_names={"ibis"})
+    assert isinstance(result, Success)
+
+
+def test_safe_eval_blocks_ibis_io_helpers():
+    result = safe_eval(
+        "ibis.duckdb.connect(':memory:')",
+        context={"ibis": ibis},
+        allowed_names={"ibis"},
+    )
     assert isinstance(result, Failure)
 
 
