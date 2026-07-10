@@ -138,6 +138,25 @@ def _reconstruct_semantic_table(
     measures = {name: _create_measure(name, data) for name, data in meas_meta.items()}
     calc_measures = deserialize_calc_measures(calc_meta) if calc_meta else {}
 
+    # Wrapper tables (join.with_measures()/with_dimensions()) must be
+    # rebuilt AROUND the reconstructed join: without _source_join the
+    # model executes on the lowered fanned-out join and the pre-agg
+    # machinery (fan-out-safe sums, t.all() totals, filter pushdown)
+    # never runs.
+    source_join_meta = context.parse_field(metadata, "source_join")
+    if source_join_meta:
+        join_model = reconstruct_bsl_operation(source_join_meta, xorq_expr, context)
+        join_op = join_model.op() if hasattr(join_model, "op") else join_model
+        return bsl_expr.SemanticModel(
+            table=join_op.to_untagged(),
+            dimensions=dimensions,
+            measures=measures,
+            calc_measures=calc_measures,
+            name=metadata.get("name"),
+            description=metadata.get("description"),
+            _source_join=join_op,
+        )
+
     return bsl_expr.SemanticModel(
         table=_reconstruct_table(),
         dimensions=dimensions,
@@ -252,6 +271,40 @@ def _reconstruct_limit(
     return source.limit(n=int(metadata.get("n", 0)), offset=int(metadata.get("offset", 0)))
 
 
+def _validate_join_leaf(model, metadata, side: str) -> None:
+    """Check a reconstructed join leaf against its declared fields.
+
+    Only missing-column failures (AttributeError/KeyError) are treated as
+    misassignment — other resolution errors (e.g. measures that need an
+    unnest context) are not evidence the table is wrong.
+    """
+    from .. import ops as bsl_ops
+
+    op = model.op() if hasattr(model, "op") else model
+    if not isinstance(op, bsl_ops.SemanticTableOp):
+        return
+    try:
+        tbl = op.table.to_expr() if hasattr(op.table, "to_expr") else op.table
+    except Exception:
+        return
+    name = metadata.get("name") or side
+    for kind, fields in (("dimension", op.get_dimensions()), ("measure", op.get_measures())):
+        for fname, fn in fields.items():
+            try:
+                fn(tbl)
+            except (AttributeError, KeyError) as exc:
+                raise ValueError(
+                    f"Round-trip could not recover the {side} join table "
+                    f"{name!r}: its {kind} {fname!r} does not resolve against "
+                    "the recovered table. Queries lowered through the "
+                    "pre-aggregation path cannot be reconstructed from the "
+                    "lowered expression — serialize the model (or the "
+                    "un-aggregated join) instead."
+                ) from exc
+            except Exception:
+                continue
+
+
 @register_reconstructor("SemanticJoinOp")
 def _reconstruct_join(
     metadata: dict, xorq_expr, source, context: BSLSerializationContext
@@ -276,6 +329,15 @@ def _reconstruct_join(
 
     left_model = reconstruct_bsl_operation(left_metadata, left_xorq_expr, context)
     right_model = reconstruct_bsl_operation(right_metadata, right_xorq_expr, context)
+
+    # Guard against leaf misassignment: expressions lowered through the
+    # pre-agg path put partial-aggregate/key-bridge joins where the raw
+    # join used to be, so _split_join_expr can hand back the wrong table
+    # for a side. When shapes happen to align this silently returns wrong
+    # numbers — validate that each leaf's declared fields resolve against
+    # its recovered table and raise otherwise.
+    _validate_join_leaf(left_model, left_metadata, "left")
+    _validate_join_leaf(right_model, right_metadata, "right")
 
     how = metadata.get("how", "inner")
     # Default to "many" for payloads serialized before cardinality was

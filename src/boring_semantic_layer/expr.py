@@ -1107,7 +1107,7 @@ class SemanticJoin(SemanticTable):
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "inner",
+        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
         return SemanticJoin(
@@ -1243,7 +1243,7 @@ class SemanticFilter(SemanticTable):
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "inner",
+        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
         return SemanticJoin(
@@ -1288,6 +1288,18 @@ class SemanticGroupBy(SemanticTable):
     def __init__(self, source: SemanticTableOp, keys: tuple[str, ...]) -> None:
         op = SemanticGroupByOp(source=source, keys=keys)
         super().__init__(op)
+
+    def filter(self, predicate: Callable) -> SemanticGroupBy:
+        """Filter rows before aggregation, keeping the grouping keys.
+
+        A filter between group_by and aggregate is pre-aggregation row
+        filtering, so it commutes with the grouping. The inherited filter
+        wrapped the group-by op itself, and aggregate() — which only
+        recovers keys from its direct source — silently dropped the
+        requested grouping.
+        """
+        filtered = SemanticFilter(source=self.op().source, predicate=predicate)
+        return SemanticGroupBy(source=filtered.op(), keys=self.op().keys)
 
     @property
     def source(self):
@@ -1469,7 +1481,7 @@ class SemanticAggregate(SemanticTable):
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "inner",
+        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
         return SemanticJoin(

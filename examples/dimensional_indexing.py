@@ -210,7 +210,7 @@ def main():
     flights_with_origin = flights.join_one(airports, lambda f, a: f.origin == a.code)
 
     joined_index = (
-        flights_with_origin.index(s.cols("carrier", "airports__state"))
+        flights_with_origin.index(s.cols("carrier", "airports.state"))
         .order_by(lambda t: t.weight.desc())
         .limit(15)
         .execute()
