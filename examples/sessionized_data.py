@@ -10,7 +10,6 @@ a nested list of flight_legs by the aircraft on that day. The flight legs are nu
 
 from pathlib import Path
 
-import ibis
 import pandas as pd
 
 # CI runs this example with and without xorq. xibis matches BSL's active ibis

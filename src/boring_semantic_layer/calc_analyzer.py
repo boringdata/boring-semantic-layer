@@ -309,7 +309,6 @@ def analyze_calc_expr(
 
     _, has_window, references_AllOf = _scan_tree(node)
 
-    field_names = _collect_field_names(node)
     source_tables = _collect_source_tables(node)
 
     depends_on: set[str] = set()

@@ -471,7 +471,6 @@ def test_serialize_resolver_case_expr():
 
     from boring_semantic_layer.utils import expr_to_structured, structured_to_expr
     from xorq.common.utils.ibis_utils import from_ibis
-    from xorq.vendor.ibis import _
 
     fn = lambda t: xo.case().when(t.distance < 200, 1).else_(0).end().sum()
     result = expr_to_structured(fn)
@@ -527,7 +526,6 @@ def test_serialize_resolver_ifelse():
 
     from boring_semantic_layer.utils import expr_to_structured, structured_to_expr
     from xorq.common.utils.ibis_utils import from_ibis
-    from xorq.vendor.ibis import _
 
     fn = lambda t: xo.ifelse(t.distance < 200, 1, 0).sum()
     result = expr_to_structured(fn)
@@ -688,7 +686,6 @@ def test_resolver_roundtrip_binary_arithmetic(xorq_flights):
 
 def test_resolver_roundtrip_comparison_operators(xorq_flights):
     """Comparison binary operators: <, <=, >, >=, ==, != produce correct deferred."""
-    from boring_semantic_layer.utils import expr_to_structured, structured_to_expr
 
     comparisons = {
         "lt": lambda t: (t.distance < 200).sum(),
@@ -827,13 +824,6 @@ def test_tagged_roundtrip_mutate_arithmetic(flights_data):
             total_distance=lambda t: t.distance.sum(),
             flight_count=lambda t: t.count(),
         )
-    )
-
-    result_original = (
-        flights.group_by("origin")
-        .aggregate("total_distance", "flight_count")
-        .mutate(avg_distance_per_flight=lambda t: t.total_distance / t.flight_count)
-        .execute()
     )
 
     tagged = to_tagged(

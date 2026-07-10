@@ -92,7 +92,8 @@ class BSLSlackBot:
                 if tool_output:
                     response_parts.append(f"\n```\n{tool_output}\n```")
 
-                say(f"📊 *Results:*\n\n{'\n'.join(response_parts)}")
+                joined_response = "\n".join(response_parts)
+                say(f"📊 *Results:*\n\n{joined_response}")
 
                 if chart_path:
                     try:

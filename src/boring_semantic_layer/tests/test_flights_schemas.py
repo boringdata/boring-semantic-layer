@@ -8,7 +8,6 @@ All ground truth computed from raw ibis/SQL — BSL results must match.
 """
 
 import ibis
-import pandas as pd
 import pytest
 from ibis import _
 

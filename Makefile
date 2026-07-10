@@ -1,4 +1,4 @@
-.PHONY: test examples docs-build skills-build skills-check eval eval-full check clean help
+.PHONY: test lint examples docs-build skills-build skills-check eval eval-full check clean help
 
 # Default target - show help
 .DEFAULT_GOAL := help
@@ -14,6 +14,7 @@ help:
 	@echo "  make test                              - Run pytest tests"
 	@echo "  make test IBIS_VERSION=all             - Run tests with all ibis versions (9.5.0, 10.8.0, 11.0.0)"
 	@echo "  make test IBIS_VERSION=10.8.0          - Run tests with specific ibis version"
+	@echo "  make lint                              - Run mandatory Ruff correctness checks"
 	@echo "  make examples                          - Run all example scripts"
 	@echo "  make examples-core                     - Run no-xorq-compatible examples"
 	@echo "  make examples IBIS_VERSION=all         - Run examples with all ibis versions"
@@ -56,6 +57,10 @@ else
 	@echo "Running tests..."
 	@uv run pytest
 endif
+
+lint:
+	@echo "Running mandatory Ruff correctness checks..."
+	uv run ruff check --select F,E9 .
 
 # Run all examples (skip MCP examples as they require special setup)
 examples:
@@ -169,6 +174,7 @@ eval-list:
 # Run all checks (CI target)
 check:
 	@if [ "$(IBIS_VERSION)" = "all" ]; then \
+		$(MAKE) lint && \
 		$(MAKE) test IBIS_VERSION=all && \
 		$(MAKE) examples IBIS_VERSION=all && \
 		$(MAKE) skills-check && \
@@ -178,6 +184,7 @@ check:
 		echo "Note: Run 'make docs-build' separately to build documentation" && \
 		echo "========================================"; \
 	elif [ -n "$(IBIS_VERSION)" ]; then \
+		$(MAKE) lint && \
 		$(MAKE) test IBIS_VERSION=$(IBIS_VERSION) && \
 		$(MAKE) examples IBIS_VERSION=$(IBIS_VERSION) && \
 		$(MAKE) skills-check && \
@@ -187,6 +194,7 @@ check:
 		echo "Note: Run 'make docs-build' separately to build documentation" && \
 		echo "========================================"; \
 	else \
+		$(MAKE) lint && \
 		$(MAKE) test && \
 		$(MAKE) examples && \
 		$(MAKE) docs-build && \
