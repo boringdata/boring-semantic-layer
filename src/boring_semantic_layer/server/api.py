@@ -145,18 +145,25 @@ def _build_model_response(model: Any) -> dict[str, Any]:
 
 
 def _get_time_range_response(model: Any, model_name: str) -> dict[str, str]:
-    time_dim_name = _find_time_dimension(model, list(model.dimensions))
+    dimensions = model.get_dimensions()
+    time_dim_name = _find_time_dimension(model, list(dimensions))
     if not time_dim_name:
         raise HTTPException(status_code=400, detail=f"Model '{model_name}' has no time dimension")
 
     tbl = model.table
-    col_name = time_dim_name.split(".")[-1] if "." in time_dim_name else time_dim_name
-    time_col = tbl[col_name]
+    time_col = dimensions[time_dim_name](tbl)
     result = tbl.aggregate(start=time_col.min(), end=time_col.max()).execute()
 
+    def to_iso(value: Any) -> str:
+        # Some backends materialize an Ibis date aggregate as a midnight
+        # pandas Timestamp. Preserve the semantic datatype in the HTTP value.
+        if time_col.type().is_date() and callable(as_date := getattr(value, "date", None)):
+            value = as_date()
+        return value.isoformat()
+
     return {
-        "start": result["start"].iloc[0].isoformat(),
-        "end": result["end"].iloc[0].isoformat(),
+        "start": to_iso(result["start"].iloc[0]),
+        "end": to_iso(result["end"].iloc[0]),
     }
 
 

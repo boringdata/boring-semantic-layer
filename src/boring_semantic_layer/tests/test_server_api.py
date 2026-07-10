@@ -164,6 +164,34 @@ def test_get_time_range(client):
     assert data["end"].startswith("2024-01-30")
 
 
+def test_get_time_range_evaluates_derived_dimension():
+    con = ibis.duckdb.connect(":memory:")
+    tbl = con.create_table(
+        "derived_time_http",
+        pd.DataFrame(
+            {
+                "ts": pd.to_datetime(
+                    ["2024-03-01 12:30:00", "2024-03-04 08:15:00", "2024-03-09 18:45:00"]
+                )
+            }
+        ),
+        overwrite=True,
+    )
+    model = to_semantic_table(tbl, name="events").with_dimensions(
+        event_date={
+            "expr": lambda t: t.ts.date(),
+            "is_time_dimension": True,
+            "smallest_time_grain": "day",
+        }
+    )
+
+    with TestClient(create_app(models={"events": model})) as derived_client:
+        response = derived_client.get("/models/events/time-range")
+
+    assert response.status_code == 200
+    assert response.json() == {"start": "2024-03-01", "end": "2024-03-09"}
+
+
 def test_search_dimension_values(client):
     response = client.get("/models/flights/dimensions/carrier/values", params={"limit": 2})
 
