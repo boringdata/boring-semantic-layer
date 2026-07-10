@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+
 import ibis
 import pandas as pd
 import pytest
@@ -9,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from boring_semantic_layer import to_semantic_table
 from boring_semantic_layer.server import create_app
+from boring_semantic_layer.server import main as serve
 from boring_semantic_layer.server.loader import load_models
 
 
@@ -127,6 +130,10 @@ def test_health(client):
     assert response.json() == {"status": "ok"}
 
 
+def test_server_defaults_to_loopback():
+    assert inspect.signature(serve).parameters["host"].default == "127.0.0.1"
+
+
 def test_list_models(client):
     response = client.get("/models")
 
@@ -155,6 +162,34 @@ def test_get_time_range(client):
     data = response.json()
     assert data["start"].startswith("2024-01-01")
     assert data["end"].startswith("2024-01-30")
+
+
+def test_get_time_range_evaluates_derived_dimension():
+    con = ibis.duckdb.connect(":memory:")
+    tbl = con.create_table(
+        "derived_time_http",
+        pd.DataFrame(
+            {
+                "ts": pd.to_datetime(
+                    ["2024-03-01 12:30:00", "2024-03-04 08:15:00", "2024-03-09 18:45:00"]
+                )
+            }
+        ),
+        overwrite=True,
+    )
+    model = to_semantic_table(tbl, name="events").with_dimensions(
+        event_date={
+            "expr": lambda t: t.ts.date(),
+            "is_time_dimension": True,
+            "smallest_time_grain": "day",
+        }
+    )
+
+    with TestClient(create_app(models={"events": model})) as derived_client:
+        response = derived_client.get("/models/events/time-range")
+
+    assert response.status_code == 200
+    assert response.json() == {"start": "2024-03-01", "end": "2024-03-09"}
 
 
 def test_search_dimension_values(client):
@@ -297,3 +332,55 @@ def test_missing_model_returns_404(client):
 
     assert response.status_code == 404
     assert "not found" in response.json()["detail"].lower()
+
+
+def test_auth_hook_protects_data_endpoints_but_not_health(sample_models):
+    app = create_app(
+        models=sample_models,
+        auth_hook=lambda request: request.headers.get("x-test-token") == "secret",
+    )
+    with TestClient(app) as auth_client:
+        assert auth_client.get("/health").status_code == 200
+        assert auth_client.get("/models").status_code == 401
+        authorized = auth_client.get("/models", headers={"x-test-token": "secret"})
+
+    assert authorized.status_code == 200
+
+
+def test_api_key_authentication(sample_models):
+    with TestClient(create_app(models=sample_models, api_key="secret")) as auth_client:
+        assert auth_client.get("/models").status_code == 401
+        bearer = auth_client.get("/models", headers={"Authorization": "Bearer secret"})
+        custom_header = auth_client.get("/models", headers={"X-BSL-API-Key": "secret"})
+
+    assert bearer.status_code == 200
+    assert custom_header.status_code == 200
+
+
+def test_default_cors_does_not_allow_arbitrary_origins(sample_models):
+    with TestClient(create_app(models=sample_models)) as cors_client:
+        response = cors_client.options(
+            "/models",
+            headers={
+                "Origin": "https://untrusted.example",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_unhandled_errors_do_not_leak_exception_text():
+    class BrokenModel:
+        def query(self, **_kwargs):
+            raise RuntimeError("database password is hunter2")
+
+    app = create_app(models={"broken": BrokenModel()})
+    with TestClient(app, raise_server_exceptions=False) as error_client:
+        response = error_client.post(
+            "/query",
+            json={"model_name": "broken", "measures": ["count"], "get_chart": False},
+        )
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Internal server error"}

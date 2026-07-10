@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from .api import create_app
 
@@ -13,7 +13,7 @@ __all__ = ["create_app", "main"]
 
 def main(
     config: str | None = None,
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",
     port: int = 8000,
     reload: bool = False,
     cors_origins: Sequence[str] | None = None,

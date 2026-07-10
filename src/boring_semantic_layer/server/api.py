@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
 import re
-from collections.abc import Mapping, Sequence
+import secrets
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -21,6 +23,8 @@ from boring_semantic_layer.query import _find_time_dimension
 from .loader import load_models
 
 logger = logging.getLogger(__name__)
+
+AuthHook = Callable[[Request], bool | None | Awaitable[bool | None]]
 
 
 class QueryRequest(BaseModel):
@@ -88,9 +92,21 @@ class ComparePeriodsRequest(BaseModel):
 def _default_cors_origins() -> list[str]:
     raw = os.environ.get("BSL_CORS_ORIGINS")
     if not raw:
-        return ["*"]
+        return []
     origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
-    return origins or ["*"]
+    return origins
+
+
+def _api_key_auth_hook(api_key: str) -> AuthHook:
+    """Build a constant-time API-key hook for simple deployments."""
+
+    def authenticate(request: Request) -> bool:
+        authorization = request.headers.get("authorization", "")
+        bearer = authorization[7:] if authorization.lower().startswith("bearer ") else ""
+        supplied = request.headers.get("x-bsl-api-key") or bearer
+        return bool(supplied) and secrets.compare_digest(supplied, api_key)
+
+    return authenticate
 
 
 def _get_models(request: Request) -> Mapping[str, Any]:
@@ -129,18 +145,25 @@ def _build_model_response(model: Any) -> dict[str, Any]:
 
 
 def _get_time_range_response(model: Any, model_name: str) -> dict[str, str]:
-    time_dim_name = _find_time_dimension(model, list(model.dimensions))
+    dimensions = model.get_dimensions()
+    time_dim_name = _find_time_dimension(model, list(dimensions))
     if not time_dim_name:
         raise HTTPException(status_code=400, detail=f"Model '{model_name}' has no time dimension")
 
     tbl = model.table
-    col_name = time_dim_name.split(".")[-1] if "." in time_dim_name else time_dim_name
-    time_col = tbl[col_name]
+    time_col = dimensions[time_dim_name](tbl)
     result = tbl.aggregate(start=time_col.min(), end=time_col.max()).execute()
 
+    def to_iso(value: Any) -> str:
+        # Some backends materialize an Ibis date aggregate as a midnight
+        # pandas Timestamp. Preserve the semantic datatype in the HTTP value.
+        if time_col.type().is_date() and callable(as_date := getattr(value, "date", None)):
+            value = as_date()
+        return value.isoformat()
+
     return {
-        "start": result["start"].iloc[0].isoformat(),
-        "end": result["end"].iloc[0].isoformat(),
+        "start": to_iso(result["start"].iloc[0]),
+        "end": to_iso(result["end"].iloc[0]),
     }
 
 
@@ -227,8 +250,23 @@ def create_app(
     models: Mapping[str, Any] | None = None,
     config_path: str | None = None,
     cors_origins: Sequence[str] | None = None,
+    auth_hook: AuthHook | None = None,
+    api_key: str | None = None,
 ) -> FastAPI:
-    """Create the FastAPI app for the BSL HTTP server."""
+    """Create the FastAPI app for the BSL HTTP server.
+
+    ``auth_hook`` is called before every endpoint except health checks and CORS
+    preflight requests. It may raise ``HTTPException`` or return ``False`` to
+    reject a request. For simple deployments, ``api_key`` (or ``BSL_API_KEY``)
+    enables Bearer and ``X-BSL-API-Key`` authentication.
+    """
+
+    if auth_hook is not None and api_key:
+        raise ValueError("Specify either auth_hook or api_key, not both")
+    configured_api_key = api_key or (os.environ.get("BSL_API_KEY") if auth_hook is None else None)
+    effective_auth_hook = auth_hook or (
+        _api_key_auth_hook(configured_api_key) if configured_api_key else None
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -236,11 +274,42 @@ def create_app(
         yield
 
     app = FastAPI(title="Boring Semantic Layer HTTP API", version="0.1.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def authenticate_request(request: Request, call_next):
+        if (
+            effective_auth_hook is None
+            or request.url.path == "/health"
+            or request.method == "OPTIONS"
+        ):
+            return await call_next(request)
+        try:
+            authorized = effective_auth_hook(request)
+            if inspect.isawaitable(authorized):
+                authorized = await authorized
+        except HTTPException as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail},
+                headers=exc.headers,
+            )
+        except Exception:
+            logger.exception("HTTP authentication hook failed")
+            return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+        if authorized is False:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Unauthorized"},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return await call_next(request)
+
+    allowed_origins = list(_default_cors_origins() if cors_origins is None else cors_origins)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=list(cors_origins or _default_cors_origins()),
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=allowed_origins,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization", "Content-Type", "X-BSL-API-Key"],
     )
 
     @app.exception_handler(ValueError)
@@ -250,7 +319,7 @@ def create_app(
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
         logger.exception("Unhandled HTTP API error")
-        return JSONResponse(status_code=500, content={"detail": str(exc)})
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
     @app.get("/health")
     def health() -> dict[str, str]:

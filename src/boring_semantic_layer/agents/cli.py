@@ -432,8 +432,8 @@ def main():
     )
     serve_parser.add_argument(
         "--host",
-        default="0.0.0.0",
-        help="Host to bind to (default: 0.0.0.0)",
+        default="127.0.0.1",
+        help="Host to bind to (default: 127.0.0.1)",
     )
     serve_parser.add_argument(
         "--port",
@@ -448,7 +448,7 @@ def main():
     )
     serve_parser.add_argument(
         "--cors-origins",
-        help="Comma-separated CORS allowlist. Defaults to BSL_CORS_ORIGINS or '*' if unset.",
+        help="Comma-separated CORS allowlist. Defaults to BSL_CORS_ORIGINS or no origins.",
     )
     serve_parser.set_defaults(func=cmd_serve)
 
