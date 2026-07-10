@@ -6,7 +6,6 @@ the grains before joining — preventing fan-out / double-counting.
 """
 
 import warnings
-from unittest.mock import patch
 
 import ibis
 import pandas as pd

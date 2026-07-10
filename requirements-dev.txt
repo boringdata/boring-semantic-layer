@@ -34,18 +34,15 @@ attrs==25.4.0
     #   jsonschema
     #   referencing
     #   xorq
+    #   xorq-dasher
 authlib==1.6.5
     # via fastmcp
-backports-asyncio-runner==1.2.0 ; python_full_version < '3.11'
-    # via pytest-asyncio
 backports-tarfile==1.2.0 ; python_full_version < '3.12'
     # via jaraco-context
 beartype==0.22.5
     # via
     #   py-key-value-aio
     #   py-key-value-shared
-beniget==0.4.2.post1 ; sys_platform == 'darwin'
-    # via pythran
 boto3==1.40.64
     # via snowflake-connector-python
 botocore==1.40.64
@@ -73,17 +70,12 @@ charset-normalizer==3.4.4
     #   snowflake-connector-python
 choreographer==1.2.0
     # via kaleido
-cityhash==0.4.10 ; python_full_version < '4'
-    # via xorq
 click==8.3.0
     # via
-    #   dask
     #   uvicorn
     #   xorq
 cloudpickle==3.1.2
-    # via
-    #   dask
-    #   xorq
+    # via xorq
 colorama==0.4.6 ; sys_platform == 'win32'
     # via
     #   click
@@ -101,8 +93,6 @@ cryptography==46.0.3
     #   xorq
 cyclopts==4.2.1
     # via fastmcp
-dask==2025.1.0 ; python_full_version < '4'
-    # via xorq
 decorator==5.2.1
     # via ipython
 diskcache==5.6.3
@@ -129,14 +119,8 @@ duckdb==1.3.2
     #   xorq
 email-validator==2.3.0
     # via pydantic
-envyaml==1.10.211231
-    # via xorq
 exceptiongroup==1.3.0
-    # via
-    #   anyio
-    #   fastmcp
-    #   ipython
-    #   pytest
+    # via fastmcp
 executing==2.2.1
     # via stack-data
 fastapi==0.135.3
@@ -150,16 +134,6 @@ filelock==3.20.0
     #   snowflake-connector-python
     #   virtualenv
     #   xorq
-fsspec==2025.10.0 ; python_full_version < '4'
-    # via dask
-gast==0.6.0 ; sys_platform == 'darwin'
-    # via
-    #   beniget
-    #   pythran
-geoarrow-types==0.3.0 ; python_full_version < '4'
-    # via xorq
-git-annex==10.20260316
-    # via xorq
 gitdb==4.0.12
     # via gitpython
 gitpython==3.1.46
@@ -225,14 +199,12 @@ idna==3.11
     #   snowflake-connector-python
 importlib-metadata==8.7.0
     # via
-    #   dask
     #   keyring
     #   opentelemetry-api
 iniconfig==2.3.0
     # via pytest
-ipython==8.38.0 ; python_full_version < '3.11'
-ipython==9.10.0 ; python_full_version >= '3.11'
-ipython-pygments-lexers==1.1.1 ; python_full_version >= '3.11'
+ipython==9.10.0
+ipython-pygments-lexers==1.1.1
     # via ipython
 jaraco-classes==3.4.0
     # via keyring
@@ -303,8 +275,6 @@ langsmith==0.4.49
     # via langchain-core
 linkify-it-py==2.1.0
     # via markdown-it-py
-locket==1.0.0 ; python_full_version < '4'
-    # via partd
 logistro==2.0.1
     # via
     #   choreographer
@@ -338,16 +308,10 @@ nbformat==5.10.4
     # via boring-semantic-layer
 nodeenv==1.9.1
     # via pre-commit
-numpy==2.2.6 ; python_full_version < '3.11'
+numpy==2.3.4
     # via
     #   ibis-framework
     #   pandas
-    #   pythran
-numpy==2.3.4 ; python_full_version >= '3.11'
-    # via
-    #   ibis-framework
-    #   pandas
-    #   pythran
 openai==2.8.1
     # via
     #   boring-semantic-layer
@@ -399,7 +363,6 @@ packaging==25.0
     # via
     #   altair
     #   boring-semantic-layer
-    #   dask
     #   google-cloud-bigquery
     #   ibis-framework
     #   kaleido
@@ -419,8 +382,6 @@ parsy==2.2
     # via
     #   ibis-framework
     #   xorq
-partd==1.4.2 ; python_full_version < '4'
-    # via dask
 pathable==0.4.4
     # via jsonschema-path
 pathvalidate==3.3.1
@@ -440,8 +401,6 @@ plotly==6.3.1
     # via boring-semantic-layer
 pluggy==1.6.0
     # via pytest
-ply==3.11 ; sys_platform == 'darwin'
-    # via pythran
 pre-commit==4.3.0
     # via boring-semantic-layer
 prometheus-client==0.23.1
@@ -543,8 +502,6 @@ python-dotenv==1.2.1
     #   uvicorn
 python-multipart==0.0.20
     # via mcp
-pythran==0.18.0 ; sys_platform == 'darwin'
-    # via xorq
 pytz==2025.2
     # via
     #   pandas
@@ -557,8 +514,6 @@ pywin32-ctypes==0.2.3 ; sys_platform == 'win32'
 pyyaml==6.0.3
     # via
     #   boring-semantic-layer
-    #   dask
-    #   envyaml
     #   jsonschema-path
     #   langchain-core
     #   pre-commit
@@ -607,8 +562,6 @@ s3transfer==0.14.0
     # via boto3
 secretstorage==3.4.0 ; sys_platform == 'linux'
     # via keyring
-setuptools==80.9.0 ; sys_platform == 'darwin'
-    # via pythran
 simplejson==3.20.2
     # via choreographer
 six==1.17.0
@@ -636,8 +589,6 @@ starlette==0.50.0
     # via
     #   fastapi
     #   mcp
-strenum==0.4.15 ; python_full_version < '3.11'
-    # via xorq
 structlog==25.5.0 ; python_full_version < '4'
     # via xorq
 tenacity==9.1.2
@@ -646,10 +597,6 @@ textual==8.1.0
     # via xorq
 tiktoken==0.12.0
     # via langchain-openai
-tomli==2.3.0 ; python_full_version < '3.11'
-    # via
-    #   cyclopts
-    #   pytest
 tomlkit==0.13.3
     # via
     #   snowflake-connector-python
@@ -657,10 +604,9 @@ tomlkit==0.13.3
 toolz==1.1.0
     # via
     #   boring-semantic-layer
-    #   dask
     #   ibis-framework
-    #   partd
     #   xorq
+    #   xorq-dasher
 tqdm==4.67.1
     # via openai
 traitlets==5.14.3
@@ -674,8 +620,6 @@ typing-extensions==4.15.0
     #   altair
     #   anthropic
     #   anyio
-    #   cryptography
-    #   cyclopts
     #   exceptiongroup
     #   fastapi
     #   grpcio
@@ -697,11 +641,8 @@ typing-extensions==4.15.0
     #   returns
     #   snowflake-connector-python
     #   starlette
-    #   structlog
     #   textual
     #   typing-inspection
-    #   uvicorn
-    #   virtualenv
     #   xorq
 typing-inspection==0.4.2
     # via
@@ -739,12 +680,16 @@ websockets==15.0.1
     # via
     #   fastmcp
     #   uvicorn
-xorq==0.3.25
+xorq==0.3.31
     # via boring-semantic-layer
+xorq-dasher==0.1.1
+    # via xorq
 xorq-datafusion==0.2.7
     # via xorq
 xxhash==3.6.0
-    # via langgraph
+    # via
+    #   langgraph
+    #   xorq-dasher
 zipp==3.23.0
     # via importlib-metadata
 zstandard==0.25.0

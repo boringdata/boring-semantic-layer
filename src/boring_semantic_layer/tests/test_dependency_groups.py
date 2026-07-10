@@ -18,6 +18,7 @@ Note: xorq is an optional dependency; core BSL works without it.
 import subprocess
 import sys
 import textwrap
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -28,15 +29,6 @@ class TestDependencyGroupDocumentation:
 
     def test_pyproject_has_all_optional_dependencies(self):
         """Verify all optional dependency groups exist in pyproject.toml."""
-        # Use tomllib (Python 3.11+) or tomli (Python 3.10)
-        if sys.version_info >= (3, 11):
-            import tomllib
-        else:
-            try:
-                import tomli as tomllib
-            except ImportError:
-                pytest.skip("tomli not available for Python < 3.11")
-
         # Read pyproject.toml - go up from test file to project root
         # test file is at: src/boring_semantic_layer/tests/test_dependency_groups.py
         # pyproject.toml is at project root
@@ -66,15 +58,6 @@ class TestDependencyGroupDocumentation:
 
     def test_all_dependency_groups_in_dev(self):
         """Verify dev dependency group contains developer tooling (not a self-referential bundle)."""
-        # Use tomllib (Python 3.11+) or tomli (Python 3.10)
-        if sys.version_info >= (3, 11):
-            import tomllib
-        else:
-            try:
-                import tomli as tomllib
-            except ImportError:
-                pytest.skip("tomli not available for Python < 3.11")
-
         # Read pyproject.toml - go up from test file to project root
         test_file = Path(__file__)
         project_root = test_file.parent.parent.parent.parent
@@ -267,15 +250,6 @@ class TestDependencyGroupCoverage:
 
     def test_pyproject_dev_group_is_comprehensive(self):
         """Verify all optional dependency groups are declared in pyproject.toml."""
-        # Use tomllib (Python 3.11+) or tomli (Python 3.10)
-        if sys.version_info >= (3, 11):
-            import tomllib
-        else:
-            try:
-                import tomli as tomllib
-            except ImportError:
-                pytest.skip("tomli not available for Python < 3.11")
-
         test_file = Path(__file__)
         project_root = test_file.parent.parent.parent.parent
         pyproject_path = project_root / "pyproject.toml"

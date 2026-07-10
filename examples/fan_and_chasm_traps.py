@@ -93,7 +93,7 @@ def main():
     true_order_count = len(orders_df)  # 8
     true_total_amount = orders_df["amount"].sum()  # 805
 
-    print(f"\nGround truth:")
+    print("\nGround truth:")
     print(f"  Total lifetime_value (customers): {true_revenue}")
     print(f"  Total order_count (orders):       {true_order_count}")
     print(f"  Total order_amount (orders):      {true_total_amount}")
@@ -209,7 +209,7 @@ def main():
     # --- 2a. Ground truth -------------------------------------------------
     true_ticket_count = len(support_tickets_df)  # 5
 
-    print(f"\nGround truth:")
+    print("\nGround truth:")
     print(f"  Total order_count (orders):       {true_order_count}")
     print(f"  Total ticket_count (tickets):     {true_ticket_count}")
     print(f"  Total lifetime_value (customers): {true_revenue}")

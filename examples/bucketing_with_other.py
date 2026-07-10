@@ -6,7 +6,6 @@ Malloy: https://docs.malloydata.dev/documentation/patterns/other
 
 from pathlib import Path
 
-import ibis
 from ibis import _
 
 # CI runs this example with and without xorq. xibis matches BSL's active ibis

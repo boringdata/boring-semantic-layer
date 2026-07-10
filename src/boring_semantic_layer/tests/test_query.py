@@ -1669,9 +1669,6 @@ class TestMeasureFilters:
             .with_measures(total_distance=lambda t: t.distance.sum())
         )
         # Filter only AA rows, then aggregate — should only count AA distances
-        all_result = st.query(
-            dimensions=["carrier"], measures=["total_distance"]
-        ).execute()
         filtered_result = st.query(
             dimensions=["carrier"],
             measures=["total_distance"],

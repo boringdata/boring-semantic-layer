@@ -471,7 +471,7 @@ class TestConvergentPathTrap:
     def models(self):
         con = ibis.duckdb.connect(":memory:")
 
-        airports_tbl = con.create_table(
+        con.create_table(
             "airports",
             pd.DataFrame(
                 {

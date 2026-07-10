@@ -19,6 +19,27 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'release' }}
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run Ruff lint
+        run: uv run ruff check --select F,E9 .
+
   # Run the test suite with and without the xorq extra. The no-xorq leg
   # verifies xorq is truly optional (its tests skip, not error).
   test:
@@ -104,7 +125,7 @@ jobs:
   deploy-docs:
     name: Deploy Docs
     if: github.event_name == 'release'
-    needs: [test, build]
+    needs: [lint, test, build]
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -118,7 +139,7 @@ jobs:
   release-pypi:
     name: Release to PyPI
     if: github.event_name == 'release'
-    needs: [test, build]
+    needs: [lint, test, build]
     runs-on: ubuntu-latest
     environment:
       name: release
