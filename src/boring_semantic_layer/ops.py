@@ -2783,6 +2783,10 @@ class SemanticAggregateOp(Relation):
         return combined.to_dict()
 
     def to_untagged(self):
+        semantic_nest_result = self._lower_semantic_nests()
+        if semantic_nest_result is not None:
+            return semantic_nest_result
+
         all_roots = _find_all_root_models(self.source)
 
         def find_join_in_tree(node):
@@ -2979,6 +2983,152 @@ class SemanticAggregateOp(Relation):
             requested_measures=list(plan.requested_measures),
             is_post_agg=is_post_agg,
         )
+
+    def _lower_semantic_nests(self):
+        """Lower nest lambdas which return a BSL aggregate pipeline.
+
+        A nest is correlated with this aggregate's grouping keys.  The inner
+        query therefore has to run at ``outer keys + inner keys`` grain before
+        its rows are collected into an array of structs.  Invoking the lambda
+        as a scalar measure cannot express that correlation and, historically,
+        also passed a :class:`ColumnScope` where the BSL query API was expected.
+
+        Return ``None`` when every nest lambda is a raw ibis/xorq lambda; that
+        preserves the original lightweight struct-collect implementation.
+        """
+        from .expr import SemanticTable
+
+        marked: dict[str, Any] = {}
+        regular: dict[str, Any] = {}
+        for name, wrapped in self.aggs.items():
+            fn = _unwrap(wrapped)
+            semantic_fn = getattr(fn, "__bsl_semantic_nest__", None)
+            if semantic_fn is None:
+                regular[name] = fn
+                continue
+
+            # group_by().aggregate() stores the SemanticGroupByOp as the
+            # aggregate source.  Nested pipelines should start from the same
+            # ungrouped semantic source, not from that bookkeeping wrapper.
+            base_source = (
+                self.source.source
+                if isinstance(self.source, SemanticGroupByOp)
+                else self.source
+            )
+            try:
+                nested = semantic_fn(SemanticTable(base_source))
+            except (AttributeError, TypeError, NotImplementedError):
+                # The established raw-table form (notably
+                # ``t.group_by(["a", "b"])``) is intentionally not valid BSL
+                # syntax.  Leave it on the old path.
+                regular[name] = fn
+                continue
+            if not isinstance(nested, SemanticTable):
+                regular[name] = fn
+                continue
+            marked[name] = nested.op()
+
+        if not marked:
+            return None
+
+        # Compile the outer query without the nest measures.  Reusing a normal
+        # SemanticAggregateOp keeps joins, filters, calculated measures, and
+        # fan-out-safe aggregation on their existing paths.
+        outer_op = SemanticAggregateOp(
+            source=self.source,
+            keys=self.keys,
+            aggs=regular,
+            nested_columns=(),
+        )
+        result = outer_op.to_untagged()
+
+        for output_name, pipeline_op in marked.items():
+            inner_agg, order_keys, limit_spec, predicates = self._split_nest_pipeline(
+                pipeline_op, output_name
+            )
+            fine_keys = tuple(dict.fromkeys((*self.keys, *inner_agg.keys)))
+            fine_op = SemanticAggregateOp(
+                source=inner_agg.source,
+                keys=fine_keys,
+                aggs={name: _unwrap(fn) for name, fn in inner_agg.aggs.items()},
+                nested_columns=(),
+            )
+            fine = fine_op.to_untagged()
+
+            # Filters above the inner aggregate are HAVING predicates and must
+            # run at the fine grain, before collection.
+            for predicate in reversed(predicates):
+                fine = fine.filter(_resolve_expr(_unwrap(predicate), ColumnScope(_tbl=fine)))
+
+            struct_cols = tuple(dict.fromkeys((*inner_agg.keys, *inner_agg.aggs.keys())))
+            if not struct_cols:
+                raise TypeError(
+                    f"Nest lambda for {output_name!r} must produce at least one column"
+                )
+            struct_values = {col: fine[col] for col in struct_cols}
+            first_col = next(iter(struct_values.values()))
+            if "xorq.vendor.ibis" in type(first_col).__module__:
+                from ._xorq import ibis as ibis_mod
+            else:
+                ibis_mod = ibis
+
+            collect_kwargs = {}
+            if order_keys:
+                collect_kwargs["order_by"] = [
+                    self._resolve_nest_order_key(key, fine) for key in order_keys
+                ]
+            collected_expr = ibis_mod.struct(struct_values).collect(**collect_kwargs)
+            if limit_spec is not None:
+                n, offset = limit_spec
+                collected_expr = collected_expr[offset : offset + n]
+
+            if self.keys:
+                part = fine.group_by([fine[key] for key in self.keys]).aggregate(
+                    **{output_name: collected_expr}
+                )
+                from .nested_compile import join_tables
+
+                result = join_tables(self.keys, [result, part])
+            else:
+                part = fine.aggregate(**{output_name: collected_expr})
+                result = result.cross_join(part)
+
+        wanted = [*self.keys, *self.aggs.keys()]
+        return result.select(*wanted)
+
+    @staticmethod
+    def _split_nest_pipeline(pipeline_op, output_name):
+        """Return inner aggregate plus post-aggregate pipeline modifiers."""
+        order_keys: tuple[Any, ...] = ()
+        limit_spec: tuple[int, int] | None = None
+        predicates: list[Any] = []
+        current = pipeline_op
+        while not isinstance(current, SemanticAggregateOp):
+            if isinstance(current, SemanticLimitOp):
+                if limit_spec is not None:
+                    raise TypeError(f"Nest lambda for {output_name!r} has multiple limits")
+                limit_spec = (current.n, current.offset)
+            elif isinstance(current, SemanticOrderByOp):
+                if order_keys:
+                    raise TypeError(
+                        f"Nest lambda for {output_name!r} has multiple order_by steps"
+                    )
+                order_keys = current.keys
+            elif isinstance(current, SemanticFilterOp):
+                predicates.append(current.predicate)
+            else:
+                raise TypeError(
+                    f"Nest lambda for {output_name!r} must return an aggregate pipeline, "
+                    f"got {type(current).__name__}"
+                )
+            current = current.source
+        return current, order_keys, limit_spec, predicates
+
+    @staticmethod
+    def _resolve_nest_order_key(key, table):
+        if isinstance(key, str):
+            return table[key]
+        return _resolve_expr(_unwrap(key), ColumnScope(_tbl=table))
 
     def _to_untagged_with_preagg(
         self,

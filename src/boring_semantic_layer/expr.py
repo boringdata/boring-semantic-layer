@@ -1384,6 +1384,18 @@ class SemanticGroupBy(SemanticTable):
                         f"got {type(result).__module__}.{type(result).__name__}",
                     )
 
+                # Keep the semantic lambda available to the aggregate compiler.
+                # Treating this callable like an ordinary measure causes
+                # _make_base_measure() to invoke it with ColumnScope, which is
+                # correct for scalar measures but loses the BSL query API used by
+                # lambdas such as
+                #
+                #   lambda t: t.group_by("carrier").aggregate("flight_count")
+                #
+                # SemanticAggregateOp lowers that query at the combined outer +
+                # inner grain and collects its rows.  Raw ibis/xorq nest lambdas
+                # continue through the callable above unchanged.
+                nest_agg.__bsl_semantic_nest__ = fn
                 return nest_agg
 
             nest_aggs = {name: make_nest_agg(fn) for name, fn in nest.items()}
