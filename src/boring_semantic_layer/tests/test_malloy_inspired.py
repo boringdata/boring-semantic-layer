@@ -740,6 +740,88 @@ class TestNestedAggregation:
         nested_codes = {item["code"] for item in co_row["data"]}
         assert nested_codes == {"DEN", "ASE"}
 
+    def test_semantic_nest_lambda_executes_at_correlated_grain(self):
+        """A semantic nest pipeline receives BSL, not ColumnScope, semantics."""
+        con = ibis.duckdb.connect(":memory:")
+        flights_tbl = con.create_table(
+            "semantic_nest_flights",
+            pd.DataFrame(
+                {
+                    "origin": ["NYC", "NYC", "NYC", "LAX"],
+                    "carrier": ["AA", "AA", "DL", "UA"],
+                }
+            ),
+        )
+        flights = (
+            to_semantic_table(flights_tbl, name="flights")
+            .with_dimensions(
+                origin=lambda t: t.origin,
+                carrier=lambda t: t.carrier,
+            )
+            .with_measures(flight_count=lambda t: t.count())
+        )
+
+        result = (
+            flights.group_by("origin")
+            .aggregate(
+                "flight_count",
+                nest={
+                    "by_carrier": lambda t: t.group_by("carrier").aggregate(
+                        "flight_count"
+                    )
+                },
+            )
+            .execute()
+            .set_index("origin")
+        )
+
+        assert result.loc["NYC", "flight_count"] == 3
+        assert {
+            row["carrier"]: row["flight_count"]
+            for row in result.loc["NYC", "by_carrier"]
+        } == {"AA": 2, "DL": 1}
+        assert result.loc["LAX", "by_carrier"] == [{"carrier": "UA", "flight_count": 1}]
+
+    def test_semantic_nest_preserves_inner_order_and_limit(self):
+        con = ibis.duckdb.connect(":memory:")
+        flights_tbl = con.create_table(
+            "ordered_semantic_nest_flights",
+            pd.DataFrame(
+                {
+                    "origin": ["NYC"] * 6,
+                    "carrier": ["AA", "AA", "AA", "DL", "DL", "UA"],
+                }
+            ),
+        )
+        flights = (
+            to_semantic_table(flights_tbl)
+            .with_dimensions(
+                origin=lambda t: t.origin,
+                carrier=lambda t: t.carrier,
+            )
+            .with_measures(flight_count=lambda t: t.count())
+        )
+
+        result = (
+            flights.group_by("origin")
+            .aggregate(
+                nest={
+                    "top_carriers": lambda t: (
+                        t.group_by("carrier")
+                        .aggregate("flight_count")
+                        .order_by(lambda t: t.flight_count.desc())
+                        .limit(2)
+                    )
+                }
+            )
+            .execute()
+        )
+
+        assert result.loc[0, "top_carriers"] == [
+            {"carrier": "AA", "flight_count": 3},
+            {"carrier": "DL", "flight_count": 2},
+        ]
+
 
 class TestCrossJoinAggregation:
     """
