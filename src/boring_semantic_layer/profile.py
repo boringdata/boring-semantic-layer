@@ -7,7 +7,6 @@ from pathlib import Path
 from ibis import BaseBackend
 
 from ._xorq import HAS_XORQ, Profile as XorqProfile
-
 from .utils import read_yaml_file
 
 
@@ -170,12 +169,16 @@ def _create_connection_from_config(config: dict) -> BaseBackend:
 
     if HAS_XORQ:
         # Try xorq first (handles env var substitution automatically)
+        kwargs_tuple = tuple(sorted((k, v) for k, v in config.items() if k != "type"))
         try:
-            kwargs_tuple = tuple(sorted((k, v) for k, v in config.items() if k != "type"))
             xorq_profile = XorqProfile(con_name=conn_type, kwargs_tuple=kwargs_tuple)
-            connection = xorq_profile.get_con()
-        except AssertionError:
+        except (AssertionError, ValueError):
             connection = _connect_plain_ibis(ibis, config, conn_type)
+        else:
+            try:
+                connection = xorq_profile.get_con()
+            except AssertionError:
+                connection = _connect_plain_ibis(ibis, config, conn_type)
     else:
         connection = _connect_plain_ibis(ibis, config, conn_type)
 
