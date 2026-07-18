@@ -3830,15 +3830,27 @@ class SemanticAggregateOp(Relation):
 
         # --- 7. Select requested columns ---
         available = frozenset(result.columns)
-        select_cols = tuple(
+        requested = tuple(
             dict.fromkeys(
-                c
-                for c in (*plan.group_by_cols, *plan.requested_measures, *plan.calc_specs.keys())
-                if c in available
+                (*plan.group_by_cols, *plan.requested_measures, *plan.calc_specs.keys())
             )
         )
-        if select_cols:
-            result = result.select([result[c] for c in select_cols])
+        missing = [c for c in requested if c not in available]
+        if missing:
+            # Dropping the missing columns would return a result that silently
+            # ignores part of the query (e.g. cross-joined models have no
+            # dimension bridge, so group keys from the other side never get
+            # attached to a pre-aggregated measure leg).
+            raise ValueError(
+                f"Pre-aggregation could not attach requested column(s) {missing} "
+                f"to the result; available columns: {sorted(available)}. "
+                "Grouping a cross-joined model by one side's dimension while "
+                "aggregating the other side's measures is not supported — "
+                "restructure the query (e.g. join on an explicit key, or "
+                "aggregate each side separately and combine)."
+            )
+        if requested:
+            result = result.select([result[c] for c in requested])
 
         return result
 
