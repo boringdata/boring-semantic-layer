@@ -699,7 +699,7 @@ class SemanticModel(SemanticTable):
 
         for name, fn_or_expr in meas.items():
             kind, value = _classify_measure(fn_or_expr, scope, name)
-            (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
+            _store_classified_measure(name, kind, value, new_base_meas, new_calc_meas)
 
         return SemanticModel(
             table=self.op().table,
@@ -1093,7 +1093,7 @@ class SemanticJoin(SemanticTable):
         )
         for name, fn_or_expr in meas.items():
             kind, value = _classify_measure(fn_or_expr, scope, name)
-            (new_calc if kind == "calc" else new_base)[name] = value
+            _store_classified_measure(name, kind, value, new_base, new_calc)
 
         return SemanticModel(
             table=joined_tbl,
@@ -1230,7 +1230,7 @@ class SemanticFilter(SemanticTable):
 
         for name, fn_or_expr in meas.items():
             kind, value = _classify_measure(fn_or_expr, scope, name)
-            (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
+            _store_classified_measure(name, kind, value, new_base_meas, new_calc_meas)
 
         return SemanticModel(
             table=self.op().to_untagged(),
@@ -1711,7 +1711,7 @@ class SemanticUnnest(SemanticTable):
 
         for name, fn_or_expr in meas.items():
             kind, value = _classify_measure(fn_or_expr, scope, name)
-            (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
+            _store_classified_measure(name, kind, value, new_base_meas, new_calc_meas)
 
         return SemanticModel(
             table=self,
@@ -1719,6 +1719,24 @@ class SemanticUnnest(SemanticTable):
             measures=new_base_meas,
             calc_measures=new_calc_meas,
         )
+
+
+def _store_classified_measure(name, kind, value, base_meas, calc_meas):
+    """Store a classified measure, evicting a same-named entry of the other
+    kind. Measure lookup is base-first, so a base measure left behind when a
+    redefinition lands in the calc map would silently keep serving the old
+    definition."""
+    if kind == "calc":
+        if name in getattr(value, "depends_on", ()):
+            raise ValueError(
+                f"Measure {name!r} cannot be defined in terms of itself. "
+                "Reference other measures or columns, or use a new name."
+            )
+        base_meas.pop(name, None)
+        calc_meas[name] = value
+    else:
+        calc_meas.pop(name, None)
+        base_meas[name] = value
 
 
 class SemanticProject(SemanticTable):

@@ -509,8 +509,11 @@ def _reject_bool_resolution(result: Any, source: Any) -> None:
             "mixed plain-ibis and xorq-vendored objects (e.g. "
             "`t.col == ibis.literal(...)` against a xorq-backed table). "
             "Compare against plain Python values instead (`t.col == 'AA'`) "
-            "or build the literal with the same ibis flavor as the table "
-            "(see boring_semantic_layer.nested_compile.get_ibis_module)."
+            "or build the literal with the table's own ibis flavor: "
+            "`from boring_semantic_layer.nested_compile import get_ibis_module; "
+            "get_ibis_module(t).literal(...)`. For a deliberately constant "
+            "predicate, return `get_ibis_module(t).literal(True)` rather "
+            "than a Python bool."
         )
 
 
