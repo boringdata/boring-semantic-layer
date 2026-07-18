@@ -159,10 +159,12 @@ class TestDictFilterValueCoercion:
             )
 
     def test_partial_date_strings_not_coerced(self, events):
+        import duckdb
+
         # R4-5: "2024" was parsed with today's month/day, so results changed
         # depending on the day the query ran. Now it reaches the backend as a
         # plain string and fails loudly instead.
-        with pytest.raises(Exception):
+        with pytest.raises(duckdb.Error, match="timestamp"):
             events.query(
                 dimensions=["ts"],
                 measures=["cnt"],
