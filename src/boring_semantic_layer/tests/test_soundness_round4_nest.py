@@ -246,17 +246,28 @@ def test_nest_bare_group_by_keeps_per_row_structs(orders):
     assert list(open_rows["qty"]) == [1, 3, 5, 6]
 
 
-def test_nest_unsupported_shapes_raise(orders):
-    """order_by/limit inside nest and transformed bare group_by raise loudly
-    instead of silently collecting raw rows."""
-    with pytest.raises(NotImplementedError, match="order_by/limit"):
-        orders.group_by("status").aggregate(
+def test_nest_inner_order_by_orders_each_group_array(orders):
+    """order_by after the inner aggregate orders each group's struct array."""
+    result = (
+        orders.group_by("status")
+        .aggregate(
             "total",
             nest={
-                "x": lambda t: t.group_by("sku").aggregate("total_qty").order_by("sku")
+                "x": lambda t: t.group_by("sku")
+                .aggregate("total_qty")
+                .order_by(lambda t: t.total_qty.desc())
             },
         )
+        .execute()
+    )
+    nested = _nested_frames(result, "x")
+    open_qty = [float(v) for v in nested["open"]["total_qty"]]
+    assert open_qty == sorted(open_qty, reverse=True)
 
+
+def test_nest_unsupported_shapes_raise(orders):
+    """Transformed bare group_by raises loudly instead of silently
+    collecting raw rows."""
     with pytest.raises(NotImplementedError, match="bare group_by"):
         orders.group_by("status").aggregate(
             "total",
