@@ -133,9 +133,10 @@ def _validate_time_grain(
     if not smallest_allowed_grain:
         return
 
-    smallest_grain = _make_grain_id(smallest_allowed_grain)
-    if smallest_grain not in TIME_GRAIN_ORDER:
-        return
+    # _normalize_grain accepts both spellings ("day" and "TIME_GRAIN_DAY")
+    # and raises on anything else — a silently-skipped validation here would
+    # let queries run at grains the model forbids.
+    smallest_grain = _normalize_grain(smallest_allowed_grain)
 
     requested_idx = TIME_GRAIN_ORDER.index(time_grain)
     smallest_idx = TIME_GRAIN_ORDER.index(smallest_grain)
@@ -281,7 +282,15 @@ def _normalize_filter(
 @curry
 def _make_order_key(field: str, direction: str):
     """Create order key for sorting (curried)."""
-    return ibis.desc(field) if direction.lower() == "desc" else field
+    normalized = direction.lower() if isinstance(direction, str) else direction
+    if normalized in ("desc", "descending"):
+        return ibis.desc(field)
+    if normalized in ("asc", "ascending"):
+        return field
+    raise ValueError(
+        f"Invalid order_by direction {direction!r} for field {field!r}. "
+        "Valid directions: 'asc', 'ascending', 'desc', 'descending'"
+    )
 
 
 def _normalize_field_name(
@@ -453,7 +462,7 @@ def _build_time_range_filters(semantic_table: Any, time_dimension: str, time_ran
     if not isinstance(time_range, dict) or "start" not in time_range or "end" not in time_range:
         raise ValueError("time_range must be a dict with 'start' and 'end' keys")
 
-    from datetime import datetime
+    from datetime import datetime, timedelta
 
     dim_obj = semantic_table.get_dimensions().get(time_dimension)
     if dim_obj is None:
@@ -471,10 +480,32 @@ def _build_time_range_filters(semantic_table: Any, time_dimension: str, time_ran
     end_dt = datetime.fromisoformat(time_range["end"])
     if end_dt < start_dt:
         raise ValueError("time_range end must be greater than or equal to start")
+
+    # A date-only end means "through the end of that day" (the documented
+    # usage: end "2000-12-31" covers the whole year). Parsing it as midnight
+    # and comparing <= would silently drop end-date rows with intra-day
+    # times, so use an exclusive bound at the next midnight instead. An end
+    # with an explicit time component keeps inclusive <= semantics.
+    end_is_date_only = _is_date_only(time_range["end"])
+    if end_is_date_only:
+        end_bound = end_dt + timedelta(days=1)
+        end_filter = lambda t, dim=dim_obj, end=end_bound: dim(t) < end  # noqa: E731
+    else:
+        end_filter = lambda t, dim=dim_obj, end=end_dt: dim(t) <= end  # noqa: E731
     return [
         lambda t, dim=dim_obj, start=start_dt: dim(t) >= start,
-        lambda t, dim=dim_obj, end=end_dt: dim(t) <= end,
+        end_filter,
     ]
+
+
+def _is_date_only(value: str) -> bool:
+    from datetime import date
+
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def compare_periods(
@@ -709,7 +740,22 @@ def query(
 
         filters.extend(_build_time_range_filters(result, time_dim_name, time_range))
 
-    # Step 1: Handle time grain transformations
+    # Step 1: Apply row filters — separate pre-agg (dimension) from post-agg
+    # (measure). Pre-agg filters must run BEFORE any grain transformation:
+    # they reference dimensions as the queried model defines them, and once
+    # the time dimension is swapped for its truncated version a range filter
+    # would compare truncated bucket starts instead of raw values, silently
+    # dropping in-range rows (and, at week grain, including out-of-range ones).
+    pre_agg_filters = []
+    post_agg_filters = list(having or [])
+    for filter_spec in filters:
+        _split_filter(filter_spec, known_measures, model_name, pre_agg_filters, post_agg_filters)
+
+    for filter_spec in pre_agg_filters:
+        filter_fn = _normalize_filter(filter_spec)
+        result = result.filter(filter_fn)
+
+    # Step 2: Handle time grain transformations
     if time_grain and time_grains:
         raise ValueError(
             "Cannot specify both 'time_grain' and 'time_grains'. "
@@ -761,16 +807,6 @@ def query(
         if time_dims_to_transform:
             result = result.with_dimensions(**time_dims_to_transform)
 
-    # Step 2: Apply filters — separate pre-agg (dimension) from post-agg (measure)
-    pre_agg_filters = []
-    post_agg_filters = list(having or [])
-    for filter_spec in filters:
-        _split_filter(filter_spec, known_measures, model_name, pre_agg_filters, post_agg_filters)
-
-    for filter_spec in pre_agg_filters:
-        filter_fn = _normalize_filter(filter_spec)
-        result = result.filter(filter_fn)
-
     # Step 3: Group by and aggregate
     if dimensions:
         result = result.group_by(*dimensions)
@@ -791,8 +827,11 @@ def query(
         order_keys = [_make_order_key(field, direction) for field, direction in order_by]
         result = result.order_by(*order_keys)
 
-    # Step 5: Apply limit
-    if limit:
+    # Step 5: Apply limit. `limit=0` is a real LIMIT 0 (zero rows), not
+    # "no limit" — truthiness would silently return the full result set.
+    if limit is not None:
+        if isinstance(limit, bool):
+            raise ValueError(f"limit must be an integer, got {limit!r}")
         result = result.limit(limit)
 
     return result

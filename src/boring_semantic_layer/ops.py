@@ -5177,8 +5177,8 @@ class SemanticLimitOp(Relation):
     offset: int
 
     def __init__(self, source: Relation, n: int, offset: int = 0) -> None:
-        if n <= 0:
-            raise ValueError(f"limit must be positive, got {n}")
+        if n < 0:
+            raise ValueError(f"limit must be non-negative, got {n}")
         if offset < 0:
             raise ValueError(f"offset must be non-negative, got {offset}")
         super().__init__(source=Relation.__coerce__(source), n=n, offset=offset)
