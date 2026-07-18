@@ -54,6 +54,7 @@ from .calc_compiler import (
     TOTALS_PREFIX,
     TotalsNotAvailableError,
     UnknownMeasureRefError,
+    WindowedBaseReductionError,
     _drop_totals_columns,
     _to_op,
     apply_calc_measures,
@@ -1825,7 +1826,11 @@ def _compile_aggregation(
                     priority_measures=cm.prefer_known,
                 )
                 new_expr, new_vt, new_totals_vt, lifted = lift_inline_reductions(
-                    expr, vt, base_tbl, totals_virtual_agg_tbl=totals_vt
+                    expr,
+                    vt,
+                    base_tbl,
+                    totals_virtual_agg_tbl=totals_vt,
+                    group_keys=by_cols,
                 )
                 analysis = analyze_calc_expr(
                     new_expr,
@@ -1840,6 +1845,12 @@ def _compile_aggregation(
                 for anon_name, reduction_expr in lifted.items():
                     if anon_name not in agg_specs:
                         agg_specs[anon_name] = lambda t, r=reduction_expr: r
+            except WindowedBaseReductionError:
+                # The apply-time fallback re-evaluates the lambda against
+                # the aggregated result, which would silently give the
+                # windowed reduction different (output-grain) semantics —
+                # surface the soundness error instead.
+                raise
             except Exception as exc:
                 logger.debug(
                     "calc-measure lift/classify failed for %r; will re-evaluate "
@@ -2038,7 +2049,11 @@ def _compile_aggregation(
                 )
                 rewritten_expr, rewritten_vt, rewritten_totals_vt, lifted = (
                     lift_inline_reductions(
-                        expr0, vt0, base_tbl, totals_virtual_agg_tbl=totals_vt0
+                        expr0,
+                        vt0,
+                        base_tbl,
+                        totals_virtual_agg_tbl=totals_vt0,
+                        group_keys=by_cols,
                     )
                 )
                 if lifted:
