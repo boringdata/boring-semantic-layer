@@ -3350,7 +3350,6 @@ class SemanticAggregateOp(Relation):
         # each leg's source tables via field provenance so legs can be pushed
         # row-precisely to the table they constrain.
         filter_legs: dict[int, list] = {}
-        many_side_tables: set[str] = set()
         if tbl_filter_exprs:
             leaf_types = _leaf_rel_types()
             base_rel_to_table: dict = {}
@@ -3371,17 +3370,22 @@ class SemanticAggregateOp(Relation):
                     for leg in _flatten_and_legs(expr)
                 ]
 
-            def _collect_many_sides(node):
-                if isinstance(node, SemanticJoinOp):
-                    if node.cardinality == "many":
-                        for r in _find_all_root_models(node.right):
-                            if getattr(r, "name", None):
-                                many_side_tables.add(r.name)
-                    _collect_many_sides(node.left)
-                    _collect_many_sides(node.right)
+        # Tables reached through a ``join_many`` edge. Their raw rows only
+        # count when they participate in the join, so this set drives both
+        # the residual-filter-leg check and the unconditional measure-leg
+        # participation restriction below.
+        many_side_tables: set[str] = set()
 
-            if filter_legs:
-                _collect_many_sides(join_op)
+        def _collect_many_sides(node):
+            if isinstance(node, SemanticJoinOp):
+                if node.cardinality == "many":
+                    for r in _find_all_root_models(node.right):
+                        if getattr(r, "name", None):
+                            many_side_tables.add(r.name)
+                _collect_many_sides(node.left)
+                _collect_many_sides(node.right)
+
+        _collect_many_sides(join_op)
 
         # --- 2. Build aggregation plan ---
         if tbl is not None:
@@ -3456,8 +3460,8 @@ class SemanticAggregateOp(Relation):
             # Push filters owned by this table onto its raw table. Filters
             # handled elsewhere (applied to the full joined table, or owned
             # by another table) reach this table via a join-key bridge.
+            needs_bridge = False
             if filter_fns:
-                needs_bridge = False
                 residual_cross_legs = False
                 for i, pred_fn in enumerate(filter_fns):
                     if filter_owners[i] == frozenset({table_name}):
@@ -3493,46 +3497,100 @@ class SemanticAggregateOp(Relation):
                         "calls, or restate it against a single table."
                     )
 
-                # Filters not pushed here (cross-table, ambiguous, or owned
-                # by another table) restrict via join keys from the filtered
-                # full joined table, or from the owning table's raw table.
-                if needs_bridge:
-                    jk = join_tree_info.table_join_keys.get(table_name, set())
-                    if tbl is not None:
-                        shared = sorted(jk & set(raw_tbl.columns) & set(tbl.columns))
-                        if shared:
-                            key_bridge = tbl.select([tbl[c] for c in shared]).distinct()
-                            preds = [raw_tbl[c] == key_bridge[c] for c in shared]
-                            raw_tbl = raw_tbl.inner_join(key_bridge, preds).select(raw_tbl)
-                    else:
-                        # Chasm fallback: restrict via each owning table's keys
-                        for i, pred_fn in enumerate(filter_fns):
-                            owners = filter_owners[i]
-                            if table_name in owners or len(owners) != 1:
+            # Rows of a join_many table whose join keys are NULL or match no
+            # left-side row never appear in the LEFT JOIN output, so measure
+            # legs must ALWAYS be restricted to join participants — not only
+            # when cross-table filter routing forces a bridge. Otherwise
+            # grand totals and many-side-only group-bys silently count
+            # orphan rows the joined table can never produce, and the sum
+            # over groups stops matching the ungrouped total.
+            needs_participation = table_name in many_side_tables and bool(measures)
+
+            # Filters not pushed here (cross-table, ambiguous, or owned
+            # by another table) restrict via join keys from the filtered
+            # full joined table, or from the owning table's raw table.
+            if needs_bridge or needs_participation:
+                jk = join_tree_info.table_join_keys.get(table_name, set())
+                if tbl is not None:
+                    shared = sorted(jk & set(raw_tbl.columns) & set(tbl.columns))
+                    if shared:
+                        key_bridge = tbl.select([tbl[c] for c in shared]).distinct()
+                        preds = [raw_tbl[c] == key_bridge[c] for c in shared]
+                        raw_tbl = raw_tbl.inner_join(key_bridge, preds).select(raw_tbl)
+                    elif needs_participation:
+                        raise ValueError(
+                            f"Measures on {table_name!r} cannot be restricted "
+                            "to rows that participate in its join_many: no "
+                            "join-key column is available on both the raw "
+                            "table and the joined table. Computing them on "
+                            "the raw table would silently count rows the "
+                            "join can never produce."
+                        )
+                else:
+                    # Chasm fallback: restrict participation via the raw
+                    # keys of root-side tables that share join-key columns.
+                    participation_bridged = not needs_participation
+                    if needs_participation:
+                        for root_name, card in (
+                            join_tree_info.table_cardinalities.items()
+                        ):
+                            if card != "root":
                                 continue
-                            (owner_name,) = owners
-                            owner_op = join_tree_info.table_ops.get(owner_name)
-                            owner_raw = raw_tables.get(owner_name)
-                            if owner_op is None or owner_raw is None:
+                            root_op = join_tree_info.table_ops.get(root_name)
+                            if root_op is None:
                                 continue
-                            owner_raw = owner_raw.filter(
-                                _resolve_expr(
-                                    pred_fn,
-                                    _table_filter_resolver(
-                                        owner_raw, owner_op, owner_name
-                                    ),
-                                )
-                            )
-                            owner_jk = join_tree_info.table_join_keys.get(owner_name, set())
+                            try:
+                                root_raw = _to_untagged(root_op)
+                            except Exception:
+                                continue
+                            root_jk = join_tree_info.table_join_keys.get(root_name, set())
                             shared = sorted(
-                                jk & owner_jk & set(raw_tbl.columns) & set(owner_raw.columns)
+                                jk & root_jk & set(raw_tbl.columns) & set(root_raw.columns)
                             )
                             if shared:
-                                key_bridge = owner_raw.select(
-                                    [owner_raw[c] for c in shared]
+                                key_bridge = root_raw.select(
+                                    [root_raw[c] for c in shared]
                                 ).distinct()
                                 preds = [raw_tbl[c] == key_bridge[c] for c in shared]
                                 raw_tbl = raw_tbl.inner_join(key_bridge, preds).select(raw_tbl)
+                                participation_bridged = True
+                    if not participation_bridged:
+                        raise ValueError(
+                            f"Measures on {table_name!r} cannot be restricted "
+                            "to rows that participate in its join_many: the "
+                            "full joined table is unavailable (chasm fallback) "
+                            "and no join-key column is shared with the root "
+                            "table. Computing them on the raw table would "
+                            "silently count rows the join can never produce."
+                        )
+                    # Chasm fallback: restrict via each owning table's keys
+                    for i, pred_fn in enumerate(filter_fns):
+                        owners = filter_owners[i]
+                        if table_name in owners or len(owners) != 1:
+                            continue
+                        (owner_name,) = owners
+                        owner_op = join_tree_info.table_ops.get(owner_name)
+                        owner_raw = raw_tables.get(owner_name)
+                        if owner_op is None or owner_raw is None:
+                            continue
+                        owner_raw = owner_raw.filter(
+                            _resolve_expr(
+                                pred_fn,
+                                _table_filter_resolver(
+                                    owner_raw, owner_op, owner_name
+                                ),
+                            )
+                        )
+                        owner_jk = join_tree_info.table_join_keys.get(owner_name, set())
+                        shared = sorted(
+                            jk & owner_jk & set(raw_tbl.columns) & set(owner_raw.columns)
+                        )
+                        if shared:
+                            key_bridge = owner_raw.select(
+                                [owner_raw[c] for c in shared]
+                            ).distinct()
+                            preds = [raw_tbl[c] == key_bridge[c] for c in shared]
+                            raw_tbl = raw_tbl.inner_join(key_bridge, preds).select(raw_tbl)
 
             table_measures = _get_field_dict(table_op, "measures")
             table_dims = _get_field_dict(table_op, "dimensions")
