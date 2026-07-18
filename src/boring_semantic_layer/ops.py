@@ -492,8 +492,34 @@ def _make_schema(fields_dict: dict[str, str]):
     return _SchemaClass(cleaned)
 
 
+def _reject_bool_resolution(result: Any, source: Any) -> None:
+    """Reject expressions that resolved to a Python bool.
+
+    A bool here almost always means a comparison mixed plain-ibis and
+    xorq-vendored objects (e.g. ``t.col == ibis.literal(...)`` where ``t``
+    is xorq-backed): both ``__eq__`` implementations return
+    ``NotImplemented`` for the foreign type, so Python falls back to
+    identity comparison and yields a plain ``False``.  Left unchecked, that
+    compiles into a constant predicate and silently returns wrong results.
+    """
+    if isinstance(result, bool):
+        raise TypeError(
+            f"Expression {source!r} resolved to the Python bool {result!r} "
+            "instead of an ibis expression. This usually means a comparison "
+            "mixed plain-ibis and xorq-vendored objects (e.g. "
+            "`t.col == ibis.literal(...)` against a xorq-backed table). "
+            "Compare against plain Python values instead (`t.col == 'AA'`) "
+            "or build the literal with the same ibis flavor as the table "
+            "(see boring_semantic_layer.nested_compile.get_ibis_module)."
+        )
+
+
 def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
+    was_resolved = _is_deferred(expr) or callable(expr)
     result = expr.resolve(scope) if _is_deferred(expr) else expr(scope) if callable(expr) else expr
+
+    if was_resolved:
+        _reject_bool_resolution(result, expr)
 
     if hasattr(result, "__class__") and hasattr(scope, "__class__"):
         result_module = result.__class__.__module__
@@ -955,14 +981,14 @@ class Dimension:
 
     def __call__(self, table: ir.Table, _dims: dict | None = None) -> ir.Value:
         try:
-            return self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
+            result = self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
         except AttributeError as e:
             # Retry with a prefix-aware proxy for joined tables where
             # model prefixes are used (e.g., lambda t: t.flights.carrier)
             if _dims and not _is_deferred(self.expr) and callable(self.expr):
                 try:
                     proxy = _DimensionTableProxy(table, _dims)
-                    return self.expr(proxy)
+                    proxy_result = self.expr(proxy)
                 except AttributeError as proxy_err:
                     # Preserve explicit prefix-proxy errors (e.g. missing
                     # "model.field") to avoid silent fallback to unprefixed
@@ -972,12 +998,18 @@ class Dimension:
                         raise
                 except Exception:
                     pass
+                else:
+                    _reject_bool_resolution(proxy_result, self.expr)
+                    return proxy_result
             # Provide helpful error for missing columns
             if "'Table' object has no attribute" in str(
                 e
             ) or "'Join' object has no attribute" in str(e):
                 raise AttributeError(_format_column_error(e, table)) from e
             raise
+        else:
+            _reject_bool_resolution(result, self.expr)
+            return result
 
     def to_json(self) -> Mapping[str, Any]:
         base = {"description": self.description}
@@ -1015,7 +1047,9 @@ class Measure:
     metadata: Mapping[str, Any] = field(factory=dict, eq=False, hash=False)
 
     def __call__(self, table: ir.Table) -> ir.Value:
-        return self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
+        result = self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
+        _reject_bool_resolution(result, self.expr)
+        return result
 
     @property
     def locality(self) -> str | None:

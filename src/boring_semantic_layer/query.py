@@ -21,10 +21,13 @@ def _get_ibis_api():
     """Return xorq's vendored ibis API if available, else plain ibis.
 
     Filter expressions built with ``ibis._`` / ``ibis.literal()`` must use the
-    same ibis implementation as the table they will be resolved against.  Since
-    ``_ensure_xorq_table()`` converts tables to xorq when possible, we should
-    build filter expressions with xorq's ibis to match.  For backends that
-    xorq does not support, plain ibis is used as the fallback.
+    same ibis implementation as the table they will be resolved against.  This
+    helper only provides a *default* flavor for contexts where no table is in
+    scope yet (eager validation, value parsing without a target table).  The
+    filter callables built in ``Filter.to_callable`` pick the flavor from the
+    actual table at resolve time via ``get_ibis_module`` — tables on backends
+    that xorq does not support stay plain ibis even when xorq is installed,
+    and mixing flavors silently produces wrong predicates.
     """
     try:
         from ._xorq import api as xo
@@ -199,20 +202,29 @@ class Filter:
         return value
 
     def to_callable(self) -> Callable:
-        """Convert filter to callable that can be used with SemanticTable.filter()."""
+        """Convert filter to callable that can be used with SemanticTable.filter().
+
+        The ibis flavor (plain vs xorq-vendored) is picked from the table the
+        filter actually resolves against, not from whether xorq is importable:
+        on backends xorq can't wrap, the table stays plain ibis, and literals
+        built with the other flavor mis-compose (equality silently yields a
+        constant-false predicate; ordering raises TypeError).
+        """
         from . import predicate as pred_mod
+        from .nested_compile import get_ibis_module
         from .ops import _ensure_xorq_table
 
         if isinstance(self.filter, dict):
             pred = pred_mod.from_dict(self.filter)
-            ibis_module = _get_ibis_api()
 
             def _dict_filter(t):
+                tbl = _ensure_xorq_table(t)
+                ibis_module = get_ibis_module(tbl)
                 return pred_mod.compile(
                     pred,
                     ibis_module._,
                     ibis_module=ibis_module,
-                ).resolve(_ensure_xorq_table(t))
+                ).resolve(tbl)
 
             # Deferred resolution: columns can't be statically introspected
             # (see ops._dimension_only_source_table). Marked so callers can opt
@@ -221,14 +233,24 @@ class Filter:
             _dict_filter.__bsl_deferred_resolution__ = True
             return _dict_filter
         elif isinstance(self.filter, str):
-            _ibis = _get_ibis_api()
-            expr = safe_eval(
-                self.filter,
-                context={"_": _ibis._, "ibis": _ibis},
-            ).unwrap()
+            filter_str = self.filter
+            # Validate eagerly (syntax, allowed names) so bad filter strings
+            # fail at build time; the flavor-matched expression is built per
+            # table at resolve time and memoized per ibis module.
+            _default = _get_ibis_api()
+            safe_eval(filter_str, context={"_": _default._, "ibis": _default}).unwrap()
+            _expr_cache: dict[int, Any] = {}
 
             def _str_filter(t):
-                return expr.resolve(_ensure_xorq_table(t))
+                tbl = _ensure_xorq_table(t)
+                _ibis = get_ibis_module(tbl)
+                key = id(_ibis)
+                if key not in _expr_cache:
+                    _expr_cache[key] = safe_eval(
+                        filter_str,
+                        context={"_": _ibis._, "ibis": _ibis},
+                    ).unwrap()
+                return _expr_cache[key].resolve(tbl)
 
             _str_filter.__bsl_deferred_resolution__ = True
             return _str_filter
