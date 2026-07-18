@@ -215,11 +215,20 @@ class Filter:
         from .nested_compile import get_ibis_module
         from .ops import _ensure_xorq_table
 
+        def _resolve_target(t):
+            # Dimension-aware resolver proxies must be resolved against
+            # directly: _ensure_xorq_table would silently unwrap them (the
+            # proxy forwards .op()), resolving field names to raw columns
+            # and bypassing same-named dimension expressions.
+            if type(t).__module__.startswith("boring_semantic_layer"):
+                return t
+            return _ensure_xorq_table(t)
+
         if isinstance(self.filter, dict):
             pred = pred_mod.from_dict(self.filter)
 
             def _dict_filter(t):
-                tbl = _ensure_xorq_table(t)
+                tbl = _resolve_target(t)
                 ibis_module = get_ibis_module(tbl)
                 return pred_mod.compile(
                     pred,
@@ -243,7 +252,7 @@ class Filter:
             _expr_cache: dict[int, Any] = {}
 
             def _str_filter(t):
-                tbl = _ensure_xorq_table(t)
+                tbl = _resolve_target(t)
                 _ibis = get_ibis_module(tbl)
                 key = id(_ibis)
                 if key not in _expr_cache:

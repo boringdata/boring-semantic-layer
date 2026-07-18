@@ -581,8 +581,18 @@ def _mutate_dimensions_with_dependencies(
     tbl: ir.Table,
     dimension_names: Iterable[str],
     merged_dimensions: Mapping[str, Any],
+    *,
+    overwrite_existing: bool = True,
 ) -> ir.Table:
-    """Mutate requested dimensions, recursively materializing derived deps first."""
+    """Mutate requested dimensions, recursively materializing derived deps first.
+
+    ``overwrite_existing=False`` leaves dimensions that share a name with an
+    existing column unmaterialized. Filter resolution needs this: it resolves
+    such dimensions through the dimension lambda against raw columns, and
+    materializing them first would both re-apply the expression (``amount*2``
+    filtering as ``amount*4``) and hand downstream measures the mutated
+    column in place of the raw one.
+    """
     resolving: list[str] = []
 
     # Dim lambdas reference sibling dims by their BARE name (t.region_band),
@@ -600,6 +610,8 @@ def _mutate_dimensions_with_dependencies(
 
     def resolve_one(dim_name: str, current_tbl: ir.Table) -> ir.Table:
         if dim_name not in merged_dimensions:
+            return current_tbl
+        if not overwrite_existing and dim_name in current_tbl.columns:
             return current_tbl
         if dim_name in resolving:
             cycle = " -> ".join([*resolving, dim_name])
@@ -633,6 +645,52 @@ def _mutate_dimensions_with_dependencies(
     for dim_name in dimension_names:
         tbl = resolve_one(dim_name, tbl)
     return tbl
+
+
+def _reject_shadowed_group_keys(tbl, keys, merged_dimensions, aggs, merged_base_measures):
+    """Reject group keys whose dimension redefines a column a measure reads.
+
+    Materializing such a dimension overwrites the raw column before measures
+    are computed, so the measure would silently aggregate the dimension's
+    values (e.g. ``amount * 2``) instead of the column it was defined over.
+    Identity dimensions (``lambda t: t.amount``) and measures that don't
+    touch the shadowed column are unaffected and stay allowed.
+    """
+    for key in keys:
+        if key not in merged_dimensions or key not in tbl.columns:
+            continue
+        dim_fn = merged_dimensions[key]
+        try:
+            dim_expr = dim_fn(tbl)
+        except Exception:
+            continue
+        target = tbl[key].op()
+        try:
+            if dim_expr.op() == target:
+                continue
+        except Exception:
+            continue
+        for name, agg in aggs.items():
+            measure = merged_base_measures.get(name)
+            try:
+                measure_expr = measure(tbl) if measure is not None else _unwrap(agg)(tbl)
+            except Exception:
+                continue
+            try:
+                reads_shadowed = any(
+                    node == target for node in measure_expr.op().find(type(target))
+                )
+            except Exception:
+                continue
+            if reads_shadowed:
+                raise ValueError(
+                    f"Group key {key!r} is a dimension that redefines column "
+                    f"{key!r} with a different expression, and measure {name!r} "
+                    "reads that column. Grouping would replace the column with "
+                    "the dimension's values and silently change the measure. "
+                    f"Rename the dimension (e.g. '{key}_bucket') or define the "
+                    "measure against a column the dimension does not shadow."
+                )
 
 
 def _classify_dependencies(
@@ -1305,7 +1363,7 @@ class SemanticFilterOp(Relation):
         for dim_name in dim_map:
             try:
                 enriched = _mutate_dimensions_with_dependencies(
-                    enriched, [dim_name], dim_map
+                    enriched, [dim_name], dim_map, overwrite_existing=False
                 )
             except (TypeError, KeyError, AttributeError):
                 pass
@@ -2983,6 +3041,10 @@ class SemanticAggregateOp(Relation):
                         root_dimensions,
                     )
 
+        if not is_post_agg:
+            _reject_shadowed_group_keys(
+                tbl, self.keys, merged_dimensions, self.aggs, merged_base_measures
+            )
         tbl = _mutate_dimensions_with_dependencies(
             tbl,
             [k for k in self.keys if k in merged_dimensions],
