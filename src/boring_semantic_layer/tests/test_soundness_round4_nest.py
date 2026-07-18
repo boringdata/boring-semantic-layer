@@ -265,6 +265,58 @@ def test_nest_inner_order_by_orders_each_group_array(orders):
     assert open_qty == sorted(open_qty, reverse=True)
 
 
+def test_nest_within_nest_regrains_to_outer_keys(orders):
+    """A nest entry inside a nest entry widens to the full outer grain.
+
+    The inner-most plan used to keep the middle lambda's grain (sku,
+    customer): compiling the middle level then raised column-not-found
+    on the outer key, and had it compiled it would have aggregated
+    customers across outer groups.
+    """
+    orders = orders.with_dimensions(customer=lambda t: t.customer_id)
+    result = (
+        orders.group_by("status")
+        .aggregate(
+            "total",
+            nest={
+                "by_sku": lambda t: t.group_by("sku")
+                .aggregate(
+                    "total_qty",
+                    nest={
+                        "by_customer": lambda t2: t2.group_by("customer").aggregate(
+                            "total_qty"
+                        )
+                    },
+                )
+                .order_by(lambda t: t.total_qty.desc())
+                .limit(2)
+            },
+        )
+        .execute()
+    )
+
+    assert list(result.columns) == ["status", "total", "by_sku"]
+    by_status = {row["status"]: row for _, row in result.iterrows()}
+
+    # Middle level: ordered desc by total_qty, truncated to 2 per group.
+    open_skus = list(by_status["open"]["by_sku"])
+    assert [s["sku"] for s in open_skus] == ["c", "b"]
+    assert [float(s["total_qty"]) for s in open_skus] == [11.0, 3.0]
+
+    # Inner-most level: scoped to (status, sku). Customer 100 under
+    # ("closed", "a") must see qty 2 only, not the cross-status total 3.
+    closed_skus = {s["sku"]: s for s in by_status["closed"]["by_sku"]}
+    assert {
+        c["customer"]: float(c["total_qty"])
+        for c in closed_skus["a"]["by_customer"]
+    } == {100: 2.0}
+    inner_c = {
+        c["customer"]: float(c["total_qty"])
+        for c in dict((s["sku"], s) for s in open_skus)["c"]["by_customer"]
+    }
+    assert inner_c == {300: 5.0, 999: 6.0}
+
+
 def test_nest_unsupported_shapes_raise(orders):
     """Transformed bare group_by raises loudly instead of silently
     collecting raw rows."""

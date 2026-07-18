@@ -648,7 +648,9 @@ def _mutate_dimensions_with_dependencies(
     return tbl
 
 
-def _reject_shadowed_group_keys(tbl, keys, merged_dimensions, aggs, merged_base_measures):
+def _reject_shadowed_group_keys(
+    tbl, keys, merged_dimensions, aggs, merged_base_measures, raw_columns=None
+):
     """Reject group keys whose dimension redefines a column a measure reads.
 
     Materializing such a dimension overwrites the raw column before measures
@@ -656,9 +658,17 @@ def _reject_shadowed_group_keys(tbl, keys, merged_dimensions, aggs, merged_base_
     values (e.g. ``amount * 2``) instead of the column it was defined over.
     Identity dimensions (``lambda t: t.amount``) and measures that don't
     touch the shadowed column are unaffected and stay allowed.
+
+    ``raw_columns`` is the union of the root tables' own column names: a key
+    absent from it can only exist in ``tbl`` as an upstream materialization
+    of the dimension itself (e.g. by a pre-aggregation filter), so there is
+    no raw column to shadow and expressions reading it are well-defined
+    (e.g. ``mutate`` entries desugared onto the measure path).
     """
     for key in keys:
         if key not in merged_dimensions or key not in tbl.columns:
+            continue
+        if raw_columns is not None and key not in raw_columns:
             continue
         dim_fn = merged_dimensions[key]
         try:
@@ -3117,8 +3127,19 @@ class SemanticAggregateOp(Relation):
                     )
 
         if not is_post_agg:
+            raw_columns = set()
+            for root in all_roots:
+                cols = getattr(getattr(root, "table", None), "columns", ())
+                raw_columns.update(cols)
+                if root.name:
+                    raw_columns.update(f"{root.name}.{c}" for c in cols)
             _reject_shadowed_group_keys(
-                tbl, self.keys, merged_dimensions, self.aggs, merged_base_measures
+                tbl,
+                self.keys,
+                merged_dimensions,
+                self.aggs,
+                merged_base_measures,
+                raw_columns=raw_columns,
             )
         tbl = _mutate_dimensions_with_dependencies(
             tbl,

@@ -36,6 +36,7 @@ from .ops import (
     _find_all_root_models,
     _get_merged_fields,
     _is_deferred,
+    _unwrap,
     _normalize_join_predicate,
     _normalize_to_name,
     make_bare_ref_lambda,
@@ -1360,6 +1361,45 @@ def _split_nest_pipeline(name: str, probe_op):
     return current, order_keys, limit_spec, tuple(having)
 
 
+def _regrain_nested_specs(aggs: dict, new_outer_keys: tuple[str, ...]) -> dict:
+    """Widen child ``nest=`` plans to a re-grained parent's keys.
+
+    A nest entry's inner aggregate is re-grouped at (outer + inner) keys;
+    any ``nest=`` entries *it* carries were compiled against the lambda's
+    original grain and must widen to the new keys too, or the group-by
+    that joins them back onto their parent has no outer key columns.
+    """
+    out = {}
+    for agg_name, agg_fn in aggs.items():
+        spec = _unwrap(agg_fn)
+        if not isinstance(spec, NestAggSpec):
+            out[agg_name] = agg_fn
+            continue
+        inner = spec.inner_op
+        widened = tuple(new_outer_keys) + tuple(
+            k for k in inner.keys if k not in new_outer_keys
+        )
+        if widened == tuple(inner.keys):
+            out[agg_name] = agg_fn
+            continue
+        inner_source = inner.source
+        if isinstance(inner_source, SemanticGroupByOp):
+            inner_source = inner_source.source
+        out[agg_name] = NestAggSpec(
+            inner_op=SemanticAggregateOp(
+                source=SemanticGroupByOp(source=inner_source, keys=widened),
+                keys=widened,
+                aggs=_regrain_nested_specs(dict(inner.aggs), widened),
+                nested_columns=inner.nested_columns,
+            ),
+            struct_fields=spec.struct_fields,
+            order_keys=spec.order_keys,
+            limit_spec=spec.limit_spec,
+            having=spec.having,
+        )
+    return out
+
+
 def _build_nest_agg(name: str, fn: Callable, source_op, outer_keys: tuple[str, ...]):
     """Classify a ``nest=`` lambda against the semantic source.
 
@@ -1395,7 +1435,7 @@ def _build_nest_agg(name: str, fn: Callable, source_op, outer_keys: tuple[str, .
         combined_op = SemanticAggregateOp(
             source=SemanticGroupByOp(source=inner_source, keys=combined),
             keys=combined,
-            aggs=dict(inner_op.aggs),
+            aggs=_regrain_nested_specs(dict(inner_op.aggs), combined),
             nested_columns=inner_op.nested_columns,
         )
         struct_fields = inner_keys + tuple(n for n in inner_op.aggs if n not in inner_keys)

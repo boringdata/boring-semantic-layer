@@ -240,6 +240,32 @@ class TestDimensionShadowing:
         result = sm.group_by("amount").aggregate("total").execute()
         assert sorted(result["total"].tolist()) == [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
 
+    def test_non_raw_dim_key_with_filter_and_mutate_not_rejected(self, orders):
+        """A group key that shadows no raw column passes the guard.
+
+        With a pre-aggregation filter, the dimension is materialized into
+        the source table before the aggregate compiles, so the key IS a
+        table column there — but it is the dimension's own output, not a
+        shadowed raw column. mutate() entries (desugared onto the measure
+        path) that read the group key must not trip the shadowing guard
+        (Malloy cohorts-query regression).
+        """
+        sm = (
+            to_semantic_table(orders, name="orders")
+            .with_dimensions(**{"Qty Bucket": lambda t: (t.qty > 3).ifelse("hi", "lo")})
+            .with_measures(total=lambda t: t.amount.sum())
+        )
+        result = (
+            sm.filter(lambda t: t.amount > 15)
+            .group_by("Qty Bucket")
+            .aggregate("total")
+            .mutate(**{"Qty Bucket": lambda t: t["Qty Bucket"].upper()})
+            .execute()
+        )
+        got = dict(zip(result["Qty Bucket"], result["total"], strict=True))
+        # amount > 15 keeps rows (qty, amount): (2,20) (3,30) lo; (4,40) (5,50) (6,60) hi
+        assert got == {"LO": 50.0, "HI": 150.0}
+
 
 class TestJoinCrossGroupKeys:
     """R4-7: requested group keys must never be silently dropped."""
