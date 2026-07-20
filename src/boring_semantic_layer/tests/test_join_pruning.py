@@ -69,9 +69,7 @@ def _build_star_model(star_schema):
     """Build a joined model with fact + 3 dimension tables using LEFT joins.
 
     Left joins are safe for pruning — they don't filter unmatched left rows.
-    Chained .join_one() defaults to how="inner" which cannot be pruned
-    since inner joins act as filters on unmatched rows, so we pass
-    how="left" explicitly.
+    Semantic joins are always left joins, including when chained.
     """
     facts = (
         to_semantic_table(star_schema["facts"], name="facts")
@@ -115,6 +113,24 @@ def _build_star_model(star_schema):
         .join_one(stores, on=lambda f, s: f.store_id == s.store_id, how="left")
         .join_one(items, on=lambda f, i: f.item_id == i.item_id, how="left")
     )
+
+
+@pytest.mark.parametrize("join_method", ["join_one", "join_many"])
+@pytest.mark.parametrize("how", ["inner", "right", "outer", "cross"])
+def test_semantic_joins_reject_non_left_join_types(star_schema, join_method, how):
+    """Semantic relationships preserve left rows; cross joins use join_cross()."""
+    facts = to_semantic_table(star_schema["facts"], name="reject_facts")
+    dates = to_semantic_table(star_schema["dates"], name="reject_dates")
+
+    with pytest.raises(ValueError, match="only support how='left'"):
+        getattr(facts, join_method)(dates, on="date_id", how=how)
+
+
+def test_join_cross_remains_supported(star_schema):
+    facts = to_semantic_table(star_schema["facts"], name="cross_facts")
+    dates = to_semantic_table(star_schema["dates"], name="cross_dates")
+
+    assert facts.join_cross(dates).how == "cross"
 
 
 class TestJoinPruningMeasureOnly:
@@ -261,10 +277,10 @@ class TestJoinPruningCorrectness:
 
 
 class TestJoinPruningEdgeCases:
-    """Edge cases: inner joins, orphan rows, filters, join_many."""
+    """Edge cases: orphan rows, filters, and join_many."""
 
-    def test_inner_join_not_pruned(self, con):
-        """Inner joins must NOT be pruned — they filter unmatched left rows."""
+    def test_explicit_match_filter_not_pruned(self, con):
+        """An explicit right-side match filter must prevent join pruning."""
         facts_with_orphan = con.create_table(
             "facts_orphan",
             pd.DataFrame(
@@ -288,12 +304,14 @@ class TestJoinPruningEdgeCases:
             date_id=lambda t: t.date_id, date_name=lambda t: t.date_name
         )
 
-        # Inner join: the orphan row (date_id=999) should be excluded.
-        # Use how="inner" — pruning must NOT remove this join.
-        model = f.join_one(d, on=lambda l, r: l.date_id == r.date_id, how="inner")
+        # Express inner semantics visibly: preserve rows in the semantic join,
+        # then require a non-nullable field from the right side.
+        model = f.join_one(d, on=lambda left, right: left.date_id == right.date_id).filter(
+            lambda t: t["dates_i.date_name"].notnull()
+        )
         result = model.aggregate("facts_o.total_sales").execute()
 
-        # Inner join filters out the orphan row — total should be 10, not 110
+        # The explicit filter removes the orphan row — total should be 10, not 110.
         assert result["facts_o.total_sales"].iloc[0] == 10.0
 
     def test_filter_prevents_pruning(self, star_schema):

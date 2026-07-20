@@ -18,6 +18,23 @@ from boring_semantic_layer.agents.utils.prompts import load_prompt
 from boring_semantic_layer.utils import safe_eval
 
 
+def _models_ibis_module(models: dict) -> Any:
+    """Return the ibis module matching the models' table flavor.
+
+    Model tables are converted to xorq's vendored ibis at construction when
+    xorq is installed; query strings evaluated against them must build
+    literals/expressions with the same flavor (``ibis.literal``,
+    ``ibis.cases``, ...) or comparisons silently mis-compose.
+    """
+    from boring_semantic_layer.nested_compile import get_ibis_module
+
+    for model in models.values():
+        table = getattr(model, "table", None)
+        if table is not None:
+            return get_ibis_module(table)
+    return ibis
+
+
 @cache
 def _get_md_dir() -> Path:
     """Get the directory containing markdown documentation files.
@@ -282,14 +299,18 @@ class BSLTools:
         chart_format: str | None = None,
         chart_spec: dict | None = None,
     ) -> str:
-        from ibis import _
         from returns.result import Failure, Success
 
         # Extract model name for error context
         model_name = self._extract_model_name(query)
 
         try:
-            result = safe_eval(query, context={**self.models, "ibis": ibis, "_": _})
+            # Match the models' ibis flavor so agent-built literals
+            # (ibis.literal, ibis.cases, ...) compose with the tables.
+            ibis_module = _models_ibis_module(self.models)
+            result = safe_eval(
+                query, context={**self.models, "ibis": ibis_module, "_": ibis_module._}
+            )
             if isinstance(result, Failure):
                 raise result.failure()
             query_result = result.unwrap() if isinstance(result, Success) else result

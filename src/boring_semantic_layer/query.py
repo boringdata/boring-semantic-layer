@@ -21,10 +21,13 @@ def _get_ibis_api():
     """Return xorq's vendored ibis API if available, else plain ibis.
 
     Filter expressions built with ``ibis._`` / ``ibis.literal()`` must use the
-    same ibis implementation as the table they will be resolved against.  Since
-    ``_ensure_xorq_table()`` converts tables to xorq when possible, we should
-    build filter expressions with xorq's ibis to match.  For backends that
-    xorq does not support, plain ibis is used as the fallback.
+    same ibis implementation as the table they will be resolved against.  This
+    helper only provides a *default* flavor for contexts where no table is in
+    scope yet (eager validation, value parsing without a target table).  The
+    filter callables built in ``Filter.to_callable`` pick the flavor from the
+    actual table at resolve time via ``get_ibis_module`` — tables on backends
+    that xorq does not support stay plain ibis even when xorq is installed,
+    and mixing flavors silently produces wrong predicates.
     """
     try:
         from ._xorq import api as xo
@@ -130,9 +133,10 @@ def _validate_time_grain(
     if not smallest_allowed_grain:
         return
 
-    smallest_grain = _make_grain_id(smallest_allowed_grain)
-    if smallest_grain not in TIME_GRAIN_ORDER:
-        return
+    # _normalize_grain accepts both spellings ("day" and "TIME_GRAIN_DAY")
+    # and raises on anything else — a silently-skipped validation here would
+    # let queries run at grains the model forbids.
+    smallest_grain = _normalize_grain(smallest_allowed_grain)
 
     requested_idx = TIME_GRAIN_ORDER.index(time_grain)
     smallest_idx = TIME_GRAIN_ORDER.index(smallest_grain)
@@ -199,20 +203,38 @@ class Filter:
         return value
 
     def to_callable(self) -> Callable:
-        """Convert filter to callable that can be used with SemanticTable.filter()."""
+        """Convert filter to callable that can be used with SemanticTable.filter().
+
+        The ibis flavor (plain vs xorq-vendored) is picked from the table the
+        filter actually resolves against, not from whether xorq is importable:
+        on backends xorq can't wrap, the table stays plain ibis, and literals
+        built with the other flavor mis-compose (equality silently yields a
+        constant-false predicate; ordering raises TypeError).
+        """
         from . import predicate as pred_mod
+        from .nested_compile import get_ibis_module
         from .ops import _ensure_xorq_table
+
+        def _resolve_target(t):
+            # Dimension-aware resolver proxies must be resolved against
+            # directly: _ensure_xorq_table would silently unwrap them (the
+            # proxy forwards .op()), resolving field names to raw columns
+            # and bypassing same-named dimension expressions.
+            if type(t).__module__.startswith("boring_semantic_layer"):
+                return t
+            return _ensure_xorq_table(t)
 
         if isinstance(self.filter, dict):
             pred = pred_mod.from_dict(self.filter)
-            ibis_module = _get_ibis_api()
 
             def _dict_filter(t):
+                tbl = _resolve_target(t)
+                ibis_module = get_ibis_module(tbl)
                 return pred_mod.compile(
                     pred,
                     ibis_module._,
                     ibis_module=ibis_module,
-                ).resolve(_ensure_xorq_table(t))
+                ).resolve(tbl)
 
             # Deferred resolution: columns can't be statically introspected
             # (see ops._dimension_only_source_table). Marked so callers can opt
@@ -221,14 +243,24 @@ class Filter:
             _dict_filter.__bsl_deferred_resolution__ = True
             return _dict_filter
         elif isinstance(self.filter, str):
-            _ibis = _get_ibis_api()
-            expr = safe_eval(
-                self.filter,
-                context={"_": _ibis._, "ibis": _ibis},
-            ).unwrap()
+            filter_str = self.filter
+            # Validate eagerly (syntax, allowed names) so bad filter strings
+            # fail at build time; the flavor-matched expression is built per
+            # table at resolve time and memoized per ibis module.
+            _default = _get_ibis_api()
+            safe_eval(filter_str, context={"_": _default._, "ibis": _default}).unwrap()
+            _expr_cache: dict[int, Any] = {}
 
             def _str_filter(t):
-                return expr.resolve(_ensure_xorq_table(t))
+                tbl = _resolve_target(t)
+                _ibis = get_ibis_module(tbl)
+                key = id(_ibis)
+                if key not in _expr_cache:
+                    _expr_cache[key] = safe_eval(
+                        filter_str,
+                        context={"_": _ibis._, "ibis": _ibis},
+                    ).unwrap()
+                return _expr_cache[key].resolve(tbl)
 
             _str_filter.__bsl_deferred_resolution__ = True
             return _str_filter
@@ -259,7 +291,15 @@ def _normalize_filter(
 @curry
 def _make_order_key(field: str, direction: str):
     """Create order key for sorting (curried)."""
-    return ibis.desc(field) if direction.lower() == "desc" else field
+    normalized = direction.lower() if isinstance(direction, str) else direction
+    if normalized in ("desc", "descending"):
+        return ibis.desc(field)
+    if normalized in ("asc", "ascending"):
+        return field
+    raise ValueError(
+        f"Invalid order_by direction {direction!r} for field {field!r}. "
+        "Valid directions: 'asc', 'ascending', 'desc', 'descending'"
+    )
 
 
 def _normalize_field_name(
@@ -431,7 +471,7 @@ def _build_time_range_filters(semantic_table: Any, time_dimension: str, time_ran
     if not isinstance(time_range, dict) or "start" not in time_range or "end" not in time_range:
         raise ValueError("time_range must be a dict with 'start' and 'end' keys")
 
-    from datetime import datetime
+    from datetime import datetime, timedelta
 
     dim_obj = semantic_table.get_dimensions().get(time_dimension)
     if dim_obj is None:
@@ -449,10 +489,32 @@ def _build_time_range_filters(semantic_table: Any, time_dimension: str, time_ran
     end_dt = datetime.fromisoformat(time_range["end"])
     if end_dt < start_dt:
         raise ValueError("time_range end must be greater than or equal to start")
+
+    # A date-only end means "through the end of that day" (the documented
+    # usage: end "2000-12-31" covers the whole year). Parsing it as midnight
+    # and comparing <= would silently drop end-date rows with intra-day
+    # times, so use an exclusive bound at the next midnight instead. An end
+    # with an explicit time component keeps inclusive <= semantics.
+    end_is_date_only = _is_date_only(time_range["end"])
+    if end_is_date_only:
+        end_bound = end_dt + timedelta(days=1)
+        end_filter = lambda t, dim=dim_obj, end=end_bound: dim(t) < end  # noqa: E731
+    else:
+        end_filter = lambda t, dim=dim_obj, end=end_dt: dim(t) <= end  # noqa: E731
     return [
         lambda t, dim=dim_obj, start=start_dt: dim(t) >= start,
-        lambda t, dim=dim_obj, end=end_dt: dim(t) <= end,
+        end_filter,
     ]
+
+
+def _is_date_only(value: str) -> bool:
+    from datetime import date
+
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def compare_periods(
@@ -687,7 +749,22 @@ def query(
 
         filters.extend(_build_time_range_filters(result, time_dim_name, time_range))
 
-    # Step 1: Handle time grain transformations
+    # Step 1: Apply row filters — separate pre-agg (dimension) from post-agg
+    # (measure). Pre-agg filters must run BEFORE any grain transformation:
+    # they reference dimensions as the queried model defines them, and once
+    # the time dimension is swapped for its truncated version a range filter
+    # would compare truncated bucket starts instead of raw values, silently
+    # dropping in-range rows (and, at week grain, including out-of-range ones).
+    pre_agg_filters = []
+    post_agg_filters = list(having or [])
+    for filter_spec in filters:
+        _split_filter(filter_spec, known_measures, model_name, pre_agg_filters, post_agg_filters)
+
+    for filter_spec in pre_agg_filters:
+        filter_fn = _normalize_filter(filter_spec)
+        result = result.filter(filter_fn)
+
+    # Step 2: Handle time grain transformations
     if time_grain and time_grains:
         raise ValueError(
             "Cannot specify both 'time_grain' and 'time_grains'. "
@@ -739,16 +816,6 @@ def query(
         if time_dims_to_transform:
             result = result.with_dimensions(**time_dims_to_transform)
 
-    # Step 2: Apply filters — separate pre-agg (dimension) from post-agg (measure)
-    pre_agg_filters = []
-    post_agg_filters = list(having or [])
-    for filter_spec in filters:
-        _split_filter(filter_spec, known_measures, model_name, pre_agg_filters, post_agg_filters)
-
-    for filter_spec in pre_agg_filters:
-        filter_fn = _normalize_filter(filter_spec)
-        result = result.filter(filter_fn)
-
     # Step 3: Group by and aggregate
     if dimensions:
         result = result.group_by(*dimensions)
@@ -769,8 +836,11 @@ def query(
         order_keys = [_make_order_key(field, direction) for field, direction in order_by]
         result = result.order_by(*order_keys)
 
-    # Step 5: Apply limit
-    if limit:
+    # Step 5: Apply limit. `limit=0` is a real LIMIT 0 (zero rows), not
+    # "no limit" — truthiness would silently return the full result set.
+    if limit is not None:
+        if isinstance(limit, bool):
+            raise ValueError(f"limit must be an integer, got {limit!r}")
         result = result.limit(limit)
 
     return result

@@ -17,6 +17,7 @@ step.
 
 from __future__ import annotations
 
+import datetime
 from collections.abc import Callable, Iterable
 from typing import Any, ClassVar, Literal
 
@@ -194,6 +195,12 @@ def _require_values(spec: dict, op: str) -> tuple:
     values = spec.get("values")
     if values is None:
         raise ValueError(f"Operator {op!r} requires 'values' field")
+    if isinstance(values, (str, bytes)):
+        raise ValueError(
+            f"Operator {op!r} requires a list of values, got the string "
+            f"{values!r}; iterating it would match individual characters. "
+            f"Use 'values': [{values!r}] instead"
+        )
     return tuple(values)
 
 
@@ -203,13 +210,16 @@ def _reject_value_keys(spec: dict, op: str) -> None:
 
 
 def _convert_literal(value: Any, ibis_module) -> Any:
-    """Convert string date/timestamp values to typed ibis literals.
+    """Convert complete ISO date/timestamp strings to typed ibis literals.
 
-    Mirrors ``query.Filter._convert_filter_value``: backends like Athena
-    require typed date literals or fail with TYPE_MISMATCH. Returns the
-    value unchanged when it is not a date/timestamp string.
+    Backends like Athena require typed date literals or fail with
+    TYPE_MISMATCH. Only complete ISO dates/datetimes are coerced: ibis's
+    lenient parser fills fields missing from partial strings like "2024"
+    or "12:30" with *today's* date, so coercing them would make results
+    depend on the day the query runs. Other strings pass through
+    unchanged.
     """
-    if not isinstance(value, str):
+    if not isinstance(value, str) or not _is_complete_iso_datetime(value):
         return value
     for dtype in ("timestamp", "date"):
         try:
@@ -217,6 +227,16 @@ def _convert_literal(value: Any, ibis_module) -> Any:
         except (ValueError, TypeError):
             pass
     return value
+
+
+def _is_complete_iso_datetime(value: str) -> bool:
+    for parse in (datetime.date.fromisoformat, datetime.datetime.fromisoformat):
+        try:
+            parse(value)
+        except ValueError:
+            continue
+        return True
+    return False
 
 
 def _field_accessor(table, name: str, *, post_agg: bool):

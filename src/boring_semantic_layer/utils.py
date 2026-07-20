@@ -515,32 +515,43 @@ def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
         lambda_str = f"lambda t: {t_expr}"
 
         import ibis
-        from ibis import _
 
-        try:
-            from ._xorq import api as xo, ibis as xorq_ibis
-
-            eval_context = {
-                "ibis": ibis,
-                "_": _,
-                "xorq_ibis": xorq_ibis,
-                "xo": xo,
-            }
-            allowed_names = {"ibis", "_", "xorq_ibis", "xo", "t"}
-        except ImportError:
-            eval_context = {
-                "ibis": ibis,
-                "_": _,
-            }
+        def _build(flavor_ibis):
+            """Evaluate the lambda with ``ibis``/``_`` bound to one flavor."""
+            eval_context = {"ibis": flavor_ibis, "_": flavor_ibis._}
             allowed_names = {"ibis", "_", "t"}
+            try:
+                from ._xorq import api as xo, ibis as xorq_ibis
 
-        result = safe_eval(lambda_str, context=eval_context, allowed_names=allowed_names)
-        if isinstance(result, Success):
-            return result.unwrap()
-        elif isinstance(result, Failure):
-            raise result.failure()
-        else:
-            raise ValueError(f"Unexpected result type: {type(result)}")
+                eval_context.update({"xorq_ibis": xorq_ibis, "xo": xo})
+                allowed_names |= {"xorq_ibis", "xo"}
+            except ImportError:
+                pass
+
+            result = safe_eval(lambda_str, context=eval_context, allowed_names=allowed_names)
+            if isinstance(result, Success):
+                return result.unwrap()
+            elif isinstance(result, Failure):
+                raise result.failure()
+            else:
+                raise ValueError(f"Unexpected result type: {type(result)}")
+
+        # Eager evaluation validates the string up front; the returned wrapper
+        # re-binds ``ibis``/``_`` to the flavor (plain vs xorq-vendored) of the
+        # table it is called with, so eager constructors like ``ibis.literal``
+        # compose with either flavor instead of silently mis-comparing.
+        fns = {id(ibis): _build(ibis)}
+
+        def _flavored(t):
+            from .nested_compile import get_ibis_module
+
+            flavor = get_ibis_module(t)
+            key = id(flavor)
+            if key not in fns:
+                fns[key] = _build(flavor)
+            return fns[key](t)
+
+        return _flavored
 
     return do_convert()
 

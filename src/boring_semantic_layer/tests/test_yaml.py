@@ -221,6 +221,7 @@ flights:
     try:
         models = from_yaml(yaml_path, tables=sample_tables)
         flights = models["flights"]
+        assert flights.how == "left"
 
         # Test query with joined dimension (use dot notation)
         result = (

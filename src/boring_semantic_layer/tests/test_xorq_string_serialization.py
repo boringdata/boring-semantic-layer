@@ -1389,8 +1389,8 @@ def test_tagged_roundtrip_join_filter_aggregate():
     assert got["Bob"] == 70
 
 
-def test_tagged_roundtrip_join_inner():
-    """Inner join survives round-trip and excludes non-matching rows."""
+def test_tagged_roundtrip_left_join_with_explicit_match_filter():
+    """Explicit inner semantics survive round-trip and exclude unmatched rows."""
     import pandas as pd
 
     from boring_semantic_layer.serialization import from_tagged, to_tagged
@@ -1413,8 +1413,10 @@ def test_tagged_roundtrip_join_inner():
         label=lambda t: t.label,
     )
 
-    joined = left_st.join_many(right_st, lambda l, r: l.key == r.key, how="inner").with_dimensions(
-        label=lambda t: t.label
+    joined = (
+        left_st.join_many(right_st, lambda left, right: left.key == right.key)
+        .with_dimensions(label=lambda t: t.label)
+        .filter(lambda t: t.label.notnull())
     )
 
     tagged = to_tagged(joined)

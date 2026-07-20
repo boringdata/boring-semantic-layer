@@ -76,7 +76,16 @@ result = (
     .aggregate(
         year_order_count=lambda t: t.order_count.sum(),
         year_total_sales=lambda t: t.total_sales.sum(),
-        nest={"by_month": lambda t: t.group_by(["created_month", "order_count", "total_sales"]).order_by("created_month")}
+        nest={
+            "by_month": lambda t: (
+                t.group_by("created_month")
+                .aggregate(
+                    order_count=lambda t: t.order_count.sum(),
+                    total_sales=lambda t: t.total_sales.sum(),
+                )
+                .order_by("created_month")
+            )
+        }
     )
     .order_by("created_year")
 )
@@ -109,7 +118,17 @@ result = (
     .aggregate(
         year_order_count=lambda t: t.order_count.sum(),
         year_total_sales=lambda t: t.total_sales.sum(),
-        nest={"by_status": lambda t: t.group_by(["status", "order_count", "total_sales", "avg_price"]).order_by(xo.desc("total_sales"))}
+        nest={
+            "by_status": lambda t: (
+                t.group_by("status")
+                .aggregate(
+                    order_count=lambda t: t.order_count.sum(),
+                    total_sales=lambda t: t.total_sales.sum(),
+                    avg_price=lambda t: t.avg_price.mean(),
+                )
+                .order_by(lambda t: t.total_sales.desc())
+            )
+        }
     )
     .order_by("created_year")
 )
@@ -138,7 +157,14 @@ monthly_with_status = (
     .aggregate(
         month_order_count=lambda t: t.order_count.sum(),
         month_total_sales=lambda t: t.total_sales.sum(),
-        nest={"by_status": lambda t: t.group_by(["status", "order_count", "total_sales"])}
+        nest={
+            "by_status": lambda t: (
+                t.group_by("status").aggregate(
+                    order_count=lambda t: t.order_count.sum(),
+                    total_sales=lambda t: t.total_sales.sum(),
+                )
+            )
+        }
     )
 )
 
@@ -149,7 +175,11 @@ result = (
     .aggregate(
         year_order_count=lambda t: t.month_order_count.sum(),
         year_total_sales=lambda t: t.month_total_sales.sum(),
-        nest={"by_month": lambda t: t.group_by(["created_month", "month_order_count", "month_total_sales", "by_status"]).order_by("created_month")}
+        nest={
+            "by_month": lambda t: t.group_by(
+                "created_month", "month_order_count", "month_total_sales", "by_status"
+            )
+        }
     )
     .order_by("created_year")
     .limit(3)

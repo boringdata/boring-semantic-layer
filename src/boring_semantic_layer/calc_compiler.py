@@ -42,6 +42,7 @@ from ._xorq import ibis as ibis_mod
 from ._xorq import operations as ibis_ops
 from .calc_analyzer import (
     CalcExprAnalysis,
+    _is_empty_window,
     _walk,
     analyze_calc_expr,
     virtual_agg_table,
@@ -80,6 +81,43 @@ class TotalsNotAvailableError(RuntimeError):
       computed at multiple grains and joined; building a totals table
       that respects all grains is not yet supported.
     """
+
+
+class WindowedBaseReductionError(RuntimeError):
+    """Raised when a windowed reduction over raw base columns cannot be
+    compiled soundly at the query's grain.
+
+    A calc measure like ``t.amount.sum().over(window(group_by=t.region))``
+    reads base columns directly, so the window must be re-expressed over
+    the aggregated result. That is only possible when the reduction is
+    decomposable (sum/count/min/max/any/all) and every column the window
+    partitions or orders by is a group key of the query. Anything else
+    would silently produce wrong numbers, so it raises this error with a
+    pointer to the measure-reference form (define a base measure, then
+    window over the measure name), which compiles at the output grain.
+    """
+
+
+_WINDOW_REAGG_METHODS: dict[type, str] = {
+    cls: method
+    for cls_name, method in (
+        # Decomposable reductions: the windowed value over base rows can
+        # be recovered by re-aggregating the lifted per-group value over
+        # the output rows. Count re-aggregates with sum (sum of per-group
+        # counts). Exact-type keys: subclasses (e.g. CountDistinct) are
+        # NOT decomposable and must not inherit a mapping.
+        ("Sum", "sum"),
+        ("Count", "sum"),
+        ("CountStar", "sum"),
+        ("Min", "min"),
+        ("Max", "max"),
+        ("Any", "any"),
+        ("All", "all"),
+    )
+    if (cls := getattr(ibis_ops, cls_name, None)) is not None
+}
+"""Reduction op type → re-aggregation method used to rewrite a non-empty
+window over a lifted base reduction onto the aggregated result."""
 
 
 def _to_op(x):
@@ -953,7 +991,9 @@ def _topological_order(
     return topological_order_from_deps(calc_lambdas, deps)
 
 
-def lift_inline_reductions(expr, virtual_agg_tbl, base_tbl, totals_virtual_agg_tbl=None):
+def lift_inline_reductions(
+    expr, virtual_agg_tbl, base_tbl, totals_virtual_agg_tbl=None, group_keys=()
+):
     """Lift inline reductions over the base table out of a calc expression.
 
     The user's calc lambda may contain reductions that read base-table
@@ -968,12 +1008,23 @@ def lift_inline_reductions(expr, virtual_agg_tbl, base_tbl, totals_virtual_agg_t
 
     - A reduction at the top level becomes ``Field(vt, anon_name)`` —
       a column reference on the per-group result.
-    - A reduction that is the ``func`` of a ``WindowFunction`` (the
-      ``t.all(...)`` totals shape) becomes ``Field(totals_vt, anon_name)``
-      — a reference to the same reduction computed over the full
-      filtered base. The compiler later substitutes ``totals_vt`` with a
-      real totals table cross-joined into the result, so non-sum
+    - A reduction that is the ``func`` of an *empty* ``WindowFunction``
+      (the ``t.all(...)`` totals shape) becomes ``Field(totals_vt,
+      anon_name)`` — a reference to the same reduction computed over the
+      full filtered base. The compiler later substitutes ``totals_vt``
+      with a real totals table cross-joined into the result, so non-sum
       reductions (mean/quantile/…) get correct overall values.
+    - A reduction under a *non-empty* window (``group_by=``/``order_by=``)
+      is re-expressed over the aggregated result: the per-group lifted
+      value is re-aggregated inside the same window with its partition
+      and order keys remapped from base columns to the corresponding
+      output columns. This is only sound when the reduction is
+      decomposable and every window key is one of ``group_keys``;
+      anything else raises :class:`WindowedBaseReductionError` rather
+      than silently flattening the window to the grand total.
+
+    ``group_keys`` is the set of group-by column names of the enclosing
+    aggregation; it gates the non-empty-window rewrite above.
 
     Returns ``(rewritten_expr, new_vt, new_totals_vt, lifted)`` where
     ``lifted`` maps anonymous names to the original scalar reduction
@@ -997,9 +1048,20 @@ def lift_inline_reductions(expr, virtual_agg_tbl, base_tbl, totals_virtual_agg_t
     if Reduction is None:
         return expr, virtual_agg_tbl, totals_virtual_agg_tbl, {}
 
+    Relation = getattr(ibis_ops.relations, "Relation", None)
+
     def is_base_reduction(node):
         if not isinstance(node, Reduction):
             return False
+        # CountStar-style reductions hold the relation as a direct argument
+        # (no Field child): ``t.count()`` is ``CountStar(base)``. Walking for
+        # Fields alone misses them, leaving the reduction unlifted and the
+        # ``t.all(t.count())`` totals shape without a totals column.
+        if Relation is not None and any(
+            isinstance(a, Relation) and id(a) == id(base_op)
+            for a in getattr(node, "__args__", ())
+        ):
+            return True
         for c in _walk(node):
             if isinstance(c, Field) and id(c.rel) == id(base_op):
                 return True
@@ -1044,6 +1106,7 @@ def lift_inline_reductions(expr, virtual_agg_tbl, base_tbl, totals_virtual_agg_t
     # value). ``op.replace`` dedupes by equality, so we can't tell those
     # apart in one pass: handle WindowFunctions first, then the bare
     # Reductions.
+    group_key_set = frozenset(group_keys)
     if WindowFunction is not None:
         window_subs: dict = {}
         for n in _walk(op):
@@ -1053,7 +1116,86 @@ def lift_inline_reductions(expr, virtual_agg_tbl, base_tbl, totals_virtual_agg_t
             if inner is None or id(inner) not in reduction_to_name:
                 continue
             anon = reduction_to_name[id(inner)]
-            window_subs[n] = Field(new_totals_vt_op, anon)
+            if _is_empty_window(n):
+                # The ``t.all(...)`` grand-totals shape. One exception:
+                # when the window IS the whole calc expression and the
+                # reduction reads only group-key columns, "totals over
+                # base rows" (``t.all`` semantics) and "window over the
+                # aggregated output rows" (post-aggregation ``mutate``
+                # semantics) are both plausible readings that produce
+                # different numbers — refuse to guess.
+                reduction_cols = {
+                    c.name
+                    for c in _walk(inner)
+                    if isinstance(c, Field) and id(c.rel) == id(base_op)
+                }
+                if (
+                    id(n) == id(op)
+                    and reduction_cols
+                    and reduction_cols <= group_key_set
+                ):
+                    cols = ", ".join(sorted(reduction_cols))
+                    raise WindowedBaseReductionError(
+                        f"An empty window over a reduction of group-key "
+                        f"column(s) ({cols}) is ambiguous: it could mean "
+                        "the total over the base rows (t.all semantics) or "
+                        "a window over the aggregated output rows. Use "
+                        "t.all(...) explicitly for base-row totals, or "
+                        "window over a measure reference (e.g. "
+                        "t.<measure>.count().over(window())) for "
+                        "output-grain values."
+                    )
+                window_subs[n] = Field(new_totals_vt_op, anon)
+                continue
+
+            # Non-empty window over a base-column reduction: re-aggregate
+            # the lifted per-group value over the output rows inside the
+            # same window, with partition/order keys remapped to output
+            # columns. Sound only for decomposable reductions whose
+            # window keys are all group keys of this aggregation.
+            reagg_method = _WINDOW_REAGG_METHODS.get(type(inner))
+            if reagg_method is None:
+                raise WindowedBaseReductionError(
+                    f"Cannot compile {type(inner).__name__}(...) over a "
+                    "raw base column inside a partitioned/ordered window: "
+                    "the reduction is not decomposable, so it cannot be "
+                    "recomputed at the query's grain. Define it as a base "
+                    "measure and window over the measure name instead "
+                    "(e.g. with_measures(m=lambda t: t.col.mean()) then "
+                    "t.m.mean().over(window(...)))."
+                )
+            key_subs: dict = {}
+            key_pieces = list(n.group_by) + list(n.order_by)
+            key_pieces += [b for b in (n.start, n.end) if b is not None]
+            for piece in key_pieces:
+                for f in _walk(piece):
+                    if not isinstance(f, Field):
+                        continue
+                    if id(f.rel) == id(base_op) and f.name in group_key_set:
+                        key_subs[f] = Field(new_vt_op, f.name)
+                    else:
+                        raise WindowedBaseReductionError(
+                            f"Window key {f.name!r} is not a group key of "
+                            "this aggregation, so a window over a raw "
+                            "base-column reduction cannot be computed at "
+                            "the query's grain "
+                            f"(group keys: {sorted(group_key_set)!r}). "
+                            "Add it to group_by, or define a base measure "
+                            "and window over the measure name instead."
+                        )
+
+            def _remap(piece, _subs=key_subs):
+                return piece.replace(_subs) if _subs else piece
+
+            reagg_func = getattr(new_vt[anon], reagg_method)().op()
+            window_subs[n] = WindowFunction(
+                reagg_func,
+                how=n.how,
+                start=None if n.start is None else _remap(n.start),
+                end=None if n.end is None else _remap(n.end),
+                group_by=tuple(_remap(g) for g in n.group_by),
+                order_by=tuple(_remap(s) for s in n.order_by),
+            )
         intermediate = op.replace(window_subs) if window_subs else op
     else:
         intermediate = op

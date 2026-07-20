@@ -339,7 +339,9 @@ def _reconstruct_join(
     _validate_join_leaf(left_model, left_metadata, "left")
     _validate_join_leaf(right_model, right_metadata, "right")
 
-    how = metadata.get("how", "inner")
+    # Payloads written before ``how`` was serialized must preserve left-side
+    # rows rather than silently treating the relationship as an inner join.
+    how = metadata.get("how", "left")
     # Default to "many" for payloads serialized before cardinality was
     # emitted — join_many is a safe superset of join_one behaviour, while
     # the reverse silently skips pre-aggregation.  (Fixes #223.)

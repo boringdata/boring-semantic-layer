@@ -152,7 +152,7 @@ result = (
 
 ## Key Takeaways
 
-- **Composition via Joins**: Use `join_many()`, `join_one()`, or `join()` to compose models
+- **Composition via Joins**: Use `join_many()`, `join_one()`, or `join_cross()` to compose models
 - **Additive**: Each join adds dimensions and measures from the joined table
 - **Table Prefixes**: Dimensions/measures are prefixed with table names (`flights.`, `carriers.`, `aircraft.`)
 - **No Limit**: Compose as many models as needed for your analysis

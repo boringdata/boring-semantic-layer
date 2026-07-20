@@ -157,14 +157,24 @@ class TestStarSchema:
         )
 
     def test_scalar_flight_count(self, star):
-        """Total flight count across the star should match raw data."""
+        """Total flight count across the star matches the LEFT JOIN output.
+
+        14 flights originate from SCE, which is missing from the airports
+        table; the join can never produce them, so they must not count
+        (raw table has 344827) — otherwise the grand total disagrees with
+        the sum over any grouped query on the same model.
+        """
         df = star.aggregate("flights.flight_count").execute()
-        assert df["flights.flight_count"].iloc[0] == 344827
+        assert df["flights.flight_count"].iloc[0] == 344813
 
     def test_scalar_total_distance(self, star):
-        """Total distance should not be inflated by join fan-out."""
+        """Total distance should not be inflated by join fan-out.
+
+        Joined truth excludes the 14 SCE-origin orphan flights
+        (raw table total is 255337195).
+        """
         df = star.aggregate("flights.total_distance").execute()
-        assert df["flights.total_distance"].iloc[0] == 255337195
+        assert df["flights.total_distance"].iloc[0] == 255331833
 
     def test_scalar_avg_distance(self, star):
         """Mean distance must use sum/count decomposition correctly."""
@@ -427,9 +437,13 @@ class TestFullStarSnowflake:
         )
 
     def test_scalar_flight_count(self, full_schema):
-        """344k+ flights through 4-table schema."""
+        """344k+ flights through 4-table schema.
+
+        Joined truth: the 14 SCE-origin flights match no airport row,
+        so the airports -< flights join can never produce them.
+        """
         df = full_schema.aggregate("flights.flight_count").execute()
-        assert df["flights.flight_count"].iloc[0] == 344827
+        assert df["flights.flight_count"].iloc[0] == 344813
 
     def test_one_side_airport_count(self, full_schema):
         """airports.airport_count at global level."""
@@ -603,7 +617,12 @@ class TestMixedAggStar:
         )
 
     def test_all_agg_types_scalar(self, star):
-        """All agg types in one scalar query should be correct."""
+        """All agg types in one scalar query should be correct.
+
+        Ground truth is the LEFT JOIN output: the 14 SCE-origin orphan
+        flights match no airport row and never count (raw totals would
+        be 344827 / 255337195).
+        """
         df = star.aggregate(
             "flights.flight_count",
             "flights.total_distance",
@@ -614,9 +633,9 @@ class TestMixedAggStar:
             "flights.max_dep_delay",
         ).execute()
 
-        assert df["flights.flight_count"].iloc[0] == 344827
-        assert df["flights.total_distance"].iloc[0] == 255337195
-        assert df["flights.avg_distance"].iloc[0] == pytest.approx(740.48, abs=0.1)
+        assert df["flights.flight_count"].iloc[0] == 344813
+        assert df["flights.total_distance"].iloc[0] == 255331833
+        assert df["flights.avg_distance"].iloc[0] == pytest.approx(740.49, abs=0.1)
         assert df["flights.min_dep_delay"].iloc[0] == -1133
         assert df["flights.max_dep_delay"].iloc[0] == 1433
 

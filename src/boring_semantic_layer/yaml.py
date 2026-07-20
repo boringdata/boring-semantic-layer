@@ -210,7 +210,7 @@ def _parse_joins(
 
         # Apply the join based on type
         join_type = join_config.get("type", "one")  # Default to one-to-one
-        how = join_config.get("how")  # Optional join method override
+        how = join_config.get("how") or "left"
 
         if join_type == "cross":
             # Cross join - no keys needed
@@ -231,7 +231,7 @@ def _parse_joins(
             result_model = result_model.join_one(
                 join_model,
                 on=on_condition,
-                how=how if how else "inner",
+                how=how,
             )
         elif join_type == "many":
             left_on = join_config.get("left_on")
@@ -249,7 +249,7 @@ def _parse_joins(
             result_model = result_model.join_many(
                 join_model,
                 on=on_condition,
-                how=how if how else "left",
+                how=how,
             )
         else:
             raise ValueError(f"Invalid join type '{join_type}'. Must be 'one', 'many', or 'cross'")

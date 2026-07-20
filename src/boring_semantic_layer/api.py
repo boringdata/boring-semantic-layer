@@ -58,7 +58,7 @@ def join_one(
         on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
             name string, a Deferred ``_.col``, or a list of strings/Deferred for
             compound equi-joins.
-        how: Join type - "left", "inner", "right", or "outer" (default: "left")
+        how: Join type. Only ``"left"`` is supported.
 
     Returns:
         Joined SemanticModel
@@ -85,7 +85,7 @@ def join_many(
         on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
             name string, a Deferred ``_.col``, or a list of strings/Deferred for
             compound equi-joins.
-        how: Join type - "inner", "left", "right", or "outer" (default: "left")
+        how: Join type. Only ``"left"`` is supported.
 
     Returns:
         Joined SemanticModel

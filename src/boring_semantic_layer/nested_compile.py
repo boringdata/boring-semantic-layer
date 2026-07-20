@@ -19,19 +19,39 @@ from typing import Any
 import ibis
 from toolz import curry, pipe
 
+from .join_utils import null_safe_equal
+
 
 def get_ibis_module(table):
     """Return the ibis module that built ``table`` (regular vs xorq-vendored).
 
     BSL coexists with both flavors of ibis. Picking the right module avoids
-    cross-flavor literal/struct construction errors.
+    cross-flavor literal/struct construction errors. Filter and dimension
+    callables receive resolver proxies rather than the table itself, so
+    unwrap those first — otherwise flavor detection would report plain ibis
+    for a xorq-backed table.
     """
+    table = _unwrap_table_proxy(table)
     table_module = type(table).__module__
     if table_module.startswith("xorq.vendor.ibis"):
         from ._xorq import ibis as xorq_ibis
 
         return xorq_ibis
     return ibis
+
+
+def _unwrap_table_proxy(obj):
+    for _ in range(8):
+        if not type(obj).__module__.startswith("boring_semantic_layer"):
+            return obj
+        inner = getattr(obj, "_t", None)
+        if inner is None:
+            resolver = getattr(obj, "_resolver", None)
+            inner = getattr(resolver, "_t", None) if resolver is not None else None
+        if inner is None:
+            return obj
+        obj = inner
+    return obj
 
 
 @curry
@@ -143,7 +163,7 @@ def join_tables(by_cols: Iterable[str], tables: list) -> Any:
         # Null-safe equality: group keys can legitimately be NULL (real NULL
         # dim values, or keys minted by an outer join). Plain == drops those
         # groups from every table but the first.
-        predicates = [left[c].identical_to(right[c]) for c in by_cols]
+        predicates = [null_safe_equal(left[c], right[c]) for c in by_cols]
         right_cols = [c for c in right.columns if c not in by_cols_set]
         right_select = [right[c] for c in right_cols]
         return left.left_join(right, predicates).select([left] + right_select)

@@ -109,7 +109,7 @@ flights_with_carriers = flights_st.join_many(
 )
 ```
 
-### join_one() - One-to-One (INNER JOIN)
+### join_one() - One-to-One (LEFT JOIN)
 
 ```python
 # Each flight has exactly one carrier

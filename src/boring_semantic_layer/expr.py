@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from operator import attrgetter
 from typing import Any
 
 import ibis
@@ -22,6 +21,7 @@ from .measure_scope import MeasureScope
 from .ops import (
     Dimension,
     Measure,
+    NestAggSpec,
     SemanticAggregateOp,
     SemanticFilterOp,
     SemanticGroupByOp,
@@ -36,6 +36,7 @@ from .ops import (
     _find_all_root_models,
     _get_merged_fields,
     _is_deferred,
+    _unwrap,
     _normalize_join_predicate,
     _normalize_to_name,
     make_bare_ref_lambda,
@@ -51,6 +52,14 @@ _JOIN_REMOVED_MESSAGE = (
     "  table.join_many(other, lambda l, r: l.id == r.id)\n\n"
     "For Cartesian product:\n"
     "  table.join_cross(other)"
+)
+
+_NON_LEFT_JOIN_MESSAGE = (
+    "Semantic joins only support how='left'; got how={how!r}. "
+    "Non-left joins can silently change which left-side rows contribute to measures. "
+    "For inner-join semantics, use a left semantic join followed by an explicit "
+    "filter on a non-nullable field from the right table. Use join_cross() for a "
+    "Cartesian product."
 )
 
 _BLOCKED_IBIS_METHODS = [
@@ -118,6 +127,17 @@ def to_untagged(expr):
         return _rebind_to_canonical_backend(result.unwrap())
 
     raise TypeError(f"Cannot convert {type(expr)} to Ibis expression")
+
+
+def _flatten_group_keys(keys: tuple) -> tuple:
+    """Flatten list/tuple arguments so ``group_by(["a", "b"])`` works like ibis."""
+    flat: list = []
+    for k in keys:
+        if isinstance(k, (list, tuple)):
+            flat.extend(k)
+        else:
+            flat.append(k)
+    return tuple(flat)
 
 
 def to_tagged(expr, aggregate_cache_storage=None):
@@ -207,7 +227,7 @@ class SemanticTable(ir.Table):
         return SemanticFilter(source=self.op(), predicate=predicate)
 
     def group_by(self, *keys: str | Deferred):
-        normalized = tuple(_normalize_to_name(k) for k in keys)
+        normalized = tuple(_normalize_to_name(k) for k in _flatten_group_keys(keys))
         return SemanticGroupBy(source=self.op(), keys=normalized)
 
     def aggregate(self, *measure_names, nest: dict[str, Callable] | None = None, **aliased):
@@ -699,7 +719,7 @@ class SemanticModel(SemanticTable):
 
         for name, fn_or_expr in meas.items():
             kind, value = _classify_measure(fn_or_expr, scope, name)
-            (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
+            _store_classified_measure(name, kind, value, new_base_meas, new_calc_meas)
 
         return SemanticModel(
             table=self.op().table,
@@ -729,7 +749,7 @@ class SemanticModel(SemanticTable):
             on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
                 name string, a Deferred ``_.col``, or a list of strings/Deferred for
                 compound equi-joins.
-            how: Join type - "left", "inner", "right", or "outer" (default: "left")
+            how: Join type. Only ``"left"`` is supported.
 
         Returns:
             SemanticJoin: The joined semantic model
@@ -756,7 +776,7 @@ class SemanticModel(SemanticTable):
             on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
                 name string, a Deferred ``_.col``, or a list of strings/Deferred for
                 compound equi-joins.
-            how: Join type - "inner", "left", "right", or "outer" (default: "left")
+            how: Join type. Only ``"left"`` is supported.
 
         Returns:
             SemanticJoin: The joined semantic model
@@ -911,9 +931,12 @@ class SemanticJoin(SemanticTable):
         | Deferred
         | Sequence[str | Deferred]
         | None = None,
-        how: str = "inner",
+        how: str = "left",
         cardinality: str = "one",
     ) -> None:
+        is_cross_join = how == "cross" and cardinality == "cross"
+        if how != "left" and not is_cross_join:
+            raise ValueError(_NON_LEFT_JOIN_MESSAGE.format(how=how))
         on = _normalize_join_predicate(on)
         op = SemanticJoinOp(left=left, right=right, on=on, how=how, cardinality=cardinality)
         super().__init__(op)
@@ -1093,7 +1116,7 @@ class SemanticJoin(SemanticTable):
         )
         for name, fn_or_expr in meas.items():
             kind, value = _classify_measure(fn_or_expr, scope, name)
-            (new_calc if kind == "calc" else new_base)[name] = value
+            _store_classified_measure(name, kind, value, new_base, new_calc)
 
         return SemanticModel(
             table=joined_tbl,
@@ -1148,7 +1171,7 @@ class SemanticJoin(SemanticTable):
         raise TypeError(_JOIN_REMOVED_MESSAGE)
 
     def group_by(self, *keys: str | Deferred):
-        normalized = tuple(_normalize_to_name(k) for k in keys)
+        normalized = tuple(_normalize_to_name(k) for k in _flatten_group_keys(keys))
         return self.op().group_by(*normalized)
 
     def filter(self, predicate: Callable):
@@ -1230,7 +1253,7 @@ class SemanticFilter(SemanticTable):
 
         for name, fn_or_expr in meas.items():
             kind, value = _classify_measure(fn_or_expr, scope, name)
-            (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
+            _store_classified_measure(name, kind, value, new_base_meas, new_calc_meas)
 
         return SemanticModel(
             table=self.op().to_untagged(),
@@ -1282,6 +1305,189 @@ class SemanticFilter(SemanticTable):
     def join(self, *args, **kwargs):
         """Deprecated: Use join_one(), join_many(), or join_cross() instead."""
         raise TypeError(_JOIN_REMOVED_MESSAGE)
+
+
+def _collect_struct(struct_dict: dict[str, Any], **collect_kwargs):
+    """Build ``struct(...).collect()`` from columns of a single ibis flavor.
+
+    ``ibis.struct`` and ``xorq.vendor.ibis.struct`` are not interchangeable:
+    each can only infer types from columns of its own module.
+    """
+    first_col = next(iter(struct_dict.values()))
+    if isinstance(first_col, XorqColumn):
+        from ._xorq import ibis as xibis
+
+        return xibis.struct(struct_dict).collect(**collect_kwargs)
+    return ibis.struct(struct_dict).collect(**collect_kwargs)
+
+
+def _make_row_struct_collector(columns: tuple[str, ...]) -> Callable:
+    """Per-row struct collection for the bare ``group_by`` nest form.
+
+    Collects one struct per source row within each outer group, duplicates
+    included — the historical ``nest={"x": lambda t: t.group_by([...])}``
+    semantics that re-grouping via nested access relies on.
+    """
+
+    def collect_rows(tbl):
+        return _collect_struct({col: tbl[col] for col in columns})
+
+    return collect_rows
+
+
+def _split_nest_pipeline(name: str, probe_op):
+    """Separate an inner aggregate from pipeline steps chained after it.
+
+    ``order_by``/``limit``/``filter`` applied after the inner ``aggregate``
+    are per-group modifiers: ordering and truncation of the collected
+    array, and HAVING predicates evaluated at the inner grain.
+    """
+    order_keys: tuple[Any, ...] = ()
+    limit_spec: tuple[int, int] | None = None
+    having: list[Any] = []
+    current = probe_op
+    while not isinstance(current, SemanticAggregateOp):
+        if isinstance(current, SemanticLimitOp):
+            if limit_spec is not None:
+                raise NotImplementedError(
+                    f"nest entry {name!r}: multiple limit() steps are not supported."
+                )
+            limit_spec = (current.n, current.offset)
+        elif isinstance(current, SemanticOrderByOp):
+            if order_keys:
+                raise NotImplementedError(
+                    f"nest entry {name!r}: multiple order_by() steps are not supported."
+                )
+            order_keys = tuple(current.keys)
+        elif isinstance(current, SemanticFilterOp):
+            having.append(current.predicate)
+        else:
+            raise NotImplementedError(
+                f"nest entry {name!r}: unsupported nested query shape "
+                f"{type(current).__name__}. Supported forms are t.group_by(...) "
+                "and t.group_by(...).aggregate(...) optionally followed by "
+                "filter/order_by/limit.",
+            )
+        current = current.source
+    return current, order_keys, limit_spec, tuple(having)
+
+
+def _regrain_nested_specs(aggs: dict, new_outer_keys: tuple[str, ...]) -> dict:
+    """Widen child ``nest=`` plans to a re-grained parent's keys.
+
+    A nest entry's inner aggregate is re-grouped at (outer + inner) keys;
+    any ``nest=`` entries *it* carries were compiled against the lambda's
+    original grain and must widen to the new keys too, or the group-by
+    that joins them back onto their parent has no outer key columns.
+    """
+    out = {}
+    for agg_name, agg_fn in aggs.items():
+        spec = _unwrap(agg_fn)
+        if not isinstance(spec, NestAggSpec):
+            out[agg_name] = agg_fn
+            continue
+        inner = spec.inner_op
+        widened = tuple(new_outer_keys) + tuple(
+            k for k in inner.keys if k not in new_outer_keys
+        )
+        if widened == tuple(inner.keys):
+            out[agg_name] = agg_fn
+            continue
+        inner_source = inner.source
+        if isinstance(inner_source, SemanticGroupByOp):
+            inner_source = inner_source.source
+        out[agg_name] = NestAggSpec(
+            inner_op=SemanticAggregateOp(
+                source=SemanticGroupByOp(source=inner_source, keys=widened),
+                keys=widened,
+                aggs=_regrain_nested_specs(dict(inner.aggs), widened),
+                nested_columns=inner.nested_columns,
+            ),
+            struct_fields=spec.struct_fields,
+            order_keys=spec.order_keys,
+            limit_spec=spec.limit_spec,
+            having=spec.having,
+        )
+    return out
+
+
+def _build_nest_agg(name: str, fn: Callable, source_op, outer_keys: tuple[str, ...]):
+    """Classify a ``nest=`` lambda against the semantic source.
+
+    The lambda receives the aggregation's semantic source table, so measure
+    and dimension names resolve exactly like a top-level query:
+
+    - ``t.group_by(...).aggregate(...)`` compiles as its own semantic
+      aggregation at (outer keys + inner keys) grain and is attached to the
+      outer aggregate as an array-of-structs column (:class:`NestAggSpec`).
+      ``filter``/``order_by``/``limit`` chained after the aggregate become
+      HAVING predicates, array ordering, and array truncation per outer
+      group.
+    - Bare ``t.group_by(...)`` keeps the historical per-row struct
+      collection over the raw source rows.
+
+    Anything else raises ``NotImplementedError`` — silently collecting raw
+    rows in place of the requested query is never acceptable.
+    """
+    probe = fn(SemanticTable(source_op))
+
+    if isinstance(probe, SemanticAggregate) or (
+        isinstance(probe, SemanticFilter | SemanticOrderBy | SemanticLimit)
+        and not isinstance(probe, SemanticGroupBy)
+    ):
+        inner_op, order_keys, limit_spec, having = _split_nest_pipeline(name, probe.op())
+        inner_keys = tuple(inner_op.keys)
+        combined = tuple(outer_keys) + tuple(k for k in inner_keys if k not in outer_keys)
+        inner_source = inner_op.source
+        if isinstance(inner_source, SemanticGroupByOp):
+            # Re-group the inner query at (outer + inner) grain over its own
+            # source chain, keeping any filters the lambda applied.
+            inner_source = inner_source.source
+        combined_op = SemanticAggregateOp(
+            source=SemanticGroupByOp(source=inner_source, keys=combined),
+            keys=combined,
+            aggs=_regrain_nested_specs(dict(inner_op.aggs), combined),
+            nested_columns=inner_op.nested_columns,
+        )
+        struct_fields = inner_keys + tuple(n for n in inner_op.aggs if n not in inner_keys)
+        return NestAggSpec(
+            inner_op=combined_op,
+            struct_fields=struct_fields,
+            order_keys=order_keys,
+            limit_spec=limit_spec,
+            having=having,
+        )
+
+    if isinstance(probe, SemanticGroupBy):
+        if probe.op().source != source_op:
+            raise NotImplementedError(
+                f"nest entry {name!r}: transformations before a bare group_by "
+                "(e.g. filter without a following .aggregate(...)) are not "
+                "supported inside nest=. Add .aggregate(...) to the nested query.",
+            )
+        return _make_row_struct_collector(tuple(probe.op().keys))
+
+    if isinstance(probe, SemanticTable):
+        raise NotImplementedError(
+            f"nest entry {name!r}: unsupported nested query shape "
+            f"{type(probe).__name__}. Supported forms are t.group_by(...) and "
+            "t.group_by(...).aggregate(...), optionally followed by "
+            "filter/order_by/limit.",
+        )
+
+    if isinstance(probe, GroupedTable | IbisGroupedTable | Table | IbisTable):
+        raise NotImplementedError(
+            f"nest entry {name!r}: the lambda returned a raw ibis expression "
+            f"({type(probe).__module__}.{type(probe).__name__}). Build the nested "
+            "query from the semantic table argument instead, e.g. "
+            'nest={"x": lambda t: t.group_by("dim").aggregate("measure")}.',
+        )
+
+    raise NotImplementedError(
+        f"nest entry {name!r}: nest lambdas must return t.group_by(...) or "
+        f"t.group_by(...).aggregate(...), got "
+        f"{type(probe).__module__}.{type(probe).__name__}.",
+    )
 
 
 class SemanticGroupBy(SemanticTable):
@@ -1345,60 +1551,11 @@ class SemanticGroupBy(SemanticTable):
         aggs.update(aliased)
 
         if nest:
-
-            def make_nest_agg(fn):
-                def build_struct_dict(columns, source_tbl):
-                    return {col: source_tbl[col] for col in columns}
-
-                def collect_struct(struct_dict):
-                    # ibis.struct and xorq.vendor.ibis.struct are not interchangeable:
-                    # each can only infer types from columns of its own module
-                    first_col = next(iter(struct_dict.values()))
-                    if isinstance(first_col, XorqColumn):
-                        from ._xorq import ibis as xibis
-
-                        return xibis.struct(struct_dict).collect()
-                    return ibis.struct(struct_dict).collect()
-
-                def handle_grouped_table(result, ibis_tbl):
-                    group_cols = tuple(map(attrgetter("name"), result.groupings))
-                    return collect_struct(build_struct_dict(group_cols, ibis_tbl))
-
-                def handle_table(result, ibis_tbl):
-                    return collect_struct(build_struct_dict(result.columns, ibis_tbl))
-
-                def nest_agg(ibis_tbl):
-                    result = fn(ibis_tbl)
-
-                    if isinstance(result, SemanticTable):
-                        return to_untagged(result)
-
-                    if isinstance(result, GroupedTable | IbisGroupedTable):
-                        return handle_grouped_table(result, ibis_tbl)
-
-                    if isinstance(result, Table | IbisTable):
-                        return handle_table(result, ibis_tbl)
-
-                    raise TypeError(
-                        f"Nest lambda must return GroupedTable, Table, or SemanticExpression, "
-                        f"got {type(result).__module__}.{type(result).__name__}",
-                    )
-
-                # Keep the semantic lambda available to the aggregate compiler.
-                # Treating this callable like an ordinary measure causes
-                # _make_base_measure() to invoke it with ColumnScope, which is
-                # correct for scalar measures but loses the BSL query API used by
-                # lambdas such as
-                #
-                #   lambda t: t.group_by("carrier").aggregate("flight_count")
-                #
-                # SemanticAggregateOp lowers that query at the combined outer +
-                # inner grain and collects its rows.  Raw ibis/xorq nest lambdas
-                # continue through the callable above unchanged.
-                nest_agg.__bsl_semantic_nest__ = fn
-                return nest_agg
-
-            nest_aggs = {name: make_nest_agg(fn) for name, fn in nest.items()}
+            source_op = self.op().source
+            nest_aggs = {
+                name: _build_nest_agg(name, fn, source_op, self.keys)
+                for name, fn in nest.items()
+            }
             aggs = {**aggs, **nest_aggs}
             nested_columns = tuple(nest.keys())
         else:
@@ -1711,7 +1868,7 @@ class SemanticUnnest(SemanticTable):
 
         for name, fn_or_expr in meas.items():
             kind, value = _classify_measure(fn_or_expr, scope, name)
-            (new_calc_meas if kind == "calc" else new_base_meas)[name] = value
+            _store_classified_measure(name, kind, value, new_base_meas, new_calc_meas)
 
         return SemanticModel(
             table=self,
@@ -1719,6 +1876,24 @@ class SemanticUnnest(SemanticTable):
             measures=new_base_meas,
             calc_measures=new_calc_meas,
         )
+
+
+def _store_classified_measure(name, kind, value, base_meas, calc_meas):
+    """Store a classified measure, evicting a same-named entry of the other
+    kind. Measure lookup is base-first, so a base measure left behind when a
+    redefinition lands in the calc map would silently keep serving the old
+    definition."""
+    if kind == "calc":
+        if name in getattr(value, "depends_on", ()):
+            raise ValueError(
+                f"Measure {name!r} cannot be defined in terms of itself. "
+                "Reference other measures or columns, or use a new name."
+            )
+        base_meas.pop(name, None)
+        calc_meas[name] = value
+    else:
+        calc_meas.pop(name, None)
+        base_meas[name] = value
 
 
 class SemanticProject(SemanticTable):
