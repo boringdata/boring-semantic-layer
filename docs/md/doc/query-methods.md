@@ -297,19 +297,21 @@ result = (
 
 **How it works:**
 - The `nest` parameter accepts a dictionary: `{"column_name": lambda t: ...}`
-- The lambda specifies which columns to collect using `.group_by()` or `.select()`
+- A bare `.group_by()` in the lambda specifies which row fields to collect
 - Results in an array of structs column named `flights`
 
-You can also use `.select()` to specify which columns to nest:
+To nest selected row-level fields, use the bare `group_by(...)` form. In a
+`nest` lambda this selects the struct fields to collect; it does not collapse
+duplicate source rows:
 
 ```query_nest_select
-# Nest specific columns
+# Nest specific row-level fields
 result = (
     flights_st
     .group_by("carrier")
     .aggregate(
         "flight_count",
-        nest={"routes": lambda t: t.select("origin", "distance", "duration")}
+        nest={"routes": lambda t: t.group_by("origin", "distance", "duration")}
     )
 )
 ```

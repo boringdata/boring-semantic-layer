@@ -66,6 +66,7 @@ from .calc_compiler import (
     topological_order_from_deps,
 )
 from .graph_utils import walk_nodes
+from .join_utils import null_safe_equal
 from .measure_scope import (
     ColumnScope,
     MeasureScope,
@@ -2758,7 +2759,7 @@ def _find_deferrable_joins(
 def _left_join_bridge(left, bridge, common_keys):
     """Left-join *bridge* onto *left*, selecting only new columns from bridge."""
     # Null-safe equality so NULL-valued keys still pair up
-    preds = [left[c].identical_to(bridge[c]) for c in common_keys]
+    preds = [null_safe_equal(left[c], bridge[c]) for c in common_keys]
     bridge_only = tuple(c for c in bridge.columns if c not in frozenset(common_keys))
     return left.left_join(bridge, preds).select([left] + [bridge[c] for c in bridge_only])
 
@@ -2929,7 +2930,7 @@ def _exact_grain_preagg(raw_tbl, tbl, group_by_cols, join_keys, exact_measures):
     bridge = tbl.select(
         [tbl[c].name(tmp[c]) for c in group_by_cols] + [tbl[k] for k in shared_jk]
     ).distinct()
-    preds = [bridge[k].identical_to(raw_tbl[k]) for k in shared_jk]
+    preds = [null_safe_equal(bridge[k], raw_tbl[k]) for k in shared_jk]
     joined = bridge.inner_join(raw_tbl, preds)
     aggs = {m: fn(joined) for m, fn in exact_measures.items()}
     pt = joined.group_by([joined[t] for t in tmp.values()]).aggregate(**aggs)
@@ -3344,7 +3345,9 @@ class SemanticAggregateOp(Relation):
                 tmp_keys = {f"__bsl_nest_k{i}__": k for i, k in enumerate(outer_keys)}
                 nest_tbl = nest_tbl.rename(tmp_keys)
                 tmp_for = {old: tmp for tmp, old in tmp_keys.items()}
-                preds = [result[k].identical_to(nest_tbl[tmp_for[k]]) for k in outer_keys]
+                preds = [
+                    null_safe_equal(result[k], nest_tbl[tmp_for[k]]) for k in outer_keys
+                ]
                 joined = result.left_join(nest_tbl, preds)
                 result = joined.select([*result.columns, name])
             else:
@@ -4326,7 +4329,7 @@ class SemanticAggregateOp(Relation):
             # Null-safe equality: a NULL group key (real NULL dim value, or
             # minted by the outer join for parents with no children) must
             # still match its pre-agg row
-            preds = [dim_bridge[c].identical_to(pt[c]) for c in common]
+            preds = [null_safe_equal(dim_bridge[c], pt[c]) for c in common]
             joined_pt = dim_bridge.left_join(pt, preds).select(
                 [dim_bridge] + [pt[c] for c in pt_meas]
             )

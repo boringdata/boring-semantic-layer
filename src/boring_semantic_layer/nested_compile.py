@@ -19,6 +19,8 @@ from typing import Any
 import ibis
 from toolz import curry, pipe
 
+from .join_utils import null_safe_equal
+
 
 def get_ibis_module(table):
     """Return the ibis module that built ``table`` (regular vs xorq-vendored).
@@ -161,7 +163,7 @@ def join_tables(by_cols: Iterable[str], tables: list) -> Any:
         # Null-safe equality: group keys can legitimately be NULL (real NULL
         # dim values, or keys minted by an outer join). Plain == drops those
         # groups from every table but the first.
-        predicates = [left[c].identical_to(right[c]) for c in by_cols]
+        predicates = [null_safe_equal(left[c], right[c]) for c in by_cols]
         right_cols = [c for c in right.columns if c not in by_cols_set]
         right_select = [right[c] for c in right_cols]
         return left.left_join(right, predicates).select([left] + right_select)

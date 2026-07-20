@@ -265,6 +265,24 @@ def test_nest_inner_order_by_orders_each_group_array(orders):
     assert open_qty == sorted(open_qty, reverse=True)
 
 
+def test_nest_two_outer_keys_executes_on_xorq_datafusion(orders):
+    """Multiple null-safe join predicates must remain boolean expressions."""
+    orders = orders.with_dimensions(customer=lambda t: t.customer_id)
+    result = (
+        orders.group_by("status", "customer")
+        .aggregate(
+            "total",
+            nest={"by_sku": lambda t: t.group_by("sku").aggregate("total_qty")},
+        )
+        .execute()
+    )
+
+    assert len(result) == 6
+    row = result[(result["status"] == "open") & (result["customer"] == 300)].iloc[0]
+    assert float(row["total"]) == 50.0
+    assert list(row["by_sku"]) == [{"sku": "c", "total_qty": 5}]
+
+
 def test_nest_within_nest_regrains_to_outer_keys(orders):
     """A nest entry inside a nest entry widens to the full outer grain.
 

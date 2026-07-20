@@ -353,7 +353,7 @@ Create nested data structures within aggregations.
 aggregate(
     *measures,
     nest={
-        "nested_column": lambda t: t.group_by([...]) | t.select(...)
+        "nested_column": lambda t: t.group_by(...)
     }
 )
 ```
