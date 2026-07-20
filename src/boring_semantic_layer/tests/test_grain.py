@@ -259,7 +259,6 @@ class TestGrainAwareQueryResults:
         query = joined.group_by("appearances.canonical_team_name").aggregate(
             "appearances.game_count"
         )
-        query.to_tagged()
         result = query.execute().set_index("appearances.canonical_team_name")
 
         assert result.loc["Germany", "appearances.game_count"] == 2
