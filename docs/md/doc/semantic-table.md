@@ -289,7 +289,9 @@ After joining, all dimensions and measures from both tables are available. Each 
 
 ### join_one() - One-to-One Relationships
 
-Use `join_one()` when rows have a unique matching relationship (INNER JOIN).
+Use `join_one()` when rows have a unique matching relationship. Like all
+non-cross semantic joins, it uses a LEFT JOIN so unmatched left rows remain
+visible to measures.
 
 ```python
 # Many flights → one carrier (each flight has exactly one carrier)
@@ -330,34 +332,20 @@ Use `join_cross()` to create every possible combination of rows from both tables
 all_combinations = flights_st.join_cross(carriers)
 ```
 
-### join() - Custom Join Conditions
+### Requiring a Match
 
-Use `join()` for complex join conditions or specific SQL join types.
+`join_one()` and `join_many()` only support `how="left"`. When a query should
+require a match, make the row removal explicit with a filter on a non-nullable
+field from the right table:
 
 ```python
-# LEFT JOIN with custom condition
-flights_with_carriers = flights_st.join(
+flights_matched = flights_st.join_one(
     carriers,
     lambda f, c: f.carrier == c.code,
-    how="left"
-)
-
-# INNER JOIN
-flights_matched = flights_st.join(
-    carriers,
-    lambda f, c: f.carrier == c.code,
-    how="inner"
-)
-
-# Complex conditions
-date_range_join = flights_st.join(
-    promotions,
-    lambda f, p: (f.date >= p.start_date) & (f.date <= p.end_date),
-    how="left"
-)
+).filter(lambda t: t["carriers.name"].notnull())
 ```
 
-**Supported join types:** `"inner"`, `"left"`, `"right"`, `"outer"`, `"cross"`
+Use `join_cross()` for Cartesian products.
 
 ## Next Steps
 

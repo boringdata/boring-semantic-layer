@@ -169,6 +169,7 @@ Methods for composing semantic tables through joins.
 join_many(
     other: SemanticTable,
     on: Callable,
+    how: str = "left",
     name: str = None
 ) -> SemanticTable
 ```
@@ -179,6 +180,7 @@ One-to-many relationship join (LEFT JOIN). Use when the left table can match mul
 |-----------|------|-------------|
 | `other` | `SemanticTable` | The semantic table to join with |
 | `on` | `Callable` | Lambda function defining the join condition |
+| `how` | `str` | Join type; only `'left'` is supported |
 | `name` | `str` | Optional name for the joined table reference |
 
 **Example:**
@@ -196,11 +198,13 @@ flights_st = flights_st.join_many(
 join_one(
     other: SemanticTable,
     on: Callable,
+    how: str = "left",
     name: str = None
 ) -> SemanticTable
 ```
 
-One-to-one relationship join (INNER JOIN). Use when each row in the left table matches exactly one row in the right table.
+One-to-one relationship join (LEFT JOIN). Use when each left row can match at
+most one row in the right table. Only `how="left"` is supported.
 
 **Example:**
 ```python
@@ -220,26 +224,6 @@ join_cross(
 ```
 
 Cross join (CARTESIAN PRODUCT). Creates all possible combinations of rows from both tables.
-
-### join()
-
-```python
-join(
-    other: SemanticTable,
-    on: Callable,
-    how: str = "inner",
-    name: str = None
-) -> SemanticTable
-```
-
-Custom join with flexible join type. Supports 'inner', 'left', 'right', 'outer', and 'cross'.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `other` | `SemanticTable` | The semantic table to join with |
-| `on` | `Callable` | Lambda function defining the join condition |
-| `how` | `str` | Join type: 'inner', 'left', 'right', 'outer', or 'cross' |
-| `name` | `str` | Optional name for the joined table reference |
 
 ## Query Methods
 
@@ -531,7 +515,7 @@ model_name:
     join_name:
       model: model_reference
       on: join_condition
-      how: join_type  # left, inner, right, outer, cross
+      how: left  # Optional; non-cross semantic joins are always left joins
 ```
 
 #### Expression Syntax

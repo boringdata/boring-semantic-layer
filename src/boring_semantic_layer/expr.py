@@ -54,6 +54,14 @@ _JOIN_REMOVED_MESSAGE = (
     "  table.join_cross(other)"
 )
 
+_NON_LEFT_JOIN_MESSAGE = (
+    "Semantic joins only support how='left'; got how={how!r}. "
+    "Non-left joins can silently change which left-side rows contribute to measures. "
+    "For inner-join semantics, use a left semantic join followed by an explicit "
+    "filter on a non-nullable field from the right table. Use join_cross() for a "
+    "Cartesian product."
+)
+
 _BLOCKED_IBIS_METHODS = [
     "alias",
     "anti_join",
@@ -741,7 +749,7 @@ class SemanticModel(SemanticTable):
             on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
                 name string, a Deferred ``_.col``, or a list of strings/Deferred for
                 compound equi-joins.
-            how: Join type - "left", "inner", "right", or "outer" (default: "left")
+            how: Join type. Only ``"left"`` is supported.
 
         Returns:
             SemanticJoin: The joined semantic model
@@ -768,7 +776,7 @@ class SemanticModel(SemanticTable):
             on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
                 name string, a Deferred ``_.col``, or a list of strings/Deferred for
                 compound equi-joins.
-            how: Join type - "inner", "left", "right", or "outer" (default: "left")
+            how: Join type. Only ``"left"`` is supported.
 
         Returns:
             SemanticJoin: The joined semantic model
@@ -923,9 +931,12 @@ class SemanticJoin(SemanticTable):
         | Deferred
         | Sequence[str | Deferred]
         | None = None,
-        how: str = "inner",
+        how: str = "left",
         cardinality: str = "one",
     ) -> None:
+        is_cross_join = how == "cross" and cardinality == "cross"
+        if how != "left" and not is_cross_join:
+            raise ValueError(_NON_LEFT_JOIN_MESSAGE.format(how=how))
         on = _normalize_join_predicate(on)
         op = SemanticJoinOp(left=left, right=right, on=on, how=how, cardinality=cardinality)
         super().__init__(op)
