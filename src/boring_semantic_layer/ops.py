@@ -562,6 +562,91 @@ def _get_merged_fields(all_roots: list, field_type: str) -> dict:
     )
 
 
+def _augment_dimensions_with_raw_columns(
+    merged_dimensions: Mapping[str, Any],
+    keys: Iterable[str],
+    all_roots: Sequence[Any],
+    source: Any = None,
+) -> dict:
+    """Expose requested ``<table>.<column>`` group keys as auto-dimensions.
+
+    On a single un-joined model, raw table columns are queryable without a
+    ``with_dimensions`` declaration. A joined table flattens to physical
+    columns with collision suffixes (``_right``, ``_right2``, …), so a
+    prefixed raw-column reference has nothing to resolve against unless a
+    dimension was declared. For each requested key that names a root table
+    and one of its raw columns, synthesize an identity dimension and run it
+    through the same rename-aware merge that declared dimensions use, so
+    collided right-side columns resolve to their suffixed physical name.
+
+    Declared dimensions always win over synthesized ones.
+    """
+    requested: dict[str, dict[str, Dimension]] = {}
+    for key in keys:
+        if key in merged_dimensions or "." not in key:
+            continue
+        prefix, col = key.split(".", 1)
+        for root in all_roots:
+            if root.name != prefix:
+                continue
+            cols = getattr(getattr(root, "table", None), "columns", ())
+            if col in cols:
+                requested.setdefault(prefix, {})[col] = Dimension(
+                    expr=lambda t, _c=col: t[_c]
+                )
+            break
+    if not requested:
+        return dict(merged_dimensions)
+    synthesized = _merge_fields_with_prefixing(
+        all_roots,
+        lambda r: requested.get(r.name, {}),
+        source=source,
+    )
+    return {**dict(synthesized), **dict(merged_dimensions)}
+
+
+def _reject_unresolvable_group_keys(
+    keys: Iterable[str],
+    merged_dimensions: Mapping[str, Any],
+    tbl,
+    all_roots: Sequence[Any],
+) -> None:
+    """Raise a semantic-layer error for group keys that resolve to nothing.
+
+    Without this, an unknown key reaches ibis as a physical column lookup on
+    the joined table and fails with an error that leaks the flattened join
+    schema (``name_right``, ``tournament_id_right2``, …) instead of naming
+    the model's queryable surface.
+    """
+    tbl_columns = frozenset(getattr(tbl, "columns", ()))
+    unresolved = [
+        k for k in keys if k not in merged_dimensions and k not in tbl_columns
+    ]
+    if not unresolved:
+        return
+
+    candidates: set[str] = set(merged_dimensions)
+    for root in all_roots:
+        cols = getattr(getattr(root, "table", None), "columns", ())
+        candidates.update(cols)
+        if root.name:
+            candidates.update(f"{root.name}.{c}" for c in cols)
+
+    suggestions = []
+    for key in unresolved:
+        close = get_close_matches(key, sorted(candidates), n=3, cutoff=0.6)
+        if close:
+            suggestions.append(f"{key!r} (did you mean: {', '.join(map(repr, close))}?)")
+        else:
+            suggestions.append(repr(key))
+    declared = ", ".join(sorted(merged_dimensions)) or "none"
+    raise KeyError(
+        f"Unknown group_by key(s): {'; '.join(suggestions)}. "
+        f"Declared dimensions: {declared}. Raw table columns can also be "
+        "referenced directly ('column' or '<table>.<column>' on joins)."
+    )
+
+
 def _extract_missing_column_name(exc: Exception) -> str | None:
     """Extract a missing column/attribute name from common resolution errors."""
     message = str(exc)
@@ -1813,6 +1898,25 @@ def _build_aggregation_plan(
     )
 
 
+def _make_rebindable_reduction_spec(reduction_expr, origin_op) -> Callable:
+    """Wrap a lifted inline reduction as an agg-spec callable.
+
+    The reduction was built against the pre-totals base table. Field-based
+    reductions (``Sum(Field(base, x))``) survive on a mutated descendant via
+    ibis's field dereferencing, but relation-argument reductions
+    (``CountStar(base)``) hold the relation itself and fail the aggregate
+    integrity check unless rebound to the table actually being aggregated.
+    """
+
+    def spec(t, _r=reduction_expr, _origin=origin_op):
+        target = _to_op(t)
+        if target is _origin:
+            return _r
+        return _to_op(_r).replace({_origin: target}).to_expr()
+
+    return spec
+
+
 def _compile_aggregation(
     base_tbl,
     by_cols: list[str],
@@ -1910,7 +2014,9 @@ def _compile_aggregation(
                     needs_totals = True
                 for anon_name, reduction_expr in lifted.items():
                     if anon_name not in agg_specs:
-                        agg_specs[anon_name] = lambda t, r=reduction_expr: r
+                        agg_specs[anon_name] = _make_rebindable_reduction_spec(
+                            reduction_expr, base_op
+                        )
             except WindowedBaseReductionError:
                 # The apply-time fallback re-evaluates the lambda against
                 # the aggregated result, which would silently give the
@@ -3141,11 +3247,16 @@ class SemanticAggregateOp(Relation):
                 merged_base_measures,
                 raw_columns=raw_columns,
             )
+            merged_dimensions = _augment_dimensions_with_raw_columns(
+                merged_dimensions, self.keys, all_roots, join_op
+            )
         tbl = _mutate_dimensions_with_dependencies(
             tbl,
             [k for k in self.keys if k in merged_dimensions],
             merged_dimensions,
         )
+        if not is_post_agg:
+            _reject_unresolvable_group_keys(self.keys, merged_dimensions, tbl, all_roots)
 
         scope = (
             ColumnScope(_tbl=tbl)
@@ -3261,6 +3372,9 @@ class SemanticAggregateOp(Relation):
         This prevents fan-out inflation when ``join_many`` is used.
         """
         merged_dimensions = _get_merged_fields(all_roots, "dimensions")
+        merged_dimensions = _augment_dimensions_with_raw_columns(
+            merged_dimensions, self.keys, all_roots, join_op
+        )
         merged_base_measures = _get_merged_fields(all_roots, "measures")
         merged_calc_measures = _get_merged_fields(all_roots, "calc_measures")
         group_by_cols = list(self.keys)
@@ -3953,6 +4067,9 @@ class SemanticAggregateOp(Relation):
         deferred_names = {d.table_name for d in deferrable}
 
         merged_dimensions = _get_merged_fields(all_roots, "dimensions")
+        merged_dimensions = _augment_dimensions_with_raw_columns(
+            merged_dimensions, self.keys, all_roots, join_op
+        )
         merged_base_measures = _get_merged_fields(all_roots, "measures")
         merged_calc_measures = _get_merged_fields(all_roots, "calc_measures")
 
@@ -6061,12 +6178,18 @@ def _merge_fields_with_prefixing(
 
     merged_fields = {}
 
+    # Sample the first root with declared fields — not all_roots[0]
+    # unconditionally. When the fact table declares no dimensions, an
+    # empty first sample would leave ``is_dimensions`` False, skip the
+    # rename map, and let a colliding right-table dimension silently
+    # read the LEFT table's column after the join.
     is_dimensions = False
-    if all_roots:
-        sample_fields = field_accessor(all_roots[0])
+    for root in all_roots:
+        sample_fields = field_accessor(root)
         if sample_fields:
             first_val = next(iter(sample_fields.values()), None)
             is_dimensions = isinstance(first_val, Dimension)
+            break
 
     column_rename_map = {}
     if is_dimensions:

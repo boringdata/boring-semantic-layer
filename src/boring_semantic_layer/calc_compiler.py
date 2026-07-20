@@ -1048,9 +1048,20 @@ def lift_inline_reductions(
     if Reduction is None:
         return expr, virtual_agg_tbl, totals_virtual_agg_tbl, {}
 
+    Relation = getattr(ibis_ops.relations, "Relation", None)
+
     def is_base_reduction(node):
         if not isinstance(node, Reduction):
             return False
+        # CountStar-style reductions hold the relation as a direct argument
+        # (no Field child): ``t.count()`` is ``CountStar(base)``. Walking for
+        # Fields alone misses them, leaving the reduction unlifted and the
+        # ``t.all(t.count())`` totals shape without a totals column.
+        if Relation is not None and any(
+            isinstance(a, Relation) and id(a) == id(base_op)
+            for a in getattr(node, "__args__", ())
+        ):
+            return True
         for c in _walk(node):
             if isinstance(c, Field) and id(c.rel) == id(base_op):
                 return True
