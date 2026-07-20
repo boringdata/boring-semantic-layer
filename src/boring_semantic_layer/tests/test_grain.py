@@ -204,6 +204,67 @@ class TestGrainAwareQueryResults:
         # Total hours: 80+85+90+75+88+82 = 500
         assert result["hours.total_hours"].iloc[0] == 500.0
 
+    def test_derived_group_dimension_rebinds_countstar(self, con):
+        """Derived dimensions added during pre-agg must rebind reductions.
+
+        CountStar stores its source relation directly.  Materializing a
+        derived group key creates a new relation, so the reduction must be
+        rebound before aggregation rather than remaining attached to the
+        pre-mutation table.
+        """
+        appearances_tbl = con.create_table(
+            "grain_derived_appearances",
+            pd.DataFrame(
+                {
+                    "match_id": [1, 2, 3, 4],
+                    "team_id": [10, 10, 20, 30],
+                    "team_name": ["West Germany", "Germany", "Brazil", "Brazil"],
+                }
+            ),
+        )
+        teams_tbl = con.create_table(
+            "grain_derived_teams",
+            pd.DataFrame(
+                {
+                    "team_id": [10, 20, 30],
+                    "region": ["Europe", "South America", "South America"],
+                }
+            ),
+        )
+
+        appearances = (
+            to_semantic_table(appearances_tbl, name="appearances")
+            .with_dimensions(
+                match_id=Dimension(expr=lambda t: t.match_id, is_entity=True),
+                team_id=Dimension(expr=lambda t: t.team_id, is_entity=True),
+                canonical_team_name=lambda t: (t.team_name == "West Germany").ifelse(
+                    "Germany", t.team_name
+                ),
+            )
+            .with_measures(game_count=lambda t: t.count())
+        )
+        teams = (
+            to_semantic_table(teams_tbl, name="teams")
+            .with_dimensions(
+                team_id=Dimension(expr=lambda t: t.team_id, is_entity=True),
+                region=lambda t: t.region,
+            )
+            .with_measures(team_count=lambda t: t.count())
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            joined = appearances.join_one(teams, on="team_id")
+
+        query = joined.group_by("appearances.canonical_team_name").aggregate(
+            "appearances.game_count"
+        )
+        query.to_tagged()
+        result = query.execute().set_index("appearances.canonical_team_name")
+
+        assert result.loc["Germany", "appearances.game_count"] == 2
+        assert result.loc["Brazil", "appearances.game_count"] == 2
+
 
 class TestMissingCardinalityDefault:
     """Missing cardinality in serialized metadata must default to 'many'.

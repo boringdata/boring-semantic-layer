@@ -3731,6 +3731,7 @@ class SemanticAggregateOp(Relation):
             raw_columns = set(raw_tbl.columns)
 
             # Build agg expressions on the raw table
+            measure_binding_op = _to_op(raw_tbl)
             agg_exprs: dict = {}
             _tot_exprs: dict = {}
             _exact_measures_t: dict = {}
@@ -3874,6 +3875,23 @@ class SemanticAggregateOp(Relation):
                     )
                 case _:
                     grain = tuple(_local_dims)
+
+            # Materializing a derived group dimension above replaces raw_tbl
+            # with a Project relation.  Reductions were built before that
+            # projection; relation-argument reductions such as CountStar keep
+            # pointing at the old table and fail ibis's aggregate integrity
+            # check.  Rebind every reduction to the final relation used by the
+            # group-by.  Field-based reductions need the same treatment for
+            # consistency, even though ibis can sometimes dereference them
+            # through a projection automatically.
+            final_raw_op = _to_op(raw_tbl)
+            if final_raw_op is not measure_binding_op:
+                agg_exprs = {
+                    name: _to_op(expr)
+                    .replace({measure_binding_op: final_raw_op})
+                    .to_expr()
+                    for name, expr in agg_exprs.items()
+                }
 
             if _exact_measures_t:
                 if not has_cross_table_gb:
