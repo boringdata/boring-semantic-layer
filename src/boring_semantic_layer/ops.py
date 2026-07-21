@@ -3245,6 +3245,63 @@ def _allocate_local_group_alias(
     return candidate
 
 
+def _compile_evaluated_measure_table(
+    base_tbl,
+    by_cols: Iterable[str],
+    evaluated_measures: Mapping[str, Any],
+):
+    """Aggregate already-evaluated regular and nested measures together.
+
+    ``NestedAccessMarker`` is intentionally not an ibis expression.  Most
+    aggregation paths classify it before calling ``Table.aggregate``; the
+    source-aware join pre-aggregation path also needs that dispatch because
+    nested arrays must be unnested on their owning raw relation, never on the
+    flattened (and potentially fanned-out) join.
+    """
+    by_cols = tuple(by_cols)
+    nested_specs = {
+        name: value
+        for name, value in evaluated_measures.items()
+        if isinstance(value, NestedAccessMarker)
+    }
+    regular_exprs = {
+        name: value
+        for name, value in evaluated_measures.items()
+        if not isinstance(value, NestedAccessMarker)
+    }
+
+    if nested_specs:
+        # `_compile_aggregation_with_nested` accepts callables for regular
+        # measures.  These expressions are already bound to `base_tbl`, so a
+        # constant-returning wrapper preserves that exact relation binding.
+        regular_specs = {
+            name: (lambda _table, expr=expr: expr)
+            for name, expr in regular_exprs.items()
+        }
+        return _compile_aggregation_with_nested(
+            base_tbl,
+            list(by_cols),
+            regular_specs,
+            nested_specs,
+        )
+
+    if by_cols:
+        return base_tbl.group_by([base_tbl[c] for c in by_cols]).aggregate(
+            **regular_exprs
+        )
+    return base_tbl.aggregate(**regular_exprs)
+
+
+def _compile_exact_measure_table(
+    base_tbl,
+    by_cols: Iterable[str],
+    exact_measures: Mapping[str, Callable],
+):
+    """Evaluate exact-grain measure specs and compile nested markers safely."""
+    evaluated = {name: fn(base_tbl) for name, fn in exact_measures.items()}
+    return _compile_evaluated_measure_table(base_tbl, by_cols, evaluated)
+
+
 def _exact_grain_preagg(
     raw_tbl,
     tbl,
@@ -3334,8 +3391,7 @@ def _exact_grain_preagg(
         for joined_name, raw_name in local_group_keys.items()
     )
     joined = bridge.inner_join(raw_tbl, preds)
-    aggs = {m: fn(joined) for m, fn in exact_measures.items()}
-    pt = joined.group_by([joined[t] for t in tmp.values()]).aggregate(**aggs)
+    pt = _compile_exact_measure_table(joined, tmp.values(), exact_measures)
     from .nested_compile import get_ibis_module
 
     pt = pt.mutate(**{presence_name: get_ibis_module(pt).literal(True)})
@@ -3349,10 +3405,12 @@ def _exact_grain_preagg(
     # NULL filling is unsound. A separate presence marker distinguishes an
     # absent aggregate row from a matched row whose measure itself is NULL.
     empty_tbl = raw_tbl.limit(0)
-    empty_values = empty_tbl.aggregate(
-        **{
-            empty_names[measure]: fn(empty_tbl)
-            for measure, fn in exact_measures.items()
+    empty_values = _compile_exact_measure_table(
+        empty_tbl, (), exact_measures
+    ).rename(
+        {
+            empty_names[measure]: measure
+            for measure in exact_measures
         }
     )
     group_spine = tbl.select([tbl[c] for c in group_by_cols]).distinct()
@@ -4549,6 +4607,7 @@ class SemanticAggregateOp(Relation):
             agg_exprs: dict = {}
             _tot_exprs: dict = {}
             _exact_measures_t: dict = {}
+            _nested_measures_t: dict = {}
             for mname, _mfn in measures.items():
                 short = mname.split(".", 1)[1] if "." in mname else mname
                 source_measure = (
@@ -4558,6 +4617,16 @@ class SemanticAggregateOp(Relation):
                 )
                 if isinstance(source_measure, Measure):
                     expr = source_measure(raw_tbl)
+                    if isinstance(expr, NestedAccessMarker):
+                        # Nested arrays are a separate aggregation grain, not
+                        # ibis reductions that can be inspected via `.op()`.
+                        # Keep the original source-bound measure for exact
+                        # target-grain compilation after group-key routing.
+                        _nested_measures_t[mname] = source_measure
+                        _tot_exprs[mname] = expr
+                        if expr.operation in {"count", "nunique"}:
+                            _empty_count_measures.add(mname)
+                        continue
                     if _is_count_expr(expr):
                         _empty_count_measures.add(mname)
                     # Original expression on the filtered raw table: at zero
@@ -4599,16 +4668,23 @@ class SemanticAggregateOp(Relation):
 
             # --- Compute grain ---
             if not group_by_cols:
-                if not agg_exprs and not _exact_measures_t:
+                if not agg_exprs and not _exact_measures_t and not _nested_measures_t:
                     continue
                 # No group-by → scalar aggregate
-                pt = raw_tbl.aggregate(**agg_exprs)
-                # Recompute MEAN from SUM/COUNT for scalar results
-                for mname, (sc, cc) in _decomposed_means.items():
-                    if sc in pt.columns and cc in pt.columns:
-                        pt = pt.mutate(**{mname: pt[sc] / pt[cc]})
-                        pt = pt.drop(sc, cc)
-                _preagg_results.append(pt)
+                if agg_exprs:
+                    pt = raw_tbl.aggregate(**agg_exprs)
+                    # Recompute MEAN from SUM/COUNT for scalar results
+                    for mname, (sc, cc) in _decomposed_means.items():
+                        if sc in pt.columns and cc in pt.columns:
+                            pt = pt.mutate(**{mname: pt[sc] / pt[cc]})
+                            pt = pt.drop(sc, cc)
+                    _preagg_results.append(pt)
+                if _nested_measures_t:
+                    _preagg_results.append(
+                        _compile_exact_measure_table(
+                            raw_tbl, (), _nested_measures_t
+                        )
+                    )
                 continue
 
             # a) group-by dims that live on this table
@@ -4776,7 +4852,7 @@ class SemanticAggregateOp(Relation):
                     dict(_local_group_keys),
                 )
 
-            if not agg_exprs and not _exact_measures_t:
+            if not agg_exprs and not _exact_measures_t and not _nested_measures_t:
                 continue
 
             join_keys = join_tree_info.table_join_keys.get(table_name, set())
@@ -4833,6 +4909,61 @@ class SemanticAggregateOp(Relation):
                             group_by_cols,
                             available_jk,
                             _exact_measures_t,
+                            joined_key_names=source_key_names,
+                            local_group_keys=_local_group_keys,
+                        )
+                    )
+
+            if _nested_measures_t:
+                nested_needs_source_spine = (
+                    join_tree_info.table_cardinalities.get(table_name)
+                    not in ("root", "cross")
+                )
+                if not has_cross_table_gb and not nested_needs_source_spine and grain:
+                    # A root/cross source grouped only by its own dimensions
+                    # is already at the requested grain. Compile nested
+                    # measures directly there and keep them separate from the
+                    # regular preaggregate so sibling joins cannot fan out the
+                    # unnested rows.
+                    nested_pt = _compile_exact_measure_table(
+                        raw_tbl, grain, _nested_measures_t
+                    )
+                    local_renames = {
+                        public_name: raw_name
+                        for raw_name, public_name in _local_group_outputs.items()
+                        if raw_name in nested_pt.columns
+                    }
+                    collisions = sorted(
+                        set(local_renames)
+                        & (set(nested_pt.columns) - set(local_renames.values()))
+                    )
+                    if collisions:
+                        raise ValueError(
+                            "Cannot restore semantic group-key names after nested "
+                            "source preaggregation because they collide with "
+                            f"aggregate columns: {collisions}. Rename the aggregate field."
+                        )
+                    if local_renames:
+                        nested_pt = nested_pt.rename(local_renames)
+                    joined_grain = tuple(
+                        _local_group_outputs.get(name, name) for name in grain
+                    )
+                    _preagg_results.append(
+                        _rename_preagg_grain_to_joined_aliases(
+                            nested_pt, joined_grain, source_key_names
+                        )
+                    )
+                else:
+                    # Cross-source dimensions and non-root sources need the
+                    # joined group-domain spine. This also restores the true
+                    # empty-set value for unmatched LEFT JOIN groups.
+                    _preagg_results.append(
+                        _exact_grain_preagg(
+                            raw_tbl,
+                            tbl,
+                            group_by_cols,
+                            available_jk,
+                            _nested_measures_t,
                             joined_key_names=source_key_names,
                             local_group_keys=_local_group_keys,
                         )
@@ -5017,7 +5148,7 @@ class SemanticAggregateOp(Relation):
                 under join_many.
                 """
                 parts = [
-                    src.aggregate(**texprs)
+                    _compile_evaluated_measure_table(src, (), texprs)
                     for src, texprs in _totals_sources.values()
                     if texprs
                 ]
