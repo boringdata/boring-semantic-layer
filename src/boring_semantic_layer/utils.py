@@ -814,24 +814,26 @@ def _is_deferred(obj) -> bool:
 def expr_to_structured(fn: Callable) -> Result[tuple, Exception]:
     """Convert a callable/Deferred expression to a structured tuple representation."""
     from ._xorq import Deferred as XorqDeferred
+    from .ops import _CallableWrapper
 
     @safe
     def do_convert():
         from ._xorq import _
 
-        if isinstance(fn, XorqDeferred):
-            return serialize_resolver(fn._resolver)
+        expr = fn._fn if isinstance(fn, _CallableWrapper) else fn
+        if isinstance(expr, XorqDeferred):
+            return serialize_resolver(expr._resolver)
         # For ibis Deferred (not xorq vendor), resolve through xorq _ to get xorq types
-        if _is_deferred(fn):
-            result = fn.resolve(_)
+        if _is_deferred(expr):
+            result = expr.resolve(_)
             if _is_deferred(result):
                 return serialize_resolver(result._resolver)
-        if callable(fn):
-            result = fn(_)
+        if callable(expr):
+            result = expr(_)
             if _is_deferred(result):
                 return serialize_resolver(result._resolver)
             raise ValueError(f"Callable did not produce a Deferred, got {type(result)}")
-        raise ValueError(f"Expected callable or Deferred, got {type(fn)}")
+        raise ValueError(f"Expected callable or Deferred, got {type(expr)}")
 
     return do_convert()
 

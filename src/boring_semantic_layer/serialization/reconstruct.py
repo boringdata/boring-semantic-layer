@@ -177,6 +177,25 @@ def _reconstruct_filter(
         metadata.get("predicate_struct"),
         "SemanticFilterOp",
     )
+    filter_fields = context.parse_field(metadata, "filter_fields")
+    if filter_fields and (
+        not isinstance(filter_fields, list | tuple)
+        or not all(isinstance(field, str) and field for field in filter_fields)
+    ):
+        raise ValueError("SemanticFilterOp has invalid filter_fields metadata")
+    if filter_fields:
+        # Structured deserialization returns a Deferred and necessarily loses
+        # attributes from the original JSON-filter callable.  Restore those
+        # attributes on a small callable adapter instead of inferring field
+        # ownership from the Deferred expression: string/callable filters can
+        # contain identical syntax without carrying JSON's strict semantics.
+        deferred_predicate = predicate
+
+        def predicate(t):
+            return deferred_predicate.resolve(t)
+
+        predicate.__bsl_filter_fields__ = frozenset(filter_fields)
+        predicate.__bsl_deferred_resolution__ = True
     return source.filter(predicate)
 
 
