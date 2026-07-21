@@ -144,17 +144,19 @@ flights_st = flights_st.with_measures(
 ### all()
 
 ```python
-st.all()
+t.all(measure_or_reduction)
 ```
 
-Reference the entire dataset within measure definitions. Primarily used for percentage-of-total calculations.
+Reference the entire dataset within a measure definition. Pass a declared
+measure reference, measure name, or Ibis reduction; `all()` does not have a
+zero-argument form. It is primarily used for percentage-of-total calculations.
 
 **Example:**
 ```python
 flights_st = to_semantic_table(data, "flights").with_measures(
     flight_count=lambda t: t.count(),
     pct_of_total=lambda t: (
-        t.count() / t.all().count() * 100
+        t.flight_count / t.all(t.flight_count) * 100
     )
 )
 ```
@@ -168,9 +170,8 @@ Methods for composing semantic tables through joins.
 ```python
 join_many(
     other: SemanticTable,
-    on: Callable,
-    how: str = "left",
-    name: str = None
+    on: Callable | str | Deferred | Sequence[str | Deferred],
+    how: str = "left"
 ) -> SemanticTable
 ```
 
@@ -179,32 +180,39 @@ One-to-many relationship join (LEFT JOIN). Use when the left table can match mul
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `other` | `SemanticTable` | The semantic table to join with |
-| `on` | `Callable` | Lambda function defining the join condition |
+| `on` | `Callable \| str \| Deferred \| Sequence[str \| Deferred]` | Join predicate: a two-argument lambda, same-name column shorthand, or sequence of shorthands for a compound equijoin |
 | `how` | `str` | Join type; only `'left'` is supported |
-| `name` | `str` | Optional name for the joined table reference |
 
 **Example:**
 ```python
-flights_st = flights_st.join_many(
-    carriers_st,
-    on=lambda l, r: l.carrier == r.code,
-    name="carrier_info"
+carriers_with_flights = carriers_st.join_many(
+    flights_st,
+    on=lambda carrier, flight: carrier.code == flight.carrier
 )
 ```
+
+Model names are the source aliases used in prefixed fields. Every base model in
+a composed join tree must therefore have a unique `name`; assign explicit names
+with `to_semantic_table(..., name="...")` before joining. When the same physical
+table serves multiple roles, use both `.view()` and distinct model names.
+
+Source-aware aggregation supports direct field equijoins and conjunctions of
+direct field equijoins. Inequality, `OR`, cast, and transformed predicates are
+rejected when source pre-aggregation is required because they cannot be safely
+reconstructed from key columns alone.
 
 ### join_one()
 
 ```python
 join_one(
     other: SemanticTable,
-    on: Callable,
-    how: str = "left",
-    name: str = None
+    on: Callable | str | Deferred | Sequence[str | Deferred],
+    how: str = "left"
 ) -> SemanticTable
 ```
 
-One-to-one relationship join (LEFT JOIN). Use when each left row can match at
-most one row in the right table. Only `how="left"` is supported.
+At-most-one-right-match relationship join (LEFT JOIN). Use when each left row
+can match at most one row in the right table. Only `how="left"` is supported.
 
 **Example:**
 ```python
@@ -218,8 +226,7 @@ flights_st = flights_st.join_one(
 
 ```python
 join_cross(
-    other: SemanticTable,
-    name: str = None
+    other: SemanticTable
 ) -> SemanticTable
 ```
 

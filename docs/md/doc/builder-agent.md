@@ -7,9 +7,9 @@ The Builder Agent is focused on authoring and evolving semantic tables: defining
 - File: [`docs/md/skills/claude-code/bsl-model-builder/SKILL.md`](../skills/claude-code/bsl-model-builder/SKILL.md)
 - Use it when you want Claude Desktop to help write new semantic tables, add time dimensions, or compose models.
 - The skill includes:
-  - Python DSL examples showing `SemanticTable(...)`, `.with_dimensions`, `.with_measures`, `.with_calculated_measures`, and `.join()` patterns.
+  - Python DSL examples showing `to_semantic_table(...)`, `.with_dimensions`, `.with_measures`, `join_one()`, `join_many()`, and `join_cross()` patterns.
   - YAML equivalents so you can copy the same logic into declarative configs.
-  - Gotchas such as "measures must aggregate" and "join keys must be defined dimensions".
+  - Gotchas such as choosing cardinality from the left side, using source-aware equality predicates, and assigning unique model aliases.
 
 **Workflow:** Load the skill in Claude Desktop, paste the schema or YAML snippet you are editing, and ask "Generate a semantic table for flights with avg delay and join to airports". Claude will respond with both Python and YAML patterns that mirror the documentation.
 

@@ -10,6 +10,17 @@ Model composition in BSL is achieved through **joins**. When you join semantic t
 Each join creates a new semantic model with the combined dimensions and measures from all joined tables. This allows you to build progressively richer models.
 </note>
 
+Choose cardinality from the perspective of the left model: use `join_one()`
+when each left row can match at most one right row, and `join_many()` when one
+left row can match multiple right rows. Every source model in a join tree must
+also have a unique `name`, because that name becomes its field prefix and source
+identity.
+
+For source-aware aggregation, non-cross joins support direct field equality
+predicates and conjunctions of direct field equalities. Inequality, `OR`, cast,
+and transformed predicates are rejected when source pre-aggregation is needed;
+aggregate each model first or restate the relationship as equality keys.
+
 ## Example: Two-Level Composition
 
 Let's build a composed model step-by-step, showing available dimensions and measures at each level.
@@ -108,8 +119,8 @@ flights_st.dimensions, flights_st.measures
 Join carriers to flights to add carrier information:
 
 ```level1_join
-# Join carriers to flights
-flights_with_carriers = flights_st.join_many(
+# Each flight row matches at most one carrier row
+flights_with_carriers = flights_st.join_one(
     carriers_st,
     lambda f, c: f.carrier_code == c.code
 )
@@ -124,8 +135,8 @@ flights_with_carriers.dimensions, flights_with_carriers.measures
 Add aircraft information to create a fully composed model:
 
 ```level2_join
-# Join aircraft to the composed model
-full_model = flights_with_carriers.join_many(
+# Each flight row matches at most one aircraft row
+full_model = flights_with_carriers.join_one(
     aircraft_st,
     lambda f, a: f.aircraft_id == a.id
 )
@@ -152,9 +163,10 @@ result = (
 
 ## Key Takeaways
 
-- **Composition via Joins**: Use `join_many()`, `join_one()`, or `join_cross()` to compose models
+- **Composition via Joins**: Use `join_one()` for at-most-one right matches, `join_many()` for multiple right matches, and `join_cross()` for Cartesian products
 - **Additive**: Each join adds dimensions and measures from the joined table
 - **Table Prefixes**: Dimensions/measures are prefixed with table names (`flights.`, `carriers.`, `aircraft.`)
+- **Unique Source Names**: Give every base model in the join tree a distinct `name`
 - **No Limit**: Compose as many models as needed for your analysis
 - **Incremental**: Build from simple to complex, one join at a time
 
