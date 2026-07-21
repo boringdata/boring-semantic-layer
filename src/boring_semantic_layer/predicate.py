@@ -18,12 +18,11 @@ step.
 from __future__ import annotations
 
 import datetime
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, ClassVar, Literal
 
 import ibis
 from attrs import field, frozen
-
 
 _COMPARE_OPS: dict[str, Callable[[Any, Any], Any]] = {
     "eq": lambda x, y: x == y,
@@ -239,13 +238,25 @@ def _is_complete_iso_datetime(value: str) -> bool:
     return False
 
 
-def _field_accessor(table, name: str, *, post_agg: bool):
+def _field_accessor(
+    table,
+    name: str,
+    *,
+    post_agg: bool,
+    strict_qualified: bool = False,
+):
     """Resolve a field name on the table.
 
-    Pre-aggregation: use attribute access on ``ibis._`` so the predicate
-    can be resolved against any table later (it is a Deferred).
-    Pre-aggregation also strips a model-prefix from dotted names because
-    joined tables flatten columns to the top level.
+    Pre-aggregation: resolve a qualified name exactly through bracket access.
+    Semantic resolver proxies understand names such as ``items.status`` and
+    bind them to the owning model's dimension, including any physical rename
+    caused by a join collision.  Stripping the prefix first is unsound: when
+    both inputs contain ``status`` it silently binds to the left input.
+
+    The unprefixed fallback preserves the convenience spelling
+    ``standalone_model.field`` when a standalone model exposes only bare
+    semantic names.  Joined/scoped resolvers resolve a declared qualified
+    dimension in the exact lookup and therefore never take that fallback.
 
     Post-aggregation: use bracket access to preserve dotted names like
     ``orders.total_amount`` that survive into the aggregated table.
@@ -253,8 +264,21 @@ def _field_accessor(table, name: str, *, post_agg: bool):
     if post_agg:
         return table[name]
     if "." in name:
-        _prefix, unprefixed = name.split(".", 1)
-        return getattr(table, unprefixed)
+        declared_dimensions = getattr(table, "_dims", {})
+        if isinstance(declared_dimensions, Mapping) and name in declared_dimensions:
+            # Do not mask an error raised while evaluating an explicitly
+            # qualified dimension by falling back to an unrelated bare
+            # column with the same suffix.
+            return table[name]
+        try:
+            return table[name]
+        except (AttributeError, KeyError, TypeError) as exc:
+            if strict_qualified:
+                raise KeyError(
+                    f"Qualified filter field {name!r} did not resolve exactly"
+                ) from exc
+            _prefix, unprefixed = name.split(".", 1)
+            return getattr(table, unprefixed)
     return getattr(table, name)
 
 
@@ -264,36 +288,76 @@ def compile(  # noqa: A001
     *,
     post_agg: bool = False,
     ibis_module=ibis,
+    strict_qualified: bool = False,
 ) -> Any:
     """Compile *pred* into an ibis expression against *table*.
 
-    *table* is typically a Deferred (``ibis._``) for pre-agg or an actual
-    aggregated relation for post-agg. ``ibis_module`` controls the flavor
-    of literal construction (plain ibis vs xorq vendored).
+    *table* may be a Deferred (``ibis._``), a semantic resolver proxy, or an
+    actual relation. ``ibis_module`` controls the flavor of literal
+    construction (plain ibis vs xorq vendored).
     """
     if isinstance(pred, And):
-        compiled = [compile(c, table, post_agg=post_agg, ibis_module=ibis_module) for c in pred.children]
+        compiled = [
+            compile(
+                c,
+                table,
+                post_agg=post_agg,
+                ibis_module=ibis_module,
+                strict_qualified=strict_qualified,
+            )
+            for c in pred.children
+        ]
         result = compiled[0]
         for c in compiled[1:]:
             result = result & c
         return result
     if isinstance(pred, Or):
-        compiled = [compile(c, table, post_agg=post_agg, ibis_module=ibis_module) for c in pred.children]
+        compiled = [
+            compile(
+                c,
+                table,
+                post_agg=post_agg,
+                ibis_module=ibis_module,
+                strict_qualified=strict_qualified,
+            )
+            for c in pred.children
+        ]
         result = compiled[0]
         for c in compiled[1:]:
             result = result | c
         return result
     if isinstance(pred, Not):
-        return ~compile(pred.predicate, table, post_agg=post_agg, ibis_module=ibis_module)
+        return ~compile(
+            pred.predicate,
+            table,
+            post_agg=post_agg,
+            ibis_module=ibis_module,
+            strict_qualified=strict_qualified,
+        )
     if isinstance(pred, IsNull):
-        col = _field_accessor(table, pred.field, post_agg=post_agg)
+        col = _field_accessor(
+            table,
+            pred.field,
+            post_agg=post_agg,
+            strict_qualified=strict_qualified,
+        )
         return col.notnull() if pred.negate else col.isnull()
     if isinstance(pred, In):
-        col = _field_accessor(table, pred.field, post_agg=post_agg)
+        col = _field_accessor(
+            table,
+            pred.field,
+            post_agg=post_agg,
+            strict_qualified=strict_qualified,
+        )
         values = [_convert_literal(v, ibis_module) for v in pred.values]
         return col.notin(values) if pred.negate else col.isin(values)
     if isinstance(pred, Compare):
-        col = _field_accessor(table, pred.field, post_agg=post_agg)
+        col = _field_accessor(
+            table,
+            pred.field,
+            post_agg=post_agg,
+            strict_qualified=strict_qualified,
+        )
         value = _convert_literal(pred.value, ibis_module)
         return _COMPARE_OPS[pred.op](col, value)
     if isinstance(pred, Custom):

@@ -266,17 +266,38 @@ def _convert_semantic_filter(node: SemanticFilterOp, catalog, *args):
     Resolves dimension references in the filter predicate and applies
     the filter to the base table.
     """
-    from boring_semantic_layer.ops import SemanticAggregateOp, _get_merged_fields
+    from boring_semantic_layer.ops import (
+        SemanticAggregateOp,
+        _augment_dimensions_with_raw_columns,
+        _exact_filter_fields,
+        _get_merged_fields,
+        _unwrap,
+        _validate_qualified_filter_fields,
+    )
 
     all_roots = _find_all_root_models(node.source)
     base_tbl = convert(node.source, catalog=catalog)
 
+    pred_fn = _unwrap(node.predicate)
+    exact_fields = _exact_filter_fields(pred_fn)
     dim_map = (
         {}
         if isinstance(node.source, SemanticAggregateOp)
-        else _get_merged_fields(all_roots, "dimensions")
+        else _get_merged_fields(
+            all_roots,
+            "dimensions",
+            source=node.source,
+        )
     )
-    pred = node.predicate(_Resolver(base_tbl, dim_map))
+    if not isinstance(node.source, SemanticAggregateOp) and exact_fields:
+        dim_map = _augment_dimensions_with_raw_columns(
+            dim_map,
+            exact_fields,
+            all_roots,
+            node.source,
+        )
+        _validate_qualified_filter_fields(exact_fields, dim_map, all_roots)
+    pred = pred_fn(_Resolver(base_tbl, dim_map))
     return base_tbl.filter(pred)
 
 
