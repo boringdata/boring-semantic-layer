@@ -86,9 +86,10 @@ flights_st = flights_st.with_measures(
 )
 ```
 
-### Percent of Total with all()
+### Percent of Total with all(ref)
 
-Use `t.all()` to reference the entire dataset:
+Pass a declared measure or reduction to `t.all(...)` to reference its value over
+the entire dataset. There is no zero-argument `t.all()` form:
 
 ```python
 flights_st = flights_st.with_measures(
@@ -103,16 +104,16 @@ flights_st = flights_st.with_measures(
 
 ```python
 # One carrier has many flights
-flights_with_carriers = flights_st.join_many(
-    carriers_st,
-    lambda f, c: f.carrier == c.code
+carriers_with_flights = carriers_st.join_many(
+    flights_st,
+    lambda c, f: c.code == f.carrier
 )
 ```
 
-### join_one() - One-to-One (LEFT JOIN)
+### join_one() - At-Most-One Right Match (LEFT JOIN)
 
 ```python
-# Each flight has exactly one carrier
+# Each flight matches at most one carrier
 flights_with_carrier = flights_st.join_one(
     carriers_st,
     lambda f, c: f.carrier == c.code
@@ -125,19 +126,21 @@ flights_with_carrier = flights_st.join_one(
 all_combinations = flights_st.join_cross(carriers_st)
 ```
 
-### Custom Joins
+### Join Predicates and Source-Aware Aggregation
 
-```python
-flights_st.join(
-    carriers_st,
-    lambda f, c: f.carrier == c.code,
-    how="left"  # "inner", "left", "right", "outer", "cross"
-)
-```
+`join_one()` and `join_many()` are left joins. Their `on=` argument can be a
+column-name string, Deferred key, sequence of equality keys, or a lambda whose
+predicate is a direct field equality (or conjunction of direct field
+equalities). Source-aware aggregation rejects inequality, `OR`, cast, and
+transformed join predicates because pre-aggregating those predicates from key
+columns could change the matched rows. Aggregate each model first or restate the
+relationship as equality keys. Use `join_cross()` for Cartesian products.
 
 **After joins**: Fields are prefixed with table names (e.g., `flights.origin`, `carriers.name`)
 
-**Multiple joins to same table**: Use `.view()` to create distinct references:
+**Unique aliases are required**: Every base model in a composed join tree must
+have a distinct `name`. When the same physical table plays multiple roles, use
+both `.view()` and explicit model aliases:
 ```python
 pickup_locs = to_semantic_table(locs_tbl.view(), "pickup_locs")
 dropoff_locs = to_semantic_table(locs_tbl.view(), "dropoff_locs")
@@ -198,6 +201,7 @@ flights_sm = models["flights"]
 3. **Define composed measures** to avoid repetition
 4. **Use YAML** for production models (version control, collaboration)
 5. **Use profiles** for database connections (see Profile docs)
+6. **Choose join cardinality from the left side** and give every joined source a unique name
 
 ## Common Patterns
 

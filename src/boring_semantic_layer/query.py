@@ -230,17 +230,27 @@ class Filter:
             def _dict_filter(t):
                 tbl = _resolve_target(t)
                 ibis_module = get_ibis_module(tbl)
+                # Compile directly against the semantic resolver.  In
+                # particular, ``resolver["items.status"]`` retains source
+                # ownership across a joined table whose left input also has
+                # a ``status`` column.  Building a Deferred after first
+                # discarding that prefix cannot recover the ownership later.
                 return pred_mod.compile(
                     pred,
-                    ibis_module._,
+                    tbl,
                     ibis_module=ibis_module,
-                ).resolve(tbl)
+                    strict_qualified=True,
+                )
 
             # Deferred resolution: columns can't be statically introspected
             # (see ops._dimension_only_source_table). Marked so callers can opt
             # out of static-column optimizations consistently regardless of
             # whether xorq is installed.
             _dict_filter.__bsl_deferred_resolution__ = True
+            # Preserve the exact semantic spellings from the JSON AST. Lowering
+            # uses these to synthesize qualified raw-column dimensions before
+            # resolution; callable/string filters intentionally remain opaque.
+            _dict_filter.__bsl_filter_fields__ = frozenset(pred_mod.fields(pred))
             return _dict_filter
         elif isinstance(self.filter, str):
             filter_str = self.filter
@@ -390,7 +400,7 @@ def _build_post_agg_predicate(filter_obj: dict) -> Any:
 
 def _normalize_post_agg_filter(
     filter_spec: Any,
-    known_measures: set[str],
+    known_fields: set[str],
     model_name: str | None = None,
 ) -> Callable:
     """Normalize a measure filter for post-aggregation (HAVING) application.
@@ -398,12 +408,12 @@ def _normalize_post_agg_filter(
     Handles dict, Filter objects, and callables.  For dict/Filter filters the
     field names are accessed via bracket notation so dotted names from joined
     models work correctly after aggregation.  Field names are normalised
-    against *known_measures* so that ``"model.total_sales"`` resolves to
+    against *known_fields* so that ``"model.total_sales"`` resolves to
     ``"total_sales"`` on standalone models but stays prefixed on joins.
     """
     raw = filter_spec.filter if isinstance(filter_spec, Filter) else filter_spec
     if isinstance(raw, dict):
-        raw = _normalize_filter_fields(raw, known_measures, model_name)
+        raw = _normalize_filter_fields(raw, known_fields, model_name)
         expr = _build_post_agg_predicate(raw)
         return lambda t: expr.resolve(t)
     if callable(raw):
@@ -464,6 +474,36 @@ def _split_filter(
         post_agg.append(filter_spec)
     else:
         pre_agg.append(filter_spec)
+
+
+def _validate_post_agg_filter_fields(
+    filters: Sequence[Any],
+    selected_fields: set[str],
+    known_fields: set[str],
+    model_name: str | None,
+) -> None:
+    """Reject inspectable HAVING fields absent from the aggregate output.
+
+    A semantic measure can be known to the model without being selected by
+    this query.  Previously such a field passed normalization and failed much
+    later as an ibis ``AttributeError`` when the HAVING predicate was applied.
+    Dict filters are fully inspectable, so fail at query construction with the
+    actual semantic mistake.  Opaque callable/string filters retain their
+    existing runtime behavior because their referenced fields cannot be
+    recovered reliably here.
+    """
+    for filter_spec in filters:
+        raw = filter_spec.filter if isinstance(filter_spec, Filter) else filter_spec
+        if not isinstance(raw, dict):
+            continue
+        normalized = _normalize_filter_fields(raw, known_fields, model_name)
+        missing = sorted(_extract_filter_fields(normalized) - selected_fields)
+        if missing:
+            raise ValueError(
+                "A post-aggregation filter references field(s) not selected "
+                f"by this query: {missing}. Add them to dimensions/measures "
+                "or remove the filter."
+            )
 
 
 def _build_time_range_filters(semantic_table: Any, time_dimension: str, time_range: Mapping[str, str]) -> list[Callable]:
@@ -532,6 +572,7 @@ def compare_periods(
 ) -> Any:
     """Compare two time ranges and return current/previous/delta columns."""
     from .api import to_semantic_table
+    from .join_utils import null_safe_equal
 
     dimensions = list(dimensions or [])
     measures = list(measures or [])
@@ -597,7 +638,13 @@ def compare_periods(
     )
 
     if dimensions:
-        join_predicates = [current_tbl[dim] == previous_tbl[f"__previous_{dim}"] for dim in dimensions]
+        # SQL equality does not match NULL to NULL, but grouping semantics do:
+        # a NULL dimension member is one group in each period and therefore
+        # must form one comparison row rather than independent +/- rows.
+        join_predicates = [
+            null_safe_equal(current_tbl[dim], previous_tbl[f"__previous_{dim}"])
+            for dim in dimensions
+        ]
         joined = current_tbl.join(previous_tbl, join_predicates, how="outer")
         result_tbl = joined.select(
             *[
@@ -736,6 +783,19 @@ def query(
     order_by = _normalize_order_by(order_by, known_order_fields, expected_prefix=model_name)
     filters = list(filters or [])  # Copy to avoid mutating input
 
+    selected_fields = set(dimensions) | set(measures or [])
+    produces_aggregate = bool(dimensions or measures)
+    if produces_aggregate and order_by:
+        missing_order_fields = sorted(
+            field for field, _direction in order_by if field not in selected_fields
+        )
+        if missing_order_fields:
+            raise ValueError(
+                "order_by references field(s) not selected by this query: "
+                f"{missing_order_fields}. Add them to dimensions/measures or "
+                "remove them from order_by."
+            )
+
     # Step 0: Add time_range as a filter if specified
     if time_range:
         time_dim_name = _find_time_dimension(result, dimensions)
@@ -759,6 +819,14 @@ def query(
     post_agg_filters = list(having or [])
     for filter_spec in filters:
         _split_filter(filter_spec, known_measures, model_name, pre_agg_filters, post_agg_filters)
+
+    known_post_agg_fields = known_dimensions | known_measures
+    _validate_post_agg_filter_fields(
+        post_agg_filters,
+        selected_fields,
+        known_post_agg_fields,
+        model_name,
+    )
 
     for filter_spec in pre_agg_filters:
         filter_fn = _normalize_filter(filter_spec)
@@ -828,7 +896,9 @@ def query(
 
     # Step 3.5: Apply measure filters after aggregation (HAVING semantics)
     for filter_spec in post_agg_filters:
-        filter_fn = _normalize_post_agg_filter(filter_spec, known_measures, model_name)
+        filter_fn = _normalize_post_agg_filter(
+            filter_spec, known_post_agg_fields, model_name
+        )
         result = result.filter(filter_fn)
 
     # Step 4: Apply ordering using functional composition

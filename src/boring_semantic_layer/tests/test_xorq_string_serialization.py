@@ -793,15 +793,22 @@ def test_tagged_roundtrip_multiple_measure_types(flights_data):
     }
 
 
-def test_tagged_roundtrip_filter_predicate(flights_data):
-    """Filter predicates survive to_tagged -> from_tagged."""
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        pytest.param(lambda t: t.distance > 100, id="callable"),
+        pytest.param(ibis._.distance > 100, id="deferred"),
+    ],
+)
+def test_tagged_roundtrip_filter_predicate(flights_data, predicate):
+    """Ordinary callable and Deferred filters survive tagged round-trips."""
     from boring_semantic_layer.serialization import from_tagged, to_tagged
 
     flights = (
         to_semantic_table(flights_data, name="flights")
         .with_dimensions(origin=lambda t: t.origin)
         .with_measures(total_distance=lambda t: t.distance.sum())
-        .filter(lambda t: t.distance > 100)
+        .filter(predicate)
     )
 
     tagged = to_tagged(flights)
@@ -811,6 +818,149 @@ def test_tagged_roundtrip_filter_predicate(flights_data):
     assert len(result) > 0
     # Only rows with distance > 100 (200, 300) should be included
     assert result["total_distance"].sum() == 500
+
+
+def _joined_qualified_raw_json_filter(table_suffix):
+    """Build a collision-sensitive JSON filter for tagged-round-trip tests."""
+    import pandas as pd
+
+    from boring_semantic_layer.query import Filter
+
+    con = ibis.duckdb.connect(":memory:")
+    orders_tbl = con.create_table(
+        f"orders_json_rt_{table_suffix}",
+        pd.DataFrame(
+            {
+                "order_id": [1, 2],
+                "status": ["bad", "open"],
+            }
+        ),
+    )
+    items_tbl = con.create_table(
+        f"items_json_rt_{table_suffix}",
+        pd.DataFrame(
+            {
+                "order_id": [1, 1, 2],
+                "status": ["ok", "ok", "bad"],
+                "amount": [1, 2, 30],
+            }
+        ),
+    )
+    orders = to_semantic_table(orders_tbl, "orders").with_dimensions(
+        status=lambda t: t.status
+    )
+    # ``status`` intentionally remains an undeclared raw column on the right.
+    items = to_semantic_table(items_tbl, "items").with_measures(
+        total=lambda t: t.amount.sum()
+    )
+    joined = orders.join_many(items, on="order_id")
+    predicate = Filter(
+        filter={"field": "items.status", "operator": "=", "value": "bad"}
+    ).to_callable()
+    return joined.filter(predicate)
+
+
+def test_tagged_roundtrip_preserves_json_exact_fields_for_joined_raw_column():
+    """JSON field provenance survives when no semantic dimension declares it."""
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
+
+    filtered = _joined_qualified_raw_json_filter("valid")
+    before = filtered.aggregate("items.total").execute()
+
+    reconstructed = from_tagged(to_tagged(filtered))
+    restored_predicate = reconstructed.op().predicate.unwrap
+    assert object.__getattribute__(
+        restored_predicate, "__bsl_filter_fields__"
+    ) == frozenset({"items.status"})
+
+    after = reconstructed.aggregate("items.total").execute()
+    reconstructed_twice = from_tagged(to_tagged(reconstructed))
+    after_twice = reconstructed_twice.aggregate("items.total").execute()
+    assert before["items.total"].tolist() == [30]
+    assert after["items.total"].tolist() == [30]
+    assert after_twice["items.total"].tolist() == [30]
+
+
+@pytest.mark.parametrize("overlay", ["dimensions", "measures"])
+def test_tagged_json_filter_survives_metadata_overlay(overlay):
+    """Overlay rebinding retains strict fields through tagged serialization."""
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
+
+    filtered = _joined_qualified_raw_json_filter(f"overlay_{overlay}")
+    if overlay == "dimensions":
+        rebound = filtered.with_dimensions(bucket=lambda t: t.status)
+    else:
+        rebound = filtered.with_measures(
+            joined_total=lambda t: t.amount.sum()
+        )
+
+    reconstructed = from_tagged(to_tagged(rebound))
+    result = reconstructed.aggregate("items.total").execute()
+
+    assert result["items.total"].tolist() == [30]
+
+
+def test_tagged_filter_keeps_author_time_dimension_before_same_name_overlay():
+    """Round-trip must not rebind a raw timestamp filter to its month bucket."""
+    import pandas as pd
+
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
+
+    con = ibis.duckdb.connect(":memory:")
+    table = con.create_table(
+        "filter_same_name_dimension_roundtrip",
+        pd.DataFrame(
+            {
+                "ts": pd.to_datetime(
+                    ["2025-01-05", "2025-01-31", "2025-02-10"]
+                ),
+                "value": [1, 2, 3],
+            }
+        ),
+    )
+    model = (
+        to_semantic_table(table, "events")
+        .with_dimensions(ts=lambda t: t.ts)
+        .with_measures(count=lambda t: t.count())
+    )
+    rebound = model.filter(lambda t: t.ts >= "2025-01-15").with_dimensions(
+        ts=lambda t: t.ts.truncate("M")
+    )
+
+    reconstructed = from_tagged(to_tagged(rebound))
+    result = (
+        reconstructed.group_by("ts")
+        .aggregate("count")
+        .execute()
+        .sort_values("ts")
+        .reset_index(drop=True)
+    )
+
+    assert [str(value)[:10] for value in result["ts"]] == [
+        "2025-01-01",
+        "2025-02-01",
+    ]
+    assert result["count"].tolist() == [1, 1]
+
+
+def test_tagged_json_filter_metadata_rejects_unknown_prefix_after_roundtrip():
+    """Deserialized exact-field metadata remains fail-closed if untrusted."""
+    from boring_semantic_layer.serialization import from_tagged, to_tagged
+    from boring_semantic_layer.serialization.freeze import freeze, thaw
+
+    tagged = to_tagged(_joined_qualified_raw_json_filter("bad_prefix"))
+    tag_op = tagged.op()
+    metadata = {key: thaw(value) for key, value in dict(tag_op.metadata).items()}
+    metadata.pop("tag")
+    metadata["filter_fields"] = ["bogus.status"]
+    tampered = tag_op.parent.to_expr().hashing_tag(
+        tag="bsl",
+        **{key: freeze(value) for key, value in metadata.items()},
+    )
+
+    reconstructed = from_tagged(tampered)
+    with pytest.raises(KeyError, match="Unknown semantic model prefix 'bogus'"):
+        reconstructed.aggregate("items.total").execute()
 
 
 def test_tagged_roundtrip_mutate_arithmetic(flights_data):

@@ -112,7 +112,9 @@ result = (
 <bslquery code-block="measure_all_demo"></bslquery>
 
 <note type="info">
-`t.all()` is a method available on the table parameter `t` in measure definitions. It references the entire dataset regardless of grouping, making it perfect for calculating percentages, or comparing groups to the total.
+`t.all(ref)` is available on the table parameter `t` in measure definitions. It
+evaluates the supplied measure or reduction over the entire dataset regardless
+of grouping, making it useful for percentages and comparisons with the total.
 </note>
 
 For more examples, see the [Percent of Total pattern](/advanced/percentage-total).
@@ -205,14 +207,14 @@ Semantic joins explicitly capture the **relationship type** between tables, rath
 
 **SQL Joins:**
 ```python
-# Specifies HOW to join (LEFT/INNER), but not the relationship
-flights.join(carriers, condition, how="left")
+# Specifies HOW to join, but not the analytical relationship
+flights_tbl.left_join(carriers_tbl, flights_tbl.carrier == carriers_tbl.code)
 ```
 
 **Semantic Joins:**
 ```python
-# Specifies the relationship: one carrier has many flights
-flights.join_many(carriers, lambda f, c: f.carrier == c.code)
+# One carrier row can match many flight rows
+carriers.join_many(flights_st, lambda c, f: c.code == f.carrier)
 ```
 
 **What You Get:**
@@ -225,7 +227,11 @@ After joining, dimensions and measures are prefixed with table names (e.g., `fli
 </note>
 
 <note type="warning">
-**Joining the same table multiple times?** If you need to join to the same source table via different foreign keys (e.g., pickup and dropoff locations), you must use `.view()` to create distinct table references:
+**Give every source in a composed model a unique name.** BSL uses model names as
+source aliases for dimensions, measures, and grain metadata, and rejects a join
+tree containing duplicate names. If you join the same underlying table more than
+once (for example, pickup and dropoff locations), create distinct table references
+and assign explicit aliases:
 
 ```python
 # Create distinct references when joining same table twice
@@ -233,7 +239,19 @@ pickup_locs = to_semantic_table(locs_tbl.view(), "pickup_locs")
 dropoff_locs = to_semantic_table(locs_tbl.view(), "dropoff_locs")
 ```
 
-Without `.view()`, you'll encounter an `IbisInputError: Ambiguous field reference` error. 
+The distinct names prevent ambiguous semantic prefixes; `.view()` prevents Ibis
+from treating both roles as the same relation.
+</note>
+
+<note type="warning">
+**Source-aware aggregation requires equality-key joins.** When BSL aggregates
+measures at their source grain before joining, each non-cross join predicate must
+be a direct field equality or a conjunction of direct field equalities. String,
+Deferred, and compound equality-key shorthands are supported. Predicates using
+inequality, `OR`, casts, or transformed expressions are rejected because reducing
+them to join-key bridges could change the matched row set. Aggregate the models
+first or restate the relationship with plain equality keys; use `join_cross()` for
+a Cartesian product.
 </note>
 
 Let's get some additional data:
@@ -273,28 +291,28 @@ carriers = (
 Use `join_many()` when one row in the left table can match multiple rows in the right table (LEFT JOIN).
 
 ```join_demo
-# Join carriers to flights - one carrier has many flights
-flights_with_carriers = flights_st.join_many(
-    carriers,
-    lambda f, c: f.carrier == c.code
+# One carrier row can match many flight rows
+carriers_with_flights = carriers.join_many(
+    flights_st,
+    lambda c, f: c.code == f.carrier
 )
 
 # Inspect available dimensions and measures
-flights_with_carriers.dimensions
+carriers_with_flights.dimensions
 ```
 <regularoutput code-block="join_demo"></regularoutput>
 
 After joining, all dimensions and measures from both tables are available. Each is prefixed with its table name to avoid conflicts:
 
 
-### join_one() - One-to-One Relationships
+### join_one() - At-Most-One Right Match
 
-Use `join_one()` when rows have a unique matching relationship. Like all
-non-cross semantic joins, it uses a LEFT JOIN so unmatched left rows remain
-visible to measures.
+Use `join_one()` when each row on the left can match at most one row on the
+right. Like all non-cross semantic joins, it uses a LEFT JOIN so unmatched left
+rows remain visible to measures.
 
 ```python
-# Many flights → one carrier (each flight has exactly one carrier)
+# Many flights → one carrier (each flight matches at most one carrier)
 flights_with_carrier = flights_st.join_one(
     carriers,
     lambda f, c: f.carrier == c.code
@@ -302,25 +320,20 @@ flights_with_carrier = flights_st.join_one(
 ```
 
 <note type="warning">
-**Important Limitation:** Currently, `left_on` and `right_on` must be **COLUMN names**, not dimension names.
-
-If you have a dimension that maps to a different column name, you must use the underlying column name in the join.
+**Join predicates resolve physical columns.** A string or Deferred shorthand
+names the same underlying column on both sides. If the columns have different
+names, use a two-argument lambda instead.
 
 **Example:**
 ```python
 # If users table has column 'id' but dimension 'customer_id':
-users = to_semantic_table(users_tbl).with_dimensions(
+users = to_semantic_table(users_tbl, "users").with_dimensions(
     customer_id=lambda t: t.id  # Dimension renamed
 )
 
-# ❌ This will fail with a helpful error:
-orders.join_one(users, left_on="customer_id", right_on="customer_id")
-
-# ✓ Use the actual column name:
-orders.join_one(users, left_on="customer_id", right_on="id")
+# Compare the underlying columns explicitly:
+orders.join_one(users, on=lambda order, user: order.customer_id == user.id)
 ```
-
-This is a known limitation tracked in [issue #43](https://github.com/boringdata/boring-semantic-layer/issues/43). If you attempt to use a dimension name that doesn't match a column name, you'll get a helpful error message guiding you to use the correct column name.
 </note>
 
 ### join_cross() - Cross Join

@@ -10,12 +10,14 @@ from ibis.expr import types as ir
 from ibis.expr.types.groupby import GroupedTable as IbisGroupedTable
 from ibis.expr.types.relations import Table as IbisTable
 from returns.result import Success, safe
+
 from ._xorq import (
     Column as XorqColumn,
+)
+from ._xorq import (
     GroupedTable,
     Table,
 )
-
 from .chart import chart as create_chart
 from .measure_scope import MeasureScope
 from .ops import (
@@ -33,12 +35,15 @@ from .ops import (
     SemanticTableOp,
     SemanticUnnestOp,
     _classify_measure,
+    _exact_filter_fields,
+    _extract_columns_from_callable,
+    _extract_join_key_columns,
     _find_all_root_models,
     _get_merged_fields,
     _is_deferred,
-    _unwrap,
     _normalize_join_predicate,
     _normalize_to_name,
+    _unwrap,
     make_bare_ref_lambda,
 )
 from .query import compare_periods as build_compare_periods
@@ -547,26 +552,109 @@ def _build_post_aggregate_model(source_op, ibis_table: ir.Table) -> SemanticMode
 
 
 def _get_entity_dims(op) -> frozenset[str]:
-    """Return the set of dimension names marked ``is_entity=True`` on an op."""
-    from .ops import SemanticTableOp
+    """Return the logical entity grain carried by an operation.
+
+    Pass-through operations (most importantly filters) retain their source
+    grain.  A ``join_one`` also retains the left grain, while a ``join_many``
+    can add entity dimensions from its many side.  Deriving the grain from the
+    operation tree avoids treating the prefixed copies exposed by a joined
+    model as independent entities merely because metadata has been merged.
+    """
+    if isinstance(op, SemanticFilterOp):
+        return _get_entity_dims(op.source)
+
+    # Aggregation establishes a new result grain. SemanticAggregateOp does
+    # not currently expose entity metadata for that output, so inheriting the
+    # source entities would falsely claim (for example) that a month-level
+    # result still has its source's day-level grain.
+    if isinstance(op, SemanticAggregateOp):
+        return frozenset()
+
+    if isinstance(op, SemanticJoinOp):
+        left_entities = _get_entity_dims(op.left)
+        if op.cardinality == "one":
+            return left_entities or _get_entity_dims(op.right)
+        return left_entities | _get_entity_dims(op.right)
 
     if isinstance(op, SemanticTableOp):
+        source_join = getattr(op, "_source_join", None)
+        if source_join is not None:
+            # A materialized join wrapper carries all inherited dimensions as
+            # prefixed copies plus any dimensions declared directly on the
+            # wrapper. Preserve only the unprefixed local entity declarations;
+            # inherited prefixed copies are already represented by the source
+            # join's logical grain.
+            local_entities = {
+                name
+                for name, dim in op.get_dimensions().items()
+                if "." not in name and getattr(dim, "is_entity", False)
+            }
+            return _get_entity_dims(source_join) | frozenset(local_entities)
         return frozenset(
-            name for name, dim in op.get_dimensions().items() if getattr(dim, "is_entity", False)
+            # Joined field maps use ``model.field`` names.  Leaf model maps do
+            # not, so normalizing the prefix lets same-grain fact models still
+            # compare by their declared semantic entity names.
+            name.rsplit(".", 1)[-1]
+            for name, dim in op.get_dimensions().items()
+            if getattr(dim, "is_entity", False)
         )
-    return frozenset()
+
+    source = getattr(op, "source", None)
+    return _get_entity_dims(source) if source is not None else frozenset()
 
 
 def _has_measure_fields(op) -> bool:
     """Return whether an op defines base or calculated measures."""
-    from .ops import SemanticTableOp
+    get_measures = getattr(op, "get_measures", None)
+    get_calculated = getattr(op, "get_calculated_measures", None)
+    return bool(get_measures and get_measures()) or bool(get_calculated and get_calculated())
 
+
+def _get_entity_source_columns(op) -> frozenset[str]:
+    """Return physical columns that define an operation's logical entity grain."""
+    if isinstance(op, SemanticFilterOp):
+        return _get_entity_source_columns(op.source)
+    if isinstance(op, SemanticAggregateOp):
+        return frozenset()
+    if isinstance(op, SemanticJoinOp):
+        left_columns = _get_entity_source_columns(op.left)
+        if op.cardinality == "one":
+            return left_columns or _get_entity_source_columns(op.right)
+        return left_columns | _get_entity_source_columns(op.right)
     if isinstance(op, SemanticTableOp):
-        return bool(op.get_measures()) or bool(op.get_calculated_measures())
-    return False
+        source_join = getattr(op, "_source_join", None)
+        if source_join is not None:
+            inherited = set(_get_entity_source_columns(source_join))
+            table = op.to_untagged()
+            for name, dim in op.get_dimensions().items():
+                if "." in name or not getattr(dim, "is_entity", False):
+                    continue
+                extraction = _extract_columns_from_callable(
+                    lambda t, entity_dim=dim: entity_dim(t), table
+                )
+                if extraction.is_success() and extraction.columns:
+                    inherited.update(extraction.columns)
+                else:
+                    inherited.add(name)
+            return frozenset(inherited)
+        table = op.to_untagged()
+        columns: set[str] = set()
+        for name, dim in op.get_dimensions().items():
+            if not getattr(dim, "is_entity", False):
+                continue
+            extraction = _extract_columns_from_callable(
+                lambda t, entity_dim=dim: entity_dim(t), table
+            )
+            if extraction.is_success() and extraction.columns:
+                columns.update(extraction.columns)
+            else:
+                columns.add(name.rsplit(".", 1)[-1])
+        return frozenset(columns)
+    source = getattr(op, "source", None)
+    return _get_entity_source_columns(source) if source is not None else frozenset()
 
 
-def _detect_grain_cardinality(left_op, right_op) -> str:
+def _detect_grain_cardinality(left_op, right_op, on=None) -> str:
     """Compare entity dimensions to detect grain mismatch.
 
     If both sides declare ``is_entity`` dimensions and the sets differ,
@@ -579,10 +667,32 @@ def _detect_grain_cardinality(left_op, right_op) -> str:
     left_entities = _get_entity_dims(left_op)
     right_entities = _get_entity_dims(right_op)
 
+    join_misses_entity_grain = False
+    if on is not None and left_entities and left_entities == right_entities:
+        try:
+            normalized_on = _normalize_join_predicate(on)
+            left_table = left_op.to_untagged()
+            right_table = right_op.to_untagged()
+            join_columns = _extract_join_key_columns(
+                normalized_on, left_table, right_table
+            )
+            if join_columns.is_success():
+                left_entity_columns = _get_entity_source_columns(left_op)
+                right_entity_columns = _get_entity_source_columns(right_op)
+                join_misses_entity_grain = not (
+                    left_entity_columns <= join_columns.left_columns
+                    and right_entity_columns <= join_columns.right_columns
+                )
+        except Exception:
+            # Inconclusive predicate analysis keeps the explicit join_one
+            # contract; aggregation-time validation still fails closed where
+            # source-aware preaggregation depends on predicate shape.
+            join_misses_entity_grain = False
+
     if (
         left_entities
         and right_entities
-        and left_entities != right_entities
+        and (left_entities != right_entities or join_misses_entity_grain)
         and _has_measure_fields(left_op)
         and _has_measure_fields(right_op)
     ):
@@ -590,12 +700,232 @@ def _detect_grain_cardinality(left_op, right_op) -> str:
         right_name = getattr(right_op, "name", None) or "right"
         warnings.warn(
             f"Grain mismatch detected: {left_name} entity dims {sorted(left_entities)} "
-            f"!= {right_name} entity dims {sorted(right_entities)}. "
+            f"and {right_name} entity dims {sorted(right_entities)} are not both "
+            "covered by the join keys. "
             f"Upgrading join_one to join_many for automatic pre-aggregation.",
             stacklevel=2,
         )
         return "many"
     return "one"
+
+
+def _join_one_with_detected_grain(
+    left_op,
+    other,
+    on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
+    how: str,
+) -> SemanticJoin:
+    """Construct ``join_one`` consistently for every semantic wrapper."""
+    other_op = other.op() if isinstance(other, SemanticTable) else other
+    cardinality = _detect_grain_cardinality(left_op, other_op, on)
+    return SemanticJoin(
+        left=left_op,
+        right=other_op,
+        on=on,
+        how=how,
+        cardinality=cardinality,
+    )
+
+
+def _find_join_provenance(op):
+    """Find the join represented by an op or a materialized model wrapper."""
+    if isinstance(op, SemanticJoinOp):
+        return op
+    if isinstance(op, SemanticTableOp):
+        return getattr(op, "_source_join", None)
+    source = getattr(op, "source", None)
+    return _find_join_provenance(source) if source is not None else None
+
+
+def _replace_metadata_preserving_filters(
+    op,
+    *,
+    dimensions: Mapping[str, Dimension | Callable | dict],
+    measures: Mapping[str, Measure | Callable],
+    calc_measures: Mapping[str, Any],
+) -> SemanticTable:
+    """Replace metadata without collapsing filters into a flat table.
+
+    Fanout-safe aggregation discovers both joins and the predicates between a
+    join and an aggregate from the semantic operation tree.  Materializing a
+    ``SemanticFilterOp`` into a new leaf model erases those predicates.  Peel
+    the contiguous filter chain, update the underlying model metadata, and
+    rebuild the same chain so the planner can still route each predicate to
+    its owning source before pre-aggregation.
+    """
+    predicates: list[
+        tuple[
+            Callable,
+            Mapping[str, Dimension],
+            frozenset[str],
+            bool,
+            Callable | None,
+        ]
+    ] = []
+    source = op
+    while isinstance(source, SemanticFilterOp):
+        predicate_source = source.source
+        get_dimensions = getattr(predicate_source, "get_dimensions", None)
+        predicate_dims = dict(get_dimensions()) if get_dimensions else {}
+        predicate = _unwrap(source.predicate)
+        try:
+            deferred_resolution = bool(
+                object.__getattribute__(
+                    predicate, "__bsl_deferred_resolution__"
+                )
+            )
+        except (AttributeError, TypeError):
+            deferred_resolution = False
+        try:
+            serialization_predicate = object.__getattribute__(
+                predicate, "__bsl_serialization_predicate__"
+            )
+        except (AttributeError, TypeError):
+            serialization_predicate = None
+        predicates.append(
+            (
+                predicate,
+                predicate_dims,
+                _exact_filter_fields(predicate),
+                deferred_resolution,
+                serialization_predicate,
+            )
+        )
+        source = source.source
+
+    source_join = _find_join_provenance(source)
+    if isinstance(source, SemanticTableOp):
+        table = source.table
+        name = source.name
+        description = source.description
+    else:
+        table = source.to_untagged()
+        name = getattr(source, "name", None)
+        description = getattr(source, "description", None)
+
+    rebuilt: SemanticTable = SemanticModel(
+        table=table,
+        dimensions=dimensions,
+        measures=measures,
+        calc_measures=calc_measures,
+        name=name,
+        description=description,
+        _source_join=source_join,
+    )
+    for (
+        predicate,
+        predicate_dims,
+        exact_filter_fields,
+        deferred_resolution,
+        prior_serialization_predicate,
+    ) in reversed(predicates):
+        # Bind each predicate to the dimension definitions visible when the
+        # filter was authored. A later metadata overlay may intentionally
+        # replace a same-named dimension (for example raw timestamp -> month
+        # bucket); letting the earlier row filter see that replacement changes
+        # filter-before-transform semantics and drops partially covered buckets.
+        def bound_predicate(
+            t,
+            pred=predicate,
+            dims=predicate_dims,
+            fields=exact_filter_fields,
+        ):
+            from .convert import _Resolver
+
+            # Filter lowering normally passes a resolver carrying the *new*
+            # metadata. Unwrap it to the physical relation before applying the
+            # dimensions captured above, otherwise an old identity dimension
+            # still delegates through the new same-named month bucket.
+            try:
+                physical_table = object.__getattribute__(t, "_t")
+            except (AttributeError, TypeError):
+                physical_table = t
+            scope_dims = dict(dims)
+            try:
+                runtime_dims = object.__getattribute__(t, "_dims")
+            except (AttributeError, TypeError):
+                runtime_dims = {}
+            # Exact JSON fields that were undeclared when the filter was
+            # authored are synthesized for the current execution scope.  A
+            # joined-table resolver maps them to collision-safe physical
+            # aliases, while a source-local resolver maps them to raw columns.
+            # Only fill missing entries: declared dimensions captured at the
+            # filter boundary must retain their original transformation.
+            for field in fields:
+                if field not in scope_dims and field in runtime_dims:
+                    scope_dims[field] = runtime_dims[field]
+            scope = _Resolver(physical_table, scope_dims)
+            return pred.resolve(scope) if _is_deferred(pred) else pred(scope)
+
+        def serialization_predicate(
+            t,
+            pred=predicate,
+            dims=predicate_dims,
+            fields=exact_filter_fields,
+        ):
+            """Inline the filter against its author-time dimension scope."""
+            from .convert import _Resolver
+
+            symbolic_physical = t._t
+
+            class _SymbolicPhysicalTable:
+                """Expose raw fields while reserving exact semantic lookups."""
+
+                def __getattr__(self, name):
+                    if name in fields:
+                        raise AttributeError(name)
+                    return getattr(symbolic_physical, name)
+
+                def __getitem__(self, name):
+                    return symbolic_physical[name]
+
+                @property
+                def columns(self):
+                    return symbolic_physical.columns
+
+            physical_scope = _SymbolicPhysicalTable()
+            serialization_dims = {
+                name: (
+                    lambda _table, _dim=dimension, _physical=symbolic_physical: (
+                        _dim.resolve(_physical)
+                        if _is_deferred(_dim)
+                        else _dim(_physical)
+                    )
+                )
+                for name, dimension in dims.items()
+            }
+            for field in fields:
+                if field not in serialization_dims:
+                    # Keep undeclared exact fields in semantic resolver scope;
+                    # their sidecar metadata synthesizes the appropriate
+                    # joined/raw mapping after reconstruction.
+                    serialization_dims[field] = (
+                        lambda _table, _field=field, _scope=t: _scope[_field]
+                    )
+            scope = _Resolver(physical_scope, serialization_dims)
+            return pred.resolve(scope) if _is_deferred(pred) else pred(scope)
+
+        # JSON filters need their exact AST field spellings after this
+        # metadata-preserving rebind.  Without them, a valid undeclared
+        # qualified raw field (for example ``items.status``) cannot be
+        # synthesized in the joined namespace and the filter becomes
+        # unresolvable.  Preserve the separate deferred marker for ordinary
+        # string filters as well; it controls dimension-table shortcuts.
+        if exact_filter_fields:
+            bound_predicate.__bsl_filter_fields__ = exact_filter_fields
+        if deferred_resolution:
+            bound_predicate.__bsl_deferred_resolution__ = True
+        # The generic serializer cannot safely infer the semantics of this
+        # closure from its captured resolver state.  Give it an explicit
+        # symbolic source that inlines the dimensions visible when the filter
+        # was authored.  This retains filter-before-overlay behavior without
+        # serializing Dimension objects themselves.
+        bound_predicate.__bsl_serialization_predicate__ = (
+            prior_serialization_predicate or serialization_predicate
+        )
+
+        rebuilt = SemanticFilter(source=rebuilt.op(), predicate=bound_predicate)
+    return rebuilt
 
 
 class SemanticModel(SemanticTable):
@@ -759,9 +1089,7 @@ class SemanticModel(SemanticTable):
             >>> orders.join_one(customers, on=_.customer_id)
             >>> orders.join_one(customers, on=lambda o, c: o.customer_id == c.customer_id)
         """
-        other_op = other.op() if isinstance(other, SemanticModel) else other
-        cardinality = _detect_grain_cardinality(self.op(), other_op)
-        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how, cardinality=cardinality)
+        return _join_one_with_detected_grain(self.op(), other, on, how)
 
     def join_many(
         self,
@@ -1133,13 +1461,7 @@ class SemanticJoin(SemanticTable):
         how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
-        return SemanticJoin(
-            left=self.op(),
-            right=other.op() if isinstance(other, SemanticModel) else other,
-            on=on,
-            how=how,
-            cardinality="one",
-        )
+        return _join_one_with_detected_grain(self.op(), other, on, how)
 
     def join_many(
         self,
@@ -1199,6 +1521,28 @@ class SemanticFilter(SemanticTable):
     def schema(self):
         return self.op().schema
 
+    def _metadata_source(self):
+        source = self.op().source
+        while isinstance(source, SemanticFilterOp):
+            source = source.source
+        return source
+
+    @property
+    def name(self):
+        return getattr(self._metadata_source(), "name", None)
+
+    @property
+    def description(self):
+        return getattr(self._metadata_source(), "description", None)
+
+    @property
+    def table(self):
+        return self.op().to_untagged()
+
+    @property
+    def json_definition(self):
+        return getattr(self._metadata_source(), "json_definition", {})
+
     def get_dimensions(self):
         return self.op().get_dimensions()
 
@@ -1218,26 +1562,82 @@ class SemanticFilter(SemanticTable):
         """Return measure names as a tuple."""
         return tuple(self.get_measures().keys()) + tuple(self.get_calculated_measures().keys())
 
+    @property
+    def calc_measures(self):
+        return dict(self.get_calculated_measures())
+
+    def query(
+        self,
+        dimensions: Sequence[str] | None = None,
+        measures: Sequence[str] | None = None,
+        filters: list | None = None,
+        order_by: Sequence[tuple[str, str]] | None = None,
+        limit: int | None = None,
+        time_grain: str | None = None,
+        time_grains: dict[str, str] | None = None,
+        time_range: dict[str, str] | None = None,
+        having: list | None = None,
+    ):
+        return build_query(
+            semantic_table=self,
+            dimensions=dimensions,
+            measures=measures,
+            filters=filters,
+            order_by=order_by,
+            limit=limit,
+            time_grain=time_grain,
+            time_grains=time_grains,
+            time_range=time_range,
+            having=having,
+        )
+
+    def compare_periods(
+        self,
+        dimensions: Sequence[str] | None = None,
+        measures: Sequence[str] | None = None,
+        current_time_range: dict[str, str] | None = None,
+        previous_time_range: dict[str, str] | None = None,
+        filters: list | None = None,
+        time_dimension: str | None = None,
+        time_grain: str | None = None,
+        time_grains: dict[str, str] | None = None,
+        order_by: Sequence[tuple[str, str]] | None = None,
+        limit: int | None = None,
+    ):
+        return build_compare_periods(
+            semantic_table=self,
+            dimensions=dimensions,
+            measures=measures,
+            current_time_range=current_time_range,
+            previous_time_range=previous_time_range,
+            filters=filters,
+            time_dimension=time_dimension,
+            time_grain=time_grain,
+            time_grains=time_grains,
+            order_by=order_by,
+            limit=limit,
+        )
+
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.op().source)
         return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
 
-    def with_dimensions(self, **dims) -> SemanticModel:
-        """Add or update dimensions after filtering."""
+    def with_dimensions(self, **dims) -> SemanticTable:
+        """Add or update dimensions while retaining filter/join lineage."""
         all_roots = _find_all_root_models(self.op().source)
         existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
         existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
         existing_calc = _get_merged_fields(all_roots, "calc_measures") if all_roots else {}
 
-        return SemanticModel(
-            table=self.op().to_untagged(),
+        return _replace_metadata_preserving_filters(
+            self.op(),
             dimensions={**existing_dims, **dims},
             measures=existing_meas,
             calc_measures=existing_calc,
         )
 
-    def with_measures(self, **meas) -> SemanticModel:
-        """Add or update measures after filtering."""
+    def with_measures(self, **meas) -> SemanticTable:
+        """Add or update measures while retaining filter/join lineage."""
         all_roots = _find_all_root_models(self.op().source)
         existing_dims = _get_merged_fields(all_roots, "dimensions") if all_roots else {}
         existing_meas = _get_merged_fields(all_roots, "measures") if all_roots else {}
@@ -1255,8 +1655,8 @@ class SemanticFilter(SemanticTable):
             kind, value = _classify_measure(fn_or_expr, scope, name)
             _store_classified_measure(name, kind, value, new_base_meas, new_calc_meas)
 
-        return SemanticModel(
-            table=self.op().to_untagged(),
+        return _replace_metadata_preserving_filters(
+            self.op(),
             dimensions=existing_dims,
             measures=new_base_meas,
             calc_measures=new_calc_meas,
@@ -1269,13 +1669,7 @@ class SemanticFilter(SemanticTable):
         how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
-        return SemanticJoin(
-            left=self.op(),
-            right=other.op() if isinstance(other, SemanticModel) else other,
-            on=on,
-            how=how,
-            cardinality="one",
-        )
+        return _join_one_with_detected_grain(self.op(), other, on, how)
 
     def join_many(
         self,
@@ -1653,13 +2047,7 @@ class SemanticAggregate(SemanticTable):
         how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
-        return SemanticJoin(
-            left=self.op(),
-            right=other.op(),
-            on=on,
-            how=how,
-            cardinality="one",
-        )
+        return _join_one_with_detected_grain(self.op(), other, on, how)
 
     def join_many(
         self,

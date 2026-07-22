@@ -17,7 +17,7 @@ from functools import reduce
 from typing import Any
 
 import ibis
-from toolz import curry, pipe
+from toolz import curry
 
 from .join_utils import null_safe_equal
 
@@ -54,14 +54,50 @@ def _unwrap_table_proxy(obj):
     return obj
 
 
-@curry
-def _extract_nested_array(prev_col: str, array_col: str, table):
+def _allocate_nested_array_name(table, idx: int) -> str:
+    """Allocate a private column name without overwriting user data."""
+    occupied = frozenset(table.columns)
+    preferred = f"__bsl_nested_array_{idx}"
+    candidate = preferred
+    suffix = 2
+    while candidate in occupied:
+        candidate = f"{preferred}_{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _extract_nested_array(
+    prev_col: str,
+    array_col: str,
+    materialized_col: str,
+    table,
+    *,
+    requested_path: tuple[str, ...],
+    parent_path: tuple[str, ...],
+):
+    """Materialize ``prev_col[array_col]`` under a private column name."""
+    path_label = ".".join(requested_path)
+    parent_label = ".".join(parent_path)
     if prev_col not in table.columns:
-        return table
+        raise ValueError(
+            f"Cannot traverse nested array path {path_label!r}: "
+            f"parent {parent_label!r} is unavailable after unnesting."
+        )
     prev_struct = table[prev_col]
-    if not hasattr(prev_struct, array_col):
-        return table
-    return table.mutate(**{array_col: getattr(prev_struct, array_col)})
+    fields = getattr(prev_struct.type(), "fields", {})
+    if array_col not in fields:
+        raise ValueError(
+            f"Cannot traverse nested array path {path_label!r}: "
+            f"child {array_col!r} does not exist under {parent_label!r}."
+        )
+    child_type = fields[array_col]
+    if not str(child_type).startswith("array"):
+        raise ValueError(
+            f"Cannot traverse nested array path {path_label!r}: "
+            f"child {array_col!r} under {parent_label!r} is not an array "
+            f"(found {child_type})."
+        )
+    return table.mutate(**{materialized_col: prev_struct[array_col]})
 
 
 @curry
@@ -71,18 +107,53 @@ def _do_unnest_array(array_col: str, table):
 
 def unnest_nested_arrays(base_tbl, array_path: tuple[str, ...]):
     """Apply unnest steps for each level of a nested array path."""
-    sorted_path = tuple(sorted(array_path))
-
-    def unnest_step(table, indexed_col):
-        idx, array_col = indexed_col
+    # ``array_path`` describes a traversal, not an unordered collection.  In
+    # particular, for ``events.products`` we must unnest ``events`` before the
+    # nested ``products`` array can be extracted from the resulting struct.
+    # Sorting the names made the result depend on their spelling and could
+    # silently turn a nested count into a count of the base rows.
+    table = base_tbl
+    parent_col: str | None = None
+    for idx, array_col in enumerate(tuple(array_path)):
         if idx == 0:
-            return _do_unnest_array(array_col, table)
-        prev_col = sorted_path[idx - 1]
-        if array_col in table.columns:
-            return _do_unnest_array(array_col, table)
-        return pipe(table, _extract_nested_array(prev_col, array_col), _do_unnest_array(array_col))
+            path_label = ".".join(array_path)
+            if array_col not in table.columns:
+                raise ValueError(
+                    f"Cannot traverse nested array path {path_label!r}: "
+                    f"root {array_col!r} does not exist."
+                )
+            root_type = table[array_col].type()
+            if not str(root_type).startswith("array"):
+                raise ValueError(
+                    f"Cannot traverse nested array path {path_label!r}: "
+                    f"root {array_col!r} is not an array (found {root_type})."
+                )
+            table = _do_unnest_array(array_col, table)
+            parent_col = array_col
+            continue
 
-    return reduce(unnest_step, enumerate(sorted_path), base_tbl)
+        # A later name is a child of the struct produced by the previous
+        # unnest step. It must never fall back to an unrelated top-level
+        # sibling that happens to have the same name.
+        if parent_col is None:
+            raise ValueError(
+                f"Cannot traverse nested array path {'.'.join(array_path)!r}: "
+                f"parent {'.'.join(array_path[:idx])!r} is unavailable after "
+                "unnesting."
+            )
+        materialized_col = _allocate_nested_array_name(table, idx)
+        table = _extract_nested_array(
+            parent_col,
+            array_col,
+            materialized_col,
+            table,
+            requested_path=tuple(array_path),
+            parent_path=tuple(array_path[:idx]),
+        )
+        table = _do_unnest_array(materialized_col, table)
+        parent_col = materialized_col
+
+    return table
 
 
 @curry
@@ -145,9 +216,35 @@ def build_nested_level_table(
     measures: dict[str, tuple[Any, Any]],
 ):
     """Aggregate nested-array measures at the unnested grain."""
+    by_cols = tuple(by_cols)
     level_aggs = build_level_aggregations(base_tbl, array_path, measures)
     unnested_tbl = unnest_nested_arrays(base_tbl, array_path)
-    return _make_grouped_table(level_aggs, by_cols, unnested_tbl)
+    level_table = _make_grouped_table(level_aggs, by_cols, unnested_tbl)
+
+    if not by_cols:
+        # A global aggregate already produces one row for an empty input.
+        return level_table
+
+    # UNNEST has inner semantics: a base row whose array is NULL or empty
+    # contributes no unnested row.  If every row in a group has an empty
+    # array, aggregating only the unnested relation drops the group entirely.
+    # Build the group domain from the base relation and attach the nested
+    # aggregate to it so nested-only queries retain the same group domain as
+    # the semantic model.
+    group_spine = _make_grouped_table({}, by_cols, base_tbl)
+    result = join_tables(by_cols, [group_spine, level_table])
+
+    # COUNT and COUNT DISTINCT have an empty-set identity of zero.  After the
+    # left join, their missing level aggregate is NULL, so restore that
+    # identity.  Other aggregates intentionally remain NULL for an empty set.
+    count_like = {
+        name
+        for name, (_agg_fn, marker) in measures.items()
+        if marker.operation in {"count", "nunique"}
+    }
+    if count_like:
+        result = result.mutate(**{name: result[name].fill_null(0) for name in count_like})
+    return result
 
 
 def join_tables(by_cols: Iterable[str], tables: list) -> Any:
@@ -157,6 +254,9 @@ def join_tables(by_cols: Iterable[str], tables: list) -> Any:
     if len(tables) == 1:
         return tables[0]
 
+    # Materialize once because callers may provide a generator and this value
+    # is traversed repeatedly while joining multiple nesting levels.
+    by_cols = tuple(by_cols)
     by_cols_set = set(by_cols)
 
     def join_step(left, right):

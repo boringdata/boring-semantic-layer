@@ -113,12 +113,28 @@ def _extract_semantic_table(op, context: BSLSerializationContext) -> dict[str, A
 
 @_register_lazy("SemanticFilterOp")
 def _extract_filter(op, context: BSLSerializationContext) -> dict[str, Any]:
+    from ..ops import _exact_filter_fields, _unwrap
     from ..utils import expr_to_structured
 
-    struct_result = expr_to_structured(op.predicate)
+    predicate = _unwrap(op.predicate)
+    try:
+        serialization_predicate = object.__getattribute__(
+            predicate, "__bsl_serialization_predicate__"
+        )
+    except (AttributeError, TypeError):
+        serialization_predicate = predicate
+    struct_result = expr_to_structured(serialization_predicate)
     match struct_result:
         case Success():
-            return {"predicate_struct": struct_result.unwrap()}
+            metadata = {"predicate_struct": struct_result.unwrap()}
+            # JSON filters carry exact semantic field spellings as callable
+            # metadata.  The generic Deferred resolver tree preserves the
+            # expression but not those attributes, so serialize them beside
+            # the predicate.  They are needed to synthesize qualified raw
+            # columns and to reject unknown model prefixes after round-trip.
+            if filter_fields := _exact_filter_fields(op.predicate):
+                metadata["filter_fields"] = sorted(filter_fields)
+            return metadata
         case _:
             raise ValueError("SemanticFilterOp: failed to serialize predicate")
 

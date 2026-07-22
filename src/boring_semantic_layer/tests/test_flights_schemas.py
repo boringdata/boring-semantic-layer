@@ -194,7 +194,7 @@ class TestStarSchema:
         assert tx["flights.flight_count"].iloc[0] == 40085
 
     def test_group_by_state_unmatched_rows_preserved(self, star):
-        """States with airports but no origin flights should appear with NULL measures.
+        """States with airports but no origin flights should appear with zero counts.
 
         Delaware (DE) has 42 airports but zero flights originating there.
         """
@@ -205,8 +205,8 @@ class TestStarSchema:
         )
         de = df[df["airports.state"] == "DE"]
         assert len(de) == 1, "Delaware should appear in results"
-        # flight_count for unmatched state should be NULL
-        assert de["flights.flight_count"].isna().iloc[0]
+        # COUNT preserves its empty-set identity for an unmatched source group.
+        assert de["flights.flight_count"].iloc[0] == 0
 
     def test_one_side_measure_airport_count_by_state(self, star):
         """One-side measure (airport_count) grouped by one-side dimension."""
@@ -477,7 +477,7 @@ class TestFullStarSnowflake:
         assert boeing["flights.flight_count"].iloc[0] == 183236
 
     def test_unmatched_states_appear(self, full_schema):
-        """States with airports but no flights should appear."""
+        """States with airports but no flights should appear with zero counts."""
         df = (
             full_schema.group_by("airports.state")
             .aggregate("flights.flight_count")
@@ -486,7 +486,7 @@ class TestFullStarSnowflake:
         # Delaware has 42 airports but 0 flights
         de = df[df["airports.state"] == "DE"]
         assert len(de) == 1
-        assert de["flights.flight_count"].isna().iloc[0]
+        assert de["flights.flight_count"].iloc[0] == 0
 
     def test_mean_not_inflated_through_snowflake_arms(self, full_schema):
         """avg_distance by state should not inflate through snowflake arms."""
