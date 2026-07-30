@@ -19,7 +19,6 @@ try:
     import xorq.api as api
     from xorq.api import selectors
     from xorq.common.utils.graph_utils import to_node
-    from xorq.common.utils.ibis_utils import from_ibis, map_ibis
     from xorq.common.utils.node_utils import replace_nodes, walk_nodes
     from xorq.expr.builders import TagHandler
     from xorq.expr.relations import CachedNode, Read, RemoteTable, Tag
@@ -60,6 +59,48 @@ try:
     from xorq.vendor.ibis.expr.types.groupby import GroupedTable
 
     HAS_XORQ = True
+
+    # Plain-ibis interop (from_ibis / map_ibis) is OPTIONAL: xorq's
+    # `ibis_utils` module imports the plain ibis-framework stack (`ibis`,
+    # `packaging`, `pyarrow_hotfix`) at module scope. When that stack is
+    # absent — a minimal env with only xorq + BSL installed — the import
+    # fails, and before this guard existed it took the ENTIRE xorq branch
+    # down with it: HAS_XORQ read False with xorq fully importable, the
+    # plain-ibis fallback shims ran against xorq objects, and `to_tagged`
+    # died with "'Table' object has no attribute 'replace'". Only the two
+    # interop symbols may degrade when plain ibis is missing.
+    try:
+        from xorq.common.utils.ibis_utils import from_ibis, map_ibis
+    except ImportError:
+
+        def from_ibis(table):
+            raise ImportError(
+                "from_ibis requires the plain ibis-framework stack; "
+                "install with: pip install ibis-framework packaging pyarrow_hotfix"
+            )
+
+        class _MapIbisXorqStub:
+            """Registry-only stand-in (same contract as the no-xorq stub):
+            lets _patch_xorq_sortkey_compat() register handlers; calling it
+            without plain ibis installed is an error."""
+
+            def __init__(self):
+                self.registry = {}
+
+            def register(self, type_):
+                def decorator(fn):
+                    self.registry[type_] = fn
+                    return fn
+
+                return decorator
+
+            def __call__(self, *args, **kwargs):
+                raise ImportError(
+                    "map_ibis requires the plain ibis-framework stack; "
+                    "install with: pip install ibis-framework packaging pyarrow_hotfix"
+                )
+
+        map_ibis = _MapIbisXorqStub()
 
 except ImportError:
     import ibis
@@ -156,8 +197,11 @@ except ImportError:
 
         The xorq replacer signature is ``(node, kwargs) -> node``; ibis passes
         ``None`` for kwargs when no children changed, which we normalise to
-        ``{}`` to match xorq's contract.
+        ``{}`` to match xorq's contract. Accepts an expression or a node —
+        ``.replace`` lives on ``Node``, so an ``Expr`` is normalised first
+        (xorq's native ``replace_nodes`` accepts both; this shim must too).
         """
+        node = to_node(node)
         return node.replace(lambda n, kwargs: replacer(n, kwargs if kwargs is not None else {}))
 
     def walk_nodes(*args, **kwargs):
