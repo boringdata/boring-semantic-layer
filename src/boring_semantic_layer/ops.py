@@ -338,17 +338,42 @@ def _ensure_xorq_table(table):
     return table
 
 
+def _connection_identity(backend) -> tuple:
+    """Identify the physical connection a backend reads from.
+
+    ``from_ibis()`` mints a fresh ``Backend`` wrapper per call but reuses the
+    caller's DBAPI connection object, so wrapper identity says nothing about
+    which database a table lives in while connection identity does. Backends
+    that expose no ``con`` fall back to their own identity, which makes
+    rebinding a no-op for them rather than a guess.
+    """
+    con = getattr(backend, "con", None)
+    if con is None:
+        return ("backend", id(backend))
+    return ("con", id(con))
+
+
 def _rebind_to_backend(expr, target_backend):
-    """Rebind every ``DatabaseTable`` op in *expr* to *target_backend*.
+    """Rebind ``DatabaseTable`` ops in *expr* that share *target_backend*'s connection.
 
     Low-level primitive shared with ``serialization.reconstruct``.
     No-op on plain ibis expressions or when xorq is unavailable for any
     reason; callers must pass a xorq-vendored ``target_backend``.
+
+    Tables belonging to a *different* connection are left alone. Rebinding
+    those used to repoint them at the canonical backend without checking,
+    so joining two same-schema databases (prod and staging, or two shards)
+    silently read every column from whichever one happened to be first.
+    Leaving them untouched lets the engine raise its own multiple-backends
+    error instead of returning plausible numbers from the wrong database.
     """
     try:
         from ._xorq import relations as xorq_rel
     except Exception:
         return expr
+
+    target_identity = _connection_identity(target_backend)
+    foreign: set[str] = set()
 
     def _recreate(op, _kwargs, **overrides):
         kwargs = dict(zip(op.__argnames__, op.__args__, strict=False))
@@ -359,12 +384,23 @@ def _rebind_to_backend(expr, target_backend):
 
     def replacer(op, _kwargs):
         if isinstance(op, xorq_rel.DatabaseTable) and op.source is not target_backend:
-            return _recreate(op, _kwargs, source=target_backend)
+            if _connection_identity(op.source) == target_identity:
+                return _recreate(op, _kwargs, source=target_backend)
+            foreign.add(op.name)
         if _kwargs:
             return _recreate(op, _kwargs)
         return op
 
-    return expr.op().replace(replacer).to_expr()
+    rebound = expr.op().replace(replacer).to_expr()
+    if foreign:
+        logger.warning(
+            "Expression spans more than one database connection; tables %s were "
+            "left bound to their own backend. A query mixing them will fail in "
+            "the engine — read them through a single connection (or ATTACH one "
+            "database to the other) if they are meant to be joined.",
+            sorted(foreign),
+        )
+    return rebound
 
 
 def _rebind_to_canonical_backend(expr):
@@ -6558,25 +6594,13 @@ class SemanticJoinOp(Relation):
         if canonical is None:
             return left_tbl, right_tbl
 
-        def _recreate(op, _kwargs, **overrides):
-            kwargs = dict(zip(op.__argnames__, op.__args__, strict=False))
-            if _kwargs:
-                kwargs.update(_kwargs)
-            kwargs.update(overrides)
-            return op.__recreate__(kwargs)
-
-        def replacer(op, _kwargs):
-            if isinstance(op, xorq_rel.DatabaseTable) and op.source is not canonical:
-                return _recreate(op, _kwargs, source=canonical)
-            # Propagate rewritten children (e.g. SelfReference wrapping
-            # a replaced DatabaseTable).
-            if _kwargs:
-                return _recreate(op, _kwargs)
-            return op
-
-        new_left = left_tbl.op().replace(replacer).to_expr()
-        new_right = right_tbl.op().replace(replacer).to_expr()
-        return new_left, new_right
+        # Shared primitive: only tables on the same physical connection are
+        # rebound, so a join across two distinct databases fails in the
+        # engine rather than silently reading both sides from one of them.
+        return (
+            _rebind_to_backend(left_tbl, canonical),
+            _rebind_to_backend(right_tbl, canonical),
+        )
 
     def execute(self):
         return _rebind_to_canonical_backend(self.to_untagged()).execute()

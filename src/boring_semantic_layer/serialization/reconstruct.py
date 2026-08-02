@@ -15,6 +15,7 @@ from returns.result import safe
 
 from .context import BSLSerializationContext
 from .extract import deserialize_calc_measures
+from .freeze import thaw
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -54,7 +55,16 @@ def _reconstruct_semantic_table(
         elif expr_struct is not None:
             expr = context.deserialize_expr(expr_struct, f"Dimension '{name}'")
         else:
-            expr = lambda t, n=name: t[n]  # noqa: E731
+            # Every serialized dimension carries either a column name or a
+            # resolver tree. Falling back to ``t[name]`` here turned an
+            # unreadable payload (a v1.0 pickle field, a future encoding)
+            # into a raw column silently: ``amount = _.amount * 1.1`` came
+            # back as ``amount``, with no error and plausible numbers.
+            raise ValueError(
+                f"Dimension {name!r} has no readable expression in this payload "
+                f"(keys: {sorted(dim_data)}). It was written by an incompatible "
+                "version of boring-semantic-layer — re-serialize the model."
+            )
         return ops.Dimension(
             expr=expr,
             description=dim_data.get("description"),
@@ -219,31 +229,69 @@ def _reconstruct_aggregate(
     if not aggs_struct:
         raise ValueError("SemanticAggregateOp has no aggs_struct")
 
-    # Model-declared measures replay by name; query-local entries (e.g.
-    # derivations folded in by ``.mutate()``) are not on the model, so
-    # rebuild their expressions from the serialized resolver structs.
-    known: set[str] = set()
-    source_op = source.op()
-    for getter in ("get_measures", "get_calculated_measures"):
-        with suppress(Exception):
-            known |= set(getattr(source_op, getter)().keys())
+    # Entries the query referenced by bare measure name replay by name, so
+    # they route back through measure resolution (fan-out-safe pre-aggregation
+    # on joined models). Everything else is a query-local expression and is
+    # rebuilt from its serialized resolver tree — replaying *those* by name
+    # silently substitutes a same-named model measure for the user's
+    # expression, e.g. ``aggregate(n=lambda t: t.a.max())`` returning the
+    # model's ``n = a.sum()``.
+    bare_refs = _bare_ref_names(metadata, aggs_struct, source)
 
     names: list[str] = []
     aliased: dict = {}
     for name, data in aggs_struct.items():
-        # Mirror _resolve_short_name semantics: a bare name replays only
-        # when it matches a model measure exactly or by a UNIQUE suffix.
-        # Ambiguous suffixes fall through to struct deserialization,
-        # which rebuilds the exact expression.
-        is_known = (
-            name in known
-            or sum(1 for k in known if k.endswith(f".{name}")) == 1
-        )
-        if is_known or data is None:
+        if name in bare_refs or data is None:
             names.append(name)
         else:
             aliased[name] = context.deserialize_expr(data, f"Aggregate({name})")
     return source.aggregate(*names, **aliased)
+
+
+def _bare_ref_names(metadata: dict, aggs_struct: dict, source) -> set[str]:
+    """Names in ``aggs_struct`` that were written as bare measure references.
+
+    Payloads written by current BSL carry ``agg_bare_refs`` explicitly. For
+    older payloads, recover the distinction structurally: a bare reference
+    serializes to exactly the tree of ``make_bare_ref_lambda(name)``, so
+    comparing against a freshly built one separates the two cases without
+    consulting the model's measure names.
+    """
+    if "agg_bare_refs" in metadata:
+        declared = thaw(metadata["agg_bare_refs"])
+        return {n for n in declared if isinstance(n, str)}
+
+    from ..ops import make_bare_ref_lambda
+    from ..utils import expr_to_structured
+
+    from .freeze import list_to_tuple
+
+    known: set[str] = set()
+
+    def _looks_like_model_measure(name: str) -> bool:
+        # Historical heuristic, kept only for entries this function cannot
+        # classify structurally (see below).
+        nonlocal known
+        if not known:
+            source_op = source.op()
+            for getter in ("get_measures", "get_calculated_measures"):
+                with suppress(Exception):
+                    known |= set(getattr(source_op, getter)().keys())
+        return name in known or sum(1 for k in known if k.endswith(f".{name}")) == 1
+
+    recovered: set[str] = set()
+    for name, data in aggs_struct.items():
+        if data is None:
+            # Nothing to rebuild from — name replay is the only option.
+            recovered.add(name)
+            continue
+        canonical = expr_to_structured(make_bare_ref_lambda(name)).value_or(None)
+        if canonical is not None:
+            if canonical == list_to_tuple(data):
+                recovered.add(name)
+        elif _looks_like_model_measure(name):
+            recovered.add(name)
+    return recovered
 
 @register_reconstructor("SemanticProjectOp")
 def _reconstruct_project(
@@ -494,6 +542,29 @@ def extract_xorq_metadata(xorq_expr) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
+#: Payload format versions this build knows how to read. ``bsl_version`` was
+#: written from the start but never checked, so a v1.0 tag (whose expressions
+#: were pickled — a format no longer read at all) used to load as a model with
+#: silently degraded fields instead of failing.
+SUPPORTED_PAYLOAD_MAJORS = frozenset({2})
+
+
+def _check_payload_version(metadata: dict[str, Any]) -> None:
+    """Refuse a payload written by an incompatible serializer version."""
+    version = metadata.get("bsl_version")
+    if version is None:
+        # Metadata assembled in-process (tests, direct reconstructor calls)
+        # carries no version; only tagged payloads are gated.
+        return
+    major = str(version).split(".", 1)[0]
+    if not major.isdigit() or int(major) not in SUPPORTED_PAYLOAD_MAJORS:
+        raise ValueError(
+            f"Cannot read BSL payload version {version!r}: this build reads "
+            f"major version(s) {sorted(SUPPORTED_PAYLOAD_MAJORS)}. Re-serialize "
+            "the model with a matching boring-semantic-layer version."
+        )
+
+
 def reconstruct_bsl_operation(
     metadata: dict[str, Any],
     xorq_expr,
@@ -504,6 +575,7 @@ def reconstruct_bsl_operation(
     Walks the metadata tree recursively, dispatching to registered
     reconstructors by ``bsl_op_type``.
     """
+    _check_payload_version(metadata)
     op_type = metadata.get("bsl_op_type")
     source = None
     source_metadata = context.parse_field(metadata, "source")

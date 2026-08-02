@@ -146,6 +146,7 @@ def _extract_group_by(op, context: BSLSerializationContext) -> dict[str, Any]:
 
 @_register_lazy("SemanticAggregateOp")
 def _extract_aggregate(op, context: BSLSerializationContext) -> dict[str, Any]:
+    from ..ops import _detect_bare_name_lambda, _unwrap
     from ..utils import expr_to_structured
 
     metadata: dict[str, Any] = {}
@@ -155,6 +156,21 @@ def _extract_aggregate(op, context: BSLSerializationContext) -> dict[str, Any]:
         metadata["aggs_struct"] = {
             name: expr_to_structured(fn).value_or(None) for name, fn in op.aggs.items()
         }
+        # ``aggregate("revenue")`` and ``aggregate(revenue=lambda t: ...)``
+        # both land in ``aggs`` and can serialize to similar-looking trees,
+        # but they mean different things: the first must replay through
+        # measure resolution (which is what makes it fan-out safe on a
+        # joined model), the second is a query-local expression that must
+        # be rebuilt verbatim. Record which is which instead of guessing
+        # from the name on the way back in.
+        # Always emitted, including empty: its absence is what tells the
+        # reader this payload predates the marker and needs the structural
+        # fallback in ``_bare_ref_names``.
+        metadata["agg_bare_refs"] = sorted(
+            name
+            for name, fn in op.aggs.items()
+            if _detect_bare_name_lambda(_unwrap(fn)) is not None
+        )
     return metadata
 
 
