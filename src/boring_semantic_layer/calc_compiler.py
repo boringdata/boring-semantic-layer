@@ -281,6 +281,30 @@ class IbisCalcScope:
             return self._virtual_agg_tbl[resolved]
         return self._base_tbl[name]
 
+    def _rebind_to_totals(self, x: Any):
+        """Re-point every measure reference inside *x* at the totals table.
+
+        Returns ``None`` when *x* contains no measure references, in which
+        case the caller falls back to the reduction/windowed handling —
+        ``t.all(t.raw_column)`` has no measure formula to re-apply.
+        """
+        try:
+            op = _to_op(x)
+            vt_op = _to_op(self._virtual_agg_tbl)
+            totals_op = _to_op(self._totals_virtual_agg_tbl)
+            referenced = {
+                node.name
+                for node in _walk(op)
+                if isinstance(node, Field) and id(node.rel) == id(vt_op)
+            }
+            if not referenced:
+                return None
+            subs = {Field(vt_op, name): Field(totals_op, name) for name in referenced}
+            return op.replace(subs).to_expr()
+        except Exception as exc:
+            logger.debug("IbisCalcScope.all() totals rebind swallowed: %s", exc)
+            return None
+
     def all(self, x: Any):
         """Resolve a measure reference to its totals-table column.
 
@@ -328,6 +352,16 @@ class IbisCalcScope:
                 op = x.op()
                 if isinstance(op, Field) and id(op.rel) == id(_to_op(self._virtual_agg_tbl)):
                     return self._totals_virtual_agg_tbl[op.name]
+
+                # An expression *built from* measure references is the same
+                # request, one level up: evaluate it against the totals table
+                # rather than the per-group one. Falling through to the
+                # windowed-sum shape below made ``t.all(m)`` and
+                # ``t.all(m * 1)`` mean different things — for a mean measure
+                # the second silently summed the per-group means.
+                over_totals = self._rebind_to_totals(x)
+                if over_totals is not None:
+                    return over_totals
 
                 Reduction = getattr(ibis_ops, "Reduction", None)
                 if Reduction is not None:

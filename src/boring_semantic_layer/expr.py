@@ -263,12 +263,23 @@ class SemanticTable(ir.Table):
         chain order and materialized, preserving the historical
         ``.mutate()`` semantics without a dedicated operator node.
         """
-        from .ops import SemanticJoinOp, SemanticTableOp, _has_prior_aggregate, _resolve_expr
+        from .ops import (
+            SemanticJoinOp,
+            SemanticTableOp,
+            _has_prior_aggregate,
+            _non_additive_result_columns,
+            _resolve_expr,
+        )
 
         if _has_prior_aggregate(self.op()):
             tbl = self.op().to_untagged()
+            # Only the aggregated rows are available here, so t.all() can only
+            # window-sum them; pass which columns that would misrepresent.
+            non_additive = _non_additive_result_columns(self.op())
             for name, fn in post.items():
-                proxy = MeasureScope(_tbl=tbl, _known=[], _post_agg=True)
+                proxy = MeasureScope(
+                    _tbl=tbl, _known=[], _post_agg=True, _non_additive=non_additive
+                )
                 resolved = _resolve_expr(fn, proxy)
                 tbl = tbl.mutate(resolved.name(name))
             return _build_post_aggregate_model(self.op(), tbl)

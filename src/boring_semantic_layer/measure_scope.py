@@ -117,6 +117,15 @@ class MeasureScope:
         converter=tuple,
         alias="_prefer_known",
     )
+    #: Result columns whose window sum is *not* their overall value (means,
+    #: medians, distinct counts, calc measures). ``t.all()`` refuses these
+    #: rather than returning a sum with no meaning. Empty means "not
+    #: classified" — the historical behaviour applies.
+    non_additive: frozenset[str] = field(
+        factory=frozenset,
+        converter=frozenset,
+        alias="_non_additive",
+    )
 
     def __attrs_post_init__(self):
         object.__setattr__(self, "known_set", frozenset(self.known))
@@ -166,16 +175,67 @@ class MeasureScope:
         from ._xorq import ibis as ibis_mod
 
         if isinstance(ref, str):
-            return self.tbl[ref].sum().over(ibis_mod.window())
+            self._reject_non_additive(ref)
+            return _float_total(self.tbl[ref].sum().over(ibis_mod.window()))
 
         if hasattr(ref, "__class__") and "ibis" in str(type(ref).__module__):
             if "Scalar" in type(ref).__name__:
                 return ref.over(ibis_mod.window())
-            return ref.sum().over(ibis_mod.window())
+            self._reject_non_additive(_column_name_of(ref))
+            return _float_total(ref.sum().over(ibis_mod.window()))
 
         raise TypeError(
             "t.all(...) expects a string column name or an ibis expression",
         )
+
+    def _reject_non_additive(self, name: str | None) -> None:
+        """Refuse a total this scope cannot compute correctly.
+
+        Post-aggregation, the only rows available are the grouped ones, so
+        the total can only be a window sum over them. For a mean, median,
+        distinct count or ratio that sum is not the overall value, and
+        returning it silently produced answers that disagreed with the same
+        formula written as a calc measure.
+        """
+        if name is None or name not in self.non_additive:
+            return
+        raise NonAdditiveTotalError(
+            f"t.all({name!r}) cannot be computed after aggregation: {name!r} is "
+            "not additive, so summing its per-group values is not its overall "
+            "value. Define the derivation on the model instead, where the total "
+            "is computed from the underlying rows:\n"
+            f"    model.with_measures(share=lambda t: t.{name} / t.all(t.{name}))\n"
+            "or place the .mutate() directly on the aggregate (before "
+            "filter/order_by/limit), which routes through the same path."
+        )
+
+
+class NonAdditiveTotalError(ValueError):
+    """``t.all()`` was asked for a total that post-aggregation rows can't give."""
+
+
+def _column_name_of(ref) -> str | None:
+    """Best-effort column name for an ibis value expression."""
+    try:
+        name = ref.get_name()
+    except Exception:
+        return None
+    return name if isinstance(name, str) else None
+
+
+def _float_total(total):
+    """Cast an integral total to float so ``measure / total`` is a true ratio.
+
+    The calc-measure path gives its virtual columns a float64 schema for the
+    same reason: with two integer operands some engines (xorq's DataFusion
+    among them) do integer division, and ``30 / 160`` came back as ``0``.
+    """
+    try:
+        if total.type().is_integer():
+            return total.cast("float64")
+    except Exception:
+        pass
+    return total
 
 
 @frozen(kw_only=True, slots=True)
@@ -206,12 +266,12 @@ class ColumnScope:
         from ._xorq import ibis as ibis_mod
 
         if isinstance(ref, str):
-            return self.tbl[ref].sum().over(ibis_mod.window())
+            return _float_total(self.tbl[ref].sum().over(ibis_mod.window()))
 
         if hasattr(ref, "__class__") and "ibis" in str(type(ref).__module__):
             if "Scalar" in type(ref).__name__:
                 return ref.over(ibis_mod.window())
-            return ref.sum().over(ibis_mod.window())
+            return _float_total(ref.sum().over(ibis_mod.window()))
 
         raise TypeError(
             "t.all(...) expects a string column name or an ibis expression",

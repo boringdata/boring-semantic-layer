@@ -5044,9 +5044,39 @@ class SemanticAggregateOp(Relation):
         empty_count_measures = tuple(_empty_count_measures)
 
         if not preagg_results and not _deferred_count_distincts:
-            if tbl is not None:
-                return tbl.aggregate({n: f(tbl) for n, f in plan.agg_specs.items()})
-            raise ValueError("No aggregation results and full join unavailable")
+            if tbl is None:
+                raise ValueError("No aggregation results and full join unavailable")
+            # Nothing could be pre-aggregated at a source grain. This fallback
+            # used to aggregate the flattened join while ignoring both the
+            # group keys and every calc spec: with only calc measures
+            # requested it returned ``tbl.aggregate({})`` — an Aggregate with
+            # no columns at all, which surfaces much later as an unrelated
+            # arrow/schema error instead of naming the problem.
+            if plan.calc_specs:
+                raise ValueError(
+                    "Pre-aggregation cannot compute calculated measure(s) "
+                    f"{sorted(plan.calc_specs)} on this joined model: none of "
+                    "the requested measures aggregate at a single source's "
+                    "grain, so there is no fan-out-safe base to calculate "
+                    "from. This happens when a calc measure builds its "
+                    "reduction inline — e.g. "
+                    "t.distance.sum() / t.all(t.distance.sum()) — rather than "
+                    "referencing a declared measure. Declare the reduction as "
+                    "a measure and reference it by name:\n"
+                    "    .with_measures(total=lambda t: t.distance.sum())\n"
+                    "    .with_measures(share=lambda t: t.total / t.all(t.total))"
+                )
+            if not plan.agg_specs:
+                raise ValueError(
+                    f"Pre-aggregation produced no measures for {sorted(self.aggs)} "
+                    f"with group keys {list(plan.group_by_cols)}; aggregating the "
+                    "joined table here would ignore the request entirely."
+                )
+            specs = {n: f(tbl) for n, f in plan.agg_specs.items()}
+            group_cols = [c for c in plan.group_by_cols if c in tbl.columns]
+            if group_cols:
+                return tbl.group_by(group_cols).aggregate(**specs)
+            return tbl.aggregate(specs)
 
         # --- 5. Combine pre-agg results ---
         result = None
@@ -7069,6 +7099,77 @@ def _find_all_root_models(node: Any) -> tuple[SemanticTableOp, ...]:
         roots.extend(_find_all_root_models(node.source))
 
     return roots
+
+
+def _non_additive_result_columns(node: Any) -> frozenset[str]:
+    """Result columns of a prior aggregate that must not be summed to get a total.
+
+    A post-aggregation ``.mutate()`` only sees the aggregated rows, so its
+    ``t.all(x)`` can only be a window sum over those rows. That equals the
+    true overall value for SUM/COUNT measures and nothing else: summing
+    per-group means, medians, min/max or distinct counts gives a number with
+    no meaning, which is what ``t.all()`` used to return silently.
+
+    Classification resolves each measure against its root's raw table, which
+    builds an expression but compiles nothing. Measures that cannot be
+    classified are omitted rather than assumed non-additive — callers keep
+    their historical behaviour for those instead of failing on a guess.
+    """
+    current = node
+    agg_op = None
+    while current is not None:
+        if isinstance(current, SemanticAggregateOp):
+            agg_op = current
+            break
+        current = getattr(current, "source", None)
+    if agg_op is None:
+        return frozenset()
+
+    try:
+        roots = _find_all_root_models(agg_op.source)
+        if not roots:
+            return frozenset()
+        merged_base = _get_merged_fields(roots, "measures")
+        merged_calc = _get_merged_fields(roots, "calc_measures")
+        probes = []
+        for root in roots:
+            raw = getattr(root, "table", None)
+            if raw is None:
+                continue
+            probes.append(raw.to_expr() if hasattr(raw, "to_expr") else raw)
+    except Exception as exc:
+        logger.debug("additivity classification unavailable: %s", exc)
+        return frozenset()
+
+    non_additive: set[str] = set()
+    for name in agg_op.aggs:
+        resolved = _resolve_short_name(name, merged_base, merged_calc)
+        if resolved is None:
+            continue
+        if resolved in merged_calc:
+            # A calculated measure is a ratio/window expression; summing it
+            # across groups is never the overall value.
+            non_additive.add(name)
+            continue
+        measure = merged_base.get(resolved)
+        expr = None
+        for probe in probes:
+            try:
+                expr = _resolve_expr(getattr(measure, "expr", measure), probe)
+                break
+            except Exception:
+                continue
+        if expr is None:
+            continue
+        try:
+            if _is_mean_expr(expr) or _reagg_op_for_expr(expr) != "sum":
+                non_additive.add(name)
+        except Exception as exc:
+            # _reagg_op_for_expr raises "this is a bug" for undecomposed
+            # mean / undeferred count-distinct: both are non-additive.
+            logger.debug("treating %r as non-additive: %s", name, exc)
+            non_additive.add(name)
+    return frozenset(non_additive)
 
 
 def _has_prior_aggregate(node: Any) -> bool:
