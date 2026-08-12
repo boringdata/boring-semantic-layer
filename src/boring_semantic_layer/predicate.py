@@ -37,6 +37,9 @@ _COMPARE_OPS: dict[str, Callable[[Any, Any], Any]] = {
     "not_ilike": lambda x, y: ~x.ilike(y),
 }
 
+#: Comparisons whose right operand is a string pattern, never a literal date.
+_PATTERN_OPS = frozenset({"like", "not_like", "ilike", "not_ilike"})
+
 # JSON filter operator strings that map to a Compare node. Includes
 # legacy aliases (``=``, ``equals``) accepted by the existing parser.
 _DICT_COMPARE_OPS: dict[str, str] = {
@@ -208,7 +211,7 @@ def _reject_value_keys(spec: dict, op: str) -> None:
         raise ValueError(f"Operator {op!r} should not have 'value' or 'values' fields")
 
 
-def _convert_literal(value: Any, ibis_module) -> Any:
+def _convert_literal(value: Any, ibis_module, column: Any = None) -> Any:
     """Convert complete ISO date/timestamp strings to typed ibis literals.
 
     Backends like Athena require typed date literals or fail with
@@ -217,8 +220,15 @@ def _convert_literal(value: Any, ibis_module) -> Any:
     or "12:30" with *today's* date, so coercing them would make results
     depend on the day the query runs. Other strings pass through
     unchanged.
+
+    Coercion also depends on *column*: a string column that happens to hold
+    ISO-looking text ("2024-01-01" as a batch label) is compared as text.
+    Without this check the comparison was rebuilt as string-vs-timestamp and
+    the backend rejected a perfectly valid filter.
     """
     if not isinstance(value, str) or not _is_complete_iso_datetime(value):
+        return value
+    if column is not None and not _is_temporal_column(column):
         return value
     for dtype in ("timestamp", "date"):
         try:
@@ -226,6 +236,25 @@ def _convert_literal(value: Any, ibis_module) -> Any:
         except (ValueError, TypeError):
             pass
     return value
+
+
+def _is_temporal_column(column: Any) -> bool:
+    """True when *column* holds dates/times, so a date literal is comparable.
+
+    Unknown dtypes answer True to preserve the coercion that backends like
+    Athena need; only a positively non-temporal column suppresses it.
+    """
+    try:
+        dtype = column.type()
+    except Exception:
+        return True
+    for probe in ("is_temporal", "is_timestamp", "is_date", "is_time"):
+        check = getattr(dtype, probe, None)
+        if callable(check) and check():
+            return True
+    return not any(
+        callable(getattr(dtype, probe, None)) for probe in ("is_temporal", "is_string")
+    )
 
 
 def _is_complete_iso_datetime(value: str) -> bool:
@@ -349,7 +378,7 @@ def compile(  # noqa: A001
             post_agg=post_agg,
             strict_qualified=strict_qualified,
         )
-        values = [_convert_literal(v, ibis_module) for v in pred.values]
+        values = [_convert_literal(v, ibis_module, col) for v in pred.values]
         return col.notin(values) if pred.negate else col.isin(values)
     if isinstance(pred, Compare):
         col = _field_accessor(
@@ -358,7 +387,13 @@ def compile(  # noqa: A001
             post_agg=post_agg,
             strict_qualified=strict_qualified,
         )
-        value = _convert_literal(pred.value, ibis_module)
+        # like/ilike are string pattern matches: a date literal can never be
+        # the right operand, whatever the column's type.
+        value = (
+            pred.value
+            if pred.op in _PATTERN_OPS
+            else _convert_literal(pred.value, ibis_module, col)
+        )
         return _COMPARE_OPS[pred.op](col, value)
     if isinstance(pred, Custom):
         return pred.fn(table)

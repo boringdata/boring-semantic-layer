@@ -1935,18 +1935,35 @@ class SemanticGroupBy(SemanticTable):
         **aliased,
     ):
         aggs = {}
-        for item in measure_names:
+
+        def anonymous_name(position: int) -> str:
+            """Name a positional measure by where it appears, not by ``id()``.
+
+            ``_measure_{id(item)}`` derived the result column from a memory
+            address: the column name changed between runs, and because the
+            name reaches the xorq tag it changed the expression hash too, so
+            an identical query never hit the cache.
+            """
+            candidate = f"_measure_{position}"
+            # ``aliased`` is merged in after this loop, so a keyword measure
+            # occupying the positional name would otherwise overwrite it.
+            while candidate in aggs or candidate in aliased:
+                position += 1
+                candidate = f"_measure_{position}"
+            return candidate
+
+        for index, item in enumerate(measure_names):
             if _is_deferred(item):
                 try:
                     name = _normalize_to_name(item)
                     aggs[name] = make_bare_ref_lambda(name)
                 except TypeError:
                     # Complex Deferred (e.g. _.distance.sum()) — treat as callable
-                    aggs[f"_measure_{id(item)}"] = item
+                    aggs[anonymous_name(index)] = item
             elif isinstance(item, str):
                 aggs[item] = make_bare_ref_lambda(item)
             elif callable(item):
-                aggs[f"_measure_{id(item)}"] = item
+                aggs[anonymous_name(index)] = item
             else:
                 raise TypeError(
                     f"measure_names must be strings, callables, or Deferred expressions, "
