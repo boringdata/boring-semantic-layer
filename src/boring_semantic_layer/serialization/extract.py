@@ -85,16 +85,38 @@ def _ensure_registered():
 # ---------------------------------------------------------------------------
 
 
+def _unwrap_or_raise(result: Result[dict, Exception], kind: str, model_name) -> dict:
+    """Return the serialized fields, or explain which kind could not be written.
+
+    ``value_or({})`` here meant that one unserializable field emptied the
+    whole set: a model with a measure holding, say, a Python ``set`` was
+    tagged with ``measures: ()``, reconstructed with no measures at all, and
+    only failed later as "Column 'total' is not found" — pointing at the
+    query rather than at the field that could not be serialized.
+    """
+    if isinstance(result, Success):
+        return result.unwrap()
+    where = f" on model {model_name!r}" if model_name else ""
+    raise ValueError(
+        f"Cannot serialize the {kind}{where}: {result.failure()}. Tagging would "
+        f"otherwise drop every {kind} silently and the reconstructed model would "
+        "be missing them."
+    )
+
+
 @_register_lazy("SemanticTableOp")
 def _extract_semantic_table(op, context: BSLSerializationContext) -> dict[str, Any]:
-    dims_result = serialize_dimensions(op.get_dimensions())
-    meas_result = serialize_measures(op.get_measures())
-    calc_result = serialize_calc_measures(op.get_calculated_measures())
     metadata: dict[str, Any] = {
-        "dimensions": dims_result.value_or({}),
-        "measures": meas_result.value_or({}),
+        "dimensions": _unwrap_or_raise(
+            serialize_dimensions(op.get_dimensions()), "dimensions", op.name
+        ),
+        "measures": _unwrap_or_raise(
+            serialize_measures(op.get_measures()), "measures", op.name
+        ),
     }
-    calc_data = calc_result.value_or({})
+    calc_data = _unwrap_or_raise(
+        serialize_calc_measures(op.get_calculated_measures()), "calculated measures", op.name
+    )
     if calc_data:
         metadata["calc_measures"] = calc_data
     if op.name:
@@ -348,7 +370,12 @@ def serialize_calc_measures(calc_measures: Mapping[str, Any]) -> Result[dict, Ex
                 case Success():
                     entry["expr_struct"] = struct_result.unwrap()
                 case _:
-                    continue
+                    # Skipping left the model looking complete while quietly
+                    # missing this calc measure.
+                    raise ValueError(
+                        f"Calc measure {name!r}: failed to serialize expression "
+                        f"({struct_result.failure()})"
+                    )
             description = getattr(calc, "description", None)
             if description is not None:
                 entry["description"] = description
@@ -393,7 +420,11 @@ def deserialize_calc_measures(calc_data: Mapping[str, Any]) -> dict[str, Any]:
             depends_on = frozenset()
 
         if struct is None:
-            continue
+            raise ValueError(
+                f"Calc measure {name!r} has no serialized expression in this "
+                "payload; reconstructing without it would silently return a "
+                "model that is missing the measure."
+            )
         # ``thaw`` converts the resolver tuple into a list of lists; the
         # resolver deserializer expects nested tuples, so convert back.
         struct = list_to_tuple(struct)
@@ -402,7 +433,10 @@ def deserialize_calc_measures(calc_data: Mapping[str, Any]) -> dict[str, Any]:
             case Success():
                 expr = result.unwrap()
             case _:
-                continue
+                raise ValueError(
+                    f"Calc measure {name!r}: failed to deserialize expression "
+                    f"({result.failure()})"
+                )
         out[name] = CalcMeasure(
             expr=expr,
             description=description,
