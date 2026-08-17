@@ -338,17 +338,42 @@ def _ensure_xorq_table(table):
     return table
 
 
+def _connection_identity(backend) -> tuple:
+    """Identify the physical connection a backend reads from.
+
+    ``from_ibis()`` mints a fresh ``Backend`` wrapper per call but reuses the
+    caller's DBAPI connection object, so wrapper identity says nothing about
+    which database a table lives in while connection identity does. Backends
+    that expose no ``con`` fall back to their own identity, which makes
+    rebinding a no-op for them rather than a guess.
+    """
+    con = getattr(backend, "con", None)
+    if con is None:
+        return ("backend", id(backend))
+    return ("con", id(con))
+
+
 def _rebind_to_backend(expr, target_backend):
-    """Rebind every ``DatabaseTable`` op in *expr* to *target_backend*.
+    """Rebind ``DatabaseTable`` ops in *expr* that share *target_backend*'s connection.
 
     Low-level primitive shared with ``serialization.reconstruct``.
     No-op on plain ibis expressions or when xorq is unavailable for any
     reason; callers must pass a xorq-vendored ``target_backend``.
+
+    Tables belonging to a *different* connection are left alone. Rebinding
+    those used to repoint them at the canonical backend without checking,
+    so joining two same-schema databases (prod and staging, or two shards)
+    silently read every column from whichever one happened to be first.
+    Leaving them untouched lets the engine raise its own multiple-backends
+    error instead of returning plausible numbers from the wrong database.
     """
     try:
         from ._xorq import relations as xorq_rel
     except Exception:
         return expr
+
+    target_identity = _connection_identity(target_backend)
+    foreign: set[str] = set()
 
     def _recreate(op, _kwargs, **overrides):
         kwargs = dict(zip(op.__argnames__, op.__args__, strict=False))
@@ -359,12 +384,23 @@ def _rebind_to_backend(expr, target_backend):
 
     def replacer(op, _kwargs):
         if isinstance(op, xorq_rel.DatabaseTable) and op.source is not target_backend:
-            return _recreate(op, _kwargs, source=target_backend)
+            if _connection_identity(op.source) == target_identity:
+                return _recreate(op, _kwargs, source=target_backend)
+            foreign.add(op.name)
         if _kwargs:
             return _recreate(op, _kwargs)
         return op
 
-    return expr.op().replace(replacer).to_expr()
+    rebound = expr.op().replace(replacer).to_expr()
+    if foreign:
+        logger.warning(
+            "Expression spans more than one database connection; tables %s were "
+            "left bound to their own backend. A query mixing them will fail in "
+            "the engine — read them through a single connection (or ATTACH one "
+            "database to the other) if they are meant to be joined.",
+            sorted(foreign),
+        )
+    return rebound
 
 
 def _rebind_to_canonical_backend(expr):
@@ -5008,9 +5044,39 @@ class SemanticAggregateOp(Relation):
         empty_count_measures = tuple(_empty_count_measures)
 
         if not preagg_results and not _deferred_count_distincts:
-            if tbl is not None:
-                return tbl.aggregate({n: f(tbl) for n, f in plan.agg_specs.items()})
-            raise ValueError("No aggregation results and full join unavailable")
+            if tbl is None:
+                raise ValueError("No aggregation results and full join unavailable")
+            # Nothing could be pre-aggregated at a source grain. This fallback
+            # used to aggregate the flattened join while ignoring both the
+            # group keys and every calc spec: with only calc measures
+            # requested it returned ``tbl.aggregate({})`` — an Aggregate with
+            # no columns at all, which surfaces much later as an unrelated
+            # arrow/schema error instead of naming the problem.
+            if plan.calc_specs:
+                raise ValueError(
+                    "Pre-aggregation cannot compute calculated measure(s) "
+                    f"{sorted(plan.calc_specs)} on this joined model: none of "
+                    "the requested measures aggregate at a single source's "
+                    "grain, so there is no fan-out-safe base to calculate "
+                    "from. This happens when a calc measure builds its "
+                    "reduction inline — e.g. "
+                    "t.distance.sum() / t.all(t.distance.sum()) — rather than "
+                    "referencing a declared measure. Declare the reduction as "
+                    "a measure and reference it by name:\n"
+                    "    .with_measures(total=lambda t: t.distance.sum())\n"
+                    "    .with_measures(share=lambda t: t.total / t.all(t.total))"
+                )
+            if not plan.agg_specs:
+                raise ValueError(
+                    f"Pre-aggregation produced no measures for {sorted(self.aggs)} "
+                    f"with group keys {list(plan.group_by_cols)}; aggregating the "
+                    "joined table here would ignore the request entirely."
+                )
+            specs = {n: f(tbl) for n, f in plan.agg_specs.items()}
+            group_cols = [c for c in plan.group_by_cols if c in tbl.columns]
+            if group_cols:
+                return tbl.group_by(group_cols).aggregate(**specs)
+            return tbl.aggregate(specs)
 
         # --- 5. Combine pre-agg results ---
         result = None
@@ -6558,25 +6624,13 @@ class SemanticJoinOp(Relation):
         if canonical is None:
             return left_tbl, right_tbl
 
-        def _recreate(op, _kwargs, **overrides):
-            kwargs = dict(zip(op.__argnames__, op.__args__, strict=False))
-            if _kwargs:
-                kwargs.update(_kwargs)
-            kwargs.update(overrides)
-            return op.__recreate__(kwargs)
-
-        def replacer(op, _kwargs):
-            if isinstance(op, xorq_rel.DatabaseTable) and op.source is not canonical:
-                return _recreate(op, _kwargs, source=canonical)
-            # Propagate rewritten children (e.g. SelfReference wrapping
-            # a replaced DatabaseTable).
-            if _kwargs:
-                return _recreate(op, _kwargs)
-            return op
-
-        new_left = left_tbl.op().replace(replacer).to_expr()
-        new_right = right_tbl.op().replace(replacer).to_expr()
-        return new_left, new_right
+        # Shared primitive: only tables on the same physical connection are
+        # rebound, so a join across two distinct databases fails in the
+        # engine rather than silently reading both sides from one of them.
+        return (
+            _rebind_to_backend(left_tbl, canonical),
+            _rebind_to_backend(right_tbl, canonical),
+        )
 
     def execute(self):
         return _rebind_to_canonical_backend(self.to_untagged()).execute()
@@ -7045,6 +7099,77 @@ def _find_all_root_models(node: Any) -> tuple[SemanticTableOp, ...]:
         roots.extend(_find_all_root_models(node.source))
 
     return roots
+
+
+def _non_additive_result_columns(node: Any) -> frozenset[str]:
+    """Result columns of a prior aggregate that must not be summed to get a total.
+
+    A post-aggregation ``.mutate()`` only sees the aggregated rows, so its
+    ``t.all(x)`` can only be a window sum over those rows. That equals the
+    true overall value for SUM/COUNT measures and nothing else: summing
+    per-group means, medians, min/max or distinct counts gives a number with
+    no meaning, which is what ``t.all()`` used to return silently.
+
+    Classification resolves each measure against its root's raw table, which
+    builds an expression but compiles nothing. Measures that cannot be
+    classified are omitted rather than assumed non-additive — callers keep
+    their historical behaviour for those instead of failing on a guess.
+    """
+    current = node
+    agg_op = None
+    while current is not None:
+        if isinstance(current, SemanticAggregateOp):
+            agg_op = current
+            break
+        current = getattr(current, "source", None)
+    if agg_op is None:
+        return frozenset()
+
+    try:
+        roots = _find_all_root_models(agg_op.source)
+        if not roots:
+            return frozenset()
+        merged_base = _get_merged_fields(roots, "measures")
+        merged_calc = _get_merged_fields(roots, "calc_measures")
+        probes = []
+        for root in roots:
+            raw = getattr(root, "table", None)
+            if raw is None:
+                continue
+            probes.append(raw.to_expr() if hasattr(raw, "to_expr") else raw)
+    except Exception as exc:
+        logger.debug("additivity classification unavailable: %s", exc)
+        return frozenset()
+
+    non_additive: set[str] = set()
+    for name in agg_op.aggs:
+        resolved = _resolve_short_name(name, merged_base, merged_calc)
+        if resolved is None:
+            continue
+        if resolved in merged_calc:
+            # A calculated measure is a ratio/window expression; summing it
+            # across groups is never the overall value.
+            non_additive.add(name)
+            continue
+        measure = merged_base.get(resolved)
+        expr = None
+        for probe in probes:
+            try:
+                expr = _resolve_expr(getattr(measure, "expr", measure), probe)
+                break
+            except Exception:
+                continue
+        if expr is None:
+            continue
+        try:
+            if _is_mean_expr(expr) or _reagg_op_for_expr(expr) != "sum":
+                non_additive.add(name)
+        except Exception as exc:
+            # _reagg_op_for_expr raises "this is a bug" for undecomposed
+            # mean / undeferred count-distinct: both are non-additive.
+            logger.debug("treating %r as non-additive: %s", name, exc)
+            non_additive.add(name)
+    return frozenset(non_additive)
 
 
 def _has_prior_aggregate(node: Any) -> bool:

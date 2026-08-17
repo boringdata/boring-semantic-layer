@@ -203,18 +203,36 @@ def test_from_xorq_returns_bsl_expr():
 
 @pytest.mark.skipif(not xorq, reason="xorq not available")
 def test_from_xorq_with_tagged_table():
+    """A tagged table reconstructs — and unreadable payloads are refused.
+
+    ``bsl_version`` used to be written and never checked, and a dimension
+    with no readable expression silently became a reference to the raw
+    column of the same name: ``amount = _.amount * 1.1`` came back as
+    ``amount``, with no error and plausible numbers.
+    """
     from xorq.api import memtable
 
-    # Use nested tuples format (following xorq sklearn pipeline pattern)
-    xorq_table = memtable({"a": [1, 2, 3]}).tag(
-        tag="bsl_test",
-        bsl_op_type="SemanticTableOp",
-        bsl_version="1.0",
-        dimensions=(("a", (("description", "Column A"),)),),
-        measures=(),
-    )
+    def tagged(**overrides):
+        payload = {
+            "tag": "bsl_test",
+            "bsl_op_type": "SemanticTableOp",
+            "bsl_version": "2.0",
+            "dimensions": (("a", (("expr", "a"), ("description", "Column A"))),),
+            "measures": (),
+        }
+        payload.update(overrides)
+        return memtable({"a": [1, 2, 3]}).tag(**payload)
 
-    bsl_expr = from_tagged(xorq_table)
+    # v1.0 stored expressions as pickles, a format no longer read at all.
+    with pytest.raises(ValueError, match="1.0"):
+        from_tagged(tagged(bsl_version="1.0"))
+
+    # Current version, but the dimension carries neither a column name nor
+    # a serialized expression.
+    with pytest.raises(ValueError, match="no readable expression"):
+        from_tagged(tagged(dimensions=(("a", (("description", "Column A"),)),)))
+
+    bsl_expr = from_tagged(tagged())
     assert bsl_expr is not None
     assert hasattr(bsl_expr, "dimensions")
 

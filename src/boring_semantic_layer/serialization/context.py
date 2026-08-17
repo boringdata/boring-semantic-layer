@@ -57,7 +57,7 @@ class BSLSerializationContext:
         value = metadata.get(field)
         if not value:
             return {} if field != "order_keys" else []
-        return thaw(value)
+        return thaw(value, key=field)
 
     def parse_structured_dict(self, raw: Any) -> dict:
         """Convert a FrozenOrderedDict-encoded tuple-of-pairs to a dict (one level).
