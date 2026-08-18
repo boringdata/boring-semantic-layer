@@ -7,7 +7,6 @@ import ibis
 import pandas as pd
 
 from boring_semantic_layer import to_semantic_table
-from boring_semantic_layer.api import aggregate_, group_by_, join_one
 
 
 def test_bracket_filter_after_join_and_aggregate():
@@ -63,12 +62,11 @@ def test_bracket_filter_after_join_and_aggregate():
         country=lambda t: t.country,
     )
 
-    step1 = join_one(model_a, model_b, lambda a, b: a.order_id == b.order_id)
-    step2 = aggregate_(
-        group_by_(step1, "orders.region", "orders.customer_id"),
+    step1 = model_a.join_one(model_b, lambda a, b: a.order_id == b.order_id)
+    step2 = step1.group_by("orders.region", "orders.customer_id").aggregate(
         lambda t: t["orders.order_count"],
     )
-    final = join_one(step2, model_c, lambda s, c: s["orders.customer_id"] == c.customer_id)
+    final = step2.join_one(model_c, lambda s, c: s["orders.customer_id"] == c.customer_id)
 
     df = final.filter(lambda t: t["orders.region"] == "North").execute()
     assert df.shape[0] == 2
@@ -126,12 +124,11 @@ def test_filter_before_aggregation_on_joined_table():
     )
 
     # Join orders with customers
-    joined = join_one(orders_sm, customers_sm, lambda o, c: o.customer_id == c.customer_id)
+    joined = orders_sm.join_one(customers_sm, lambda o, c: o.customer_id == c.customer_id)
 
     # Filter THEN aggregate - this is the critical pattern that was broken
     filtered = joined.filter(lambda t: t.country == "US")
-    aggregated = aggregate_(
-        group_by_(filtered, "customers.name"),
+    aggregated = filtered.group_by("customers.name").aggregate(
         lambda t: t["orders.total_amount"],
     )
 
