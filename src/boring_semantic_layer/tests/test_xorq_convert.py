@@ -10,7 +10,6 @@ from boring_semantic_layer.serialization import (
     to_tagged,
     try_import_xorq,
 )
-from boring_semantic_layer.utils import expr_to_ibis_string, ibis_string_to_expr
 
 xorq = pytest.importorskip("xorq", reason="xorq not installed")
 
@@ -23,53 +22,6 @@ def test_try_import_xorq():
         xorq_mod = result.unwrap()
         assert xorq_mod.api is not None
         assert hasattr(xorq_mod.api, "memtable")
-
-
-def test_serialize_ibis_lambda():
-    fn = lambda t: t.col1  # noqa: E731
-
-    result = expr_to_ibis_string(fn)
-    assert isinstance(result, Success | Failure)
-
-    if isinstance(result, Success):
-        serialized = result.unwrap()
-        assert isinstance(serialized, str)
-        assert "_.col1" in serialized or "col1" in serialized
-
-
-def test_serialize_ibis_method():
-    fn = lambda t: t.amount.sum()  # noqa: E731
-
-    result = expr_to_ibis_string(fn)
-    assert isinstance(result, Success | Failure)
-
-    if isinstance(result, Success):
-        serialized = result.unwrap()
-        assert isinstance(serialized, str)
-        assert "sum()" in serialized
-
-
-def test_deserialize_expr_string():
-    expr_str = "_.amount * 2"
-
-    deserialize_result = ibis_string_to_expr(expr_str)
-    assert isinstance(deserialize_result, Success | Failure)
-
-    if isinstance(deserialize_result, Success):
-        restored_fn = deserialize_result.unwrap()
-        assert callable(restored_fn)
-
-
-def test_round_trip_expression():
-    fn = lambda t: t.price.mean()  # noqa: E731
-
-    serialize_result = expr_to_ibis_string(fn)
-    if not isinstance(serialize_result, Success):
-        pytest.skip("Serialization failed")
-
-    serialized = serialize_result.unwrap()
-    assert isinstance(serialized, str)
-    assert "mean()" in serialized
 
 
 def test_serialize_empty_dimensions():

@@ -6,11 +6,10 @@ semantic tables. All functions are thin wrappers around SemanticModel methods.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ibis.common.deferred import Deferred
     from ibis.expr import types as ir
 
 from .expr import SemanticModel
@@ -42,165 +41,6 @@ def to_semantic_table(
         name=name,
         description=description,
     )
-
-
-def join_one(
-    left: SemanticModel,
-    other: SemanticModel,
-    on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-    how: str = "left",
-) -> SemanticModel:
-    """Join two semantic tables with a one-to-one relationship (left outer join).
-
-    Args:
-        left: Left semantic table
-        other: Right semantic table
-        on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
-            name string, a Deferred ``_.col``, or a list of strings/Deferred for
-            compound equi-joins.
-        how: Join type. Only ``"left"`` is supported.
-
-    Returns:
-        Joined SemanticModel
-
-    Examples:
-        >>> join_one(orders, customers, on="customer_id")
-        >>> join_one(orders, customers, on=_.customer_id)
-        >>> join_one(orders, customers, on=lambda o, c: o.customer_id == c.customer_id)
-    """
-    return left.join_one(other, on, how)
-
-
-def join_many(
-    left: SemanticModel,
-    other: SemanticModel,
-    on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-    how: str = "left",
-) -> SemanticModel:
-    """Join two semantic tables with a one-to-many relationship.
-
-    Args:
-        left: Left semantic table
-        other: Right semantic table
-        on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
-            name string, a Deferred ``_.col``, or a list of strings/Deferred for
-            compound equi-joins.
-        how: Join type. Only ``"left"`` is supported.
-
-    Returns:
-        Joined SemanticModel
-
-    Examples:
-        >>> join_many(customer, orders, on="customer_id")
-        >>> join_many(customer, orders, on=_.customer_id)
-        >>> join_many(customer, orders, on=lambda c, o: c.customer_id == o.customer_id)
-    """
-    return left.join_many(other, on, how)
-
-
-def join_cross(left: SemanticModel, other: SemanticModel) -> SemanticModel:
-    """Cross join (Cartesian product) two semantic tables.
-
-    Args:
-        left: Left semantic table
-        other: Right semantic table
-
-    Returns:
-        Joined SemanticModel (Cartesian product of all rows)
-
-    Examples:
-        >>> join_cross(table_a, table_b)  # All combinations of rows
-    """
-    return left.join_cross(other)
-
-
-def filter_(
-    table: SemanticModel,
-    predicate: Callable[[ir.Table], ir.BooleanValue],
-) -> SemanticModel:
-    """Filter a semantic table by a predicate.
-
-    Args:
-        table: Semantic table to filter
-        predicate: Function that takes a table and returns a boolean expression
-
-    Returns:
-        Filtered SemanticModel
-    """
-    return table.filter(predicate)
-
-
-def group_by_(table: SemanticModel, *dims: str | Deferred) -> SemanticModel:
-    """Group a semantic table by dimensions.
-
-    Args:
-        table: Semantic table to group
-        *dims: Dimension names to group by
-
-    Returns:
-        Grouped SemanticModel
-    """
-    return table.group_by(*dims)
-
-
-def aggregate_(
-    table: SemanticModel,
-    *measure_names: str | Callable | Deferred,
-    **aliased,
-) -> SemanticModel:
-    """Aggregate measures in a semantic table.
-
-    Args:
-        table: Semantic table to aggregate
-        *measure_names: Names of measures to aggregate
-        **aliased: Aliased measure aggregations
-
-    Returns:
-        Aggregated SemanticModel
-    """
-    return table.aggregate(*measure_names, **aliased)
-
-
-def mutate_(
-    table: SemanticModel,
-    **kwargs: Callable[[ir.Table], ir.Value],
-) -> SemanticModel:
-    """Add computed columns to a semantic table.
-
-    Args:
-        table: Semantic table to mutate
-        **kwargs: Named column expressions (xorq vendored ibis expressions)
-
-    Returns:
-        Mutated SemanticModel
-    """
-    return table.mutate(**kwargs)
-
-
-def order_by_(table: SemanticModel, *keys: str | ir.Value) -> SemanticModel:
-    """Order a semantic table by keys.
-
-    Args:
-        table: Semantic table to order
-        *keys: Column names or expressions to order by
-
-    Returns:
-        Ordered SemanticModel
-    """
-    return table.order_by(*keys)
-
-
-def limit_(table: SemanticModel, n: int) -> SemanticModel:
-    """Limit the number of rows in a semantic table.
-
-    Args:
-        table: Semantic table to limit
-        n: Maximum number of rows
-
-    Returns:
-        Limited SemanticModel
-    """
-    return table.limit(n)
 
 
 def entity_dimension(

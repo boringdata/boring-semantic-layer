@@ -26,17 +26,7 @@ PKG_ROOT = Path(__file__).resolve().parents[1]
 # The measured SCC as of 2026-08 (main @ 25c79a2). Shrink-only.
 KNOWN_SCC_MEMBERS = frozenset(
     {
-        "boring_semantic_layer",
-        "boring_semantic_layer.agents.backends.langgraph",
-        "boring_semantic_layer.agents.tools",
         "boring_semantic_layer.api",
-        "boring_semantic_layer.chart",
-        "boring_semantic_layer.chart.altair_chart",
-        "boring_semantic_layer.chart.echarts_adapter",
-        "boring_semantic_layer.chart.plotext_chart",
-        "boring_semantic_layer.chart.plotly_chart",
-        "boring_semantic_layer.chart.utils",
-        "boring_semantic_layer.convert",
         "boring_semantic_layer.expr",
         "boring_semantic_layer.format",
         "boring_semantic_layer.graph_utils",

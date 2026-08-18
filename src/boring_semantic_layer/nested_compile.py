@@ -16,42 +16,11 @@ from collections.abc import Iterable
 from functools import reduce
 from typing import Any
 
-import ibis
 from toolz import curry
 
-from .join_utils import null_safe_equal
-
-
-def get_ibis_module(table):
-    """Return the ibis module that built ``table`` (regular vs xorq-vendored).
-
-    BSL coexists with both flavors of ibis. Picking the right module avoids
-    cross-flavor literal/struct construction errors. Filter and dimension
-    callables receive resolver proxies rather than the table itself, so
-    unwrap those first — otherwise flavor detection would report plain ibis
-    for a xorq-backed table.
-    """
-    table = _unwrap_table_proxy(table)
-    table_module = type(table).__module__
-    if table_module.startswith("xorq.vendor.ibis"):
-        from ._xorq import ibis as xorq_ibis
-
-        return xorq_ibis
-    return ibis
-
-
-def _unwrap_table_proxy(obj):
-    for _ in range(8):
-        if not type(obj).__module__.startswith("boring_semantic_layer"):
-            return obj
-        inner = getattr(obj, "_t", None)
-        if inner is None:
-            resolver = getattr(obj, "_resolver", None)
-            inner = getattr(resolver, "_t", None) if resolver is not None else None
-        if inner is None:
-            return obj
-        obj = inner
-    return obj
+# Back-compat re-export: user-facing error messages document this import path.
+from ._xorq import get_ibis_module as get_ibis_module  # noqa: PLC0414
+from ._xorq import null_safe_equal
 
 
 def _allocate_nested_array_name(table, idx: int) -> str:

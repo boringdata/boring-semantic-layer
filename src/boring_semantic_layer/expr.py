@@ -18,7 +18,6 @@ from ._xorq import (
     GroupedTable,
     Table,
 )
-from .chart import chart as create_chart
 from .measure_scope import MeasureScope
 from .ops import (
     Dimension,
@@ -226,6 +225,12 @@ class SemanticTable(ir.Table):
         format: str = "static",
     ):
         """Create a chart from this semantic result."""
+        # The chart package is a presentation extra layered ABOVE the core
+        # expression API; resolve it at call time so core never depends on
+        # it at import time (mirrors pandas-style optional .plot accessors).
+        import importlib
+
+        create_chart = importlib.import_module("boring_semantic_layer.chart").chart
         return create_chart(self, spec=spec, backend=backend, format=format)
 
     def filter(self, predicate: Callable) -> SemanticFilter:

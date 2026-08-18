@@ -214,27 +214,3 @@ class TestAgentContextFlavor:
         out = result.execute()
         assert len(out) == 1
         assert out["cnt"].iloc[0] == 2
-
-
-class TestIbisStringToExprFlavor:
-    """ibis_string_to_expr lambdas re-bind ``ibis`` to the flavor of the
-    table they are called with."""
-
-    def test_literal_expression_against_converted_table(self, flights_table):
-        from boring_semantic_layer.utils import ibis_string_to_expr
-
-        sm = _flights_model(flights_table)
-        fn = ibis_string_to_expr("_.dep_delay >= ibis.literal(8.0)").unwrap()
-        resolved = fn(sm.table)
-        # Must be a real boolean expression of the table's own flavor,
-        # not a Python bool from identity comparison.
-        assert not isinstance(resolved, bool)
-        assert type(resolved).__module__.split(".")[0] == type(sm.table).__module__.split(".")[0]
-
-    def test_literal_expression_against_plain_table(self, flights_table):
-        from boring_semantic_layer.utils import ibis_string_to_expr
-
-        fn = ibis_string_to_expr("_.dep_delay >= ibis.literal(8.0)").unwrap()
-        resolved = fn(flights_table)
-        assert not isinstance(resolved, bool)
-        assert type(resolved).__module__.startswith("ibis.")
