@@ -8,6 +8,7 @@ markers is the follow-up.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from .._xorq import FrozenDict, null_safe_equal
@@ -66,17 +67,52 @@ from ._reductions import (
 )
 
 
-def to_untagged_with_preagg(
+@dataclass
+class _PreaggScope:
+    """Read-only inputs shared by every pre-aggregation phase.
+
+    Built by :func:`_build_scope` (prologue + phase 1) and not mutated
+    afterwards; phase functions unpack the fields they use.
+    """
+
+    op: Any
+    join_op: Any
+    join_tree_info: Any
+    all_roots: list
+    filter_fns: list
+    exact_filter_fields: frozenset
+    merged_dimensions: dict
+    merged_base_measures: dict
+    merged_calc_measures: dict
+    group_by_cols: list
+    join_column_lineage: dict
+    wrapper_local_dimensions: dict
+    wrapper_dimension_owners: dict
+    tbl: Any
+    filters_on_tbl: set
+    tbl_filter_exprs: dict
+
+
+@dataclass
+class _PreaggAccumulators:
+    """What phase 4 (per-source pre-aggregation) produces."""
+
+    preagg_results: list
+    decomposed_means: dict
+    reagg_ops: dict
+    empty_count_measures: set
+    deferred_count_distincts: dict
+    totals_sources: dict
+
+
+def _build_scope(
     op,
     all_roots: list,
-    join_op: SemanticJoinOp,
-    join_tree_info: _JoinTreeInfo,
-    filters: list | None = None,
-):
-    """Pre-aggregate each source table's measures at its own grain, then join.
-
-    This prevents fan-out inflation when ``join_many`` is used.
-    """
+    join_op,
+    join_tree_info,
+    filters: list | None,
+) -> _PreaggScope:
+    """Prologue + phase 1: metadata merge, joined-table build, filter application."""
     root_names = {
         name
         for name, cardinality in join_tree_info.table_cardinalities.items()
@@ -200,6 +236,50 @@ def to_untagged_with_preagg(
             tbl = filtered
             filters_on_tbl.add(i)
             tbl_filter_exprs[i] = pred_expr
+
+    return _PreaggScope(
+        op=op,
+        join_op=join_op,
+        join_tree_info=join_tree_info,
+        all_roots=all_roots,
+        filter_fns=filter_fns,
+        exact_filter_fields=exact_filter_fields,
+        merged_dimensions=merged_dimensions,
+        merged_base_measures=merged_base_measures,
+        merged_calc_measures=merged_calc_measures,
+        group_by_cols=group_by_cols,
+        join_column_lineage=join_column_lineage,
+        wrapper_local_dimensions=wrapper_local_dimensions,
+        wrapper_dimension_owners=wrapper_dimension_owners,
+        tbl=tbl,
+        filters_on_tbl=filters_on_tbl,
+        tbl_filter_exprs=tbl_filter_exprs,
+    )
+
+
+def to_untagged_with_preagg(
+    op,
+    all_roots: list,
+    join_op: SemanticJoinOp,
+    join_tree_info: _JoinTreeInfo,
+    filters: list | None = None,
+):
+    """Pre-aggregate each source table's measures at its own grain, then join.
+
+    This prevents fan-out inflation when ``join_many`` is used.
+    """
+    scope = _build_scope(op, all_roots, join_op, join_tree_info, filters)
+    filter_fns = scope.filter_fns
+    merged_dimensions = scope.merged_dimensions
+    merged_base_measures = scope.merged_base_measures
+    merged_calc_measures = scope.merged_calc_measures
+    group_by_cols = scope.group_by_cols
+    join_column_lineage = scope.join_column_lineage
+    wrapper_local_dimensions = scope.wrapper_local_dimensions
+    wrapper_dimension_owners = scope.wrapper_dimension_owners
+    tbl = scope.tbl
+    filters_on_tbl = scope.filters_on_tbl
+    tbl_filter_exprs = scope.tbl_filter_exprs
 
     # --- 1b. Determine which source table(s) each filter belongs to ---
     # Ownership resolution uses each table's own dimensions (bare and
