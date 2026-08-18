@@ -49,7 +49,7 @@ def deserialize_structured(struct_data: Any, context: str) -> Any:
     Raises:
         ValueError: If deserialization fails or no data provided.
     """
-    from ..utils import structured_to_expr
+    from .codec import structured_to_expr
 
     if isinstance(struct_data, tuple | list):
         data = list_to_tuple(struct_data) if isinstance(struct_data, list) else struct_data

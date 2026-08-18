@@ -4,10 +4,8 @@ import ibis
 from ibis import _
 from returns.result import Failure, Success
 
-from boring_semantic_layer.utils import (
-    _is_url,
-    safe_eval,
-)
+from boring_semantic_layer.io import _is_url
+from boring_semantic_layer.safe_eval import safe_eval
 
 
 def test_safe_eval_simple_expression():

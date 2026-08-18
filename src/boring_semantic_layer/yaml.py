@@ -10,9 +10,10 @@ from ibis import _
 from .api import to_semantic_table
 from .errors import unwrap_or_raise
 from .expr import SemanticModel, SemanticTable
+from .io import read_yaml_file
 from .ops import Dimension, Measure
 from .profile import get_connection
-from .utils import read_yaml_file, safe_eval
+from .safe_eval import safe_eval
 
 
 def _parse_expression_config(name: str, config: str | dict, metric_type: str):

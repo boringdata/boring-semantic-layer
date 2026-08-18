@@ -435,7 +435,7 @@ def test_serialize_resolver_simple_attr():
     from xorq.vendor.ibis import _
     from xorq.vendor.ibis.common.deferred import Deferred
 
-    from boring_semantic_layer.utils import deserialize_resolver, serialize_resolver
+    from boring_semantic_layer.serialization.codec import deserialize_resolver, serialize_resolver
 
     d = _.distance
     data = serialize_resolver(d._resolver)
@@ -452,7 +452,7 @@ def test_serialize_resolver_method_call():
     from xorq.vendor.ibis import _
     from xorq.vendor.ibis.common.deferred import Deferred
 
-    from boring_semantic_layer.utils import deserialize_resolver, serialize_resolver
+    from boring_semantic_layer.serialization.codec import deserialize_resolver, serialize_resolver
 
     d = _.distance.mean()
     data = serialize_resolver(d._resolver)
@@ -470,7 +470,7 @@ def test_serialize_resolver_case_expr():
     import xorq.api as xo
     from xorq.common.utils.ibis_utils import from_ibis
 
-    from boring_semantic_layer.utils import expr_to_structured, structured_to_expr
+    from boring_semantic_layer.serialization.codec import expr_to_structured, structured_to_expr
 
     fn = lambda t: xo.case().when(t.distance < 200, 1).else_(0).end().sum()
     result = expr_to_structured(fn)
@@ -501,7 +501,7 @@ def test_serialize_resolver_item_subscript_roundtrips_and_hashes():
     from xorq.vendor.ibis import _
     from xorq.vendor.ibis.common.deferred import Deferred
 
-    from boring_semantic_layer.utils import deserialize_resolver, serialize_resolver
+    from boring_semantic_layer.serialization.codec import deserialize_resolver, serialize_resolver
 
     d = _["flights.flight_count"]
     data = serialize_resolver(d._resolver)
@@ -525,7 +525,7 @@ def test_serialize_resolver_ifelse():
     import xorq.api as xo
     from xorq.common.utils.ibis_utils import from_ibis
 
-    from boring_semantic_layer.utils import expr_to_structured, structured_to_expr
+    from boring_semantic_layer.serialization.codec import expr_to_structured, structured_to_expr
 
     fn = lambda t: xo.ifelse(t.distance < 200, 1, 0).sum()
     result = expr_to_structured(fn)
@@ -624,7 +624,7 @@ def test_structured_tagged_roundtrip_ifelse(flights_data):
 
 def _make_resolver_roundtrip(fn):
     """Helper: serialize a lambda -> structured tuple -> Deferred, return Deferred."""
-    from boring_semantic_layer.utils import expr_to_structured, structured_to_expr
+    from boring_semantic_layer.serialization.codec import expr_to_structured, structured_to_expr
 
     data = expr_to_structured(fn).unwrap()
     return structured_to_expr(data).unwrap()
@@ -726,7 +726,7 @@ def test_resolver_roundtrip_boolean_cast_sum(xorq_flights):
 
 def test_resolver_roundtrip_desc(xorq_flights):
     """The .desc() method call on a column round-trips."""
-    from boring_semantic_layer.utils import expr_to_structured, structured_to_expr
+    from boring_semantic_layer.serialization.codec import expr_to_structured, structured_to_expr
 
     fn = lambda t: t.distance.desc()
     data = expr_to_structured(fn).unwrap()

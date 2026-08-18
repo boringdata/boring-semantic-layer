@@ -598,7 +598,7 @@ def test_ibis_available_in_context():
     import ibis
 
     from boring_semantic_layer import from_yaml
-    from boring_semantic_layer.utils import safe_eval
+    from boring_semantic_layer.safe_eval import safe_eval
 
     # Load models
     models = from_yaml(

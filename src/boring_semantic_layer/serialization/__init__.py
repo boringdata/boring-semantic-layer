@@ -13,6 +13,7 @@ from typing import Any
 from attrs import frozen
 from returns.result import Failure, Result, safe
 
+from ._trust import UntrustedCallableError, trust_callable_module  # noqa: F401
 from .context import BSLSerializationContext
 from .extract import (
     deserialize_calc_measures,

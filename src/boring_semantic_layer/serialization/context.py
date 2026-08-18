@@ -38,7 +38,7 @@ class BSLSerializationContext:
         Raises:
             ValueError: If deserialization fails.
         """
-        from ..utils import structured_to_join_predicate
+        from .codec import structured_to_join_predicate
 
         if isinstance(struct_data, tuple | list):
             data = list_to_tuple(struct_data) if isinstance(struct_data, list) else struct_data

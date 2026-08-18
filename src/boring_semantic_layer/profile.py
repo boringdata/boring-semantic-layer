@@ -8,7 +8,7 @@ from ibis import BaseBackend
 
 from ._xorq import HAS_XORQ
 from ._xorq import Profile as XorqProfile
-from .utils import read_yaml_file
+from .io import read_yaml_file
 
 
 class ProfileError(Exception):

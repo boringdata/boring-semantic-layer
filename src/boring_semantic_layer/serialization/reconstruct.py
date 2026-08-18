@@ -256,7 +256,7 @@ def _bare_ref_names(metadata: dict, aggs_struct: dict, source) -> set[str]:
         return {n for n in declared if isinstance(n, str)}
 
     from ..ops import make_bare_ref_lambda
-    from ..utils import expr_to_structured
+    from .codec import expr_to_structured
     from .freeze import list_to_tuple
 
     known: set[str] = set()
