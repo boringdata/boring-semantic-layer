@@ -23,16 +23,9 @@ from pathlib import Path
 PKG_NAME = "boring_semantic_layer"
 PKG_ROOT = Path(__file__).resolve().parents[1]
 
-# The measured SCC as of 2026-08 (main @ 25c79a2). Shrink-only.
-KNOWN_SCC_MEMBERS = frozenset(
-    {
-        "boring_semantic_layer.api",
-        "boring_semantic_layer.expr",
-        "boring_semantic_layer.query",
-        "boring_semantic_layer.serialization",
-        "boring_semantic_layer.serialization.reconstruct",
-    }
-)
+# Phase 3 emptied the knot: the import graph is a DAG. Nothing may join
+# a strongly connected component again.
+KNOWN_SCC_MEMBERS: frozenset[str] = frozenset()
 
 
 def _discover_modules() -> dict[str, Path]:
