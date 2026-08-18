@@ -39,11 +39,13 @@ from ._core import (
     _is_deferred,
     _make_schema,
     _non_additive_result_columns,
-    _normalize_join_predicate,
-    _normalize_to_name,
     _resolve_expr,
     _unwrap,
     make_bare_ref_lambda,
+)
+from ._normalize import (
+    _normalize_join_predicate,
+    _normalize_to_name,
 )
 from ._tracking import (
     _extract_columns_from_callable,
