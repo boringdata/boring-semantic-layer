@@ -384,3 +384,45 @@ def structured_to_join_predicate(data: tuple) -> Result[Callable, Exception]:
         return lambda left, right: deferred.resolve(left=left, right=right)
 
     return do_convert()
+
+
+def extract_simple_column_name(expr) -> str | None:
+    """Extract the column name from a simple Deferred like ``_.col_name``.
+
+    Returns the name when the expression is a bare column access, or None
+    when it needs full structured serialization.
+    """
+    from .._xorq import Attr, Just, Variable
+
+    # ops._CallableWrapper exposes the wrapped callable as ._fn; guard with
+    # _is_deferred first — attribute access on a Deferred never falls back.
+    expr = expr if _is_deferred(expr) else getattr(expr, "_fn", expr)
+    if not _is_deferred(expr):
+        return None
+    resolver = expr._resolver
+    if not isinstance(resolver, Attr):
+        return None
+    if not isinstance(resolver.obj, Variable):
+        return None
+    if not isinstance(resolver.name, Just):
+        return None
+    value = resolver.name.value
+    return value if isinstance(value, str) else None
+
+
+def deserialize_structured(struct_data, context: str):
+    """Deserialize a structured expression, raising on failure.
+
+    Args:
+        struct_data: Tuple or list of structured expression data.
+        context: Human-readable label for error messages.
+    """
+    from .freeze import list_to_tuple
+
+    if isinstance(struct_data, tuple | list):
+        data = list_to_tuple(struct_data) if isinstance(struct_data, list) else struct_data
+        result = structured_to_expr(data).value_or(None)
+        if result is None:
+            raise ValueError(f"{context}: failed to deserialize struct")
+        return result
+    raise ValueError(f"{context}: no structured data")

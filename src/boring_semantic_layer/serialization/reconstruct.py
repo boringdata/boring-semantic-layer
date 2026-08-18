@@ -13,7 +13,7 @@ from typing import Any
 
 from returns.result import safe
 
-from .context import BSLSerializationContext
+from .context import SUPPORTED_PAYLOAD_MAJORS, BSLSerializationContext
 from .extract import deserialize_calc_measures
 from .freeze import thaw
 
@@ -532,9 +532,6 @@ def extract_xorq_metadata(xorq_expr) -> dict[str, Any] | None:
 #: written from the start but never checked, so a v1.0 tag (whose expressions
 #: were pickled — a format no longer read at all) used to load as a model with
 #: silently degraded fields instead of failing.
-SUPPORTED_PAYLOAD_MAJORS = frozenset({2})
-
-
 def _check_payload_version(metadata: dict[str, Any]) -> None:
     """Refuse a payload written by an incompatible serializer version."""
     version = metadata.get("bsl_version")

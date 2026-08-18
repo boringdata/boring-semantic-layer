@@ -14,8 +14,8 @@ from typing import Any
 
 from returns.result import Result, Success, safe
 
+from .codec import extract_simple_column_name
 from .context import BSLSerializationContext
-from .helpers import extract_simple_column_name
 
 # ---------------------------------------------------------------------------
 # singledispatch extractors
