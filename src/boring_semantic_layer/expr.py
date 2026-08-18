@@ -247,6 +247,65 @@ class SemanticTable(ir.Table):
         create_chart = importlib.import_module("boring_semantic_layer.chart").chart
         return create_chart(self, spec=spec, backend=backend, format=format)
 
+    def query(
+        self,
+        dimensions: Sequence[str] | None = None,
+        measures: Sequence[str] | None = None,
+        filters: Sequence[dict | str | Callable] | None = None,
+        order_by: Sequence[tuple[str, str] | str] | None = None,
+        limit: int | None = None,
+        time_grain: str | None = None,
+        time_grains: dict[str, str] | None = None,
+        time_range: dict[str, str] | None = None,
+        having: Sequence[dict] | None = None,
+    ):
+        """Run a declarative (JSON-style) query against this semantic table.
+
+        Available on every semantic expression (models, joins, filters,
+        grouped/aggregated results). See ``boring_semantic_layer.query.query``
+        for parameter semantics and worked examples.
+        """
+        return _query_module().query(
+            semantic_table=self,
+            dimensions=dimensions,
+            measures=measures,
+            filters=filters,
+            order_by=order_by,
+            limit=limit,
+            time_grain=time_grain,
+            time_grains=time_grains,
+            time_range=time_range,
+            having=having,
+        )
+
+    def compare_periods(
+        self,
+        dimensions: Sequence[str] | None = None,
+        measures: Sequence[str] | None = None,
+        current_time_range: dict[str, str] | None = None,
+        previous_time_range: dict[str, str] | None = None,
+        filters: Sequence[dict | str | Callable] | None = None,
+        time_dimension: str | None = None,
+        time_grain: str | None = None,
+        time_grains: dict[str, str] | None = None,
+        order_by: Sequence[tuple[str, str] | str] | None = None,
+        limit: int | None = None,
+    ):
+        """Compare measures across two time ranges (current/previous/delta)."""
+        return _query_module().compare_periods(
+            semantic_table=self,
+            dimensions=dimensions,
+            measures=measures,
+            current_time_range=current_time_range,
+            previous_time_range=previous_time_range,
+            filters=filters,
+            time_dimension=time_dimension,
+            time_grain=time_grain,
+            time_grains=time_grains,
+            order_by=order_by,
+            limit=limit,
+        )
+
     def filter(self, predicate: Callable) -> SemanticFilter:
         return SemanticFilter(source=self.op(), predicate=predicate)
 
@@ -1218,58 +1277,6 @@ class SemanticModel(SemanticTable):
             f"'{key}' not found in dimensions, measures, or calculated measures",
         )
 
-    def query(
-        self,
-        dimensions: Sequence[str] | None = None,
-        measures: Sequence[str] | None = None,
-        filters: list | None = None,
-        order_by: Sequence[tuple[str, str]] | None = None,
-        limit: int | None = None,
-        time_grain: str | None = None,
-        time_grains: dict[str, str] | None = None,
-        time_range: dict[str, str] | None = None,
-        having: list | None = None,
-    ):
-        return _query_module().query(
-            semantic_table=self,
-            dimensions=dimensions,
-            measures=measures,
-            filters=filters,
-            order_by=order_by,
-            limit=limit,
-            time_grain=time_grain,
-            time_grains=time_grains,
-            time_range=time_range,
-            having=having,
-        )
-
-    def compare_periods(
-        self,
-        dimensions: Sequence[str] | None = None,
-        measures: Sequence[str] | None = None,
-        current_time_range: dict[str, str] | None = None,
-        previous_time_range: dict[str, str] | None = None,
-        filters: list | None = None,
-        time_dimension: str | None = None,
-        time_grain: str | None = None,
-        time_grains: dict[str, str] | None = None,
-        order_by: Sequence[tuple[str, str]] | None = None,
-        limit: int | None = None,
-    ):
-        return _query_module().compare_periods(
-            semantic_table=self,
-            dimensions=dimensions,
-            measures=measures,
-            current_time_range=current_time_range,
-            previous_time_range=previous_time_range,
-            filters=filters,
-            time_dimension=time_dimension,
-            time_grain=time_grain,
-            time_grains=time_grains,
-            order_by=order_by,
-            limit=limit,
-        )
-
 
 class SemanticJoin(SemanticTable):
     def __init__(
@@ -1408,31 +1415,6 @@ class SemanticJoin(SemanticTable):
     @property
     def json_definition(self):
         return self.op().json_definition
-
-    def query(
-        self,
-        dimensions: list[str] | None = None,
-        measures: list[str] | None = None,
-        filters: dict[str, Any] | None = None,
-        order_by: list[str] | None = None,
-        limit: int | None = None,
-        time_grain: str | None = None,
-        time_grains: dict[str, str] | None = None,
-        time_range: dict[str, str] | None = None,
-        having: list | None = None,
-    ):
-        return _query_module().query(
-            semantic_table=self,
-            dimensions=dimensions,
-            measures=measures,
-            filters=filters,
-            order_by=order_by,
-            limit=limit,
-            time_grain=time_grain,
-            time_grains=time_grains,
-            time_range=time_range,
-            having=having,
-        )
 
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.op())
@@ -1587,58 +1569,6 @@ class SemanticFilter(SemanticTable):
     @property
     def calc_measures(self):
         return dict(self.get_calculated_measures())
-
-    def query(
-        self,
-        dimensions: Sequence[str] | None = None,
-        measures: Sequence[str] | None = None,
-        filters: list | None = None,
-        order_by: Sequence[tuple[str, str]] | None = None,
-        limit: int | None = None,
-        time_grain: str | None = None,
-        time_grains: dict[str, str] | None = None,
-        time_range: dict[str, str] | None = None,
-        having: list | None = None,
-    ):
-        return _query_module().query(
-            semantic_table=self,
-            dimensions=dimensions,
-            measures=measures,
-            filters=filters,
-            order_by=order_by,
-            limit=limit,
-            time_grain=time_grain,
-            time_grains=time_grains,
-            time_range=time_range,
-            having=having,
-        )
-
-    def compare_periods(
-        self,
-        dimensions: Sequence[str] | None = None,
-        measures: Sequence[str] | None = None,
-        current_time_range: dict[str, str] | None = None,
-        previous_time_range: dict[str, str] | None = None,
-        filters: list | None = None,
-        time_dimension: str | None = None,
-        time_grain: str | None = None,
-        time_grains: dict[str, str] | None = None,
-        order_by: Sequence[tuple[str, str]] | None = None,
-        limit: int | None = None,
-    ):
-        return _query_module().compare_periods(
-            semantic_table=self,
-            dimensions=dimensions,
-            measures=measures,
-            current_time_range=current_time_range,
-            previous_time_range=previous_time_range,
-            filters=filters,
-            time_dimension=time_dimension,
-            time_grain=time_grain,
-            time_grains=time_grains,
-            order_by=order_by,
-            limit=limit,
-        )
 
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.op().source)
