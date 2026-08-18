@@ -14,6 +14,15 @@ from .api import (
 from .config import (
     options,
 )
+from .errors import (
+    BackendError,
+    BSLError,
+    CompilationError,
+    DefinitionError,
+    QueryError,
+    SerializationError,
+    UnknownFieldError,
+)
 from .expr import (
     SemanticModel,
     SemanticTable,
@@ -42,6 +51,13 @@ from .yaml import (
 )
 
 __all__ = [
+    "BSLError",
+    "BackendError",
+    "CompilationError",
+    "DefinitionError",
+    "QueryError",
+    "SerializationError",
+    "UnknownFieldError",
     "to_semantic_table",
     "to_tagged",
     "to_untagged",

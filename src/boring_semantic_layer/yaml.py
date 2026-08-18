@@ -8,6 +8,7 @@ from typing import Any
 from ibis import _
 
 from .api import to_semantic_table
+from .errors import unwrap_or_raise
 from .expr import SemanticModel, SemanticTable
 from .ops import Dimension, Measure
 from .profile import get_connection
@@ -56,7 +57,10 @@ def _parse_dimension_or_measure(
           metadata: {format: currency_eur, unit: EUR, ...} (free-form)
     """
     expr_str, description, extra_kwargs = _parse_expression_config(name, config, metric_type)
-    deferred = safe_eval(expr_str, context={"_": _}).unwrap()
+    deferred = unwrap_or_raise(
+        safe_eval(expr_str, context={"_": _}),
+        context=f"Invalid expression for {metric_type} {name!r} ({expr_str!r})",
+    )
     base_kwargs = {"expr": deferred, "description": description}
     if metric_type == "dimension":
         return Dimension(**base_kwargs, **extra_kwargs)
@@ -83,7 +87,10 @@ def _parse_calc_measure(name: str, config: str | dict) -> Measure:
 
     def _make_calc_fn(source: str):
         def calc_fn(scope):
-            return safe_eval(source, context={"_": scope}).unwrap()
+            return unwrap_or_raise(
+                safe_eval(source, context={"_": scope}),
+                context=f"Invalid expression for calculated measure {name!r} ({source!r})",
+            )
 
         # YAML ``calculated_measures`` are documented as expressions over
         # measures, not raw columns. Prefer known measure names during calc
@@ -106,7 +113,10 @@ def _parse_filter(filter_expr: str) -> callable:
     """
     from ibis import _
 
-    deferred = safe_eval(filter_expr, context={"_": _}, allowed_names={"_"}).unwrap()
+    deferred = unwrap_or_raise(
+        safe_eval(filter_expr, context={"_": _}, allowed_names={"_"}),
+        context=f"Invalid filter expression ({filter_expr!r})",
+    )
     return lambda t, d=deferred: d.resolve(t)
 
 

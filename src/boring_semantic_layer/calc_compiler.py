@@ -32,7 +32,6 @@ was registered as a measure.
 
 from __future__ import annotations
 
-import difflib
 import logging
 from collections.abc import Iterable
 from typing import Any
@@ -47,6 +46,7 @@ from .calc_analyzer import (
     analyze_calc_expr,
     virtual_agg_table,
 )
+from .errors import suggest_kinded
 from .measure_scope import UnknownMeasureRefError
 
 logger = logging.getLogger(__name__)
@@ -202,22 +202,12 @@ class IbisCalcScope:
         return hasattr(self._base_tbl, "columns") and name in self._base_tbl.columns
 
     def _typo_suggestion(self, name: str) -> str | None:
-        cutoff = 0.80
-        candidates: list[tuple[str, str]] = []
+        kinded = []
         if self._known_measures:
-            for match in difflib.get_close_matches(
-                name, list(self._known_measures), n=3, cutoff=cutoff
-            ):
-                candidates.append(("measure", match))
+            kinded.append(("measure", list(self._known_measures)))
         if hasattr(self._base_tbl, "columns"):
-            for match in difflib.get_close_matches(
-                name, list(self._base_tbl.columns), n=3, cutoff=cutoff
-            ):
-                candidates.append(("column", match))
-        if not candidates:
-            return None
-        formatted = ", ".join(f"{kind} {match!r}" for kind, match in candidates)
-        return f"Did you mean: {formatted}?"
+            kinded.append(("column", list(self._base_tbl.columns)))
+        return suggest_kinded(name, kinded)
 
     def _resolve_measure_name(self, name: str) -> str | None:
         """Resolve ``name`` to a known measure, including suffix matching.
