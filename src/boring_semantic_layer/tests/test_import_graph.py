@@ -27,12 +27,6 @@ PKG_ROOT = Path(__file__).resolve().parents[1]
 KNOWN_SCC_MEMBERS = frozenset(
     {
         "boring_semantic_layer.api",
-        "boring_semantic_layer.chart",
-        "boring_semantic_layer.chart.altair_chart",
-        "boring_semantic_layer.chart.echarts_adapter",
-        "boring_semantic_layer.chart.plotext_chart",
-        "boring_semantic_layer.chart.plotly_chart",
-        "boring_semantic_layer.chart.utils",
         "boring_semantic_layer.convert",
         "boring_semantic_layer.expr",
         "boring_semantic_layer.format",
