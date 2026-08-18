@@ -16,59 +16,80 @@ from ibis.expr import operations as ibis_ops
 from ibis.expr import types as ir
 from ibis.expr.operations.relations import Relation
 from ibis.expr.schema import Schema
-from returns.result import safe
 
-from . import projection_utils
-from ._xorq import (
+from .. import projection_utils
+from .._xorq import (
     Column as XorqColumn,
 )
-from ._xorq import (
+from .._xorq import (
     FrozenDict,
     FrozenOrderedDict,
     null_safe_equal,
 )
-from ._xorq import (
+from .._xorq import (
     Schema as XorqSchema,
 )
-from ._xorq import (
+from .._xorq import (
     operations as xorq_ops,
 )
-from ._xorq import (
+from .._xorq import (
     selectors as s,
 )
-from .calc_analyzer import (
+from ..calc_analyzer import (
     _is_reduction,
     _is_window,
     _to_node,
     analyze_calc_expr,
 )
-from .calc_analyzer import (
+from ..calc_analyzer import (
     _walk as _walk_calc_expr,
 )
-from .calc_compiler import (
+from ..calc_compiler import (
     TOTALS_PREFIX,
     TotalsNotAvailableError,
     UnknownMeasureRefError,
     WindowedBaseReductionError,
     _drop_totals_columns,
     _to_op,
-    apply_calc_measures,
     attach_calc_totals,
     attach_windowed_totals,
     evaluate_calc_lambda,
     lift_inline_reductions,
     topological_order_from_deps,
 )
-from .calc_compiler import (
+from ..calc_compiler import (
     compile_calc_measure as _compile_calc_measure_impl,
 )
-from .fieldref import resolve_suffix
-from .graph_utils import walk_nodes
-from .measure_scope import (
+from ..fieldref import resolve_suffix
+from ..measure_scope import (
     ColumnScope,
     MeasureScope,
 )
-from .nested_access import NestedAccessMarker
+from ..nested_access import NestedAccessMarker
+from ._compat import _rebind_to_backend, _rebind_to_canonical_backend
+from ._normalize import (
+    _JOIN_REMOVED_MESSAGE,
+    _allocate_right_collision_names,
+    _allocate_temporary_join_names,
+    _RenamedResolver,
+)
+from ._reductions import (
+    _is_mean_expr,
+    _reagg_op_for_expr,
+)
+from ._tracking import (
+    _extract_columns_from_callable,
+    _extract_join_key_columns,
+)
+from ._values import (
+    CalcMeasure,
+    Dimension,
+    Measure,
+    _CallableWrapper,
+    _ensure_wrapped,
+    _is_deferred,
+    _reject_bool_resolution,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,382 +97,14 @@ _SchemaClass = XorqSchema
 _FrozenOrderedDict = FrozenOrderedDict
 
 
-def _reductions_for_expr(expr):
-    """Return the ``reductions`` ops module matching *expr*'s ibis flavor.
-
-    A user-supplied callable produces expressions against exactly one of
-    ``ibis`` or ``xorq.vendor.ibis`` — whichever the underlying table came
-    from. Pick that module so isinstance checks compare against a single
-    concrete type rather than a cross-module union.
-    """
-    if type(expr.op()).__module__.startswith("xorq.vendor.ibis"):
-        return xorq_ops.reductions
-    return ibis_ops.reductions
-
-
-_JOIN_REMOVED_MESSAGE = (
-    "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
-    "For one-to-one relationships:\n"
-    "  table.join_one(other, lambda l, r: l.id == r.id)\n\n"
-    "For one-to-many relationships:\n"
-    "  table.join_many(other, lambda l, r: l.id == r.id)\n\n"
-    "For Cartesian product:\n"
-    "  table.join_cross(other)"
-)
-
-_BSL_JOIN_KEY_TMP_PREFIX = "__bsl_jk_"
-
-
-def _allocate_temporary_join_names(
-    conflicting: Iterable[str],
-    left_columns: Sequence[str],
-    right_columns: Sequence[str],
-) -> dict[str, str]:
-    """Allocate collision-free internal names for left predicate columns."""
-    occupied = set(left_columns) | set(right_columns)
-    result: dict[str, str] = {}
-    for name in left_columns:
-        if name not in conflicting:
-            continue
-        preferred = f"{_BSL_JOIN_KEY_TMP_PREFIX}{name}"
-        candidate = preferred
-        suffix = 2
-        while candidate in occupied:
-            candidate = f"{preferred}_{suffix}"
-            suffix += 1
-        result[name] = candidate
-        occupied.add(candidate)
-    return result
-
-
-def _allocate_right_collision_names(
-    conflicting: Iterable[str],
-    left_columns: Sequence[str],
-    right_columns: Sequence[str],
-    depth: int,
-    *,
-    reserved: Iterable[str] = (),
-) -> dict[str, str]:
-    """Allocate the executable names of colliding right-side columns.
-
-    The usual names are ``x_right``, ``x_right2``, ... according to join
-    depth.  A source table is allowed to contain those spellings itself, so
-    advance the numeric suffix until the name is unique across every column
-    that will remain in the result.
-    """
-    conflicting = frozenset(conflicting)
-    occupied = set(left_columns) | (set(right_columns) - conflicting) | set(reserved)
-    result: dict[str, str] = {}
-    for name in right_columns:
-        if name not in conflicting:
-            continue
-        candidate = f"{name}_right" if depth <= 1 else f"{name}_right{depth}"
-        suffix = max(2, depth + 1)
-        while candidate in occupied:
-            candidate = f"{name}_right{suffix}"
-            suffix += 1
-        result[name] = candidate
-        occupied.add(candidate)
-    return result
-
-
-class _RenamedResolver:
-    """Resolver that maps original column names to temporary names.
-
-    Used during join predicate resolution to avoid ibis "Ambiguous field
-    reference" errors when left and right tables share column names.
-
-    This works around two upstream ibis behaviors that have no public
-    issue tracker entry yet but are pinned by
-    ``test_upstream_ibis_pins.py``:
-
-    1. ``DerefMap`` raises ``IbisInputError: Ambiguous field reference``
-       when a predicate column-name appears in more than one relation
-       reachable from the join's LHS.
-    2. The default ``rname='{name}_right'`` collides on the third
-       table when 3+ joined relations share a column name, raising
-       ``IntegrityError: Name collisions``.
-
-    When the pinning tests start failing — i.e. ibis no longer raises
-    these errors — the rename dance in ``SemanticJoinOp.to_untagged``
-    can be removed.
-    """
-
-    __slots__ = ("_table", "_name_map")
-
-    def __init__(self, table, name_map):
-        object.__setattr__(self, "_table", table)
-        object.__setattr__(self, "_name_map", name_map)
-
-    def __getattr__(self, name):
-        mapped = self._name_map.get(name, name)
-        return getattr(self._table, mapped)
-
-    def __getitem__(self, name):
-        mapped = self._name_map.get(name, name)
-        return self._table[mapped]
-
-
-def _is_deferred(expr) -> bool:
-    # Duck-type check: works for both ibis and xorq Deferred objects
-    return hasattr(expr, "_resolver") and hasattr(expr, "resolve")
-
-
-def _normalize_to_name(arg: str | Deferred) -> str:
-    """Convert a string or simple ``_.name`` Deferred to a plain string name.
-
-    Accepts a plain string (returned as-is) or a Deferred whose resolver is a
-    simple attribute access on the top-level ``_`` variable (e.g. ``_.origin``).
-
-    Complex expressions like ``_.distance.sum()`` or ``_.a.b`` are rejected
-    with a ``TypeError``.
-    """
-    if isinstance(arg, str):
-        return arg
-
-    # Duck-type: works for both ibis and xorq Deferred objects
-    resolver = getattr(arg, "_resolver", None)
-    if resolver is None:
-        raise TypeError(
-            f"Expected a string name or Deferred expression (_.name), got {type(arg).__name__}"
-        )
-
-    obj = getattr(resolver, "obj", None)
-
-    # Try attribute access first (_.name -> Attr resolver with .name)
-    name_wrapper = getattr(resolver, "name", None)
-
-    # Fall back to getitem access (_["name"] -> Item resolver with .indexer)
-    if name_wrapper is None:
-        name_wrapper = getattr(resolver, "indexer", None)
-
-    if name_wrapper is None or obj is None:
-        raise TypeError(
-            f"Only simple Deferred expressions like _.name or _['name'] are supported "
-            f"as positional arguments, got: {arg!r}"
-        )
-
-    # Reject chained access like _.a.b (obj would itself have an .obj attr)
-    if getattr(obj, "obj", None) is not None:
-        raise TypeError(
-            f"Only simple Deferred expressions like _.name or _['name'] are supported "
-            f"as positional arguments, got: {arg!r}"
-        )
-
-    # Attr.name / Item.indexer is a Just wrapper; unwrap via .value
-    raw_name = getattr(name_wrapper, "value", name_wrapper)
-    if not isinstance(raw_name, str):
-        raise TypeError(f"Could not extract string name from Deferred expression: {arg!r}")
-
-    return raw_name
-
-
-def _normalize_join_predicate(on):
-    """Normalize a join predicate to a two-argument callable.
-
-    Accepts:
-    - ``str`` – equi-join on a column present in both sides
-    - ``Deferred`` (``_.col``) – same, after extracting the name
-    - ``list[str | Deferred]`` – compound equi-join on multiple columns
-    - ``callable`` (non-Deferred) – returned as-is (existing lambda API)
-    - ``None`` – returned as-is (for cross joins)
-    """
-    if on is None:
-        return on
-
-    if isinstance(on, str):
-        name = on
-        return lambda left, right: getattr(left, name) == getattr(right, name)
-
-    if _is_deferred(on):
-        name = _normalize_to_name(on)
-        return lambda left, right: getattr(left, name) == getattr(right, name)
-
-    if isinstance(on, (list, tuple)):
-        names = [_normalize_to_name(item) for item in on]
-        if len(names) == 1:
-            name = names[0]
-            return lambda left, right: getattr(left, name) == getattr(right, name)
-
-        def _compound_predicate(left, right):
-            from functools import reduce
-            from operator import and_
-
-            preds = [getattr(left, n) == getattr(right, n) for n in names]
-            return reduce(and_, preds)
-
-        return _compound_predicate
-
-    if callable(on):
-        return on
-
-    raise TypeError(
-        f"join `on` must be a string, Deferred (_.col), list of strings/Deferred, "
-        f"or a callable, got {type(on).__name__}"
-    )
-
-
 if TYPE_CHECKING:
-    from .expr import (
+    from ..expr import (
         SemanticFilter,
         SemanticGroupBy,
         SemanticLimit,
         SemanticOrderBy,
         SemanticTable,
     )
-
-
-def _patch_xorq_sortkey_compat():
-    """Register a map_ibis handler so ibis SortKey → xorq SortKey.
-
-    ibis 11 uses ``SortKey.expr``, ibis 12 renamed it to ``SortKey.arg``,
-    while xorq's vendored ibis keeps ``SortKey.expr``.  Handle both.
-    """
-    from ibis.expr.operations.sortkeys import SortKey as IbisSortKey
-
-    from ._xorq import SortKey as XorqSortKey
-    from ._xorq import map_ibis
-
-    if IbisSortKey in map_ibis.registry:
-        return  # already patched
-
-    @map_ibis.register(IbisSortKey)
-    def _map_sort_key(val, kwargs=None):
-        # ibis 12 uses .arg, ibis 11 uses .expr
-        sort_expr = getattr(val, "arg", None) or val.expr
-        return XorqSortKey(
-            expr=map_ibis(sort_expr, None),
-            ascending=val.ascending,
-            nulls_first=val.nulls_first,
-        )
-
-
-def _ensure_xorq_table(table):
-    """Convert plain ibis Table to xorq-vendored ibis if possible.
-
-    This is the single boundary between user-supplied ibis tables and
-    BSL's internal xorq representation. ``SemanticModel`` calls it once
-    at construction so internal code paths can assume xorq tables when
-    the backend is supported, and a plain ibis fallback otherwise.
-
-    Falls back to returning the plain ibis table when the backend is not
-    supported by xorq (e.g. Databricks). Idempotent: calling it on a
-    xorq-vendored table is a cheap no-op.
-    """
-    _patch_xorq_sortkey_compat()
-    if "xorq.vendor.ibis" not in type(table).__module__:
-        try:
-            from ._xorq import from_ibis
-
-            return from_ibis(table)
-        except Exception as exc:
-            logger.debug(
-                "xorq conversion unavailable for %s table (%s); continuing on the plain-ibis path.",
-                type(table).__name__,
-                exc,
-            )
-            return table
-    return table
-
-
-def _connection_identity(backend) -> tuple:
-    """Identify the physical connection a backend reads from.
-
-    ``from_ibis()`` mints a fresh ``Backend`` wrapper per call but reuses the
-    caller's DBAPI connection object, so wrapper identity says nothing about
-    which database a table lives in while connection identity does. Backends
-    that expose no ``con`` fall back to their own identity, which makes
-    rebinding a no-op for them rather than a guess.
-    """
-    con = getattr(backend, "con", None)
-    if con is None:
-        return ("backend", id(backend))
-    return ("con", id(con))
-
-
-def _rebind_to_backend(expr, target_backend):
-    """Rebind ``DatabaseTable`` ops in *expr* that share *target_backend*'s connection.
-
-    Low-level primitive shared with ``serialization.reconstruct``.
-    No-op on plain ibis expressions or when xorq is unavailable for any
-    reason; callers must pass a xorq-vendored ``target_backend``.
-
-    Tables belonging to a *different* connection are left alone. Rebinding
-    those used to repoint them at the canonical backend without checking,
-    so joining two same-schema databases (prod and staging, or two shards)
-    silently read every column from whichever one happened to be first.
-    Leaving them untouched lets the engine raise its own multiple-backends
-    error instead of returning plausible numbers from the wrong database.
-    """
-    try:
-        from ._xorq import relations as xorq_rel
-    except Exception:
-        return expr
-
-    target_identity = _connection_identity(target_backend)
-    foreign: set[str] = set()
-
-    def _recreate(op, _kwargs, **overrides):
-        kwargs = dict(zip(op.__argnames__, op.__args__, strict=False))
-        if _kwargs:
-            kwargs.update(_kwargs)
-        kwargs.update(overrides)
-        return op.__recreate__(kwargs)
-
-    def replacer(op, _kwargs):
-        if isinstance(op, xorq_rel.DatabaseTable) and op.source is not target_backend:
-            if _connection_identity(op.source) == target_identity:
-                return _recreate(op, _kwargs, source=target_backend)
-            foreign.add(op.name)
-        if _kwargs:
-            return _recreate(op, _kwargs)
-        return op
-
-    rebound = expr.op().replace(replacer).to_expr()
-    if foreign:
-        logger.warning(
-            "Expression spans more than one database connection; tables %s were "
-            "left bound to their own backend. A query mixing them will fail in "
-            "the engine — read them through a single connection (or ATTACH one "
-            "database to the other) if they are meant to be joined.",
-            sorted(foreign),
-        )
-    return rebound
-
-
-def _rebind_to_canonical_backend(expr):
-    """Rebind divergent ``DatabaseTable`` backends in *expr* to share one.
-
-    ``from_ibis()`` creates a distinct ``Backend`` per call, so expressions
-    built by composing separately-converted tables contain multiple
-    backends. Picking the first ``DatabaseTable``'s source as canonical
-    and rebinding the rest eliminates "Multiple backends found" errors
-    at execution time.
-
-    No-op on plain ibis expressions (not xorq-vendored).
-    """
-    from ._xorq import HAS_XORQ
-
-    # Without xorq there is only one backend, so there is nothing to rebind.
-    if not HAS_XORQ:
-        return expr
-
-    try:
-        from ._xorq import relations as xorq_rel
-        from ._xorq import walk_nodes
-    except Exception:
-        return expr
-
-    try:
-        db_tables = list(walk_nodes((xorq_rel.DatabaseTable,), expr))
-    except Exception:
-        return expr
-
-    canonical = db_tables[0].source if db_tables else None
-    if canonical is None:
-        return expr
-
-    return _rebind_to_backend(expr, canonical)
 
 
 def _to_untagged(source: Any) -> ir.Table:
@@ -468,6 +121,17 @@ def _expr_module():
     import importlib
 
     return importlib.import_module("boring_semantic_layer.expr")
+
+
+def _compile_module(name: str):
+    """Call-time accessor for a compile-strategy module.
+
+    Strategy modules import _core at module level (downward); _core reaches
+    them only at call time, keeping the import graph acyclic.
+    """
+    import importlib
+
+    return importlib.import_module(f"boring_semantic_layer.ops.{name}")
 
 
 def _query_module():
@@ -605,7 +269,7 @@ def _format_root(root_op: SemanticTableOp) -> str:
     try:
         from ibis.expr.format import fmt
     except ImportError:
-        from ._xorq import fmt
+        from .._xorq import fmt
 
     try:
         return fmt(root_op)
@@ -650,31 +314,6 @@ def _make_schema(fields_dict: dict[str, str]):
     return _SchemaClass(cleaned)
 
 
-def _reject_bool_resolution(result: Any, source: Any) -> None:
-    """Reject expressions that resolved to a Python bool.
-
-    A bool here almost always means a comparison mixed plain-ibis and
-    xorq-vendored objects (e.g. ``t.col == ibis.literal(...)`` where ``t``
-    is xorq-backed): both ``__eq__`` implementations return
-    ``NotImplemented`` for the foreign type, so Python falls back to
-    identity comparison and yields a plain ``False``.  Left unchecked, that
-    compiles into a constant predicate and silently returns wrong results.
-    """
-    if isinstance(result, bool):
-        raise TypeError(
-            f"Expression {source!r} resolved to the Python bool {result!r} "
-            "instead of an ibis expression. This usually means a comparison "
-            "mixed plain-ibis and xorq-vendored objects (e.g. "
-            "`t.col == ibis.literal(...)` against a xorq-backed table). "
-            "Compare against plain Python values instead (`t.col == 'AA'`) "
-            "or build the literal with the table's own ibis flavor: "
-            "`from boring_semantic_layer.nested_compile import get_ibis_module; "
-            "get_ibis_module(t).literal(...)`. For a deliberately constant "
-            "predicate, return `get_ibis_module(t).literal(True)` rather "
-            "than a Python bool."
-        )
-
-
 def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
     was_resolved = _is_deferred(expr) or callable(expr)
     result = expr.resolve(scope) if _is_deferred(expr) else expr(scope) if callable(expr) else expr
@@ -689,7 +328,7 @@ def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
         scope_is_xorq = "xorq.vendor.ibis" in scope_module
 
         if result_is_regular_ibis and scope_is_xorq:
-            from ._xorq import from_ibis
+            from .._xorq import from_ibis
 
             result = from_ibis(result)
 
@@ -1039,38 +678,10 @@ def _collect_struct(struct_dict: dict[str, Any], **collect_kwargs):
     """
     first_col = next(iter(struct_dict.values()))
     if isinstance(first_col, XorqColumn):
-        from ._xorq import ibis as xibis
+        from .._xorq import ibis as xibis
 
         return xibis.struct(struct_dict).collect(**collect_kwargs)
     return ibis.struct(struct_dict).collect(**collect_kwargs)
-
-
-@frozen
-class _CallableWrapper:
-    """Hashable wrapper for Callable and Deferred.
-
-    Both raw callables (lambda) and user Deferred (_.foo) are not hashable
-    and cannot be stored in FrozenDict. This wrapper provides hashability
-    using identity-based hashing.
-    """
-
-    _fn: Any
-
-    def __call__(self, *args, **kwargs):
-        return self._fn(*args, **kwargs)
-
-    def __hash__(self):
-        # should this be dask.base.tokenize()?
-        return hash(id(self._fn))
-
-    @property
-    def unwrap(self):
-        return self._fn
-
-
-def _ensure_wrapped(fn: Any) -> _CallableWrapper:
-    """Wrap Callable or Deferred for hashability."""
-    return fn if isinstance(fn, _CallableWrapper) else _CallableWrapper(fn)
 
 
 class NestAggSpec:
@@ -1333,223 +944,6 @@ def _build_json_definition(
     return result
 
 
-def _format_column_error(e: AttributeError, table: ir.Table) -> str:
-    """Format a helpful error message for missing column errors."""
-    # Extract the column name from the error
-    match = re.search(r"has no attribute ['\"]([^'\"]+)['\"]", str(e))
-    missing_col = match.group(1) if match else "unknown"
-
-    # Get available columns
-    available_cols = list(table.columns) if hasattr(table, "columns") else []
-
-    # Build error message
-    parts = [f"Dimension expression references non-existent column '{missing_col}'."]
-
-    if len(available_cols) > 20:
-        parts.append(f"Table has {len(available_cols)} columns. First 15: {available_cols[:15]}")
-    elif available_cols:
-        parts.append(f"Available columns: {available_cols}")
-    else:
-        parts.append(f"No columns available in {type(table).__name__} object")
-
-    # Suggest similar column names
-    suggestions = get_close_matches(missing_col, available_cols, n=3, cutoff=0.6)
-    if suggestions:
-        parts[-1] += f". Did you mean: {suggestions}?"
-
-    # Add helpful tip
-    example = suggestions[0] if suggestions else "column_name"
-    parts.append(
-        f"\n\nTip: Check that your dimension expression uses the correct column name. "
-        f"For example: lambda t: t.{example}"
-    )
-
-    return " ".join(parts)
-
-
-class _DimPrefixProxy:
-    """Resolves ``proxy.column`` to ``dims["prefix.column"](table)``."""
-
-    __slots__ = ("_tbl", "_dims", "_prefix")
-
-    def __init__(self, tbl, dims: dict, prefix: str):
-        object.__setattr__(self, "_tbl", tbl)
-        object.__setattr__(self, "_dims", dims)
-        object.__setattr__(self, "_prefix", prefix)
-
-    def __getattr__(self, name: str):
-        full_name = f"{self._prefix}.{name}"
-        if full_name in self._dims:
-            return self._dims[full_name](self._tbl)
-        raise AttributeError(
-            f"No dimension '{full_name}' found. "
-            f"Available dimensions with prefix '{self._prefix}.': "
-            f"{[k for k in self._dims if k.startswith(self._prefix + '.')]}"
-        )
-
-
-class _DimensionTableProxy:
-    """Proxy that wraps an ibis table to support model-prefix navigation.
-
-    Allows dimension lambdas like ``lambda t: t.flights.carrier`` to work on
-    joined tables by resolving ``t.flights.carrier`` through the merged
-    dimension map (``dims["flights.carrier"](table)``).
-    """
-
-    __slots__ = ("_tbl", "_dims")
-
-    def __init__(self, tbl, dims: dict):
-        object.__setattr__(self, "_tbl", tbl)
-        object.__setattr__(self, "_dims", dims)
-
-    def __getattr__(self, name: str):
-        prefix = f"{name}."
-        if any(k.startswith(prefix) for k in self._dims):
-            return _DimPrefixProxy(self._tbl, self._dims, name)
-        return getattr(self._tbl, name)
-
-    def __getitem__(self, name: str):
-        if name in self._dims:
-            return self._dims[name](self._tbl)
-        return self._tbl[name]
-
-    @property
-    def columns(self):
-        return self._tbl.columns
-
-
-@frozen(kw_only=True, slots=True)
-class Dimension:
-    expr: Callable[[ir.Table], ir.Value] | Deferred
-    description: str | None = None
-    is_entity: bool = False
-    is_time_dimension: bool = False
-    is_event_timestamp: bool = False
-    smallest_time_grain: str | None = None
-    derived_dimensions: tuple[str, ...] = ()
-    metadata: Mapping[str, Any] = field(factory=dict, eq=False, hash=False)
-
-    def __call__(self, table: ir.Table, _dims: dict | None = None) -> ir.Value:
-        try:
-            result = self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
-        except AttributeError as e:
-            # Retry with a prefix-aware proxy for joined tables where
-            # model prefixes are used (e.g., lambda t: t.flights.carrier)
-            if _dims and not _is_deferred(self.expr) and callable(self.expr):
-                try:
-                    proxy = _DimensionTableProxy(table, _dims)
-                    proxy_result = self.expr(proxy)
-                except AttributeError as proxy_err:
-                    # Preserve explicit prefix-proxy errors (e.g. missing
-                    # "model.field") to avoid silent fallback to unprefixed
-                    # columns, but keep normal missing-column errors on the
-                    # original table so they get the helpful formatter below.
-                    if str(proxy_err).startswith("No dimension '"):
-                        raise
-                except Exception:
-                    pass
-                else:
-                    _reject_bool_resolution(proxy_result, self.expr)
-                    return proxy_result
-            # Provide helpful error for missing columns
-            if "'Table' object has no attribute" in str(
-                e
-            ) or "'Join' object has no attribute" in str(e):
-                raise AttributeError(_format_column_error(e, table)) from e
-            raise
-        else:
-            _reject_bool_resolution(result, self.expr)
-            return result
-
-    def to_json(self) -> Mapping[str, Any]:
-        base = {"description": self.description}
-        if self.is_entity:
-            base["is_entity"] = True
-        if self.is_event_timestamp:
-            base["is_event_timestamp"] = True
-        if self.is_time_dimension:
-            base["smallest_time_grain"] = self.smallest_time_grain
-        if self.derived_dimensions:
-            base["derived_dimensions"] = list(self.derived_dimensions)
-        if self.metadata:
-            base.update(self.metadata)
-        return base
-
-    def __hash__(self) -> int:
-        return hash(
-            (
-                self.description,
-                self.is_entity,
-                self.is_event_timestamp,
-                self.is_time_dimension,
-                self.smallest_time_grain,
-                self.derived_dimensions,
-            ),
-        )
-
-
-@frozen(kw_only=True, slots=True)
-class Measure:
-    expr: Callable[[ir.Table], ir.Value] | Deferred
-    description: str | None = None
-    requires_unnest: tuple[str, ...] = ()  # Internal: Arrays that must be unnested
-    original_expr: Any = field(default=None, eq=False, hash=False)
-    metadata: Mapping[str, Any] = field(factory=dict, eq=False, hash=False)
-
-    def __call__(self, table: ir.Table) -> ir.Value:
-        result = self.expr.resolve(table) if _is_deferred(self.expr) else self.expr(table)
-        _reject_bool_resolution(result, self.expr)
-        return result
-
-    @property
-    def locality(self) -> str | None:
-        """Derive locality from requires_unnest (most nested level)."""
-        return self.requires_unnest[-1] if self.requires_unnest else None
-
-    def to_json(self) -> Mapping[str, Any]:
-        base = {"description": self.description}
-        if self.locality:
-            base["locality"] = self.locality
-        if self.requires_unnest:
-            base["requires_unnest"] = list(self.requires_unnest)
-        if self.metadata:
-            base.update(self.metadata)
-        return base
-
-    def __hash__(self) -> int:
-        return hash((self.description, self.requires_unnest))
-
-
-@frozen(kw_only=True, slots=True)
-class CalcMeasure:
-    """Stored representation of a calc (post-aggregation) measure.
-
-    Holds the user's original lambda — the analyzer-classified ibis
-    expression is recomputed from the lambda at query time against the
-    actual base table. ``depends_on`` is captured at classification time
-    so the planner can auto-include base-measure dependencies in
-    aggregations even when the user did not request them explicitly.
-    """
-
-    expr: Any  # callable | Deferred
-    description: str | None = None
-    requires_unnest: tuple[str, ...] = ()
-    depends_on: frozenset[str] = field(factory=frozenset, converter=frozenset)
-    prefer_known: frozenset[str] = field(factory=frozenset, converter=frozenset)
-    metadata: Mapping[str, Any] = field(factory=dict, eq=False, hash=False)
-
-    def to_json(self) -> Mapping[str, Any]:
-        base = {"description": self.description}
-        if self.requires_unnest:
-            base["requires_unnest"] = list(self.requires_unnest)
-        if self.metadata:
-            base.update(self.metadata)
-        return base
-
-    def __hash__(self) -> int:
-        return hash((self.description, self.requires_unnest, self.depends_on, self.prefer_known))
-
-
 class SemanticTableOp(Relation):
     """Relation with semantic metadata (dimensions and measures).
 
@@ -1669,7 +1063,7 @@ class SemanticTableOp(Relation):
         return self.calc_measures
 
     def get_graph(self) -> dict[str, dict[str, Any]]:
-        from .graph_utils import build_dependency_graph
+        from ..graph_utils import build_dependency_graph
 
         return build_dependency_graph(
             self.get_dimensions(),
@@ -1751,7 +1145,7 @@ class SemanticFilterOp(_SourcePassThroughOp, Relation):
         return _semantic_repr(self)
 
     def to_untagged(self):
-        from .convert import _Resolver
+        from ..convert import _Resolver
 
         all_roots = _find_all_root_models(self.source)
         base_tbl = _to_untagged(self.source)
@@ -2540,7 +1934,7 @@ def _compile_aggregation_with_nested(
     The new calc-compiler path layers on top of the resulting joined
     table via :func:`apply_calc_measures`.
     """
-    from .nested_compile import (
+    from ..nested_compile import (
         build_nested_level_table,
         build_session_table,
         join_tables,
@@ -2721,7 +2115,7 @@ def _validate_preaggregation_join_predicates(join_op: SemanticJoinOp) -> None:
     accessed column names produces a different row set from the actual join, so
     fail closed until the planner carries the complete predicate expression.
     """
-    from .convert import _Resolver
+    from ..convert import _Resolver
 
     def _is_field(node) -> bool:
         return type(node).__name__ == "Field"
@@ -2811,7 +2205,7 @@ def _table_filter_resolver(
     ownership checks resolve ``t["orders.status"]`` only against
     ``orders``.
     """
-    from .convert import _Resolver
+    from ..convert import _Resolver
 
     dims = dict(_get_field_dict(table_op, "dimensions"))
     if table_name:
@@ -2833,7 +2227,7 @@ _AND_TYPES = tuple({ibis_ops.And, xorq_ops.And})
 
 def _leaf_rel_types():
     """Base relation classes for both ibis flavors (plus xorq Read)."""
-    from ._xorq import Read as _XorqRead
+    from .._xorq import Read as _XorqRead
 
     types = {
         ibis_ops.DatabaseTable,
@@ -2860,7 +2254,7 @@ def _value_fields(value_op):
     Descending into a Field's relation would surface every column of the
     join tree; provenance only wants the fields the value itself reads.
     """
-    from .graph_utils import gen_children_of
+    from ..graph_utils import gen_children_of
 
     out, stack, seen = [], [value_op], set()
     while stack:
@@ -3187,77 +2581,6 @@ def _attach_dim_column(pt, gb_col, measure_names, join_tree_info, merged_dimensi
             return _left_join_bridge(bridge, pt, common_keys)
 
 
-def _is_mean_expr(expr):
-    """Check if an ibis expression is a Mean/Average reduction."""
-    try:
-        return isinstance(expr.op(), _reductions_for_expr(expr).Mean)
-    except Exception:
-        return False
-
-
-def _is_count_distinct_expr(expr):
-    """Check if an ibis expression is a CountDistinct (nunique) reduction."""
-    return safe(lambda: isinstance(expr.op(), _reductions_for_expr(expr).CountDistinct))().value_or(
-        False
-    )
-
-
-def _is_count_expr(expr):
-    """Check if an expression is COUNT(column) or COUNT(*)."""
-    try:
-        reductions = _reductions_for_expr(expr)
-        return isinstance(expr.op(), (reductions.Count, reductions.CountStar))
-    except Exception:
-        return False
-
-
-def _fill_missing_count_identities(table, measure_names):
-    """Restore COUNT's empty-set identity after a dimension-bridge join."""
-    replacements = {
-        name: table[name].fill_null(0) for name in measure_names if name in table.columns
-    }
-    return table.mutate(**replacements) if replacements else table
-
-
-def _reagg_op_for_expr(expr):
-    """Return the re-aggregation operation name for an ibis expression.
-
-    Additive measures (SUM, COUNT) re-aggregate with ``sum``; MIN and MAX
-    with ``min``/``max``. MEAN never reaches here (decomposed by
-    ``_is_mean_expr``), nor does COUNT DISTINCT (deferred).
-
-    Returns ``None`` for everything else — median, stddev, variance,
-    compound expressions like ``sum()/count()`` — which cannot be
-    re-aggregated from a finer pre-aggregate at all. Those measures must
-    be computed at the exact target grain (``_exact_grain_preagg``);
-    the previous ``"sum"`` default silently summed per-key medians.
-    """
-    op = expr.op()
-    reductions = _reductions_for_expr(expr)
-    if isinstance(op, reductions.Min):
-        return "min"
-    if isinstance(op, reductions.Max):
-        return "max"
-    if isinstance(op, (reductions.Sum, reductions.Count, reductions.CountStar)):
-        return "sum"
-    if isinstance(op, reductions.Mean):
-        raise ValueError(
-            f"Mean expression {expr.get_name()!r} was not decomposed — "
-            "this is a bug in the pre-aggregation logic"
-        )
-    if isinstance(op, reductions.CountDistinct):
-        raise ValueError(
-            f"CountDistinct expression {expr.get_name()!r} was not deferred — "
-            "this is a bug in the pre-aggregation logic"
-        )
-    return None
-
-
-def _build_reagg(col_ref, op_name):
-    """Apply the correct re-aggregation to a column reference."""
-    return getattr(col_ref, op_name)()
-
-
 def _is_direct_physical_field(expr, table, column_name: str) -> bool:
     """Return whether *expr* is exactly ``table[column_name]``.
 
@@ -3435,7 +2758,7 @@ def _exact_grain_preagg(
     )
     joined = bridge.inner_join(raw_tbl, preds)
     pt = _compile_exact_measure_table(joined, tmp.values(), exact_measures)
-    from .nested_compile import get_ibis_module
+    from ..nested_compile import get_ibis_module
 
     pt = pt.mutate(**{presence_name: get_ibis_module(pt).literal(True)})
     # ibis rename convention: {new_name: old_name}
@@ -4086,73 +3409,7 @@ class SemanticAggregateOp(Relation):
         )
 
     def _to_untagged_with_nest(self, nest_specs: dict[str, NestAggSpec]):
-        """Compile ``nest=`` aggregate entries and join them to the outer result.
-
-        Each nest spec compiles as its own semantic aggregation at
-        (outer keys + inner keys) grain — measure and dimension names
-        resolve exactly like a top-level query. Its rows are collected
-        into one array-of-structs per outer group and attached to the
-        outer aggregate with a null-safe left join on the outer keys, so
-        outer groups the inner query filtered away keep a NULL array
-        instead of disappearing. HAVING predicates run at the inner grain
-        before collection; ``order_by``/``limit`` order and truncate each
-        group's array.
-        """
-
-        plain_aggs = {name: fn for name, fn in self.aggs.items() if name not in nest_specs}
-        outer_keys = list(self.keys)
-        result = None
-        if outer_keys or plain_aggs:
-            outer_op = SemanticAggregateOp(
-                source=self.source,
-                keys=self.keys,
-                aggs=plain_aggs,
-                nested_columns=tuple(n for n in self.nested_columns if n not in nest_specs),
-            )
-            result = outer_op.to_untagged()
-
-        for name, spec in nest_specs.items():
-            inner_tbl = spec.inner_op.to_untagged()
-            for predicate in reversed(spec.having):
-                inner_tbl = inner_tbl.filter(
-                    _resolve_expr(_unwrap(predicate), ColumnScope(_tbl=inner_tbl))
-                )
-            collect_kwargs = {}
-            if spec.order_keys:
-                collect_kwargs["order_by"] = [
-                    _resolve_nest_order_key(key, inner_tbl) for key in spec.order_keys
-                ]
-            collected = _collect_struct(
-                {c: inner_tbl[c] for c in spec.struct_fields}, **collect_kwargs
-            )
-            if spec.limit_spec is not None:
-                n, offset = spec.limit_spec
-                collected = collected[offset : offset + n]
-            if outer_keys:
-                nest_tbl = inner_tbl.group_by([inner_tbl[k] for k in outer_keys]).aggregate(
-                    **{name: collected}
-                )
-                # Temp-rename the join keys so the left join has no name
-                # collisions; null-safe equality keeps NULL dimension groups
-                # matched to their own nested rows.
-                tmp_keys = {f"__bsl_nest_k{i}__": k for i, k in enumerate(outer_keys)}
-                nest_tbl = nest_tbl.rename(tmp_keys)
-                tmp_for = {old: tmp for tmp, old in tmp_keys.items()}
-                preds = [null_safe_equal(result[k], nest_tbl[tmp_for[k]]) for k in outer_keys]
-                joined = result.left_join(nest_tbl, preds)
-                result = joined.select([*result.columns, name])
-            else:
-                nest_tbl = inner_tbl.aggregate(**{name: collected})
-                result = nest_tbl if result is None else result.cross_join(nest_tbl)
-
-        # Restore the requested column order: keys, then aggregates (nest
-        # entries included) in declaration order.
-        desired = list(dict.fromkeys([*self.keys, *self.aggs.keys()]))
-        cols = list(result.columns)
-        ordered = [c for c in desired if c in cols] + [c for c in cols if c not in desired]
-        if ordered != cols:
-            result = result.select(ordered)
-        return result
+        return _compile_module("_compile_nest").to_untagged_with_nest(self, nest_specs)
 
     def _to_untagged_with_preagg(
         self,
@@ -4161,1030 +3418,9 @@ class SemanticAggregateOp(Relation):
         join_tree_info: _JoinTreeInfo,
         filters: list | None = None,
     ):
-        """Pre-aggregate each source table's measures at its own grain, then join.
-
-        This prevents fan-out inflation when ``join_many`` is used.
-        """
-        root_names = {
-            name
-            for name, cardinality in join_tree_info.table_cardinalities.items()
-            if cardinality == "root"
-        }
-        predicate_sensitive = (
-            bool(filters)
-            or any(
-                "." in name and name.split(".", 1)[0] not in root_names
-                for name in (*self.keys, *self.aggs.keys())
-            )
-            or any("." not in name for name in self.aggs)
+        return _compile_module("_compile_preagg").to_untagged_with_preagg(
+            self, all_roots, join_op, join_tree_info, filters
         )
-        if predicate_sensitive:
-            _validate_preaggregation_join_predicates(join_op)
-        filters = filters or []
-        filter_fns = [_unwrap(pred) for pred in filters]
-        exact_filter_fields = frozenset().union(*(_exact_filter_fields(fn) for fn in filter_fns))
-        merged_dimensions = _get_merged_fields(all_roots, "dimensions", source=join_op)
-        merged_dimensions = _augment_dimensions_with_raw_columns(
-            merged_dimensions,
-            (*self.keys, *exact_filter_fields),
-            all_roots,
-            join_op,
-        )
-        if exact_filter_fields:
-            _validate_qualified_filter_fields(exact_filter_fields, merged_dimensions, all_roots)
-        merged_base_measures = _get_merged_fields(all_roots, "measures")
-        merged_calc_measures = _get_merged_fields(all_roots, "calc_measures")
-        group_by_cols = list(self.keys)
-        join_column_lineage, _joined_column_names = _build_join_column_lineage(join_op)
-        wrapper_local_dimensions = {
-            name: dimension
-            for name, dimension in _join_wrapper_local_dimensions(all_roots).items()
-            if name in group_by_cols
-        }
-        wrapper_dimension_owners: dict[str, str | None] = {}
-
-        # --- 1. Try to build the full joined table (for scope / dim bridge) ---
-        # Pre-agg needs all tables for dimension bridges — no pruning here.
-        try:
-            joined_base_tbl = join_op.to_untagged(parent_requirements=None)
-        except Exception:
-            joined_base_tbl = None
-            tbl = None  # chasm / column collision – work without full join
-
-        if joined_base_tbl is not None:
-            if wrapper_local_dimensions:
-                wrapper_dimension_owners, wrapper_dimension_errors = (
-                    _infer_join_wrapper_dimension_owners(
-                        wrapper_local_dimensions,
-                        joined_base_tbl,
-                        merged_dimensions,
-                        join_column_lineage,
-                    )
-                )
-                if wrapper_dimension_errors:
-                    details = "; ".join(
-                        f"{name!r}: {reason}"
-                        for name, reason in sorted(wrapper_dimension_errors.items())
-                    )
-                    raise ValueError(
-                        "Cannot source-preaggregate by join-wrapper dimension(s) "
-                        f"because their row-level lineage is not reproducible: {details}. "
-                        "Define each dimension on one owning semantic model before "
-                        "joining, or aggregate the joined rows explicitly."
-                    )
-            try:
-                tbl = _mutate_dimensions_with_dependencies(
-                    joined_base_tbl,
-                    [k for k in self.keys if k in merged_dimensions],
-                    merged_dimensions,
-                )
-            except Exception:
-                tbl = None  # dimension materialization fallback
-
-        if joined_base_tbl is None and wrapper_local_dimensions:
-            raise ValueError(
-                "Cannot source-preaggregate by a join-wrapper dimension because "
-                "the flattened join is unavailable for source-lineage analysis."
-            )
-
-        if tbl is not None:
-            _reject_unresolvable_group_keys(self.keys, merged_dimensions, tbl, all_roots)
-
-        # Apply collected filters to the full joined table so that
-        # dimension bridges only include rows surviving the filter. A
-        # filter that fails to resolve here may still be pushed to its
-        # owning source table below; anything handled by neither path
-        # raises instead of silently dropping the filter.
-        filters_on_tbl: set[int] = set()
-        tbl_filter_exprs: dict[int, Any] = {}
-        if tbl is not None and filter_fns:
-            from .convert import _Resolver
-
-            # Bare aliases for prefixed dims: a filter written `t.size`
-            # against a join where exactly one table declares `size` must
-            # resolve on the joined table too — otherwise the dim bridge is
-            # built from the UNFILTERED join and sibling tables' measures
-            # silently ignore the filter. Physical columns keep priority
-            # (aliases are only added for names that are not columns of the
-            # joined table), and ambiguous suffixes get no alias so they
-            # still hit the loud ownership check below.
-            dims_for_tbl = dict(merged_dimensions)
-            tbl_cols = set(tbl.columns)
-            _by_suffix: dict[str, list[str]] = {}
-            for dname in merged_dimensions:
-                if "." in dname:
-                    _by_suffix.setdefault(dname.split(".", 1)[1], []).append(dname)
-            for short, fulls in _by_suffix.items():
-                if short not in dims_for_tbl and short not in tbl_cols and len(fulls) == 1:
-                    dims_for_tbl[short] = merged_dimensions[fulls[0]]
-
-            for i, pred_fn in enumerate(filter_fns):
-                try:
-                    resolver = _Resolver(tbl, dims_for_tbl)
-                    pred_expr = _resolve_expr(pred_fn, resolver)
-                    filtered = tbl.filter(pred_expr)
-                except Exception:
-                    continue
-                tbl = filtered
-                filters_on_tbl.add(i)
-                tbl_filter_exprs[i] = pred_expr
-
-        # --- 1b. Determine which source table(s) each filter belongs to ---
-        # Ownership resolution uses each table's own dimensions (bare and
-        # table-prefixed) so ``t["orders.status"]`` resolves only against
-        # ``orders``. A filter owned by exactly one table is pushed to that
-        # table's raw table; a filter resolving against several tables is
-        # ambiguous and is only applied through the filtered joined table.
-        raw_tables: dict = {}
-        filter_owners: list[frozenset] = []
-        if filter_fns:
-            for tname, top in join_tree_info.table_ops.items():
-                try:
-                    raw_tables[tname] = _to_untagged(top)
-                except Exception:
-                    continue
-            for pred_fn in filter_fns:
-                owners = set()
-                for tname, top in join_tree_info.table_ops.items():
-                    raw = raw_tables.get(tname)
-                    if raw is None:
-                        continue
-                    try:
-                        _resolve_expr(
-                            pred_fn,
-                            _table_filter_resolver(
-                                raw,
-                                top,
-                                tname,
-                                _exact_filter_fields(pred_fn),
-                            ),
-                        )
-                        owners.add(tname)
-                    except Exception:
-                        pass
-                filter_owners.append(frozenset(owners))
-            for i, owners in enumerate(filter_owners):
-                if i in filters_on_tbl or len(owners) == 1:
-                    continue
-                if len(owners) > 1:
-                    raise ValueError(
-                        f"Filter #{i} is ambiguous: it resolves against multiple "
-                        f"joined tables ({', '.join(sorted(owners))}) and could "
-                        "not be applied to the full joined table. Qualify the "
-                        'field with a table prefix (e.g. t["orders.status"]).'
-                    )
-                raise ValueError(
-                    f"Filter #{i} does not resolve against the joined table or "
-                    "any single source table; it would be silently ignored. "
-                    "Check the dimension/column name, or qualify it with a "
-                    'table prefix (e.g. t["orders.status"]).'
-                )
-
-        # --- 1c. Split cross-table conjunctions into per-table legs ---
-        # A compound like (t["orders.status"]=="open") & (t.qty >= 2) has no
-        # single owner, so it used to reach the many side only through a
-        # join-KEY bridge, keeping every item of any qualifying order — the
-        # item-level leg was silently dropped. Split top-level ANDs and track
-        # each leg's source tables via field provenance so legs can be pushed
-        # row-precisely to the table they constrain.
-        filter_legs: dict[int, list] = {}
-        if tbl_filter_exprs:
-            leaf_types = _leaf_rel_types()
-            base_rel_to_table: dict = {}
-            for tname, raw in raw_tables.items():
-                for leaf in walk_nodes(leaf_types, raw):
-                    key = _base_rel_key(leaf)
-                    # Same physical table on both sides (self-join): a leg
-                    # can't be attributed to one alias — never match.
-                    if base_rel_to_table.get(key, tname) != tname:
-                        base_rel_to_table[key] = "__ambiguous__"
-                    else:
-                        base_rel_to_table[key] = tname
-            for i, expr in tbl_filter_exprs.items():
-                if filter_owners[i] and len(filter_owners[i]) == 1:
-                    continue  # whole filter pushes to its single owner
-                filter_legs[i] = [
-                    (leg, _leg_source_tables(leg, base_rel_to_table, leaf_types))
-                    for leg in _flatten_and_legs(expr)
-                ]
-
-        # --- 2. Build aggregation plan ---
-        if tbl is not None:
-            scope = MeasureScope(
-                _tbl=tbl,
-                _known=list(merged_base_measures.keys()) + list(merged_calc_measures.keys()),
-            )
-            plan = _build_aggregation_plan(
-                aggs=self.aggs,
-                keys=self.keys,
-                scope=scope,
-                is_post_agg=False,
-                merged_base_measures=merged_base_measures,
-                merged_calc_measures=merged_calc_measures,
-                tbl=tbl,
-            )
-        else:
-            # Derive plan directly from metadata (chasm fallback)
-            agg_specs = {}
-            for name in self.aggs:
-                if name in merged_base_measures:
-                    agg_specs[name] = _make_agg_callable(merged_base_measures[name])
-            plan = _AggregationPlan(
-                agg_specs=FrozenDict(agg_specs),
-                calc_specs=FrozenDict({}),
-                requested_measures=tuple(self.aggs.keys()),
-                group_by_cols=tuple(self.keys),
-            )
-
-        # --- 3. Partition agg_specs by source table ---
-        # Partition by the join's per-table roots, not ``all_roots``. When a
-        # wrapper SemanticTableOp from ``SemanticJoin.with_measures()`` /
-        # ``with_dimensions()`` is in the tree, ``all_roots`` collapses to a
-        # single name=None root, so prefixed aggregates would all fall into the
-        # unprefixed bucket and bypass per-grain pre-aggregation.
-        partition_roots = _find_all_root_models(join_op)
-        partitioned = _partition_agg_specs_by_source(dict(plan.agg_specs), partition_roots)
-
-        # Measures declared on a joined wrapper have unprefixed result names.
-        # Route field-bearing reductions back to their unique owning leaf so
-        # they do not aggregate the fanned-out join. Relation-only reductions
-        # (notably t.count()) remain explicit joined-row-grain measures.
-        wrapper_specs = partitioned.get(None, {})
-        for measure_name, measure_fn in tuple(wrapper_specs.items()):
-            measure_obj = merged_base_measures.get(measure_name)
-            if not isinstance(measure_obj, Measure):
-                continue
-            owner = _infer_join_wrapper_measure_owner(measure_obj, join_tree_info)
-            if owner is None:
-                continue
-            partitioned.setdefault(owner, {})[measure_name] = measure_fn
-            del wrapper_specs[measure_name]
-        if not wrapper_specs:
-            partitioned.pop(None, None)
-
-        # --- 4. Pre-aggregate each source table on its raw table ---
-        _preagg_results: list = []
-        # Track MEAN measures decomposed into SUM + COUNT for correct re-agg
-        _decomposed_means: dict[str, tuple[str, str]] = {}
-        # Track correct re-aggregation op per measure (default "sum")
-        _reagg_ops: dict[str, str] = {}
-        # COUNT reductions produce zero for an empty group. A source-level
-        # pre-aggregate has no row for an unmatched outer-join group, so its
-        # later dimension-bridge join must restore that identity explicitly.
-        _empty_count_measures: set[str] = set()
-        # Track COUNT DISTINCT measures deferred past pre-aggregation.
-        # Value: (table_name, short_name, raw_tbl, measure_fn,
-        #         {joined_group_name: materialized_raw_column})
-        _deferred_count_distincts: dict[str, tuple] = {}
-        # Fan-out-safe totals sources for t.all(...): per table, the
-        # filtered raw table plus the original (undecomposed) measure
-        # expressions, aggregated at zero grain on first need.
-        _totals_sources: dict = {}
-
-        for table_name, measures in partitioned.items():
-            if table_name is None:
-                # Unprefixed – aggregate on the full join if available
-                if tbl is not None:
-                    agg_exprs = {n: f(tbl) for n, f in measures.items()}
-                    _totals_sources[None] = (tbl, dict(agg_exprs))
-                    if group_by_cols:
-                        r = tbl.group_by([tbl[c] for c in group_by_cols]).aggregate(**agg_exprs)
-                    else:
-                        r = tbl.aggregate(**agg_exprs)
-                    _preagg_results.append(r)
-                continue
-
-            table_op = join_tree_info.table_ops.get(table_name)
-            if table_op is None:
-                continue
-
-            raw_tbl = _to_untagged(table_op)
-            source_key_names = join_column_lineage.get(table_name, {})
-
-            # Push filters owned by this table onto its raw table. Filters
-            # handled elsewhere (applied to the full joined table, or owned
-            # by another table) reach this table via a join-key bridge.
-            needs_bridge = False
-            if filter_fns:
-                residual_cross_legs = False
-                for i, pred_fn in enumerate(filter_fns):
-                    if filter_owners[i] == frozenset({table_name}):
-                        pred_expr = _resolve_expr(
-                            pred_fn,
-                            _table_filter_resolver(
-                                raw_tbl,
-                                table_op,
-                                table_name,
-                                _exact_filter_fields(pred_fn),
-                            ),
-                        )
-                        raw_tbl = raw_tbl.filter(pred_expr)
-                        continue
-                    needs_bridge = True
-                    # Push this table's legs of a cross-table conjunction at
-                    # row grain; legs spanning tables (cross-table OR) keep
-                    # row-level information the key bridge cannot recover.
-                    for leg_expr, leg_srcs in filter_legs.get(i, ()):
-                        if leg_srcs == {table_name}:
-                            try:
-                                leg_op = _inline_to_base_op(
-                                    leg_expr.op(), _leaf_rel_types(), target_tbl=raw_tbl
-                                )
-                                raw_tbl = raw_tbl.filter(leg_op.to_expr())
-                            except Exception:
-                                residual_cross_legs = True
-                        elif table_name in leg_srcs and len(leg_srcs) > 1:
-                            residual_cross_legs = True
-
-                if residual_cross_legs and measures:
-                    raise ValueError(
-                        f"A filter mixes columns of {table_name!r} with other "
-                        "tables in a way that cannot be applied row-precisely "
-                        f"to {table_name!r} (e.g. OR across tables); its "
-                        "measures would be silently inflated to join-key "
-                        "grain. Split the condition into separate .filter() "
-                        "calls, or restate it against a single table."
-                    )
-
-            # Rows of every non-root/right table whose join keys are NULL or
-            # match no left-side row never appear in a LEFT JOIN. Restrict
-            # both join_many and join_one measure legs to actual participants;
-            # otherwise scalar right measures include orphan source rows and
-            # flattened CountStar reductions count unmatched left rows.
-            needs_participation = join_tree_info.table_cardinalities.get(table_name) not in (
-                "root",
-                "cross",
-            ) and bool(measures)
-
-            # Filters not pushed here (cross-table, ambiguous, or owned
-            # by another table) restrict via join keys from the filtered
-            # full joined table, or from the owning table's raw table.
-            if needs_bridge or needs_participation:
-                jk = join_tree_info.table_join_keys.get(table_name, set())
-                if tbl is not None:
-                    shared = _source_join_key_pairs(
-                        table_name,
-                        jk,
-                        raw_tbl.columns,
-                        tbl.columns,
-                        join_column_lineage,
-                    )
-                    if shared:
-                        key_bridge = tbl.select(
-                            [tbl[joined].name(raw) for raw, joined in shared]
-                        ).distinct()
-                        preds = [raw_tbl[raw] == key_bridge[raw] for raw, _joined in shared]
-                        raw_tbl = raw_tbl.inner_join(key_bridge, preds).select(raw_tbl)
-                    elif needs_participation:
-                        raise ValueError(
-                            f"Measures on {table_name!r} cannot be restricted "
-                            "to rows that participate in its join: no "
-                            "join-key column is available on both the raw "
-                            "table and the joined table. Computing them on "
-                            "the raw table would silently count rows the "
-                            "join can never produce."
-                        )
-                else:
-                    # Chasm fallback: restrict participation via the raw
-                    # keys of root-side tables that share join-key columns.
-                    participation_bridged = not needs_participation
-                    if needs_participation:
-                        for root_name, card in join_tree_info.table_cardinalities.items():
-                            if card != "root":
-                                continue
-                            root_op = join_tree_info.table_ops.get(root_name)
-                            if root_op is None:
-                                continue
-                            try:
-                                root_raw = _to_untagged(root_op)
-                            except Exception:
-                                continue
-                            root_jk = join_tree_info.table_join_keys.get(root_name, set())
-                            shared = sorted(
-                                jk & root_jk & set(raw_tbl.columns) & set(root_raw.columns)
-                            )
-                            if shared:
-                                key_bridge = root_raw.select(
-                                    [root_raw[c] for c in shared]
-                                ).distinct()
-                                preds = [raw_tbl[c] == key_bridge[c] for c in shared]
-                                raw_tbl = raw_tbl.inner_join(key_bridge, preds).select(raw_tbl)
-                                participation_bridged = True
-                    if not participation_bridged:
-                        raise ValueError(
-                            f"Measures on {table_name!r} cannot be restricted "
-                            "to rows that participate in its join: the "
-                            "full joined table is unavailable (chasm fallback) "
-                            "and no join-key column is shared with the root "
-                            "table. Computing them on the raw table would "
-                            "silently count rows the join can never produce."
-                        )
-                    # Chasm fallback: restrict via each owning table's keys
-                    for i, pred_fn in enumerate(filter_fns):
-                        owners = filter_owners[i]
-                        if table_name in owners or len(owners) != 1:
-                            continue
-                        (owner_name,) = owners
-                        owner_op = join_tree_info.table_ops.get(owner_name)
-                        owner_raw = raw_tables.get(owner_name)
-                        if owner_op is None or owner_raw is None:
-                            continue
-                        owner_raw = owner_raw.filter(
-                            _resolve_expr(
-                                pred_fn,
-                                _table_filter_resolver(
-                                    owner_raw,
-                                    owner_op,
-                                    owner_name,
-                                    _exact_filter_fields(pred_fn),
-                                ),
-                            )
-                        )
-                        owner_jk = join_tree_info.table_join_keys.get(owner_name, set())
-                        shared = sorted(
-                            jk & owner_jk & set(raw_tbl.columns) & set(owner_raw.columns)
-                        )
-                        if shared:
-                            key_bridge = owner_raw.select([owner_raw[c] for c in shared]).distinct()
-                            preds = [raw_tbl[c] == key_bridge[c] for c in shared]
-                            raw_tbl = raw_tbl.inner_join(key_bridge, preds).select(raw_tbl)
-
-            table_measures = _get_field_dict(table_op, "measures")
-            table_dims = _get_field_dict(table_op, "dimensions")
-            raw_columns = set(raw_tbl.columns)
-
-            # Build agg expressions on the raw table
-            measure_binding_op = _to_op(raw_tbl)
-            agg_exprs: dict = {}
-            _tot_exprs: dict = {}
-            _exact_measures_t: dict = {}
-            _nested_measures_t: dict = {}
-            for mname, _mfn in measures.items():
-                short = mname.split(".", 1)[1] if "." in mname else mname
-                source_measure = (
-                    table_measures.get(short) if "." in mname else merged_base_measures.get(mname)
-                )
-                if isinstance(source_measure, Measure):
-                    expr = source_measure(raw_tbl)
-                    if isinstance(expr, NestedAccessMarker):
-                        # Nested arrays are a separate aggregation grain, not
-                        # ibis reductions that can be inspected via `.op()`.
-                        # Keep the original source-bound measure for exact
-                        # target-grain compilation after group-key routing.
-                        _nested_measures_t[mname] = source_measure
-                        _tot_exprs[mname] = expr
-                        if expr.operation in {"count", "nunique"}:
-                            _empty_count_measures.add(mname)
-                        continue
-                    if _is_count_expr(expr):
-                        _empty_count_measures.add(mname)
-                    # Original expression on the filtered raw table: at zero
-                    # grain this is fan-out-safe, so it powers t.all(...) totals
-                    _tot_exprs[mname] = expr
-                    # Decompose MEAN into SUM + COUNT for correct re-aggregation
-                    if _is_mean_expr(expr):
-                        mean_op = expr.op()
-                        base_col = mean_op.arg.to_expr()
-                        # mean(where=...) must filter both legs, or the
-                        # decomposed mean silently ignores its condition
-                        mean_where = mean_op.where.to_expr() if mean_op.where is not None else None
-                        sum_col = f"_sum__{mname}"
-                        count_col = f"_count__{mname}"
-                        agg_exprs[sum_col] = base_col.sum(where=mean_where)
-                        agg_exprs[count_col] = base_col.count(where=mean_where)
-                        _decomposed_means[mname] = (sum_col, count_col)
-                    elif _is_count_distinct_expr(expr):
-                        # COUNT DISTINCT is immune to fan-out — defer past pre-agg
-                        _deferred_count_distincts[mname] = (
-                            table_name,
-                            short,
-                            raw_tbl,
-                            source_measure,
-                            {},
-                        )
-                    else:
-                        reagg = _reagg_op_for_expr(expr)
-                        if reagg is None and group_by_cols:
-                            # Non-decomposable (median, stddev, compound
-                            # ratio): computed at the exact target grain
-                            # after the grain decision below
-                            _exact_measures_t[mname] = source_measure
-                        else:
-                            if reagg is not None:
-                                _reagg_ops[mname] = reagg
-                            agg_exprs[mname] = expr
-
-            if _tot_exprs:
-                _totals_sources[table_name] = (raw_tbl, _tot_exprs)
-
-            # --- Compute grain ---
-            if not group_by_cols:
-                if not agg_exprs and not _exact_measures_t and not _nested_measures_t:
-                    continue
-                # No group-by → scalar aggregate
-                if agg_exprs:
-                    pt = raw_tbl.aggregate(**agg_exprs)
-                    # Recompute MEAN from SUM/COUNT for scalar results
-                    for mname, (sc, cc) in _decomposed_means.items():
-                        if sc in pt.columns and cc in pt.columns:
-                            pt = pt.mutate(**{mname: pt[sc] / pt[cc]})
-                            pt = pt.drop(sc, cc)
-                    _preagg_results.append(pt)
-                if _nested_measures_t:
-                    _preagg_results.append(
-                        _compile_exact_measure_table(raw_tbl, (), _nested_measures_t)
-                    )
-                continue
-
-            # a) group-by dims that live on this table
-            _local_dims = []
-            _local_group_keys: dict[str, str] = {}
-            # Derived dimensions are materialized under private, collision-safe
-            # raw aliases. Generic preaggregates rename those aliases back to
-            # the public semantic group keys before joining the dimension
-            # bridge; exact reductions use `_local_group_keys` directly.
-            _local_group_outputs: dict[str, str] = {}
-            has_cross_table_gb = False
-            for gb_key in group_by_cols:
-                if "." in gb_key:
-                    prefix, short = gb_key.split(".", 1)
-                    if prefix == table_name and short in table_dims:
-                        dim_fn = table_dims[short]
-                        if callable(dim_fn):
-                            resolved_via_deps = False
-                            try:
-                                dim_expr = dim_fn(raw_tbl)
-                            except Exception:
-                                # Derived dim referencing other derived dims
-                                raw_tbl = _mutate_dimensions_with_dependencies(
-                                    raw_tbl, [short], table_dims
-                                )
-                                raw_columns = set(raw_tbl.columns)
-                                dim_expr = raw_tbl[short]
-                                resolved_via_deps = True
-                            if not resolved_via_deps and _is_direct_physical_field(
-                                dim_expr, raw_tbl, short
-                            ):
-                                # Simple column reference — use directly
-                                if short not in _local_dims:
-                                    _local_dims.append(short)
-                                _local_group_keys[gb_key] = short
-                            else:
-                                # `get_name()` is deliberately insufficient
-                                # here: `t.kind.upper()` can still be named
-                                # "kind". Materialize every non-Field expression
-                                # under an allocator-owned alias so neither the
-                                # source schema nor user internal-prefix columns
-                                # can be overwritten.
-                                raw_group_name = _allocate_local_group_alias(gb_key, raw_columns)
-                                raw_tbl = raw_tbl.mutate(**{raw_group_name: dim_expr})
-                                raw_columns = set(raw_tbl.columns)
-                                if raw_group_name not in _local_dims:
-                                    _local_dims.append(raw_group_name)
-                                _local_group_keys[gb_key] = raw_group_name
-                                _local_group_outputs[raw_group_name] = gb_key
-                    elif prefix == table_name and short in raw_columns:
-                        # A qualified raw column is a valid source-local
-                        # dimension even when it was not declared explicitly.
-                        # Keep it at its owning table's grain; falling through
-                        # to join-key grain would repeat a coarser aggregate
-                        # once per dimension value during bridge re-joining.
-                        if short not in _local_dims:
-                            _local_dims.append(short)
-                        _local_group_keys[gb_key] = short
-                    elif prefix != table_name:
-                        has_cross_table_gb = True
-                elif gb_key in merged_dimensions:
-                    # Unprefixed derived dimension (e.g. registered on the
-                    # join wrapper via with_dimensions, or lowered from a
-                    # pre-aggregation .mutate()). Materialize it on this
-                    # raw table when its expression resolves here so the
-                    # per-table grain matches the requested grouping;
-                    # tables that lack the source columns fall back to
-                    # join keys + the dimension bridge.
-                    if gb_key in wrapper_local_dimensions:
-                        wrapper_owner = wrapper_dimension_owners.get(gb_key)
-                        if wrapper_owner != table_name:
-                            # Constants and dimensions owned by another leaf
-                            # are attached through the full joined dimension
-                            # bridge. Never re-evaluate the wrapper definition
-                            # against a same-named raw column on this source.
-                            has_cross_table_gb = True
-                            continue
-
-                        dim_fn = wrapper_local_dimensions[gb_key]
-                        joined_to_raw = {
-                            joined_name: raw_name
-                            for raw_name, joined_name in join_column_lineage.get(
-                                table_name, {}
-                            ).items()
-                        }
-                        owner_scope = _RenamedResolver(raw_tbl, joined_to_raw)
-                        dimension_scope = _JoinWrapperDimensionResolver(
-                            owner_scope,
-                            dict(merged_dimensions),
-                            resolving=(gb_key,),
-                        )
-                        try:
-                            dim_expr = dim_fn(
-                                dimension_scope,
-                                _dims=dict(merged_dimensions),
-                            )
-                        except Exception as exc:
-                            raise ValueError(
-                                f"Join-wrapper dimension {gb_key!r} was bound to "
-                                f"semantic model {table_name!r} but could not be "
-                                "evaluated in that model's raw namespace."
-                            ) from exc
-
-                        direct_raw_name = next(
-                            (
-                                column
-                                for column in raw_columns
-                                if _is_direct_physical_field(dim_expr, raw_tbl, column)
-                            ),
-                            None,
-                        )
-                        if direct_raw_name is not None:
-                            if direct_raw_name not in _local_dims:
-                                _local_dims.append(direct_raw_name)
-                            _local_group_keys[gb_key] = direct_raw_name
-                        else:
-                            raw_group_name = _allocate_local_group_alias(gb_key, raw_columns)
-                            raw_tbl = raw_tbl.mutate(**{raw_group_name: dim_expr})
-                            raw_columns = set(raw_tbl.columns)
-                            _local_dims.append(raw_group_name)
-                            _local_group_keys[gb_key] = raw_group_name
-                            _local_group_outputs[raw_group_name] = gb_key
-                    elif gb_key in raw_columns:
-                        if gb_key not in _local_dims:
-                            _local_dims.append(gb_key)
-                        _local_group_keys[gb_key] = gb_key
-                    else:
-                        dim_fn = merged_dimensions[gb_key]
-                        try:
-                            dim_expr = (
-                                dim_fn(raw_tbl)
-                                if callable(dim_fn)
-                                else _resolve_expr(dim_fn, raw_tbl)
-                            )
-                            raw_tbl = raw_tbl.mutate(**{gb_key: dim_expr})
-                            raw_columns = set(raw_tbl.columns)
-                            if gb_key not in _local_dims:
-                                _local_dims.append(gb_key)
-                            _local_group_keys[gb_key] = gb_key
-                        except Exception:
-                            has_cross_table_gb = True
-
-            # COUNT DISTINCT is evaluated after all source pre-aggregates are
-            # combined. Carry the final (possibly dimension-materialized) raw
-            # relation and its local group mapping into that exact-grain path.
-            for mname in measures:
-                deferred = _deferred_count_distincts.get(mname)
-                if deferred is None:
-                    continue
-                src_name, short, _old_raw, source_measure, _old_local = deferred
-                _deferred_count_distincts[mname] = (
-                    src_name,
-                    short,
-                    raw_tbl,
-                    source_measure,
-                    dict(_local_group_keys),
-                )
-
-            if not agg_exprs and not _exact_measures_t and not _nested_measures_t:
-                continue
-
-            join_keys = join_tree_info.table_join_keys.get(table_name, set())
-            available_jk = tuple(jk for jk in sorted(join_keys) if jk in raw_columns)
-
-            # b) if none found, use join keys; if cross-table gb, augment with them
-            match (_local_dims, has_cross_table_gb):
-                case ([], _):
-                    grain = available_jk
-                case (_, True):
-                    grain = tuple(
-                        dict.fromkeys(
-                            _local_dims + [jk for jk in available_jk if jk not in _local_dims]
-                        )
-                    )
-                case _:
-                    grain = tuple(_local_dims)
-
-            # Materializing a derived group dimension above replaces raw_tbl
-            # with a Project relation.  Reductions were built before that
-            # projection; relation-argument reductions such as CountStar keep
-            # pointing at the old table and fail ibis's aggregate integrity
-            # check.  Rebind every reduction to the final relation used by the
-            # group-by.  Field-based reductions need the same treatment for
-            # consistency, even though ibis can sometimes dereference them
-            # through a projection automatically.
-            final_raw_op = _to_op(raw_tbl)
-            if final_raw_op is not measure_binding_op:
-                agg_exprs = {
-                    name: _to_op(expr).replace({measure_binding_op: final_raw_op}).to_expr()
-                    for name, expr in agg_exprs.items()
-                }
-
-            if _exact_measures_t:
-                exact_needs_source_spine = join_tree_info.table_cardinalities.get(
-                    table_name
-                ) not in ("root", "cross")
-                if not has_cross_table_gb and not exact_needs_source_spine:
-                    # Local grain IS the target grain — aggregate the
-                    # original root/cross expressions directly, no re-agg
-                    # happens. Non-root sources still use the exact bridge so
-                    # unmatched LEFT JOIN groups receive the expression's
-                    # actual empty-set value rather than blanket NULL.
-                    for m, fn in _exact_measures_t.items():
-                        agg_exprs[m] = fn(raw_tbl)
-                else:
-                    _preagg_results.append(
-                        _exact_grain_preagg(
-                            raw_tbl,
-                            tbl,
-                            group_by_cols,
-                            available_jk,
-                            _exact_measures_t,
-                            joined_key_names=source_key_names,
-                            local_group_keys=_local_group_keys,
-                        )
-                    )
-
-            if _nested_measures_t:
-                nested_needs_source_spine = join_tree_info.table_cardinalities.get(
-                    table_name
-                ) not in ("root", "cross")
-                if not has_cross_table_gb and not nested_needs_source_spine and grain:
-                    # A root/cross source grouped only by its own dimensions
-                    # is already at the requested grain. Compile nested
-                    # measures directly there and keep them separate from the
-                    # regular preaggregate so sibling joins cannot fan out the
-                    # unnested rows.
-                    nested_pt = _compile_exact_measure_table(raw_tbl, grain, _nested_measures_t)
-                    local_renames = {
-                        public_name: raw_name
-                        for raw_name, public_name in _local_group_outputs.items()
-                        if raw_name in nested_pt.columns
-                    }
-                    collisions = sorted(
-                        set(local_renames) & (set(nested_pt.columns) - set(local_renames.values()))
-                    )
-                    if collisions:
-                        raise ValueError(
-                            "Cannot restore semantic group-key names after nested "
-                            "source preaggregation because they collide with "
-                            f"aggregate columns: {collisions}. Rename the aggregate field."
-                        )
-                    if local_renames:
-                        nested_pt = nested_pt.rename(local_renames)
-                    joined_grain = tuple(_local_group_outputs.get(name, name) for name in grain)
-                    _preagg_results.append(
-                        _rename_preagg_grain_to_joined_aliases(
-                            nested_pt, joined_grain, source_key_names
-                        )
-                    )
-                else:
-                    # Cross-source dimensions and non-root sources need the
-                    # joined group-domain spine. This also restores the true
-                    # empty-set value for unmatched LEFT JOIN groups.
-                    _preagg_results.append(
-                        _exact_grain_preagg(
-                            raw_tbl,
-                            tbl,
-                            group_by_cols,
-                            available_jk,
-                            _nested_measures_t,
-                            joined_key_names=source_key_names,
-                            local_group_keys=_local_group_keys,
-                        )
-                    )
-
-            if agg_exprs:
-                if grain:
-                    pt = raw_tbl.group_by([raw_tbl[c] for c in grain]).aggregate(**agg_exprs)
-                    local_renames = {
-                        public_name: raw_name
-                        for raw_name, public_name in _local_group_outputs.items()
-                        if raw_name in pt.columns
-                    }
-                    collisions = sorted(
-                        set(local_renames) & (set(pt.columns) - set(local_renames.values()))
-                    )
-                    if collisions:
-                        raise ValueError(
-                            "Cannot restore semantic group-key names after source "
-                            "preaggregation because they collide with aggregate "
-                            f"columns: {collisions}. Rename the aggregate field."
-                        )
-                    if local_renames:
-                        pt = pt.rename(local_renames)
-                    joined_grain = tuple(_local_group_outputs.get(name, name) for name in grain)
-                    _preagg_results.append(
-                        _rename_preagg_grain_to_joined_aliases(pt, joined_grain, source_key_names)
-                    )
-                else:
-                    _preagg_results.append(raw_tbl.aggregate(**agg_exprs))
-
-        # Freeze mutable accumulators
-        preagg_results = tuple(_preagg_results)
-        decomposed_means = tuple(_decomposed_means.items())
-        reagg_ops = tuple(_reagg_ops.items())
-        empty_count_measures = tuple(_empty_count_measures)
-
-        if not preagg_results and not _deferred_count_distincts:
-            if tbl is None:
-                raise ValueError("No aggregation results and full join unavailable")
-            # Nothing could be pre-aggregated at a source grain. This fallback
-            # used to aggregate the flattened join while ignoring both the
-            # group keys and every calc spec: with only calc measures
-            # requested it returned ``tbl.aggregate({})`` — an Aggregate with
-            # no columns at all, which surfaces much later as an unrelated
-            # arrow/schema error instead of naming the problem.
-            if plan.calc_specs:
-                raise ValueError(
-                    "Pre-aggregation cannot compute calculated measure(s) "
-                    f"{sorted(plan.calc_specs)} on this joined model: none of "
-                    "the requested measures aggregate at a single source's "
-                    "grain, so there is no fan-out-safe base to calculate "
-                    "from. This happens when a calc measure builds its "
-                    "reduction inline — e.g. "
-                    "t.distance.sum() / t.all(t.distance.sum()) — rather than "
-                    "referencing a declared measure. Declare the reduction as "
-                    "a measure and reference it by name:\n"
-                    "    .with_measures(total=lambda t: t.distance.sum())\n"
-                    "    .with_measures(share=lambda t: t.total / t.all(t.total))"
-                )
-            if not plan.agg_specs:
-                raise ValueError(
-                    f"Pre-aggregation produced no measures for {sorted(self.aggs)} "
-                    f"with group keys {list(plan.group_by_cols)}; aggregating the "
-                    "joined table here would ignore the request entirely."
-                )
-            specs = {n: f(tbl) for n, f in plan.agg_specs.items()}
-            group_cols = [c for c in plan.group_by_cols if c in tbl.columns]
-            if group_cols:
-                return tbl.group_by(group_cols).aggregate(**specs)
-            return tbl.aggregate(specs)
-
-        # --- 5. Combine pre-agg results ---
-        result = None
-        if preagg_results:
-            if not group_by_cols:
-                # Cross-join all scalar results
-                result = preagg_results[0]
-                for pt in preagg_results[1:]:
-                    result = result.cross_join(pt)
-            elif tbl is not None:
-                result = self._join_preagg_with_dim_bridge(
-                    preagg_results,
-                    plan,
-                    tbl,
-                    group_by_cols,
-                    decomposed_means=decomposed_means,
-                    reagg_ops=reagg_ops,
-                    empty_count_measures=empty_count_measures,
-                )
-            else:
-                # Chasm fallback with group-by: build minimal dim bridge from raw tables
-                result = self._build_minimal_dim_bridge(
-                    preagg_results,
-                    plan,
-                    group_by_cols,
-                    join_tree_info,
-                    merged_dimensions,
-                    decomposed_means=decomposed_means,
-                    reagg_ops=reagg_ops,
-                    empty_count_measures=empty_count_measures,
-                )
-
-        # --- 5b. Compute deferred COUNT DISTINCT measures ---
-        # COUNT DISTINCT cannot be re-aggregated from per-key partial counts.
-        # For grouped queries, bridge the requested group domain to the
-        # measure's owning raw source and evaluate the original expression
-        # there. Re-evaluating it directly on the flattened join loses source
-        # provenance when physical column names collide (e.g. both sides have
-        # ``id``), and can count an unmatched left key as a right-side value.
-        if _deferred_count_distincts:
-            cd_parts: list = []
-            join_column_lineage, _joined_columns = _build_join_column_lineage(join_op)
-            for mname, (
-                src_tbl_name,
-                _short,
-                src_raw,
-                src_fn,
-                local_group_keys,
-            ) in _deferred_count_distincts.items():
-                if not group_by_cols:
-                    cd_parts.append(src_raw.aggregate(**{mname: src_fn(src_raw)}))
-                    continue
-
-                if tbl is None:
-                    raise ValueError(
-                        "COUNT DISTINCT measures require the full joined table "
-                        "for grouped source-aware aggregation but it is unavailable "
-                        "(chasm fallback)."
-                    )
-                join_keys = join_tree_info.table_join_keys.get(src_tbl_name, set())
-                source_key_names = join_column_lineage.get(src_tbl_name, {})
-                available_jk = tuple(
-                    key
-                    for key in sorted(join_keys)
-                    if key in src_raw.columns and source_key_names.get(key, key) in tbl.columns
-                )
-                if not available_jk:
-                    raise ValueError(
-                        f"COUNT DISTINCT measure {mname!r} cannot be attached to "
-                        "the requested group grain without a shared join key."
-                    )
-
-                cd_exact = _exact_grain_preagg(
-                    src_raw,
-                    tbl,
-                    group_by_cols,
-                    available_jk,
-                    {mname: src_fn},
-                    joined_key_names=source_key_names,
-                    local_group_keys=local_group_keys,
-                )
-                # The exact source aggregate has no row for an unmatched
-                # outer-join group. Attach it to the joined group domain and
-                # restore COUNT DISTINCT's empty-set identity before calc
-                # measures are compiled.
-                group_spine = tbl.select([tbl[c] for c in group_by_cols]).distinct()
-                predicates = [null_safe_equal(group_spine[c], cd_exact[c]) for c in group_by_cols]
-                cd_pt = group_spine.left_join(cd_exact, predicates).select(
-                    [group_spine] + [cd_exact[mname]]
-                )
-                cd_parts.append(_fill_missing_count_identities(cd_pt, (mname,)))
-
-            # Merge count-distinct parts into result
-            for cd_pt in cd_parts:
-                cd_meas = [c for c in cd_pt.columns if c in _deferred_count_distincts]
-                cd_grain = [c for c in cd_pt.columns if c not in _deferred_count_distincts]
-                if result is None:
-                    result = cd_pt
-                elif cd_grain:
-                    common = [c for c in cd_grain if c in result.columns]
-                    if common:
-                        preds = [null_safe_equal(result[c], cd_pt[c]) for c in common]
-                        result = result.left_join(cd_pt, preds).select(
-                            [result] + [cd_pt[m] for m in cd_meas]
-                        )
-                    else:
-                        result = result.cross_join(cd_pt)
-                else:
-                    result = result.cross_join(cd_pt)
-
-            result = _fill_missing_count_identities(result, _deferred_count_distincts)
-
-        # --- 6. Apply calc_specs ---
-        if plan.calc_specs:
-
-            def _fanout_safe_totals():
-                """Zero-grain totals from per-table raw aggregates.
-
-                Aggregating each (filtered) source table without grouping
-                cannot fan out, so ``t.all(...)`` denominators stay correct
-                under join_many.
-                """
-                parts = [
-                    _compile_evaluated_measure_table(src, (), texprs)
-                    for src, texprs in _totals_sources.values()
-                    if texprs
-                ]
-                if not parts:
-                    return None
-                total = parts[0]
-                for p in parts[1:]:
-                    total = total.cross_join(p)
-                return total
-
-            result = self._apply_calc_specs(result, plan, tbl, totals_builder=_fanout_safe_totals)
-
-        # --- 7. Select requested columns ---
-        available = frozenset(result.columns)
-        requested = tuple(
-            dict.fromkeys((*plan.group_by_cols, *plan.requested_measures, *plan.calc_specs.keys()))
-        )
-        missing = [c for c in requested if c not in available]
-        if missing:
-            # Dropping the missing columns would return a result that silently
-            # ignores part of the query (e.g. cross-joined models have no
-            # dimension bridge, so group keys from the other side never get
-            # attached to a pre-aggregated measure leg).
-            raise ValueError(
-                f"Pre-aggregation could not attach requested column(s) {missing} "
-                f"to the result; available columns: {sorted(available)}. "
-                "Grouping a cross-joined model by one side's dimension while "
-                "aggregating the other side's measures is not supported — "
-                "restructure the query (e.g. join on an explicit key, or "
-                "aggregate each side separately and combine)."
-            )
-        if requested:
-            result = result.select([result[c] for c in requested])
-
-        return result
 
     def _to_untagged_with_deferred_joins(
         self,
@@ -5194,411 +3430,8 @@ class SemanticAggregateOp(Relation):
         deferrable: list[_DeferrableJoin],
         filters: list | None = None,
     ):
-        """Aggregate first, then LEFT JOIN deferred dimension tables.
-
-        For ``join_one`` dimension lookups where the right table's PK matches
-        the join key and no measures from the right table are used, we can:
-        1. Strip deferred tables from the join tree
-        2. Add join keys to GROUP BY so they survive aggregation
-        3. Aggregate on the core (non-deferred) tables
-        4. LEFT JOIN deferred dimension tables onto the aggregated result
-        """
-        filters = filters or []
-        deferred_names = {d.table_name for d in deferrable}
-
-        merged_dimensions = _get_merged_fields(all_roots, "dimensions", source=join_op)
-        merged_dimensions = _augment_dimensions_with_raw_columns(
-            merged_dimensions, self.keys, all_roots, join_op
-        )
-        merged_base_measures = _get_merged_fields(all_roots, "measures")
-        merged_calc_measures = _get_merged_fields(all_roots, "calc_measures")
-
-        # --- 1. Rebuild join tree without deferred tables ---
-        def strip_deferred(node):
-            """Remove deferred right-side tables from the join tree."""
-            if not isinstance(node, SemanticJoinOp):
-                return node
-            # Recurse left
-            new_left = strip_deferred(node.left)
-            # If right side is a deferred table, return just the left
-            if isinstance(node.right, SemanticTableOp) and node.right.name in deferred_names:
-                return new_left
-            return SemanticJoinOp(
-                left=new_left,
-                right=node.right,
-                how=node.how,
-                on=node.on,
-                cardinality=node.cardinality,
-            )
-
-        core_join = strip_deferred(join_op)
-
-        # --- 2. Build core table and aggregate ---
-        if isinstance(core_join, SemanticJoinOp):
-            core_tbl = core_join.to_untagged(parent_requirements=None)
-        else:
-            core_tbl = _to_untagged(core_join)
-
-        # Resolve group-by dimensions on the core table
-        core_group_keys = []
-        for k in self.keys:
-            if k in deferred_names or any(k.startswith(f"{dn}.") for dn in deferred_names):
-                # Skip deferred table's own dimensions from group-by
-                # (they'll be added via post-agg join)
-                continue
-            core_group_keys.append(k)
-
-        # Add left-side join keys to group-by so they survive aggregation
-        for d in deferrable:
-            for jk in d.join_keys_left:
-                if jk not in core_group_keys and jk in core_tbl.columns:
-                    core_group_keys.append(jk)
-
-        # Resolve dimensions for group-by on the core table
-        core_tbl = _mutate_dimensions_with_dependencies(
-            core_tbl,
-            [k for k in core_group_keys if k in merged_dimensions],
-            merged_dimensions,
-        )
-
-        # Apply filters — loudly. Filters referencing deferred tables were
-        # already excluded from deferral by _find_deferrable_joins, so a
-        # filter that fails to resolve here is a genuine error, not a
-        # cross-table predicate awaiting another mechanism.
-        if filters:
-            from .convert import _Resolver
-
-            for i, pred in enumerate(filters):
-                pred_fn = _unwrap(pred)
-                try:
-                    resolver = _Resolver(core_tbl, merged_dimensions)
-                    pred_expr = _resolve_expr(pred_fn, resolver)
-                except Exception as exc:
-                    raise ValueError(
-                        f"Filter #{i} does not resolve against the aggregation "
-                        "source table; it would be silently ignored. Check the "
-                        "dimension/column name, or qualify it with a table "
-                        'prefix (e.g. t["orders.status"]).'
-                    ) from exc
-                core_tbl = core_tbl.filter(pred_expr)
-
-        # Build aggregation expressions
-        scope = MeasureScope(
-            _tbl=core_tbl,
-            _known=list(merged_base_measures.keys()) + list(merged_calc_measures.keys()),
-        )
-        plan = _build_aggregation_plan(
-            aggs=self.aggs,
-            keys=tuple(core_group_keys),
-            scope=scope,
-            is_post_agg=False,
-            merged_base_measures=merged_base_measures,
-            merged_calc_measures=merged_calc_measures,
-            tbl=core_tbl,
-        )
-
-        # Execute aggregation on core table
-        if plan.group_by_cols:
-            gb_exprs = []
-            for col in plan.group_by_cols:
-                if col in core_tbl.columns:
-                    gb_exprs.append(core_tbl[col])
-                elif col in merged_dimensions:
-                    dim_fn = merged_dimensions[col]
-                    gb_exprs.append(dim_fn(core_tbl).name(col))
-
-            agg_exprs = {name: fn(core_tbl) for name, fn in plan.agg_specs.items()}
-            result = core_tbl.group_by(gb_exprs).aggregate(**agg_exprs)
-        else:
-            agg_exprs = {name: fn(core_tbl) for name, fn in plan.agg_specs.items()}
-            result = core_tbl.aggregate(**agg_exprs)
-
-        # Handle calculated measures
-        if plan.calc_specs:
-            known = frozenset(merged_base_measures) | frozenset(merged_calc_measures)
-            result = apply_calc_measures(
-                result,
-                core_tbl,
-                dict(plan.calc_specs),
-                known,
-                agg_specs=dict(plan.agg_specs),
-            )
-
-        # --- 3. LEFT JOIN deferred dimension tables ---
-        for d in deferrable:
-            dim_tbl = _to_untagged(d.table_op)
-
-            # Reuse the original join predicate to preserve key pairing
-            # (avoids mismatch from independently sorting left/right keys)
-            join_preds = d.on_predicate(result, dim_tbl)
-
-            # Compute deferred dimension columns on the dimension table.
-            # For direct columns (e.g., cc_name) this is a no-op rename.
-            # For derived expressions (e.g., cc_name.upper()) this materializes
-            # the computed column so it's available after the join.
-            dim_cols_to_add = []
-            right_dims = d.table_op.get_dimensions()
-            for dim_name in d.deferred_dims:
-                short = dim_name.split(".", 1)[1] if "." in dim_name else dim_name
-                if short in right_dims:
-                    dim_fn = right_dims[short]
-                    if callable(dim_fn):
-                        try:
-                            expr = dim_fn(dim_tbl)
-                        except Exception:
-                            # Derived dims may reference other derived dims;
-                            # materialize dependencies first. Failures beyond
-                            # that raise — silently dropping the requested
-                            # dimension returned unlabeled rows at a hidden
-                            # grain.
-                            dim_tbl = _mutate_dimensions_with_dependencies(
-                                dim_tbl, [short], right_dims
-                            )
-                            dim_cols_to_add.append((dim_name, short))
-                            continue
-                        col_name = expr.get_name()
-                        if col_name in dim_tbl.columns:
-                            # Direct column — use as-is
-                            dim_cols_to_add.append((dim_name, col_name))
-                        else:
-                            # Derived expression — mutate onto dim table
-                            # Use a temp name to avoid collisions
-                            temp_name = f"__deferred_{short}"
-                            dim_tbl = dim_tbl.mutate(**{temp_name: expr})
-                            dim_cols_to_add.append((dim_name, temp_name))
-
-            if dim_cols_to_add:
-                # Perform the LEFT JOIN
-                joined = result.left_join(dim_tbl, join_preds)
-                # Select: all from result + deferred dim columns renamed to prefixed names
-                select_exprs = [result]
-                for prefixed_name, raw_col in dim_cols_to_add:
-                    select_exprs.append(dim_tbl[raw_col].name(prefixed_name))
-                result = joined.select(select_exprs)
-
-        # --- 4. Select only originally requested columns ---
-        original_cols = list(self.keys) + list(self.aggs.keys())
-        # Add deferred dim names (they were requested)
-        for d in deferrable:
-            for dd in d.deferred_dims:
-                if dd not in original_cols:
-                    original_cols.append(dd)
-        # Also keep calc measure names
-        if plan.calc_specs:
-            for cm in plan.calc_specs:
-                if cm not in original_cols:
-                    original_cols.append(cm)
-
-        available = frozenset(result.columns)
-        select_cols = [c for c in original_cols if c in available]
-        if select_cols and set(select_cols) != available:
-            result = result.select([result[c] for c in select_cols])
-
-        return result
-
-    # -- helpers for _to_untagged_with_preagg --------------------------------
-
-    @staticmethod
-    def _join_preagg_with_dim_bridge(
-        preagg_results,
-        plan,
-        tbl,
-        group_by_cols,
-        decomposed_means=(),
-        reagg_ops=(),
-        empty_count_measures=(),
-    ):
-        """Join pre-aggregated tables using per-table dimension bridges.
-
-        ``decomposed_means`` and ``reagg_ops`` are tuples of (key, value) pairs.
-        """
-        from .nested_compile import join_tables as _join_tables
-
-        reagg_map = dict(reagg_ops)
-        # Include decomposed auxiliary columns in measure names
-        aux_cols = frozenset(c for _, (sc, cc) in decomposed_means for c in (sc, cc))
-        measure_names = (
-            frozenset(plan.agg_specs.keys()) | frozenset(plan.calc_specs.keys()) | aux_cols
-        )
-        gb_set = frozenset(group_by_cols)
-
-        def _rejoin_one(pt):
-            pt_grain = tuple(c for c in pt.columns if c not in measure_names)
-            pt_meas = tuple(c for c in pt.columns if c in measure_names)
-
-            if gb_set <= frozenset(pt_grain):
-                # Already has group-by columns — re-aggregate if over-grouped
-                if frozenset(pt_grain) != gb_set:
-                    re_aggs = {m: _build_reagg(pt[m], reagg_map.get(m, "sum")) for m in pt_meas}
-                    pt = pt.group_by([pt[c] for c in group_by_cols]).aggregate(**re_aggs)
-
-                # A right/source-local preaggregate has no row for an
-                # unmatched LEFT JOIN group even when it is already at the
-                # requested semantic grain. Reattach it to the full joined
-                # group domain so SUM/MEDIAN remain NULL and COUNT can restore
-                # its zero identity later.
-                group_spine = tbl.select([tbl[c] for c in group_by_cols]).distinct()
-                predicates = [null_safe_equal(group_spine[c], pt[c]) for c in group_by_cols]
-                return group_spine.left_join(pt, predicates).select(
-                    [group_spine] + [pt[c] for c in pt_meas]
-                )
-
-            if not pt_grain:
-                return pt
-
-            # Build a per-table dim bridge with ONLY this table's grain cols
-            bridge_cols = tuple(
-                dict.fromkeys(c for c in (*group_by_cols, *pt_grain) if c in tbl.columns)
-            )
-            if not bridge_cols:
-                return pt
-
-            dim_bridge = tbl.select([tbl[c] for c in bridge_cols]).distinct()
-            common = tuple(c for c in pt_grain if c in dim_bridge.columns)
-            if not common:
-                return pt
-
-            # Null-safe equality: a NULL group key (real NULL dim value, or
-            # minted by the outer join for parents with no children) must
-            # still match its pre-agg row
-            preds = [null_safe_equal(dim_bridge[c], pt[c]) for c in common]
-            joined_pt = dim_bridge.left_join(pt, preds).select(
-                [dim_bridge] + [pt[c] for c in pt_meas]
-            )
-            gb_avail = tuple(c for c in group_by_cols if c in joined_pt.columns)
-            if gb_avail:
-                re_aggs = {
-                    m: _build_reagg(joined_pt[m], reagg_map.get(m, "sum"))
-                    for m in pt_meas
-                    if m in joined_pt.columns
-                }
-                if re_aggs:
-                    joined_pt = joined_pt.group_by([joined_pt[c] for c in gb_avail]).aggregate(
-                        **re_aggs
-                    )
-            return joined_pt
-
-        rejoined = tuple(_rejoin_one(pt) for pt in preagg_results)
-        result = _join_tables(group_by_cols, list(rejoined))
-
-        # Recompute MEAN from decomposed SUM/COUNT after combining
-        for mname, (sc, cc) in decomposed_means:
-            if sc in result.columns and cc in result.columns:
-                result = result.mutate(**{mname: result[sc] / result[cc]})
-                result = result.drop(sc, cc)
-
-        return _fill_missing_count_identities(result, empty_count_measures)
-
-    @staticmethod
-    def _build_minimal_dim_bridge(
-        preagg_results,
-        plan,
-        group_by_cols,
-        join_tree_info,
-        merged_dimensions,
-        decomposed_means=(),
-        reagg_ops=(),
-        empty_count_measures=(),
-    ):
-        """Build dim bridges from raw tables when full join is unavailable.
-
-        When the full ibis join fails (e.g. column collisions with 3+
-        ``join_many`` arms sharing the same key), we build per-table dimension
-        bridges using only the raw single-table data already captured in
-        *join_tree_info*.  This avoids the ibis collision entirely because we
-        never join more than two tables at once.
-
-        ``decomposed_means`` and ``reagg_ops`` are tuples of (key, value) pairs.
-        """
-        from .nested_compile import join_tables as _join_tables
-
-        reagg_map = dict(reagg_ops)
-        aux_cols = frozenset(c for _, (sc, cc) in decomposed_means for c in (sc, cc))
-        measure_names = (
-            frozenset(plan.agg_specs.keys()) | frozenset(plan.calc_specs.keys()) | aux_cols
-        )
-        gb_set = frozenset(group_by_cols)
-
-        def _bridge_one_preagg(pt):
-            pt_grain = tuple(c for c in pt.columns if c not in measure_names)
-            pt_meas = tuple(c for c in pt.columns if c in measure_names)
-
-            # (a) Pre-agg already carries all group-by cols — re-aggregate.
-            if gb_set <= frozenset(pt_grain):
-                if frozenset(pt_grain) != gb_set:
-                    re_aggs = {m: _build_reagg(pt[m], reagg_map.get(m, "sum")) for m in pt_meas}
-                    return pt.group_by([pt[c] for c in group_by_cols]).aggregate(**re_aggs)
-                return pt
-
-            # (b) Scalar pre-agg — nothing to bridge.
-            if not pt_grain:
-                return pt
-
-            # (c) Bridge missing group-by dims from raw tables.
-            bridged = pt
-            for gb_col in group_by_cols:
-                if gb_col in bridged.columns:
-                    continue
-                bridged = _attach_dim_column(
-                    bridged,
-                    gb_col,
-                    measure_names,
-                    join_tree_info,
-                    merged_dimensions,
-                )
-
-            # Re-aggregate onto the requested group-by granularity.
-            gb_avail = tuple(c for c in group_by_cols if c in bridged.columns)
-            re_aggs = {
-                m: _build_reagg(bridged[m], reagg_map.get(m, "sum"))
-                for m in pt_meas
-                if m in bridged.columns
-            }
-            match (gb_avail, bool(re_aggs)):
-                case ((), _) | (_, False):
-                    return bridged
-                case _:
-                    return bridged.group_by([bridged[c] for c in gb_avail]).aggregate(**re_aggs)
-
-        rejoined = tuple(_bridge_one_preagg(pt) for pt in preagg_results)
-        result = _join_tables(group_by_cols, list(rejoined))
-
-        # Recompute MEAN from decomposed SUM/COUNT after combining
-        for mname, (sc, cc) in decomposed_means:
-            if sc in result.columns and cc in result.columns:
-                result = result.mutate(**{mname: result[sc] / result[cc]})
-                result = result.drop(sc, cc)
-
-        return _fill_missing_count_identities(result, empty_count_measures)
-
-    @staticmethod
-    def _apply_calc_specs(result, plan, tbl, totals_builder=None):
-        """Apply calculated measure specs to the pre-aggregated result.
-
-        Each calc spec is a :class:`CalcMeasure` whose lambda is
-        re-evaluated against the post-aggregation result via the
-        ibis-native compiler. ``t.all(measure_ref)`` patterns trigger a
-        no-group-by totals aggregation that gets cross-joined into the
-        result so non-sum measures (mean/quantile/…) get correct overall
-        values; ``apply_calc_measures`` builds the totals lazily on
-        first use.
-
-        ``totals_builder`` overrides how the base totals table is built.
-        The pre-agg path passes a fan-out-safe builder that aggregates
-        each source table at zero grain — re-running agg specs on the
-        fanned-out join would inflate ``t.all(...)`` denominators.
-        """
-        if not plan.calc_specs:
-            return result
-        base_for_calc = tbl if tbl is not None else result
-        known = frozenset(plan.agg_specs.keys()) | frozenset(plan.calc_specs.keys())
-        return apply_calc_measures(
-            result,
-            base_for_calc,
-            dict(plan.calc_specs),
-            known,
-            agg_specs=dict(plan.agg_specs),
-            totals_base_builder=totals_builder,
+        return _compile_module("_compile_deferred").to_untagged_with_deferred_joins(
+            self, all_roots, join_op, join_tree_info, deferrable, filters
         )
 
 
@@ -6365,7 +4198,7 @@ class SemanticJoinOp(Relation):
         Returns:
             Ibis join expression (potentially simplified).
         """
-        from .convert import _Resolver
+        from ..convert import _Resolver
 
         augmented_requirements = self._augment_parent_requirements_for_pruning(parent_requirements)
 
@@ -6490,7 +4323,7 @@ class SemanticJoinOp(Relation):
         fall back to returning the inputs unchanged so ibis executes the
         join natively. Rebinding is only needed for xorq-vendored backends.
         """
-        from ._xorq import HAS_XORQ
+        from .._xorq import HAS_XORQ
 
         # Without xorq, from_ibis() is an identity, so both sides already share
         # their backends — nothing to rebind (see _rebind_to_canonical_backend).
@@ -6498,8 +4331,8 @@ class SemanticJoinOp(Relation):
             return left_tbl, right_tbl
 
         try:
-            from ._xorq import relations as xorq_rel
-            from ._xorq import walk_nodes
+            from .._xorq import relations as xorq_rel
+            from .._xorq import walk_nodes
         except ImportError:
             return left_tbl, right_tbl
 
@@ -6633,7 +4466,7 @@ def _get_weight_expr(
     all_roots: list,
     is_string: bool,
 ) -> Any:
-    from ._xorq import api as xo
+    from .._xorq import api as xo
 
     if not by_measure:
         return xo._.count()
@@ -6650,7 +4483,7 @@ def _build_string_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
-    from ._xorq import api as xo
+    from .._xorq import api as xo
 
     return (
         base_tbl.group_by(field_expr.name("value"))
@@ -6673,7 +4506,7 @@ def _build_numeric_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
-    from ._xorq import api as xo
+    from .._xorq import api as xo
 
     return (
         base_tbl.select(field_expr.name("value"))
@@ -6786,7 +4619,7 @@ class SemanticIndexOp(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        from ._xorq import api as xo
+        from .._xorq import api as xo
 
         return FrozenOrderedDict(
             {
@@ -6834,7 +4667,7 @@ class SemanticIndexOp(Relation):
         )
 
         if not fields_to_index:
-            from ._xorq import api as xo
+            from .._xorq import api as xo
 
             return xo.memtable(
                 {
@@ -7297,7 +5130,7 @@ def _build_column_rename_map(
     # Build column index using graph_utils (returns Result)
     from returns.result import Failure
 
-    from .graph_utils import build_column_index_from_roots
+    from ..graph_utils import build_column_index_from_roots
 
     column_index_result = build_column_index_from_roots(all_roots)
     if isinstance(column_index_result, Failure):
@@ -7534,187 +5367,3 @@ def _merge_fields_with_prefixing(
                 merged_fields[field_name] = field_value
 
     return FrozenDict(merged_fields)
-
-
-# ==============================================================================
-# Column Tracking for Projection Pushdown
-# ==============================================================================
-
-
-@frozen
-class ColumnTracker:
-    """Immutable tracker for column references during expression evaluation.
-
-    Uses frozenset for tracked columns. New columns are added by creating
-    new tracker instances with updated sets.
-    """
-
-    columns: frozenset[str] = field(factory=frozenset, converter=frozenset)
-
-    def with_column(self, col_name: str) -> ColumnTracker:
-        """Return new tracker with additional column."""
-        return ColumnTracker(columns=self.columns | {col_name})
-
-    def merge(self, other: ColumnTracker) -> ColumnTracker:
-        """Return new tracker with merged columns."""
-        return ColumnTracker(columns=self.columns | other.columns)
-
-
-@frozen
-class ColumnExtractionResult:
-    """Result of column extraction with error handling.
-
-    Separates successful extraction from error cases.
-    """
-
-    columns: frozenset[str] = field(factory=frozenset, converter=frozenset)
-    extraction_failed: bool = False
-    error_type: type[Exception] | None = None
-
-    @classmethod
-    def success(cls, columns: set[str] | frozenset[str]) -> ColumnExtractionResult:
-        """Create successful result."""
-        return cls(columns=frozenset(columns), extraction_failed=False)
-
-    @classmethod
-    def failure(cls, error: Exception) -> ColumnExtractionResult:
-        """Create failure result with error information."""
-        return cls(
-            columns=frozenset(),
-            extraction_failed=True,
-            error_type=type(error),
-        )
-
-    def is_success(self) -> bool:
-        """Check if extraction succeeded."""
-        return not self.extraction_failed
-
-
-@frozen
-class JoinColumnExtractionResult:
-    """Result of join column extraction for both tables."""
-
-    left_columns: frozenset[str] = field(factory=frozenset, converter=frozenset)
-    right_columns: frozenset[str] = field(factory=frozenset, converter=frozenset)
-    extraction_failed: bool = False
-    error_type: type[Exception] | None = None
-
-    @classmethod
-    def success(
-        cls,
-        left: set[str] | frozenset[str],
-        right: set[str] | frozenset[str],
-    ) -> JoinColumnExtractionResult:
-        """Create successful result."""
-        return cls(
-            left_columns=frozenset(left),
-            right_columns=frozenset(right),
-            extraction_failed=False,
-        )
-
-    @classmethod
-    def failure(cls, error: Exception) -> JoinColumnExtractionResult:
-        """Create failure result with error information."""
-        return cls(
-            left_columns=frozenset(),
-            right_columns=frozenset(),
-            extraction_failed=True,
-            error_type=type(error),
-        )
-
-    def is_success(self) -> bool:
-        """Check if extraction succeeded."""
-        return not self.extraction_failed
-
-
-def _make_tracking_proxy(
-    table: ir.Table,
-    on_access: Callable[[str], None],
-) -> Any:
-    """Create tracking proxy with custom access handler.
-
-    Composable factory that enables different tracking strategies
-    via the on_access callback.
-    """
-
-    class _TrackingProxy:
-        """Proxy that tracks attribute and item access."""
-
-        def __init__(self, inner_table: ir.Table, access_handler: Callable[[str], None]):
-            object.__setattr__(self, "_table", inner_table)
-            object.__setattr__(self, "_on_access", access_handler)
-
-        def __getattr__(self, name: str):
-            if name.startswith("_"):
-                return getattr(self._table, name)
-            # Relation methods such as ``count`` are not columns. Tracking
-            # them makes CountStar appear to reference a fictitious field and
-            # corrupts source-ownership inference.
-            if name in self._table.columns:
-                self._on_access(name)
-            return getattr(self._table, name)
-
-        def __getitem__(self, name: str):
-            if name in self._table.columns:
-                self._on_access(name)
-            return self._table[name]
-
-    return _TrackingProxy(table, on_access)
-
-
-def _extract_columns_from_callable(
-    fn: Any,
-    table: ir.Table,
-) -> ColumnExtractionResult:
-    """Extract column names referenced by a callable.
-
-    Uses immutable tracking and returns structured result.
-    """
-    if not callable(fn):
-        return ColumnExtractionResult.success(frozenset())
-
-    tracker_ref = [ColumnTracker()]
-
-    def on_column_access(col_name: str) -> None:
-        tracker_ref[0] = tracker_ref[0].with_column(col_name)
-
-    try:
-        tracking_proxy = _make_tracking_proxy(table, on_column_access)
-        fn(tracking_proxy)
-        return ColumnExtractionResult.success(tracker_ref[0].columns)
-
-    except Exception as e:
-        return ColumnExtractionResult.failure(e)
-
-
-def _extract_join_key_columns(
-    on: Callable[[Any, Any], ir.BooleanValue],
-    left_table: ir.Table,
-    right_table: ir.Table,
-) -> JoinColumnExtractionResult:
-    left_tracker_ref = [ColumnTracker()]
-    right_tracker_ref = [ColumnTracker()]
-
-    def on_left_access(col_name: str) -> None:
-        left_tracker_ref[0] = left_tracker_ref[0].with_column(col_name)
-
-    def on_right_access(col_name: str) -> None:
-        right_tracker_ref[0] = right_tracker_ref[0].with_column(col_name)
-
-    try:
-        left_proxy = _make_tracking_proxy(left_table, on_left_access)
-        right_proxy = _make_tracking_proxy(right_table, on_right_access)
-        on(left_proxy, right_proxy)
-
-        return JoinColumnExtractionResult.success(
-            left_tracker_ref[0].columns,
-            right_tracker_ref[0].columns,
-        )
-
-    except Exception as e:
-        return JoinColumnExtractionResult.failure(e)
-
-
-# ==============================================================================
-# Table Column Requirements
-# ==============================================================================
