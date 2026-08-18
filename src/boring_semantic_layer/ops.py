@@ -59,6 +59,7 @@ from .calc_compiler import (
 from .calc_compiler import (
     compile_calc_measure as _compile_calc_measure_impl,
 )
+from .fieldref import resolve_suffix, split_prefixed
 from .graph_utils import walk_nodes
 from .measure_scope import (
     ColumnScope,
@@ -2518,14 +2519,7 @@ def _resolve_short_name(
     merged_calc_measures: dict,
 ) -> str | None:
     """Match ``name`` against merged measure dicts, allowing suffix lookup."""
-    if name in merged_base_measures or name in merged_calc_measures:
-        return name
-    suffix = f".{name}"
-    matches = [k for k in merged_base_measures if k.endswith(suffix)]
-    matches += [k for k in merged_calc_measures if k.endswith(suffix)]
-    if len(matches) == 1:
-        return matches[0]
-    return None
+    return resolve_suffix(name, merged_base_measures, merged_calc_measures)
 
 
 def _topological_calc_order(
@@ -7791,19 +7785,7 @@ class TableColumnRequirements:
         return {table: set(cols) for table, cols in self.requirements.items()}
 
 
-def _parse_prefixed_field(field_name: str) -> tuple[str | None, str]:
-    """Parse potentially prefixed field name.
-
-    Args:
-        field_name: Field name, possibly prefixed (e.g., "table.column")
-
-    Returns:
-        Tuple of (table_name or None, column_name)
-    """
-    if "." in field_name:
-        table, col = field_name.split(".", 1)
-        return (table, col)
-    return (None, field_name)
+_parse_prefixed_field = split_prefixed
 
 
 def _extract_requirements_from_keys(

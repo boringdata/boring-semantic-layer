@@ -17,6 +17,7 @@ from typing import Any
 from attrs import field, frozen
 
 from .errors import suggest_kinded
+from .fieldref import suffix_matches
 
 
 class UnknownMeasureRefError(AttributeError):
@@ -81,8 +82,7 @@ def _resolve_column_short_name(tbl, name):
         return tbl[name]
 
     if hasattr(tbl, "columns"):
-        suffix = f".{name}"
-        matches = [c for c in tbl.columns if c.endswith(suffix)]
+        matches = suffix_matches(name, tbl.columns)
         if matches:
             raise AttributeError(
                 f"Column '{name}' not found. Did you mean one of the fully qualified names: "

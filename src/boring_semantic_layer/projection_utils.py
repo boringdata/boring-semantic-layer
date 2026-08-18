@@ -9,6 +9,7 @@ from attrs import frozen
 from returns.result import Failure, Success, safe
 
 from ._xorq import types as ir
+from .fieldref import split_prefixed
 from .graph_utils import walk_nodes
 
 
@@ -135,16 +136,7 @@ def apply_requirements_to_tables(
     return result
 
 
-def _parse_prefixed_field(key: str) -> tuple[str | None, str]:
-    """Parse prefixed field like 'customers.name' into (table_name, col_name).
-
-    Returns:
-        (table_name, col_name) if prefixed, (None, key) otherwise
-    """
-    if "." in key:
-        parts = key.split(".", 1)
-        return (parts[0], parts[1])
-    return (None, key)
+_parse_prefixed_field = split_prefixed
 
 
 def extract_requirements_from_measures(

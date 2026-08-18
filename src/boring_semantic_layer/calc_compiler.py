@@ -47,6 +47,7 @@ from .calc_analyzer import (
     virtual_agg_table,
 )
 from .errors import suggest_kinded
+from .fieldref import resolve_suffix
 from .measure_scope import UnknownMeasureRefError
 
 logger = logging.getLogger(__name__)
@@ -217,24 +218,11 @@ class IbisCalcScope:
         them by short name (``t.flight_count``); we transparently bridge by
         suffix-matching when a unique match exists.
         """
-        if name in self._known_measures:
-            return name
-        suffix = f".{name}"
-        matches = tuple(k for k in self._known_measures if k.endswith(suffix))
-        if len(matches) == 1:
-            return matches[0]
-        return None
+        return resolve_suffix(name, self._known_measures)
 
     def _resolve_priority_measure_name(self, name: str) -> str | None:
-        if name in self._priority_measures and name in self._known_measures:
-            return name
-        suffix = f".{name}"
-        matches = tuple(
-            k for k in self._priority_measures if k in self._known_measures and k.endswith(suffix)
-        )
-        if len(matches) == 1:
-            return matches[0]
-        return None
+        eligible = [k for k in self._priority_measures if k in self._known_measures]
+        return resolve_suffix(name, eligible)
 
     def __getattr__(self, name: str):
         if name.startswith("_"):
