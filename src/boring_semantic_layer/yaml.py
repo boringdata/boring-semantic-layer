@@ -8,7 +8,7 @@ from typing import Any
 from ibis import _
 
 from .api import to_semantic_table
-from .errors import unwrap_or_raise
+from .errors import DefinitionError, format_suggestions, unwrap_or_raise
 from .expr import SemanticModel, SemanticTable
 from .io import read_yaml_file
 from .ops import Dimension, Measure
@@ -338,6 +338,74 @@ def _load_table_for_yaml_model(
     return tables, tables[table_name]
 
 
+_MODEL_KEYS = frozenset(
+    {
+        "table",
+        "description",
+        "database",
+        "dimensions",
+        "measures",
+        "calculated_measures",
+        "joins",
+        "filter",
+        "profile",
+    }
+)
+
+_VALID_TIME_GRAINS = frozenset(
+    {
+        "TIME_GRAIN_YEAR",
+        "TIME_GRAIN_QUARTER",
+        "TIME_GRAIN_MONTH",
+        "TIME_GRAIN_WEEK",
+        "TIME_GRAIN_DAY",
+        "TIME_GRAIN_HOUR",
+        "TIME_GRAIN_MINUTE",
+        "TIME_GRAIN_SECOND",
+        "year",
+        "quarter",
+        "month",
+        "week",
+        "day",
+        "hour",
+        "minute",
+        "second",
+    }
+)
+
+
+def _validate_model_config(name: str, model_config: Mapping[str, Any]) -> None:
+    """Reject unknown keys and invalid grains loudly, at load time.
+
+    A typo like ``dimension:`` used to load silently as a model with zero
+    dimensions; every mistake now names the model, the key, and the
+    accepted spellings.
+    """
+    unknown = sorted(set(model_config) - _MODEL_KEYS)
+    if unknown:
+        hints = "".join(format_suggestions(k, _MODEL_KEYS) for k in unknown)
+        raise DefinitionError(
+            f"Model {name!r} has unknown key(s) {unknown}. "
+            f"Accepted keys: {sorted(_MODEL_KEYS)}.{hints}"
+        )
+    for section in ("dimensions", "measures", "calculated_measures"):
+        entries = model_config.get(section) or {}
+        if not isinstance(entries, Mapping):
+            raise DefinitionError(
+                f"Model {name!r}: {section!r} must be a mapping of name -> "
+                f"expression/config, got {type(entries).__name__}"
+            )
+        for field_name, cfg in entries.items():
+            if isinstance(cfg, Mapping):
+                grain = cfg.get("smallest_time_grain")
+                if grain is not None and grain not in _VALID_TIME_GRAINS:
+                    raise DefinitionError(
+                        f"Model {name!r}, {section[:-1]} {field_name!r}: invalid "
+                        f"smallest_time_grain {grain!r}. Accepted values: "
+                        f"{sorted(_VALID_TIME_GRAINS)}."
+                    )
+
+
 def from_config(
     config: Mapping[str, Any],
     tables: Mapping[str, Any] | None = None,
@@ -410,9 +478,10 @@ def from_config(
 
     # First pass: create models
     for name, model_config in model_configs.items():
+        _validate_model_config(name, model_config)
         table_name = model_config.get("table")
         if not table_name:
-            raise ValueError(f"Model '{name}' must specify 'table' field")
+            raise DefinitionError(f"Model '{name}' must specify 'table' field")
 
         # Load table if needed and verify it exists
         tables, table = _load_table_for_yaml_model(model_config, tables, table_name)
