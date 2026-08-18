@@ -174,11 +174,10 @@ class TestFilterFlavorByTable:
         assert len(out) == 2
 
     def test_invalid_string_filter_fails_at_build_time(self):
-        from returns.primitives.exceptions import UnwrapFailedError
-
+        from boring_semantic_layer.errors import QueryError
         from boring_semantic_layer.query import Filter
 
-        with pytest.raises(UnwrapFailedError):
+        with pytest.raises(QueryError, match="Invalid filter expression"):
             Filter(filter="__import__('os').system('true')").to_callable()
 
 
