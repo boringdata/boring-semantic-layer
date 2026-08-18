@@ -51,9 +51,7 @@ def _nested_frames(result, nest_col):
     out = {}
     for _, row in result.iterrows():
         items = row[nest_col]
-        out[row[result.columns[0]]] = (
-            None if items is None else pd.DataFrame(list(items))
-        )
+        out[row[result.columns[0]]] = None if items is None else pd.DataFrame(list(items))
     return out
 
 
@@ -72,9 +70,7 @@ def _assert_nested_matches(nested, truth, outer_key, inner_keys, measure_name):
         assert list(got.columns) == [*inner_keys, measure_name]
         for ik in inner_keys:
             assert list(got[ik]) == list(exp[ik]), (outer_val, ik)
-        assert [float(v) for v in got[measure_name]] == [
-            float(v) for v in exp["qty"]
-        ], outer_val
+        assert [float(v) for v in got[measure_name]] == [float(v) for v in exp["qty"]], outer_val
 
 
 def test_nest_canonical_measure_name_form(orders):
@@ -93,9 +89,7 @@ def test_nest_canonical_measure_name_form(orders):
     assert totals == {"open": 150.0, "closed": 60.0}
 
     truth = _ground_truth(ORDERS_DF, ["status"], ["sku"])
-    _assert_nested_matches(
-        _nested_frames(result, "by_sku"), truth, "status", ["sku"], "total_qty"
-    )
+    _assert_nested_matches(_nested_frames(result, "by_sku"), truth, "status", ["sku"], "total_qty")
 
 
 def test_nest_aliased_inline_lambda_form(orders):
@@ -104,19 +98,13 @@ def test_nest_aliased_inline_lambda_form(orders):
         orders.group_by("status")
         .aggregate(
             "total",
-            nest={
-                "by_sku": lambda t: t.group_by("sku").aggregate(
-                    sumq=lambda x: x.qty.sum()
-                )
-            },
+            nest={"by_sku": lambda t: t.group_by("sku").aggregate(sumq=lambda x: x.qty.sum())},
         )
         .execute()
     )
 
     truth = _ground_truth(ORDERS_DF, ["status"], ["sku"])
-    _assert_nested_matches(
-        _nested_frames(result, "by_sku"), truth, "status", ["sku"], "sumq"
-    )
+    _assert_nested_matches(_nested_frames(result, "by_sku"), truth, "status", ["sku"], "sumq")
 
 
 def test_nest_inline_name_colliding_with_raw_column(orders):
@@ -126,11 +114,7 @@ def test_nest_inline_name_colliding_with_raw_column(orders):
         orders.group_by("status")
         .aggregate(
             "total",
-            nest={
-                "by_sku": lambda t: t.group_by("sku").aggregate(
-                    qty=lambda x: x.qty.sum()
-                )
-            },
+            nest={"by_sku": lambda t: t.group_by("sku").aggregate(qty=lambda x: x.qty.sum())},
         )
         .execute()
     )
@@ -139,9 +123,7 @@ def test_nest_inline_name_colliding_with_raw_column(orders):
     # Raw per-row structs would have 4 entries for "open" (two c rows).
     assert len(open_rows) == 3
     truth = _ground_truth(ORDERS_DF, ["status"], ["sku"])
-    _assert_nested_matches(
-        _nested_frames(result, "by_sku"), truth, "status", ["sku"], "qty"
-    )
+    _assert_nested_matches(_nested_frames(result, "by_sku"), truth, "status", ["sku"], "qty")
 
 
 def test_nest_multi_key_inner_group_by(orders):
@@ -149,11 +131,7 @@ def test_nest_multi_key_inner_group_by(orders):
         orders.group_by("status")
         .aggregate(
             "total",
-            nest={
-                "by_both": lambda t: t.group_by("sku", "customer_id").aggregate(
-                    "total_qty"
-                )
-            },
+            nest={"by_both": lambda t: t.group_by("sku", "customer_id").aggregate("total_qty")},
         )
         .execute()
     )
@@ -185,9 +163,7 @@ def test_nest_within_filtered_outer_query(orders):
 
     filtered = ORDERS_DF[ORDERS_DF["qty"] >= 2]
     truth = _ground_truth(filtered, ["status"], ["sku"])
-    _assert_nested_matches(
-        _nested_frames(result, "by_sku"), truth, "status", ["sku"], "total_qty"
-    )
+    _assert_nested_matches(_nested_frames(result, "by_sku"), truth, "status", ["sku"], "total_qty")
 
 
 def test_nest_inner_filter_keeps_outer_groups(orders):
@@ -300,11 +276,7 @@ def test_nest_within_nest_regrains_to_outer_keys(orders):
                 "by_sku": lambda t: t.group_by("sku")
                 .aggregate(
                     "total_qty",
-                    nest={
-                        "by_customer": lambda t2: t2.group_by("customer").aggregate(
-                            "total_qty"
-                        )
-                    },
+                    nest={"by_customer": lambda t2: t2.group_by("customer").aggregate("total_qty")},
                 )
                 .order_by(lambda t: t.total_qty.desc())
                 .limit(2)
@@ -324,10 +296,9 @@ def test_nest_within_nest_regrains_to_outer_keys(orders):
     # Inner-most level: scoped to (status, sku). Customer 100 under
     # ("closed", "a") must see qty 2 only, not the cross-status total 3.
     closed_skus = {s["sku"]: s for s in by_status["closed"]["by_sku"]}
-    assert {
-        c["customer"]: float(c["total_qty"])
-        for c in closed_skus["a"]["by_customer"]
-    } == {100: 2.0}
+    assert {c["customer"]: float(c["total_qty"]) for c in closed_skus["a"]["by_customer"]} == {
+        100: 2.0
+    }
     inner_c = {
         c["customer"]: float(c["total_qty"])
         for c in dict((s["sku"], s) for s in open_skus)["c"]["by_customer"]

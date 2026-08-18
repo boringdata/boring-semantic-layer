@@ -7,6 +7,7 @@ the op tree recursively, calling ``extract_metadata`` at each node.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 from collections.abc import Mapping
 from typing import Any
@@ -15,7 +16,6 @@ from returns.result import Result, Success, safe
 
 from .context import BSLSerializationContext
 from .helpers import extract_simple_column_name
-
 
 # ---------------------------------------------------------------------------
 # singledispatch extractors
@@ -230,10 +230,9 @@ def extract_op_tree(op, context: BSLSerializationContext) -> dict[str, Any]:
         "bsl_version": context.version,
     }
 
-    try:
+    # Unknown op type — still record bsl_op_type.
+    with contextlib.suppress(NotImplementedError):
         metadata.update(extract_metadata(op, context))
-    except NotImplementedError:
-        pass  # unknown op type — still record bsl_op_type
 
     @safe
     def extract_source():
@@ -290,9 +289,7 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
                         case Success():
                             entry["expr_struct"] = struct_result.unwrap()
                         case _:
-                            raise ValueError(
-                                f"Dimension '{name}': failed to serialize expression"
-                            )
+                            raise ValueError(f"Dimension '{name}': failed to serialize expression")
             dim_metadata[name] = entry
         return dim_metadata
 
@@ -374,7 +371,6 @@ def deserialize_calc_measures(calc_data: Mapping[str, Any]) -> dict[str, Any]:
     """
     from ..ops import CalcMeasure
     from ..utils import structured_to_expr
-
     from .freeze import list_to_tuple
 
     out: dict[str, Any] = {}

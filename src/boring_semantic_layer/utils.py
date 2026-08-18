@@ -599,7 +599,8 @@ def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
             eval_context = {"ibis": flavor_ibis, "_": flavor_ibis._}
             allowed_names = {"ibis", "_", "t"}
             try:
-                from ._xorq import api as xo, ibis as xorq_ibis
+                from ._xorq import api as xo
+                from ._xorq import ibis as xorq_ibis
 
                 eval_context.update({"xorq_ibis": xorq_ibis, "xo": xo})
                 allowed_names |= {"xorq_ibis", "xo"}
@@ -637,6 +638,7 @@ def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
 def _is_ibis_literal_node(value) -> bool:
     try:
         from ._xorq import Literal
+
         return isinstance(value, Literal)
     except ImportError:
         return False
@@ -739,10 +741,12 @@ def serialize_resolver(resolver) -> tuple:
         Item,
         Just,
         JustUnhashable,
-        Mapping as MappingResolver,
         Sequence,
         UnaryOperator,
         Variable,
+    )
+    from ._xorq import (
+        Mapping as MappingResolver,
     )
 
     if isinstance(resolver, Variable):
@@ -781,14 +785,17 @@ def serialize_resolver(resolver) -> tuple:
     if isinstance(resolver, Call):
         func_tuple = serialize_resolver(resolver.func)
         args_tuple = tuple(serialize_resolver(a) for a in resolver.args)
-        kwargs_tuple = tuple(
-            (k, serialize_resolver(v)) for k, v in resolver.kwargs.items()
-        )
+        kwargs_tuple = tuple((k, serialize_resolver(v)) for k, v in resolver.kwargs.items())
         return ("call", func_tuple, args_tuple, kwargs_tuple)
 
     if isinstance(resolver, BinaryOperator):
         op_name = resolver.func.__name__
-        return ("binop", op_name, serialize_resolver(resolver.left), serialize_resolver(resolver.right))
+        return (
+            "binop",
+            op_name,
+            serialize_resolver(resolver.left),
+            serialize_resolver(resolver.right),
+        )
 
     if isinstance(resolver, UnaryOperator):
         op_name = resolver.func.__name__
@@ -894,10 +901,12 @@ def deserialize_resolver(data: tuple):
         Call,
         Item,
         Just,
-        Mapping as MappingResolver,
         Sequence,
         UnaryOperator,
         Variable,
+    )
+    from ._xorq import (
+        Mapping as MappingResolver,
     )
 
     match data:
@@ -912,6 +921,7 @@ def deserialize_resolver(data: tuple):
 
         case ("ibis_literal", py_value, dtype_str):
             from ._xorq import ibis
+
             lit_expr = ibis.literal(_decode_scalar(py_value), type=ibis.dtype(dtype_str))
             return Just(lit_expr.op())
 
@@ -937,9 +947,8 @@ def deserialize_resolver(data: tuple):
             func_resolver = deserialize_resolver(func_data)
             args_resolvers = tuple(deserialize_resolver(a) for a in args_data)
             from ._xorq import FrozenDict
-            kwargs_resolvers = FrozenDict(
-                {k: deserialize_resolver(v) for k, v in kwargs_data}
-            )
+
+            kwargs_resolvers = FrozenDict({k: deserialize_resolver(v) for k, v in kwargs_data})
             call = object.__new__(Call)
             object.__setattr__(call, "func", func_resolver)
             object.__setattr__(call, "args", args_resolvers)
@@ -983,9 +992,8 @@ def deserialize_resolver(data: tuple):
         case ("map", type_name, items_data):
             typ = {"dict": dict}[type_name]
             from ._xorq import FrozenDict
-            values = FrozenDict(
-                {k: deserialize_resolver(v) for k, v in items_data}
-            )
+
+            values = FrozenDict({k: deserialize_resolver(v) for k, v in items_data})
             mapping = object.__new__(MappingResolver)
             object.__setattr__(mapping, "typ", typ)
             object.__setattr__(mapping, "values", values)
@@ -1058,9 +1066,7 @@ def join_predicate_to_structured(fn: Callable) -> Result[tuple, Exception]:
         right = Deferred(Variable("right"))
         result = raw_fn(left, right)
         if not hasattr(result, "_resolver"):
-            raise ValueError(
-                f"Join predicate did not produce a Deferred, got {type(result)}"
-            )
+            raise ValueError(f"Join predicate did not produce a Deferred, got {type(result)}")
         return serialize_resolver(result._resolver)
 
     return do_convert()

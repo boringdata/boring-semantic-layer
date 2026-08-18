@@ -88,7 +88,10 @@ def test_time_dimension_with_grain():
     json_def = st.json_definition
     assert json_def["dimensions"]["statement_date"]["is_event_timestamp"] is True
     assert json_def["dimensions"]["statement_date"]["smallest_time_grain"] == "TIME_GRAIN_DAY"
-    assert json_def["dimensions"]["statement_date"]["description"] == "Statement date for balance features"
+    assert (
+        json_def["dimensions"]["statement_date"]["description"]
+        == "Statement date for balance features"
+    )
     # Should be in both event_timestamp and time_dimensions
     assert "statement_date" in json_def["event_timestamp"]
     assert "statement_date" in json_def["time_dimensions"]

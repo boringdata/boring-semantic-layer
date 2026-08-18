@@ -6,8 +6,8 @@ from pathlib import Path
 
 from ibis import BaseBackend
 
-from ._xorq import HAS_XORQ, Profile as XorqProfile
-
+from ._xorq import HAS_XORQ
+from ._xorq import Profile as XorqProfile
 from .utils import read_yaml_file
 
 
@@ -146,8 +146,7 @@ def _connect_plain_ibis(ibis, config: dict, conn_type: str) -> BaseBackend:
         raise ProfileError(f"Unknown backend type: '{conn_type}'")
     connect_kwargs = {k: v for k, v in config.items() if k != "type"}
     connect_kwargs = {
-        k: _expand_env_vars(v) if isinstance(v, str) else v
-        for k, v in connect_kwargs.items()
+        k: _expand_env_vars(v) if isinstance(v, str) else v for k, v in connect_kwargs.items()
     }
     return connect_fn.connect(**connect_kwargs)
 

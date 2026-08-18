@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 from returns.result import Failure, Success
 
-from boring_semantic_layer.utils import expr_to_ibis_string, ibis_string_to_expr
 from boring_semantic_layer.serialization import (
     from_tagged,
     serialize_dimensions,
@@ -11,6 +10,7 @@ from boring_semantic_layer.serialization import (
     to_tagged,
     try_import_xorq,
 )
+from boring_semantic_layer.utils import expr_to_ibis_string, ibis_string_to_expr
 
 xorq = pytest.importorskip("xorq", reason="xorq not installed")
 
@@ -241,10 +241,10 @@ def test_from_xorq_with_tagged_table():
 def test_different_measures_produce_different_hashes():
     """Two SemanticModels on the same table with different measures should hash differently."""
     import ibis
-
-    from boring_semantic_layer import SemanticModel
     from xorq.caching.strategy import SnapshotStrategy
     from xorq.common.utils.node_utils import compute_expr_hash
+
+    from boring_semantic_layer import SemanticModel
 
     table = ibis.table({"a": "int64", "b": "float64"}, name="test_table")
 
@@ -266,17 +266,19 @@ def test_different_measures_produce_different_hashes():
     hash_sum = compute_expr_hash(tagged_sum, strategy=strategy)
     hash_mean = compute_expr_hash(tagged_mean, strategy=strategy)
 
-    assert hash_sum != hash_mean, "Same table with different measures should produce different hashes"
+    assert hash_sum != hash_mean, (
+        "Same table with different measures should produce different hashes"
+    )
 
 
 @pytest.mark.skipif(not xorq, reason="xorq not available")
 def test_same_model_produces_same_hash():
     """Two identical SemanticModels should produce the same hash."""
     import ibis
-
-    from boring_semantic_layer import SemanticModel
     from xorq.caching.strategy import SnapshotStrategy
     from xorq.common.utils.node_utils import compute_expr_hash
+
+    from boring_semantic_layer import SemanticModel
 
     table = ibis.table({"a": "int64", "b": "float64"}, name="test_table")
 

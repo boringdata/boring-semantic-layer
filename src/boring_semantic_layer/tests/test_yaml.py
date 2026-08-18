@@ -225,7 +225,9 @@ flights:
 
         # Test query with joined dimension (use dot notation)
         result = (
-            flights.group_by("flights.origin", "carriers.name").aggregate("flights.flight_count").execute()
+            flights.group_by("flights.origin", "carriers.name")
+            .aggregate("flights.flight_count")
+            .execute()
         )
 
         # Verify the join worked
@@ -480,7 +482,9 @@ events:
 
     try:
         models = from_yaml(yaml_path, tables={"nullable_values_tbl": nullable_tbl})
-        result = models["events"].group_by("grp").aggregate("total_value_safe").order_by("grp").execute()
+        result = (
+            models["events"].group_by("grp").aggregate("total_value_safe").order_by("grp").execute()
+        )
 
         got = dict(zip(result["grp"], result["total_value_safe"], strict=False))
         assert pytest.approx(got["a"]) == 1.0
@@ -514,7 +518,9 @@ events:
 
     try:
         models = from_yaml(yaml_path, tables={"nullable_values_tbl": nullable_tbl})
-        result = models["events"].group_by("grp").aggregate("safe_avg_value").order_by("grp").execute()
+        result = (
+            models["events"].group_by("grp").aggregate("safe_avg_value").order_by("grp").execute()
+        )
 
         got = dict(zip(result["grp"], result["safe_avg_value"], strict=False))
         assert pytest.approx(got["a"]) == 0.5
@@ -986,7 +992,11 @@ def test_from_config_with_joins(sample_tables):
     flights = models["flights"]
 
     # Test query with joined dimension
-    result = flights.group_by("flights.origin", "carriers.name").aggregate("flights.flight_count").execute()
+    result = (
+        flights.group_by("flights.origin", "carriers.name")
+        .aggregate("flights.flight_count")
+        .execute()
+    )
 
     assert "flights.origin" in result.columns
     assert "carriers.name" in result.columns
@@ -1314,9 +1324,7 @@ def test_yaml_self_joins(duckdb_conn):
     """Test joining the same model multiple times with different aliases (#114)."""
     from boring_semantic_layer import to_semantic_table
 
-    duckdb_conn.raw_sql(
-        "CREATE TABLE airports_114 (code VARCHAR, city VARCHAR)"
-    )
+    duckdb_conn.raw_sql("CREATE TABLE airports_114 (code VARCHAR, city VARCHAR)")
     duckdb_conn.raw_sql(
         "INSERT INTO airports_114 VALUES ('SFO', 'San Francisco'), "
         "('JFK', 'New York'), ('LAX', 'Los Angeles')"
@@ -1329,10 +1337,9 @@ def test_yaml_self_joins(duckdb_conn):
         "('JFK', 'LAX', 2475), ('LAX', 'SFO', 337)"
     )
 
-    airports_model = (
-        to_semantic_table(duckdb_conn.table("airports_114"), name="airports")
-        .with_dimensions(code=lambda t: t.code, city=lambda t: t.city)
-    )
+    airports_model = to_semantic_table(
+        duckdb_conn.table("airports_114"), name="airports"
+    ).with_dimensions(code=lambda t: t.code, city=lambda t: t.city)
 
     config = {
         "flights": {

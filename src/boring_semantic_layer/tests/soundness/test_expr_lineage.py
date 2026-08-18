@@ -102,9 +102,9 @@ def test_filter_then_with_measures_keeps_filter_and_fanout_protection(fanout_mod
 
 
 def test_filter_metadata_update_retains_query_surface(fanout_models):
-    transformed = fanout_models.filter(
-        lambda t: t["orders.amount"] > 5
-    ).with_dimensions(region_label=lambda t: t.region.upper())
+    transformed = fanout_models.filter(lambda t: t["orders.amount"] > 5).with_dimensions(
+        region_label=lambda t: t.region.upper()
+    )
 
     result = transformed.query(
         dimensions=["customers.customer_id"],
@@ -211,9 +211,7 @@ def test_join_wrapper_join_one_reuses_automatic_grain_detection(con):
 def test_join_wrapper_local_entity_dimension_participates_in_grain_detection(con):
     orders_tbl = con.create_table(
         "lineage_wrapper_orders",
-        pd.DataFrame(
-            {"order_id": [1, 2], "account_id": [10, 10], "amount": [5, 7]}
-        ),
+        pd.DataFrame({"order_id": [1, 2], "account_id": [10, 10], "amount": [5, 7]}),
     )
     accounts_tbl = con.create_table(
         "lineage_wrapper_accounts",
@@ -221,19 +219,13 @@ def test_join_wrapper_local_entity_dimension_participates_in_grain_detection(con
     )
     lines_tbl = con.create_table(
         "lineage_wrapper_lines",
-        pd.DataFrame(
-            {"line_id": [100, 101], "account_id": [10, 10], "value": [2, 3]}
-        ),
+        pd.DataFrame({"line_id": [100, 101], "account_id": [10, 10], "value": [2, 3]}),
     )
-    orders = to_semantic_table(orders_tbl, "orders").with_measures(
-        total=lambda t: t.amount.sum()
-    )
+    orders = to_semantic_table(orders_tbl, "orders").with_measures(total=lambda t: t.amount.sum())
     accounts = to_semantic_table(accounts_tbl, "accounts")
     lines = (
         to_semantic_table(lines_tbl, "lines")
-        .with_dimensions(
-            entity_id=Dimension(expr=lambda t: t.line_id, is_entity=True)
-        )
+        .with_dimensions(entity_id=Dimension(expr=lambda t: t.line_id, is_entity=True))
         .with_measures(total=lambda t: t.value.sum())
     )
     enriched_orders = orders.join_one(accounts, on="account_id").with_dimensions(

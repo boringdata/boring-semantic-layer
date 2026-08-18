@@ -167,9 +167,7 @@ def main():
 
     aircraft_with_models = aircraft.join_one(aircraft_models, on="aircraft_model_code")
 
-    flights_full = flights.join_one(
-        carriers, on=lambda f, c: f.carrier == c.code
-    ).join_one(
+    flights_full = flights.join_one(carriers, on=lambda f, c: f.carrier == c.code).join_one(
         aircraft_with_models, on="tail_num"
     )
 
@@ -199,9 +197,7 @@ def main():
     print("=" * 80)
     print()
 
-    texas_flights = (
-        airports_with_flights.filter(lambda t: t.airports.state == "TX")
-    )
+    texas_flights = airports_with_flights.filter(lambda t: t.airports.state == "TX")
 
     result = (
         texas_flights.group_by("airports.city")
@@ -241,7 +237,8 @@ def main():
         )
         .mutate(
             flights_per_airport=lambda t: t["flights.flight_count"] / t["airports.airport_count"],
-            avg_distance_per_flight=lambda t: t["flights.total_distance"] / t["flights.flight_count"],
+            avg_distance_per_flight=lambda t: t["flights.total_distance"]
+            / t["flights.flight_count"],
         )
         .order_by(lambda t: t.flights_per_airport.desc())
         .limit(10)

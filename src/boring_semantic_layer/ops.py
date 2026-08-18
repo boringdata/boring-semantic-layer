@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -15,14 +16,57 @@ from ibis.expr import operations as ibis_ops
 from ibis.expr import types as ir
 from ibis.expr.operations.relations import Relation
 from ibis.expr.schema import Schema
+from returns.result import safe
 
+from . import projection_utils
 from ._xorq import (
     FrozenDict,
     FrozenOrderedDict,
+)
+from ._xorq import (
     Schema as XorqSchema,
+)
+from ._xorq import (
     operations as xorq_ops,
+)
+from ._xorq import (
     selectors as s,
 )
+from .calc_analyzer import (
+    _is_reduction,
+    _is_window,
+    _to_node,
+    analyze_calc_expr,
+)
+from .calc_analyzer import (
+    _walk as _walk_calc_expr,
+)
+from .calc_compiler import (
+    TOTALS_PREFIX,
+    TotalsNotAvailableError,
+    UnknownMeasureRefError,
+    WindowedBaseReductionError,
+    _drop_totals_columns,
+    _to_op,
+    apply_calc_measures,
+    attach_calc_totals,
+    attach_windowed_totals,
+    evaluate_calc_lambda,
+    lift_inline_reductions,
+    topological_order_from_deps,
+)
+from .calc_compiler import (
+    compile_calc_measure as _compile_calc_measure_impl,
+)
+from .graph_utils import walk_nodes
+from .join_utils import null_safe_equal
+from .measure_scope import (
+    ColumnScope,
+    MeasureScope,
+)
+from .nested_access import NestedAccessMarker
+
+logger = logging.getLogger(__name__)
 
 _SchemaClass = XorqSchema
 _FrozenOrderedDict = FrozenOrderedDict
@@ -40,40 +84,6 @@ def _reductions_for_expr(expr):
         return xorq_ops.reductions
     return ibis_ops.reductions
 
-from returns.result import safe
-
-from . import projection_utils
-from .calc_analyzer import (
-    _is_reduction,
-    _is_window,
-    _to_node,
-    _walk as _walk_calc_expr,
-    analyze_calc_expr,
-)
-from .calc_compiler import (
-    TOTALS_PREFIX,
-    TotalsNotAvailableError,
-    UnknownMeasureRefError,
-    WindowedBaseReductionError,
-    _drop_totals_columns,
-    _to_op,
-    apply_calc_measures,
-    attach_calc_totals,
-    attach_windowed_totals,
-    compile_calc_measure as _compile_calc_measure_impl,
-    evaluate_calc_lambda,
-    lift_inline_reductions,
-    topological_order_from_deps,
-)
-from .graph_utils import walk_nodes
-from .join_utils import null_safe_equal
-from .measure_scope import (
-    ColumnScope,
-    MeasureScope,
-)
-from .nested_access import NestedAccessMarker
-
-logger = logging.getLogger(__name__)
 
 _JOIN_REMOVED_MESSAGE = (
     "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
@@ -126,11 +136,7 @@ def _allocate_right_collision_names(
     that will remain in the result.
     """
     conflicting = frozenset(conflicting)
-    occupied = (
-        set(left_columns)
-        | (set(right_columns) - conflicting)
-        | set(reserved)
-    )
+    occupied = set(left_columns) | (set(right_columns) - conflicting) | set(reserved)
     result: dict[str, str] = {}
     for name in right_columns:
         if name not in conflicting:
@@ -299,7 +305,8 @@ def _patch_xorq_sortkey_compat():
     """
     from ibis.expr.operations.sortkeys import SortKey as IbisSortKey
 
-    from ._xorq import SortKey as XorqSortKey, map_ibis
+    from ._xorq import SortKey as XorqSortKey
+    from ._xorq import map_ibis
 
     if IbisSortKey in map_ibis.registry:
         return  # already patched
@@ -307,7 +314,7 @@ def _patch_xorq_sortkey_compat():
     @map_ibis.register(IbisSortKey)
     def _map_sort_key(val, kwargs=None):
         # ibis 12 uses .arg, ibis 11 uses .expr
-        sort_expr = getattr(val, "arg", None) or getattr(val, "expr")
+        sort_expr = getattr(val, "arg", None) or val.expr
         return XorqSortKey(
             expr=map_ibis(sort_expr, None),
             ascending=val.ascending,
@@ -421,7 +428,8 @@ def _rebind_to_canonical_backend(expr):
         return expr
 
     try:
-        from ._xorq import relations as xorq_rel, walk_nodes
+        from ._xorq import relations as xorq_rel
+        from ._xorq import walk_nodes
     except Exception:
         return expr
 
@@ -732,9 +740,7 @@ def _augment_dimensions_with_raw_columns(
                 break
             cols = getattr(getattr(root, "table", None), "columns", ())
             if col in cols:
-                requested.setdefault(prefix, {})[col] = Dimension(
-                    expr=lambda t, _c=col: t[_c]
-                )
+                requested.setdefault(prefix, {})[col] = Dimension(expr=lambda t, _c=col: t[_c])
             break
     if not requested:
         return dict(merged_dimensions)
@@ -765,9 +771,7 @@ def _validate_qualified_filter_fields(
     for root in all_roots:
         expand(root)
 
-    roots_by_name = {
-        root.name: root for root in expanded_roots if getattr(root, "name", None)
-    }
+    roots_by_name = {root.name: root for root in expanded_roots if getattr(root, "name", None)}
     for field_name in fields:
         if "." not in field_name or field_name in dimensions:
             continue
@@ -779,9 +783,7 @@ def _validate_qualified_filter_fields(
                 f"Unknown semantic model prefix {prefix!r} in filter field "
                 f"{field_name!r}. Available model prefixes: {available}."
             )
-        raw_columns = frozenset(
-            getattr(getattr(root, "table", None), "columns", ())
-        )
+        raw_columns = frozenset(getattr(getattr(root, "table", None), "columns", ()))
         if raw_name not in raw_columns:
             raise KeyError(
                 f"Unknown field {raw_name!r} on semantic model {prefix!r} "
@@ -803,9 +805,7 @@ def _reject_unresolvable_group_keys(
     the model's queryable surface.
     """
     tbl_columns = frozenset(getattr(tbl, "columns", ()))
-    unresolved = [
-        k for k in keys if k not in merged_dimensions and k not in tbl_columns
-    ]
+    unresolved = [k for k in keys if k not in merged_dimensions and k not in tbl_columns]
     if not unresolved:
         return
 
@@ -1064,10 +1064,7 @@ class NestAggSpec:
         )
 
     def __repr__(self) -> str:
-        return (
-            f"NestAggSpec(keys={self.inner_op.keys!r}, "
-            f"struct_fields={self.struct_fields!r})"
-        )
+        return f"NestAggSpec(keys={self.inner_op.keys!r}, struct_fields={self.struct_fields!r})"
 
 
 def _resolve_nest_order_key(key, table):
@@ -1271,9 +1268,7 @@ def _build_json_definition(
             **{n: spec.to_json() for n, spec in meas_dict.items()},
             **{n: spec.to_json() for n, spec in calc_meas_dict.items()},
         },
-        "calculated_measures": {
-            n: spec.to_json() for n, spec in calc_meas_dict.items()
-        },
+        "calculated_measures": {n: spec.to_json() for n, spec in calc_meas_dict.items()},
         "entity_dimensions": {n: spec.to_json() for n, spec in dims_dict.items() if spec.is_entity},
         "event_timestamp": {
             n: spec.to_json() for n, spec in dims_dict.items() if spec.is_event_timestamp
@@ -1502,9 +1497,7 @@ class CalcMeasure:
         return base
 
     def __hash__(self) -> int:
-        return hash(
-            (self.description, self.requires_unnest, self.depends_on, self.prefer_known)
-        )
+        return hash((self.description, self.requires_unnest, self.depends_on, self.prefer_known))
 
 
 class SemanticTableOp(Relation):
@@ -1580,14 +1573,10 @@ class SemanticTableOp(Relation):
             for name, calc in calc_measures.items():
                 fn = calc.expr if isinstance(calc, CalcMeasure) else calc
                 try:
-                    expr, _vt, _tvt = evaluate_calc_lambda(
-                        fn, enriched, known_set, measure_schema
-                    )
+                    expr, _vt, _tvt = evaluate_calc_lambda(fn, enriched, known_set, measure_schema)
                     base_values[name] = expr.op()
                 except Exception as e:
-                    logger.debug(
-                        "calc-measure type inference failed for %r: %s", name, e
-                    )
+                    logger.debug("calc-measure type inference failed for %r: %s", name, e)
         return FrozenOrderedDict(base_values)
 
     @property
@@ -1716,12 +1705,10 @@ class SemanticFilterOp(Relation):
         # (e.g. join-based dims); those resolve through the Resolver fallback.
         enriched = base_tbl
         for dim_name in dim_map:
-            try:
+            with contextlib.suppress(TypeError, KeyError, AttributeError):
                 enriched = _mutate_dimensions_with_dependencies(
                     enriched, [dim_name], dim_map, overwrite_existing=False
                 )
-            except (TypeError, KeyError, AttributeError):
-                pass
 
         resolver = _Resolver(enriched, dim_map)
         pred = _resolve_expr(pred_fn, resolver)
@@ -1854,9 +1841,7 @@ class SemanticProjectOp(Relation):
         if not all_roots:
             return tbl.select([getattr(tbl, f) for f in self.fields])
 
-        merged_dimensions = _get_merged_fields(
-            all_roots, "dimensions", source=self.source
-        )
+        merged_dimensions = _get_merged_fields(all_roots, "dimensions", source=self.source)
         merged_measures = _get_merged_fields(all_roots, "measures")
 
         dims, meas, raw_fields = _classify_fields(self.fields, merged_dimensions, merged_measures)
@@ -2010,11 +1995,7 @@ def _build_aggregation_plan(
             # _compile_aggregation. Without the wrap, t.flights returns a
             # raw ArrayColumn and struct-field access blows up before the
             # marker can be produced.
-            if (
-                callable(fn)
-                and not _is_deferred(fn)
-                and not isinstance(fn, Measure)
-            ):
+            if callable(fn) and not _is_deferred(fn) and not isinstance(fn, Measure):
                 fn = _make_base_measure(fn, None, (), {})
             agg_specs[name] = _make_agg_callable(fn)
             remember_local_name(name)
@@ -2057,6 +2038,7 @@ def _build_aggregation_plan(
     # so the aggregation produces the columns the calc lambdas read.
     # Walk transitively so calc-of-calc chains pull all needed bases.
     if calc_specs:
+
         def _resolve_dep(ref: str) -> str | None:
             """Resolve a dependency name against base/calc measures.
 
@@ -2084,9 +2066,7 @@ def _build_aggregation_plan(
                 if resolved_ref is None or resolved_ref in agg_specs:
                     continue
                 if resolved_ref in merged_base_measures:
-                    agg_specs[resolved_ref] = _make_agg_callable(
-                        merged_base_measures[resolved_ref]
-                    )
+                    agg_specs[resolved_ref] = _make_agg_callable(merged_base_measures[resolved_ref])
                 elif resolved_ref in merged_calc_measures and resolved_ref not in seen_calcs:
                     dep_cm = merged_calc_measures[resolved_ref]
                     calc_specs[resolved_ref] = dep_cm
@@ -2229,8 +2209,7 @@ def _compile_aggregation(
                 raise
             except Exception as exc:
                 logger.debug(
-                    "calc-measure lift/classify failed for %r; will re-evaluate "
-                    "at apply time: %s",
+                    "calc-measure lift/classify failed for %r; will re-evaluate at apply time: %s",
                     name,
                     exc,
                 )
@@ -2291,7 +2270,7 @@ def _compile_aggregation(
         # Transitive expansion: for AllOf-using calcs, follow calc deps
         # through ``classifications`` until we land on base measures.
         work: list[str] = []
-        for cn, c in classifications.items():
+        for c in classifications.values():
             if c.references_AllOf:
                 for d in c.depends_on:
                     if d in regular_specs:
@@ -2358,9 +2337,7 @@ def _compile_aggregation(
     # each needed calc lambda against the totals columns to derive the
     # calc's totals value (constant across rows).
     if calc_specs and totals_arbitrary_specs:
-        real_agg_tbl = attach_calc_totals(
-            real_agg_tbl, calc_specs, classifications, TOTALS_PREFIX
-        )
+        real_agg_tbl = attach_calc_totals(real_agg_tbl, calc_specs, classifications, TOTALS_PREFIX)
 
     # --- Apply calc measures -----------------------------------------
     if calc_specs:
@@ -2390,9 +2367,7 @@ def _compile_aggregation(
                 # inline base reduction over a column consumed by the
                 # aggregation.
                 try:
-                    post_scope = MeasureScope(
-                        _tbl=real_agg_tbl, _known=[], _post_agg=True
-                    )
+                    post_scope = MeasureScope(_tbl=real_agg_tbl, _known=[], _post_agg=True)
                     resolved = _resolve_expr(calc_specs[name].expr, post_scope)
                     real_agg_tbl = real_agg_tbl.mutate(resolved.name(name))
                     if real_with_totals is not None:
@@ -2400,8 +2375,7 @@ def _compile_aggregation(
                     continue
                 except Exception as exc:
                     logger.debug(
-                        "post-aggregate fallback for calc %r failed; "
-                        "re-lifting against base: %s",
+                        "post-aggregate fallback for calc %r failed; re-lifting against base: %s",
                         name,
                         exc,
                     )
@@ -2423,14 +2397,12 @@ def _compile_aggregation(
                     virtual_schema,
                     priority_measures=calc_specs[name].prefer_known,
                 )
-                rewritten_expr, rewritten_vt, rewritten_totals_vt, lifted = (
-                    lift_inline_reductions(
-                        expr0,
-                        vt0,
-                        base_tbl,
-                        totals_virtual_agg_tbl=totals_vt0,
-                        group_keys=by_cols,
-                    )
+                rewritten_expr, rewritten_vt, rewritten_totals_vt, lifted = lift_inline_reductions(
+                    expr0,
+                    vt0,
+                    base_tbl,
+                    totals_virtual_agg_tbl=totals_vt0,
+                    group_keys=by_cols,
                 )
                 if lifted:
                     # The lift produced anonymous base reductions that
@@ -2473,9 +2445,7 @@ def _compile_aggregation(
                 real_agg_tbl = real_agg_tbl.mutate(**{name: compiled})
                 real_with_totals = real_agg_tbl
             else:
-                compiled = _compile_calc_measure_impl(
-                    rewritten_expr, rewritten_vt, real_agg_tbl
-                )
+                compiled = _compile_calc_measure_impl(rewritten_expr, rewritten_vt, real_agg_tbl)
                 real_agg_tbl = real_agg_tbl.mutate(**{name: compiled})
                 if real_with_totals is not None:
                     real_with_totals = real_agg_tbl
@@ -2487,9 +2457,7 @@ def _compile_aggregation(
 
     if requested_measures is not None:
         select_cols = list(
-            dict.fromkeys(
-                list(by_cols) + list(requested_measures) + list(calc_specs.keys())
-            )
+            dict.fromkeys(list(by_cols) + list(requested_measures) + list(calc_specs.keys()))
         )
         available = frozenset(real_agg_tbl.columns)
         select_cols = [c for c in select_cols if c in available]
@@ -2801,14 +2769,8 @@ def _table_filter_resolver(
             if "." not in field_name:
                 continue
             prefix, raw_name = field_name.split(".", 1)
-            if (
-                prefix == table_name
-                and raw_name in raw_columns
-                and field_name not in dims
-            ):
-                dims[field_name] = Dimension(
-                    expr=lambda t, _name=raw_name: t[_name]
-                )
+            if prefix == table_name and raw_name in raw_columns and field_name not in dims:
+                dims[field_name] = Dimension(expr=lambda t, _name=raw_name: t[_name])
     return _Resolver(raw_tbl, dims)
 
 
@@ -2942,9 +2904,9 @@ def _inline_to_base_op(node, leaf_types, target_tbl=None, guard=0):
         return a
 
     new_args = [_tx(a) for a in node.args]
-    if all(n is o for n, o in zip(new_args, node.args)):
+    if all(n is o for n, o in zip(new_args, node.args, strict=False)):
         return node
-    return node.__class__(**dict(zip(node.__argnames__, new_args)))
+    return node.__class__(**dict(zip(node.__argnames__, new_args, strict=False)))
 
 
 def _find_deferrable_joins(
@@ -2952,7 +2914,7 @@ def _find_deferrable_joins(
     group_by_keys: tuple[str, ...],
     agg_names: dict,
     all_roots: list,
-    join_tree_info: "_JoinTreeInfo",
+    join_tree_info: _JoinTreeInfo,
     filters: list | None = None,
 ) -> list[_DeferrableJoin]:
     """Identify join_one ops that can be deferred until after aggregation.
@@ -3013,8 +2975,7 @@ def _find_deferrable_joins(
         # Check: right table has is_entity dims
         right_dims = right.get_dimensions()
         entity_dims = frozenset(
-            name for name, dim in right_dims.items()
-            if getattr(dim, "is_entity", False)
+            name for name, dim in right_dims.items() if getattr(dim, "is_entity", False)
         )
         if not entity_dims:
             return
@@ -3049,10 +3010,7 @@ def _find_deferrable_joins(
             return
 
         # Identify which group-by dimensions from the right table will be deferred
-        deferred_dims = tuple(
-            k for k in group_by_keys
-            if k.startswith(f"{right_name}.")
-        )
+        deferred_dims = tuple(k for k in group_by_keys if k.startswith(f"{right_name}."))
 
         # Only deferrable if there are dims to add post-agg
         if not deferred_dims:
@@ -3077,13 +3035,15 @@ def _find_deferrable_joins(
         if not all(_key_covers_entity(e) for e in entity_dims):
             return
 
-        deferrable.append(_DeferrableJoin(
-            table_name=right_name,
-            table_op=right,
-            join_keys_left=left_cols,
-            on_predicate=node.on,
-            deferred_dims=deferred_dims,
-        ))
+        deferrable.append(
+            _DeferrableJoin(
+                table_name=right_name,
+                table_op=right,
+                join_keys_left=left_cols,
+                on_predicate=node.on,
+                deferred_dims=deferred_dims,
+            )
+        )
 
     walk(join_op)
     return deferrable
@@ -3184,9 +3144,9 @@ def _is_mean_expr(expr):
 
 def _is_count_distinct_expr(expr):
     """Check if an ibis expression is a CountDistinct (nunique) reduction."""
-    return safe(
-        lambda: isinstance(expr.op(), _reductions_for_expr(expr).CountDistinct)
-    )().value_or(False)
+    return safe(lambda: isinstance(expr.op(), _reductions_for_expr(expr).CountDistinct))().value_or(
+        False
+    )
 
 
 def _is_count_expr(expr):
@@ -3201,9 +3161,7 @@ def _is_count_expr(expr):
 def _fill_missing_count_identities(table, measure_names):
     """Restore COUNT's empty-set identity after a dimension-bridge join."""
     replacements = {
-        name: table[name].fill_null(0)
-        for name in measure_names
-        if name in table.columns
+        name: table[name].fill_null(0) for name in measure_names if name in table.columns
     }
     return table.mutate(**replacements) if replacements else table
 
@@ -3311,8 +3269,7 @@ def _compile_evaluated_measure_table(
         # measures.  These expressions are already bound to `base_tbl`, so a
         # constant-returning wrapper preserves that exact relation binding.
         regular_specs = {
-            name: (lambda _table, expr=expr: expr)
-            for name, expr in regular_exprs.items()
+            name: (lambda _table, expr=expr: expr) for name, expr in regular_exprs.items()
         }
         return _compile_aggregation_with_nested(
             base_tbl,
@@ -3322,9 +3279,7 @@ def _compile_evaluated_measure_table(
         )
 
     if by_cols:
-        return base_tbl.group_by([base_tbl[c] for c in by_cols]).aggregate(
-            **regular_exprs
-        )
+        return base_tbl.group_by([base_tbl[c] for c in by_cols]).aggregate(**regular_exprs)
     return base_tbl.aggregate(**regular_exprs)
 
 
@@ -3380,8 +3335,7 @@ def _exact_grain_preagg(
     shared_jk = [
         (raw_name, joined_key_names.get(raw_name, raw_name))
         for raw_name in join_keys
-        if raw_name in raw_tbl.columns
-        and joined_key_names.get(raw_name, raw_name) in tbl.columns
+        if raw_name in raw_tbl.columns and joined_key_names.get(raw_name, raw_name) in tbl.columns
     ]
     if not shared_jk:
         raise ValueError(
@@ -3441,26 +3395,17 @@ def _exact_grain_preagg(
     # NULL filling is unsound. A separate presence marker distinguishes an
     # absent aggregate row from a matched row whose measure itself is NULL.
     empty_tbl = raw_tbl.limit(0)
-    empty_values = _compile_exact_measure_table(
-        empty_tbl, (), exact_measures
-    ).rename(
-        {
-            empty_names[measure]: measure
-            for measure in exact_measures
-        }
+    empty_values = _compile_exact_measure_table(empty_tbl, (), exact_measures).rename(
+        {empty_names[measure]: measure for measure in exact_measures}
     )
     group_spine = tbl.select([tbl[c] for c in group_by_cols]).distinct()
-    spine_preds = [
-        null_safe_equal(group_spine[c], pt[c]) for c in group_by_cols
-    ]
+    spine_preds = [null_safe_equal(group_spine[c], pt[c]) for c in group_by_cols]
     attached = group_spine.left_join(pt, spine_preds).cross_join(empty_values)
     missing_aggregate = pt[presence_name].isnull()
     return attached.select(
         [group_spine]
         + [
-            missing_aggregate.ifelse(
-                empty_values[empty_names[measure]], pt[measure]
-            ).name(measure)
+            missing_aggregate.ifelse(empty_values[empty_names[measure]], pt[measure]).name(measure)
             for measure in exact_measures
         ]
     )
@@ -3487,8 +3432,7 @@ def _source_join_key_pairs(
     return tuple(
         (raw_name, source_names.get(raw_name, raw_name))
         for raw_name in sorted(join_keys)
-        if raw_name in raw_columns
-        and source_names.get(raw_name, raw_name) in joined_columns
+        if raw_name in raw_columns and source_names.get(raw_name, raw_name) in joined_columns
     )
 
 
@@ -3558,13 +3502,16 @@ def _infer_join_wrapper_measure_owner(
     owners: list[str] = []
     original = measure.original_expr
     if _is_deferred(original):
+
         def probe(t, expr=original):
             return expr.resolve(t)
     elif callable(original):
         probe = original
     else:
+
         def probe(_t, value=original):
             return value
+
     for table_name, table_op in join_tree_info.table_ops.items():
         try:
             raw_tbl = _to_untagged(table_op)
@@ -3701,10 +3648,8 @@ def _infer_join_wrapper_dimension_owners(
     dimensions_for_scope = dict(merged_dimensions)
     for name, dimension in dimensions.items():
 
-        def resolve_on_join(t, dim=dimension):
-            scope = _JoinWrapperDimensionResolver(
-                t, dimensions_for_scope, resolving=(name,)
-            )
+        def resolve_on_join(t, dim=dimension, name=name):
+            scope = _JoinWrapperDimensionResolver(t, dimensions_for_scope, resolving=(name,))
             return dim(scope, _dims=dimensions_for_scope)
 
         extraction = _extract_columns_from_callable(resolve_on_join, joined_table)
@@ -3730,8 +3675,7 @@ def _infer_join_wrapper_dimension_owners(
             )
         elif len(expression_owners) != 1:
             errors[name] = (
-                "its expression spans multiple semantic models: "
-                f"{sorted(expression_owners)}"
+                f"its expression spans multiple semantic models: {sorted(expression_owners)}"
             )
         else:
             owners[name] = next(iter(expression_owners))
@@ -3804,9 +3748,7 @@ class SemanticAggregateOp(Relation):
             Dict mapping table names to sets of required column names.
         """
         all_roots = _find_all_root_models(self.source)
-        merged_dimensions = _get_merged_fields(
-            all_roots, "dimensions", source=self.source
-        )
+        merged_dimensions = _get_merged_fields(all_roots, "dimensions", source=self.source)
 
         base_tbl = (
             self.source.to_expr() if hasattr(self.source, "to_expr") else _to_untagged(self.source)
@@ -3911,7 +3853,9 @@ class SemanticAggregateOp(Relation):
         # still returned.  (Fixes #224.)
         if join_op is not None and not is_post_agg and not self.aggs:
             shortcut = _dimension_only_source_table(
-                self.keys, all_roots, collected_filters,
+                self.keys,
+                all_roots,
+                collected_filters,
             )
             if shortcut is not None:
                 root_op, unprefixed_keys, dim_filters = shortcut
@@ -3919,7 +3863,9 @@ class SemanticAggregateOp(Relation):
                     tbl = _to_untagged(root_op)
                     root_dims = root_op.get_dimensions()
                     tbl = _mutate_dimensions_with_dependencies(
-                        tbl, unprefixed_keys, root_dims,
+                        tbl,
+                        unprefixed_keys,
+                        root_dims,
                     )
                     # Apply pre-aggregation filters on the dimension table.
                     # Resolve through the table-scoped resolver so prefixed
@@ -3928,9 +3874,7 @@ class SemanticAggregateOp(Relation):
                     for flt in dim_filters:
                         fn = _unwrap(flt) if hasattr(flt, "unwrap") else flt
                         tbl = tbl.filter(
-                            _resolve_expr(
-                                fn, _table_filter_resolver(tbl, root_op, root_op.name)
-                            )
+                            _resolve_expr(fn, _table_filter_resolver(tbl, root_op, root_op.name))
                         )
                     result = tbl.select(unprefixed_keys).distinct()
                     # Rename columns to their prefixed (dotted) names so that
@@ -3940,8 +3884,7 @@ class SemanticAggregateOp(Relation):
                     return result.rename(rename_map)
                 except Exception:
                     logger.debug(
-                        "dimension-only shortcut failed for keys=%s; "
-                        "falling back to standard path",
+                        "dimension-only shortcut failed for keys=%s; falling back to standard path",
                         self.keys,
                         exc_info=True,
                     )
@@ -3961,19 +3904,13 @@ class SemanticAggregateOp(Relation):
                 if cardinality == "root"
             }
             requested_from_non_root = any(
-                "." in name and name.split(".", 1)[0] not in root_names
-                for name in self.aggs
+                "." in name and name.split(".", 1)[0] not in root_names for name in self.aggs
             )
             merged_base_for_routing = _get_merged_fields(all_roots, "measures")
             requested_wrapper_base = any(
-                "." not in name and name in merged_base_for_routing
-                for name in self.aggs
+                "." not in name and name in merged_base_for_routing for name in self.aggs
             )
-            if (
-                join_tree_info.has_join_many
-                or requested_from_non_root
-                or requested_wrapper_base
-            ):
+            if join_tree_info.has_join_many or requested_from_non_root or requested_wrapper_base:
                 return self._to_untagged_with_preagg(
                     all_roots,
                     join_op,
@@ -3984,7 +3921,11 @@ class SemanticAggregateOp(Relation):
             # Deferred join path: when join_one dimension tables can be
             # joined AFTER aggregation for better performance.
             deferrable = _find_deferrable_joins(
-                join_op, self.keys, self.aggs, all_roots, join_tree_info,
+                join_op,
+                self.keys,
+                self.aggs,
+                all_roots,
+                join_tree_info,
                 filters=collected_filters,
             )
             if deferrable:
@@ -4013,9 +3954,7 @@ class SemanticAggregateOp(Relation):
         else:
             tbl = _to_untagged(self.source)
 
-        merged_dimensions = _get_merged_fields(
-            all_roots, "dimensions", source=join_op
-        )
+        merged_dimensions = _get_merged_fields(all_roots, "dimensions", source=join_op)
         merged_base_measures = _get_merged_fields(all_roots, "measures")
         merged_calc_measures = _get_merged_fields(all_roots, "calc_measures")
 
@@ -4147,9 +4086,7 @@ class SemanticAggregateOp(Relation):
                 tmp_keys = {f"__bsl_nest_k{i}__": k for i, k in enumerate(outer_keys)}
                 nest_tbl = nest_tbl.rename(tmp_keys)
                 tmp_for = {old: tmp for tmp, old in tmp_keys.items()}
-                preds = [
-                    null_safe_equal(result[k], nest_tbl[tmp_for[k]]) for k in outer_keys
-                ]
+                preds = [null_safe_equal(result[k], nest_tbl[tmp_for[k]]) for k in outer_keys]
                 joined = result.left_join(nest_tbl, preds)
                 result = joined.select([*result.columns, name])
             else:
@@ -4181,20 +4118,20 @@ class SemanticAggregateOp(Relation):
             for name, cardinality in join_tree_info.table_cardinalities.items()
             if cardinality == "root"
         }
-        predicate_sensitive = bool(filters) or any(
-            "." in name and name.split(".", 1)[0] not in root_names
-            for name in (*self.keys, *self.aggs.keys())
-        ) or any("." not in name for name in self.aggs)
+        predicate_sensitive = (
+            bool(filters)
+            or any(
+                "." in name and name.split(".", 1)[0] not in root_names
+                for name in (*self.keys, *self.aggs.keys())
+            )
+            or any("." not in name for name in self.aggs)
+        )
         if predicate_sensitive:
             _validate_preaggregation_join_predicates(join_op)
         filters = filters or []
         filter_fns = [_unwrap(pred) for pred in filters]
-        exact_filter_fields = frozenset().union(
-            *(_exact_filter_fields(fn) for fn in filter_fns)
-        )
-        merged_dimensions = _get_merged_fields(
-            all_roots, "dimensions", source=join_op
-        )
+        exact_filter_fields = frozenset().union(*(_exact_filter_fields(fn) for fn in filter_fns))
+        merged_dimensions = _get_merged_fields(all_roots, "dimensions", source=join_op)
         merged_dimensions = _augment_dimensions_with_raw_columns(
             merged_dimensions,
             (*self.keys, *exact_filter_fields),
@@ -4202,15 +4139,11 @@ class SemanticAggregateOp(Relation):
             join_op,
         )
         if exact_filter_fields:
-            _validate_qualified_filter_fields(
-                exact_filter_fields, merged_dimensions, all_roots
-            )
+            _validate_qualified_filter_fields(exact_filter_fields, merged_dimensions, all_roots)
         merged_base_measures = _get_merged_fields(all_roots, "measures")
         merged_calc_measures = _get_merged_fields(all_roots, "calc_measures")
         group_by_cols = list(self.keys)
-        join_column_lineage, _joined_column_names = _build_join_column_lineage(
-            join_op
-        )
+        join_column_lineage, _joined_column_names = _build_join_column_lineage(join_op)
         wrapper_local_dimensions = {
             name: dimension
             for name, dimension in _join_wrapper_local_dimensions(all_roots).items()
@@ -4263,9 +4196,7 @@ class SemanticAggregateOp(Relation):
             )
 
         if tbl is not None:
-            _reject_unresolvable_group_keys(
-                self.keys, merged_dimensions, tbl, all_roots
-            )
+            _reject_unresolvable_group_keys(self.keys, merged_dimensions, tbl, all_roots)
 
         # Apply collected filters to the full joined table so that
         # dimension bridges only include rows surviving the filter. A
@@ -4403,7 +4334,7 @@ class SemanticAggregateOp(Relation):
         else:
             # Derive plan directly from metadata (chasm fallback)
             agg_specs = {}
-            for name, fn_wrapped in self.aggs.items():
+            for name in self.aggs:
                 if name in merged_base_measures:
                     agg_specs[name] = _make_agg_callable(merged_base_measures[name])
             plan = _AggregationPlan(
@@ -4528,11 +4459,10 @@ class SemanticAggregateOp(Relation):
             # both join_many and join_one measure legs to actual participants;
             # otherwise scalar right measures include orphan source rows and
             # flattened CountStar reductions count unmatched left rows.
-            needs_participation = (
-                join_tree_info.table_cardinalities.get(table_name)
-                not in ("root", "cross")
-                and bool(measures)
-            )
+            needs_participation = join_tree_info.table_cardinalities.get(table_name) not in (
+                "root",
+                "cross",
+            ) and bool(measures)
 
             # Filters not pushed here (cross-table, ambiguous, or owned
             # by another table) restrict via join keys from the filtered
@@ -4551,10 +4481,7 @@ class SemanticAggregateOp(Relation):
                         key_bridge = tbl.select(
                             [tbl[joined].name(raw) for raw, joined in shared]
                         ).distinct()
-                        preds = [
-                            raw_tbl[raw] == key_bridge[raw]
-                            for raw, _joined in shared
-                        ]
+                        preds = [raw_tbl[raw] == key_bridge[raw] for raw, _joined in shared]
                         raw_tbl = raw_tbl.inner_join(key_bridge, preds).select(raw_tbl)
                     elif needs_participation:
                         raise ValueError(
@@ -4570,9 +4497,7 @@ class SemanticAggregateOp(Relation):
                     # keys of root-side tables that share join-key columns.
                     participation_bridged = not needs_participation
                     if needs_participation:
-                        for root_name, card in (
-                            join_tree_info.table_cardinalities.items()
-                        ):
+                        for root_name, card in join_tree_info.table_cardinalities.items():
                             if card != "root":
                                 continue
                             root_op = join_tree_info.table_ops.get(root_name)
@@ -4628,9 +4553,7 @@ class SemanticAggregateOp(Relation):
                             jk & owner_jk & set(raw_tbl.columns) & set(owner_raw.columns)
                         )
                         if shared:
-                            key_bridge = owner_raw.select(
-                                [owner_raw[c] for c in shared]
-                            ).distinct()
+                            key_bridge = owner_raw.select([owner_raw[c] for c in shared]).distinct()
                             preds = [raw_tbl[c] == key_bridge[c] for c in shared]
                             raw_tbl = raw_tbl.inner_join(key_bridge, preds).select(raw_tbl)
 
@@ -4647,9 +4570,7 @@ class SemanticAggregateOp(Relation):
             for mname, _mfn in measures.items():
                 short = mname.split(".", 1)[1] if "." in mname else mname
                 source_measure = (
-                    table_measures.get(short)
-                    if "." in mname
-                    else merged_base_measures.get(mname)
+                    table_measures.get(short) if "." in mname else merged_base_measures.get(mname)
                 )
                 if isinstance(source_measure, Measure):
                     expr = source_measure(raw_tbl)
@@ -4674,9 +4595,7 @@ class SemanticAggregateOp(Relation):
                         base_col = mean_op.arg.to_expr()
                         # mean(where=...) must filter both legs, or the
                         # decomposed mean silently ignores its condition
-                        mean_where = (
-                            mean_op.where.to_expr() if mean_op.where is not None else None
-                        )
+                        mean_where = mean_op.where.to_expr() if mean_op.where is not None else None
                         sum_col = f"_sum__{mname}"
                         count_col = f"_count__{mname}"
                         agg_exprs[sum_col] = base_col.sum(where=mean_where)
@@ -4685,7 +4604,11 @@ class SemanticAggregateOp(Relation):
                     elif _is_count_distinct_expr(expr):
                         # COUNT DISTINCT is immune to fan-out — defer past pre-agg
                         _deferred_count_distincts[mname] = (
-                            table_name, short, raw_tbl, source_measure, {},
+                            table_name,
+                            short,
+                            raw_tbl,
+                            source_measure,
+                            {},
                         )
                     else:
                         reagg = _reagg_op_for_expr(expr)
@@ -4717,9 +4640,7 @@ class SemanticAggregateOp(Relation):
                     _preagg_results.append(pt)
                 if _nested_measures_t:
                     _preagg_results.append(
-                        _compile_exact_measure_table(
-                            raw_tbl, (), _nested_measures_t
-                        )
+                        _compile_exact_measure_table(raw_tbl, (), _nested_measures_t)
                     )
                 continue
 
@@ -4763,12 +4684,8 @@ class SemanticAggregateOp(Relation):
                                 # under an allocator-owned alias so neither the
                                 # source schema nor user internal-prefix columns
                                 # can be overwritten.
-                                raw_group_name = _allocate_local_group_alias(
-                                    gb_key, raw_columns
-                                )
-                                raw_tbl = raw_tbl.mutate(
-                                    **{raw_group_name: dim_expr}
-                                )
+                                raw_group_name = _allocate_local_group_alias(gb_key, raw_columns)
+                                raw_tbl = raw_tbl.mutate(**{raw_group_name: dim_expr})
                                 raw_columns = set(raw_tbl.columns)
                                 if raw_group_name not in _local_dims:
                                     _local_dims.append(raw_group_name)
@@ -4832,9 +4749,7 @@ class SemanticAggregateOp(Relation):
                             (
                                 column
                                 for column in raw_columns
-                                if _is_direct_physical_field(
-                                    dim_expr, raw_tbl, column
-                                )
+                                if _is_direct_physical_field(dim_expr, raw_tbl, column)
                             ),
                             None,
                         )
@@ -4843,12 +4758,8 @@ class SemanticAggregateOp(Relation):
                                 _local_dims.append(direct_raw_name)
                             _local_group_keys[gb_key] = direct_raw_name
                         else:
-                            raw_group_name = _allocate_local_group_alias(
-                                gb_key, raw_columns
-                            )
-                            raw_tbl = raw_tbl.mutate(
-                                **{raw_group_name: dim_expr}
-                            )
+                            raw_group_name = _allocate_local_group_alias(gb_key, raw_columns)
+                            raw_tbl = raw_tbl.mutate(**{raw_group_name: dim_expr})
                             raw_columns = set(raw_tbl.columns)
                             _local_dims.append(raw_group_name)
                             _local_group_keys[gb_key] = raw_group_name
@@ -4861,7 +4772,8 @@ class SemanticAggregateOp(Relation):
                         dim_fn = merged_dimensions[gb_key]
                         try:
                             dim_expr = (
-                                dim_fn(raw_tbl) if callable(dim_fn)
+                                dim_fn(raw_tbl)
+                                if callable(dim_fn)
                                 else _resolve_expr(dim_fn, raw_tbl)
                             )
                             raw_tbl = raw_tbl.mutate(**{gb_key: dim_expr})
@@ -4918,17 +4830,14 @@ class SemanticAggregateOp(Relation):
             final_raw_op = _to_op(raw_tbl)
             if final_raw_op is not measure_binding_op:
                 agg_exprs = {
-                    name: _to_op(expr)
-                    .replace({measure_binding_op: final_raw_op})
-                    .to_expr()
+                    name: _to_op(expr).replace({measure_binding_op: final_raw_op}).to_expr()
                     for name, expr in agg_exprs.items()
                 }
 
             if _exact_measures_t:
-                exact_needs_source_spine = (
-                    join_tree_info.table_cardinalities.get(table_name)
-                    not in ("root", "cross")
-                )
+                exact_needs_source_spine = join_tree_info.table_cardinalities.get(
+                    table_name
+                ) not in ("root", "cross")
                 if not has_cross_table_gb and not exact_needs_source_spine:
                     # Local grain IS the target grain — aggregate the
                     # original root/cross expressions directly, no re-agg
@@ -4951,27 +4860,23 @@ class SemanticAggregateOp(Relation):
                     )
 
             if _nested_measures_t:
-                nested_needs_source_spine = (
-                    join_tree_info.table_cardinalities.get(table_name)
-                    not in ("root", "cross")
-                )
+                nested_needs_source_spine = join_tree_info.table_cardinalities.get(
+                    table_name
+                ) not in ("root", "cross")
                 if not has_cross_table_gb and not nested_needs_source_spine and grain:
                     # A root/cross source grouped only by its own dimensions
                     # is already at the requested grain. Compile nested
                     # measures directly there and keep them separate from the
                     # regular preaggregate so sibling joins cannot fan out the
                     # unnested rows.
-                    nested_pt = _compile_exact_measure_table(
-                        raw_tbl, grain, _nested_measures_t
-                    )
+                    nested_pt = _compile_exact_measure_table(raw_tbl, grain, _nested_measures_t)
                     local_renames = {
                         public_name: raw_name
                         for raw_name, public_name in _local_group_outputs.items()
                         if raw_name in nested_pt.columns
                     }
                     collisions = sorted(
-                        set(local_renames)
-                        & (set(nested_pt.columns) - set(local_renames.values()))
+                        set(local_renames) & (set(nested_pt.columns) - set(local_renames.values()))
                     )
                     if collisions:
                         raise ValueError(
@@ -4981,9 +4886,7 @@ class SemanticAggregateOp(Relation):
                         )
                     if local_renames:
                         nested_pt = nested_pt.rename(local_renames)
-                    joined_grain = tuple(
-                        _local_group_outputs.get(name, name) for name in grain
-                    )
+                    joined_grain = tuple(_local_group_outputs.get(name, name) for name in grain)
                     _preagg_results.append(
                         _rename_preagg_grain_to_joined_aliases(
                             nested_pt, joined_grain, source_key_names
@@ -5007,9 +4910,7 @@ class SemanticAggregateOp(Relation):
 
             if agg_exprs:
                 if grain:
-                    pt = raw_tbl.group_by(
-                        [raw_tbl[c] for c in grain]
-                    ).aggregate(**agg_exprs)
+                    pt = raw_tbl.group_by([raw_tbl[c] for c in grain]).aggregate(**agg_exprs)
                     local_renames = {
                         public_name: raw_name
                         for raw_name, public_name in _local_group_outputs.items()
@@ -5026,13 +4927,9 @@ class SemanticAggregateOp(Relation):
                         )
                     if local_renames:
                         pt = pt.rename(local_renames)
-                    joined_grain = tuple(
-                        _local_group_outputs.get(name, name) for name in grain
-                    )
+                    joined_grain = tuple(_local_group_outputs.get(name, name) for name in grain)
                     _preagg_results.append(
-                        _rename_preagg_grain_to_joined_aliases(
-                            pt, joined_grain, source_key_names
-                        )
+                        _rename_preagg_grain_to_joined_aliases(pt, joined_grain, source_key_names)
                     )
                 else:
                     _preagg_results.append(raw_tbl.aggregate(**agg_exprs))
@@ -5118,22 +5015,16 @@ class SemanticAggregateOp(Relation):
         # ``id``), and can count an unmatched left key as a right-side value.
         if _deferred_count_distincts:
             cd_parts: list = []
-            join_column_lineage, _joined_columns = _build_join_column_lineage(
-                join_op
-            )
+            join_column_lineage, _joined_columns = _build_join_column_lineage(join_op)
             for mname, (
                 src_tbl_name,
                 _short,
                 src_raw,
                 src_fn,
                 local_group_keys,
-            ) in (
-                _deferred_count_distincts.items()
-            ):
+            ) in _deferred_count_distincts.items():
                 if not group_by_cols:
-                    cd_parts.append(
-                        src_raw.aggregate(**{mname: src_fn(src_raw)})
-                    )
+                    cd_parts.append(src_raw.aggregate(**{mname: src_fn(src_raw)}))
                     continue
 
                 if tbl is None:
@@ -5147,8 +5038,7 @@ class SemanticAggregateOp(Relation):
                 available_jk = tuple(
                     key
                     for key in sorted(join_keys)
-                    if key in src_raw.columns
-                    and source_key_names.get(key, key) in tbl.columns
+                    if key in src_raw.columns and source_key_names.get(key, key) in tbl.columns
                 )
                 if not available_jk:
                     raise ValueError(
@@ -5169,13 +5059,8 @@ class SemanticAggregateOp(Relation):
                 # outer-join group. Attach it to the joined group domain and
                 # restore COUNT DISTINCT's empty-set identity before calc
                 # measures are compiled.
-                group_spine = tbl.select(
-                    [tbl[c] for c in group_by_cols]
-                ).distinct()
-                predicates = [
-                    null_safe_equal(group_spine[c], cd_exact[c])
-                    for c in group_by_cols
-                ]
+                group_spine = tbl.select([tbl[c] for c in group_by_cols]).distinct()
+                predicates = [null_safe_equal(group_spine[c], cd_exact[c]) for c in group_by_cols]
                 cd_pt = group_spine.left_join(cd_exact, predicates).select(
                     [group_spine] + [cd_exact[mname]]
                 )
@@ -5199,9 +5084,7 @@ class SemanticAggregateOp(Relation):
                 else:
                     result = result.cross_join(cd_pt)
 
-            result = _fill_missing_count_identities(
-                result, _deferred_count_distincts
-            )
+            result = _fill_missing_count_identities(result, _deferred_count_distincts)
 
         # --- 6. Apply calc_specs ---
         if plan.calc_specs:
@@ -5225,16 +5108,12 @@ class SemanticAggregateOp(Relation):
                     total = total.cross_join(p)
                 return total
 
-            result = self._apply_calc_specs(
-                result, plan, tbl, totals_builder=_fanout_safe_totals
-            )
+            result = self._apply_calc_specs(result, plan, tbl, totals_builder=_fanout_safe_totals)
 
         # --- 7. Select requested columns ---
         available = frozenset(result.columns)
         requested = tuple(
-            dict.fromkeys(
-                (*plan.group_by_cols, *plan.requested_measures, *plan.calc_specs.keys())
-            )
+            dict.fromkeys((*plan.group_by_cols, *plan.requested_measures, *plan.calc_specs.keys()))
         )
         missing = [c for c in requested if c not in available]
         if missing:
@@ -5258,9 +5137,9 @@ class SemanticAggregateOp(Relation):
     def _to_untagged_with_deferred_joins(
         self,
         all_roots: list,
-        join_op: "SemanticJoinOp",
-        join_tree_info: "_JoinTreeInfo",
-        deferrable: list["_DeferrableJoin"],
+        join_op: SemanticJoinOp,
+        join_tree_info: _JoinTreeInfo,
+        deferrable: list[_DeferrableJoin],
         filters: list | None = None,
     ):
         """Aggregate first, then LEFT JOIN deferred dimension tables.
@@ -5275,9 +5154,7 @@ class SemanticAggregateOp(Relation):
         filters = filters or []
         deferred_names = {d.table_name for d in deferrable}
 
-        merged_dimensions = _get_merged_fields(
-            all_roots, "dimensions", source=join_op
-        )
+        merged_dimensions = _get_merged_fields(all_roots, "dimensions", source=join_op)
         merged_dimensions = _augment_dimensions_with_raw_columns(
             merged_dimensions, self.keys, all_roots, join_op
         )
@@ -5292,10 +5169,7 @@ class SemanticAggregateOp(Relation):
             # Recurse left
             new_left = strip_deferred(node.left)
             # If right side is a deferred table, return just the left
-            if (
-                isinstance(node.right, SemanticTableOp)
-                and node.right.name in deferred_names
-            ):
+            if isinstance(node.right, SemanticTableOp) and node.right.name in deferred_names:
                 return new_left
             return SemanticJoinOp(
                 left=new_left,
@@ -5504,22 +5378,15 @@ class SemanticAggregateOp(Relation):
                 # Already has group-by columns — re-aggregate if over-grouped
                 if frozenset(pt_grain) != gb_set:
                     re_aggs = {m: _build_reagg(pt[m], reagg_map.get(m, "sum")) for m in pt_meas}
-                    pt = pt.group_by([pt[c] for c in group_by_cols]).aggregate(
-                        **re_aggs
-                    )
+                    pt = pt.group_by([pt[c] for c in group_by_cols]).aggregate(**re_aggs)
 
                 # A right/source-local preaggregate has no row for an
                 # unmatched LEFT JOIN group even when it is already at the
                 # requested semantic grain. Reattach it to the full joined
                 # group domain so SUM/MEDIAN remain NULL and COUNT can restore
                 # its zero identity later.
-                group_spine = tbl.select(
-                    [tbl[c] for c in group_by_cols]
-                ).distinct()
-                predicates = [
-                    null_safe_equal(group_spine[c], pt[c])
-                    for c in group_by_cols
-                ]
+                group_spine = tbl.select([tbl[c] for c in group_by_cols]).distinct()
+                predicates = [null_safe_equal(group_spine[c], pt[c]) for c in group_by_cols]
                 return group_spine.left_join(pt, predicates).select(
                     [group_spine] + [pt[c] for c in pt_meas]
                 )
@@ -5785,9 +5652,7 @@ class SemanticJoinOp(Relation):
             return _root_names(source) if source is not None else []
 
         root_names = [*_root_names(left), *_root_names(right)]
-        duplicate_names = sorted(
-            name for name in set(root_names) if root_names.count(name) > 1
-        )
+        duplicate_names = sorted(name for name in set(root_names) if root_names.count(name) > 1)
         if duplicate_names:
             raise ValueError(
                 "Joined semantic models must have unique names; duplicate "
@@ -6343,7 +6208,8 @@ class SemanticJoinOp(Relation):
                 if isinstance(self.left, SemanticJoinOp) and right_needed_tables:
                     left_leaf_names = self.left._collect_leaf_table_names()
                     right_needed_leaf_names = [
-                        leaf_name for leaf_name in right_needed_tables
+                        leaf_name
+                        for leaf_name in right_needed_tables
                         if self._get_leaf_table_by_name(self, leaf_name) is not None
                     ]
                     for left_leaf_name in left_leaf_names:
@@ -6371,11 +6237,7 @@ class SemanticJoinOp(Relation):
 
     def _should_prune_right(self, parent_requirements: dict[str, set[str]] | None) -> bool:
         """Return whether the right side can be skipped for the given requirements."""
-        if (
-            parent_requirements is None
-            or self.cardinality != "one"
-            or self.how != "left"
-        ):
+        if parent_requirements is None or self.cardinality != "one" or self.how != "left":
             return False
 
         needed_tables = frozenset(parent_requirements.keys())
@@ -6608,7 +6470,8 @@ class SemanticJoinOp(Relation):
             return left_tbl, right_tbl
 
         try:
-            from ._xorq import relations as xorq_rel, walk_nodes
+            from ._xorq import relations as xorq_rel
+            from ._xorq import walk_nodes
         except ImportError:
             return left_tbl, right_tbl
 
@@ -6788,9 +6651,7 @@ def _get_weight_expr(
         return xo._.count()
 
     merged_measures = _get_merged_fields(all_roots, "measures")
-    return (
-        merged_measures[by_measure](base_tbl) if by_measure in merged_measures else xo._.count()
-    )
+    return merged_measures[by_measure](base_tbl) if by_measure in merged_measures else xo._.count()
 
 
 def _build_string_index_fragment(
@@ -6838,9 +6699,7 @@ def _build_numeric_index_fragment(
             fieldName=xo.literal(field_name.split(".")[-1]),
             fieldPath=xo.literal(field_path),
             fieldType=xo.literal(type_str),
-            fieldValue=(
-                xo._["min_val"].cast("string") + " to " + xo._["max_val"].cast("string")
-            ),
+            fieldValue=(xo._["min_val"].cast("string") + " to " + xo._["max_val"].cast("string")),
             weight=xo._["weight"],
         )
     )
@@ -6979,9 +6838,7 @@ class SemanticIndexOp(Relation):
             else _to_untagged(self.source)
         )
 
-        merged_dimensions = _get_merged_fields(
-            all_roots, "dimensions", source=self.source
-        )
+        merged_dimensions = _get_merged_fields(all_roots, "dimensions", source=self.source)
         fields_to_index = _get_fields_to_index(
             self.selector,
             merged_dimensions,
@@ -7371,9 +7228,7 @@ def _build_join_column_lineage(
         right_lineage, right_columns = _build_join_column_lineage(node.right)
         conflicting = frozenset(left_columns) & frozenset(right_columns)
         reserved = (
-            _allocate_temporary_join_names(
-                conflicting, left_columns, right_columns
-            ).values()
+            _allocate_temporary_join_names(conflicting, left_columns, right_columns).values()
             if node.on is not None
             else ()
         )
@@ -7401,11 +7256,7 @@ def _build_join_column_lineage(
             lineage, _columns = _build_join_column_lineage(source_join)
             return lineage, tuple(node.table.columns)
         columns = tuple(node.table.columns)
-        lineage = (
-            {node.name: {column: column for column in columns}}
-            if node.name
-            else {}
-        )
+        lineage = {node.name: {column: column for column in columns}} if node.name else {}
         return lineage, columns
 
     source = getattr(node, "source", None)
@@ -7501,9 +7352,7 @@ def _build_column_rename_map(
             # previous implementation selected an arbitrary first field and
             # replaced the whole expression with it, turning e.g. ``upper()``
             # and multi-column dimensions into identity dimensions.
-            extraction = _extract_columns_from_callable(
-                lambda t, dim=field_value: dim(t), root_tbl
-            )
+            extraction = _extract_columns_from_callable(lambda t, dim=field_value: dim(t), root_tbl)
             if not extraction.is_success():
                 continue
 

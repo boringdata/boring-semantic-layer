@@ -36,6 +36,7 @@ def _get_ibis_api():
     except Exception:
         return ibis
 
+
 # Time grain type alias
 TimeGrain = Literal[
     "TIME_GRAIN_YEAR",
@@ -506,7 +507,9 @@ def _validate_post_agg_filter_fields(
             )
 
 
-def _build_time_range_filters(semantic_table: Any, time_dimension: str, time_range: Mapping[str, str]) -> list[Callable]:
+def _build_time_range_filters(
+    semantic_table: Any, time_dimension: str, time_range: Mapping[str, str]
+) -> list[Callable]:
     """Build reusable filters for a specific time dimension and range."""
     if not isinstance(time_range, dict) or "start" not in time_range or "end" not in time_range:
         raise ValueError("time_range must be a dict with 'start' and 'end' keys")
@@ -587,7 +590,9 @@ def compare_periods(
 
     dims_dict = semantic_table.get_dimensions()
     known_dimensions = set(dims_dict)
-    known_measures = set(semantic_table.get_measures()) | set(semantic_table.get_calculated_measures())
+    known_measures = set(semantic_table.get_measures()) | set(
+        semantic_table.get_calculated_measures()
+    )
     model_name = getattr(semantic_table, "name", None)
 
     dimensions = _normalize_fields(dimensions, known_dimensions, expected_prefix=model_name)
@@ -599,9 +604,9 @@ def compare_periods(
             [resolved_time_dimension], known_dimensions, expected_prefix=model_name
         )[0]
     else:
-        resolved_time_dimension = _find_time_dimension(semantic_table, dimensions) or _find_any_time_dimension(
-            semantic_table
-        )
+        resolved_time_dimension = _find_time_dimension(
+            semantic_table, dimensions
+        ) or _find_any_time_dimension(semantic_table)
 
     if resolved_time_dimension is None:
         raise ValueError(
@@ -614,7 +619,10 @@ def compare_periods(
         semantic_table=semantic_table,
         dimensions=dimensions,
         measures=measures,
-        filters=[*filters, *_build_time_range_filters(semantic_table, resolved_time_dimension, current_time_range)],
+        filters=[
+            *filters,
+            *_build_time_range_filters(semantic_table, resolved_time_dimension, current_time_range),
+        ],
         time_grain=time_grain,
         time_grains=time_grains,
     )
@@ -622,7 +630,12 @@ def compare_periods(
         semantic_table=semantic_table,
         dimensions=dimensions,
         measures=measures,
-        filters=[*filters, *_build_time_range_filters(semantic_table, resolved_time_dimension, previous_time_range)],
+        filters=[
+            *filters,
+            *_build_time_range_filters(
+                semantic_table, resolved_time_dimension, previous_time_range
+            ),
+        ],
         time_grain=time_grain,
         time_grains=time_grains,
     )
@@ -647,10 +660,7 @@ def compare_periods(
         ]
         joined = current_tbl.join(previous_tbl, join_predicates, how="outer")
         result_tbl = joined.select(
-            *[
-                joined[dim].coalesce(joined[f"__previous_{dim}"]).name(dim)
-                for dim in dimensions
-            ],
+            *[joined[dim].coalesce(joined[f"__previous_{dim}"]).name(dim) for dim in dimensions],
             *[joined[f"{measure}_current"] for measure in measures],
             *[joined[f"{measure}_previous"] for measure in measures],
         )
@@ -673,7 +683,9 @@ def compare_periods(
     result_tbl = result_tbl.mutate(**delta_mutations, **pct_mutations)
 
     if order_by:
-        order_by = _normalize_order_by(order_by, set(result_tbl.columns), expected_prefix=model_name)
+        order_by = _normalize_order_by(
+            order_by, set(result_tbl.columns), expected_prefix=model_name
+        )
         result_tbl = result_tbl.order_by(
             [
                 result_tbl[field].desc() if direction.lower() == "desc" else result_tbl[field]
@@ -896,9 +908,7 @@ def query(
 
     # Step 3.5: Apply measure filters after aggregation (HAVING semantics)
     for filter_spec in post_agg_filters:
-        filter_fn = _normalize_post_agg_filter(
-            filter_spec, known_post_agg_fields, model_name
-        )
+        filter_fn = _normalize_post_agg_filter(filter_spec, known_post_agg_fields, model_name)
         result = result.filter(filter_fn)
 
     # Step 4: Apply ordering using functional composition

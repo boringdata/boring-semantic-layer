@@ -200,9 +200,7 @@ def _parse_joins(
         # rather than the underlying model name (e.g., "airports.city").
         join_count = joined_model_names.get(join_model_name, 0)
         needs_alias = (
-            alias != join_model_name
-            or join_count > 0
-            or join_model_name == current_model_name
+            alias != join_model_name or join_count > 0 or join_model_name == current_model_name
         )
         if needs_alias:
             join_model = _create_aliased_model(join_model, alias)

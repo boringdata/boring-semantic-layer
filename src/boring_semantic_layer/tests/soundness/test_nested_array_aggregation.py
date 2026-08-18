@@ -64,10 +64,7 @@ def test_nested_array_path_ignores_colliding_top_level_child_name():
     )
 
     result = (
-        model.group_by("session_id")
-        .aggregate("product_count")
-        .execute()
-        .sort_values("session_id")
+        model.group_by("session_id").aggregate("product_count").execute().sort_values("session_id")
     )
 
     assert result["product_count"].tolist() == [3, 2]
@@ -94,9 +91,7 @@ def test_nested_array_path_ignores_colliding_top_level_child_name():
     ],
     ids=["missing-child", "missing-deep-child", "non-array-child"],
 )
-def test_invalid_nested_array_child_fails_closed(
-    measure_fn, requested_path, message
-):
+def test_invalid_nested_array_child_fails_closed(measure_fn, requested_path, message):
     con = ibis.duckdb.connect(":memory:")
     table = con.create_table(
         "nested_invalid_child",
@@ -249,9 +244,7 @@ def joined_nested_model():
         ),
     )
 
-    users = to_semantic_table(users_table, "users").with_dimensions(
-        segment=lambda t: t.segment
-    )
+    users = to_semantic_table(users_table, "users").with_dimensions(segment=lambda t: t.segment)
     sessions = (
         to_semantic_table(sessions_table, "sessions")
         .with_dimensions(kind=lambda t: t.kind)
@@ -266,12 +259,10 @@ def joined_nested_model():
             hit_share=lambda t: t.hit_count / t.all(t.hit_count) * 100,
         )
     )
-    purchases = to_semantic_table(
-        purchases_table, "purchases"
-    ).with_measures(spend=lambda t: t.spend.sum())
-    joined = users.join_many(sessions, on="user_id").join_many(
-        purchases, on="user_id"
+    purchases = to_semantic_table(purchases_table, "purchases").with_measures(
+        spend=lambda t: t.spend.sum()
     )
+    joined = users.join_many(sessions, on="user_id").join_many(purchases, on="user_id")
     return joined, sessions, purchases
 
 
@@ -322,13 +313,17 @@ def test_joined_nested_measures_compile_at_exact_cross_source_grain(
 def test_joined_nested_scalar_and_nonroot_local_group(joined_nested_model):
     joined, _sessions, _purchases = joined_nested_model
 
-    scalar = joined.aggregate(
-        "sessions.hit_count",
-        "sessions.hit_sum",
-        "sessions.hit_mean",
-        "sessions.unique_hits",
-        "purchases.spend",
-    ).execute().iloc[0]
+    scalar = (
+        joined.aggregate(
+            "sessions.hit_count",
+            "sessions.hit_sum",
+            "sessions.hit_mean",
+            "sessions.unique_hits",
+            "purchases.spend",
+        )
+        .execute()
+        .iloc[0]
+    )
     assert scalar["sessions.hit_count"] == 6
     assert scalar["sessions.hit_sum"] == 28
     assert scalar["sessions.hit_mean"] == pytest.approx(28 / 6)
@@ -361,12 +356,8 @@ def test_joined_nested_scalar_and_nonroot_local_group(joined_nested_model):
         .aggregate("sessions.hit_count", "sessions.unique_hits")
         .execute()
     )
-    a_x = mixed[
-        (mixed["users.segment"] == "A") & (mixed["sessions.kind"] == "x")
-    ].iloc[0]
-    a_y = mixed[
-        (mixed["users.segment"] == "A") & (mixed["sessions.kind"] == "y")
-    ].iloc[0]
+    a_x = mixed[(mixed["users.segment"] == "A") & (mixed["sessions.kind"] == "x")].iloc[0]
+    a_y = mixed[(mixed["users.segment"] == "A") & (mixed["sessions.kind"] == "y")].iloc[0]
     assert a_x["sessions.hit_count"] == 3
     assert a_x["sessions.unique_hits"] == 2
     assert a_y["sessions.hit_count"] == 1
@@ -415,17 +406,18 @@ def test_joined_nested_measure_excludes_orphan_source_rows():
             }
         ),
     )
-    users = to_semantic_table(users_table, "users").with_dimensions(
-        segment=lambda t: t.segment
-    )
+    users = to_semantic_table(users_table, "users").with_dimensions(segment=lambda t: t.segment)
     sessions = to_semantic_table(sessions_table, "sessions").with_measures(
         hit_count=lambda t: t.hits.count(),
         hit_sum=lambda t: t.hits.sum(),
     )
 
-    result = users.join_many(sessions, on="user_id").aggregate(
-        "sessions.hit_count", "sessions.hit_sum"
-    ).execute().iloc[0]
+    result = (
+        users.join_many(sessions, on="user_id")
+        .aggregate("sessions.hit_count", "sessions.hit_sum")
+        .execute()
+        .iloc[0]
+    )
 
     assert result["sessions.hit_count"] == 2
     assert result["sessions.hit_sum"] == 3

@@ -21,6 +21,7 @@ from typing import Any
 
 from attrs import frozen
 from toolz import curry
+
 from ._xorq import types as ir
 
 

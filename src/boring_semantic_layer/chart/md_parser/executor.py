@@ -1,5 +1,6 @@
 """BSL query execution engine with context management."""
 
+import contextlib
 import io
 import sys
 from typing import Any
@@ -21,11 +22,10 @@ class QueryExecutor:
         """Initialize executor with output capture settings."""
         self.capture_output = capture_output
         self.context: dict[str, Any] = {}
-        # Set DuckDB as default backend for ibis
-        try:
+        # Set DuckDB as default backend for ibis; ignore if already set
+        # or DuckDB is not available.
+        with contextlib.suppress(Exception):
             ibis.set_backend("duckdb")
-        except Exception:
-            pass  # Ignore if already set or DuckDB not available
 
     def execute(self, code: str, is_chart_only: bool = False) -> dict[str, Any]:
         """Execute BSL query code and return structured results."""
@@ -53,7 +53,12 @@ class QueryExecutor:
             sys.stdout = captured
 
         try:
-            namespace = {"ibis": ibis, "xo": xo, "to_semantic_table": to_semantic_table, **self.context}
+            namespace = {
+                "ibis": ibis,
+                "xo": xo,
+                "to_semantic_table": to_semantic_table,
+                **self.context,
+            }
             last_expr = self._eval_last_expression(code, namespace)
 
             # Update context with new variables
@@ -207,6 +212,7 @@ class QueryExecutor:
         # Pandas DataFrame directly
         try:
             import pandas as pd
+
             if isinstance(result, pd.DataFrame):
                 return {"table": {"columns": list(result.columns), "data": result.values.tolist()}}
         except ImportError:

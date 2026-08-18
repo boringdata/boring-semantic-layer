@@ -454,8 +454,7 @@ def _expand_derived_dimensions(
     dimensions: Mapping[str, Dimension | Callable | dict] | None,
 ) -> FrozenDict[str, Dimension]:
     base_dimensions = {
-        dim_name: _create_dimension(dim)
-        for dim_name, dim in (dimensions or {}).items()
+        dim_name: _create_dimension(dim) for dim_name, dim in (dimensions or {}).items()
     }
     expanded_dimensions = dict(base_dimensions)
 
@@ -684,9 +683,7 @@ def _detect_grain_cardinality(left_op, right_op, on=None) -> str:
             normalized_on = _normalize_join_predicate(on)
             left_table = left_op.to_untagged()
             right_table = right_op.to_untagged()
-            join_columns = _extract_join_key_columns(
-                normalized_on, left_table, right_table
-            )
+            join_columns = _extract_join_key_columns(normalized_on, left_table, right_table)
             if join_columns.is_success():
                 left_entity_columns = _get_entity_source_columns(left_op)
                 right_entity_columns = _get_entity_source_columns(right_op)
@@ -781,9 +778,7 @@ def _replace_metadata_preserving_filters(
         predicate = _unwrap(source.predicate)
         try:
             deferred_resolution = bool(
-                object.__getattribute__(
-                    predicate, "__bsl_deferred_resolution__"
-                )
+                object.__getattribute__(predicate, "__bsl_deferred_resolution__")
             )
         except (AttributeError, TypeError):
             deferred_resolution = False
@@ -898,9 +893,7 @@ def _replace_metadata_preserving_filters(
             serialization_dims = {
                 name: (
                     lambda _table, _dim=dimension, _physical=symbolic_physical: (
-                        _dim.resolve(_physical)
-                        if _is_deferred(_dim)
-                        else _dim(_physical)
+                        _dim.resolve(_physical) if _is_deferred(_dim) else _dim(_physical)
                     )
                 )
                 for name, dimension in dims.items()
@@ -910,9 +903,9 @@ def _replace_metadata_preserving_filters(
                     # Keep undeclared exact fields in semantic resolver scope;
                     # their sidecar metadata synthesizes the appropriate
                     # joined/raw mapping after reconstruction.
-                    serialization_dims[field] = (
-                        lambda _table, _field=field, _scope=t: _scope[_field]
-                    )
+                    serialization_dims[field] = lambda _table, _field=field, _scope=t: _scope[
+                        _field
+                    ]
             scope = _Resolver(physical_scope, serialization_dims)
             return pred.resolve(scope) if _is_deferred(pred) else pred(scope)
 
@@ -1792,9 +1785,7 @@ def _regrain_nested_specs(aggs: dict, new_outer_keys: tuple[str, ...]) -> dict:
             out[agg_name] = agg_fn
             continue
         inner = spec.inner_op
-        widened = tuple(new_outer_keys) + tuple(
-            k for k in inner.keys if k not in new_outer_keys
-        )
+        widened = tuple(new_outer_keys) + tuple(k for k in inner.keys if k not in new_outer_keys)
         if widened == tuple(inner.keys):
             out[agg_name] = agg_fn
             continue
@@ -1958,8 +1949,7 @@ class SemanticGroupBy(SemanticTable):
         if nest:
             source_op = self.op().source
             nest_aggs = {
-                name: _build_nest_agg(name, fn, source_op, self.keys)
-                for name, fn in nest.items()
+                name: _build_nest_agg(name, fn, source_op, self.keys) for name, fn in nest.items()
             }
             aggs = {**aggs, **nest_aggs}
             nested_columns = tuple(nest.keys())

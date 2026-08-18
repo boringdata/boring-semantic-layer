@@ -63,10 +63,7 @@ def _format_semantic_filter(op: SemanticFilterOp, source=None, **kwargs):
         if hasattr(unwrapped, "__name__"):
             pred_repr = f"λ {unwrapped.__name__}"
 
-    if source is None:
-        top = "Filter\n"
-    else:
-        top = f"Filter[{source}]\n"
+    top = "Filter\n" if source is None else f"Filter[{source}]\n"
     return top + render_fields({"predicate": pred_repr}, 1)
 
 

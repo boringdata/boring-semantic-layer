@@ -100,9 +100,7 @@ def main():
 
     # --- 1b. Naive ibis join (WRONG) --------------------------------------
     print("\n--- Naive JOIN (raw ibis) ---")
-    naive_join = customers_tbl.join(
-        orders_tbl, customers_tbl.customer_id == orders_tbl.customer_id
-    )
+    naive_join = customers_tbl.join(orders_tbl, customers_tbl.customer_id == orders_tbl.customer_id)
     naive_result = naive_join.aggregate(
         total_ltv=naive_join.lifetime_value.sum(),
         order_count=naive_join.count(),
@@ -110,22 +108,15 @@ def main():
     ).execute()
 
     print(naive_result.to_string(index=False))
+    print(f"\n  ❌  total_ltv = {naive_result['total_ltv'].iloc[0]}  (expected {true_revenue})")
     print(
-        f"\n  ❌  total_ltv = {naive_result['total_ltv'].iloc[0]}  "
-        f"(expected {true_revenue})"
-    )
-    print(
-        f"  ✓  order_count = {naive_result['order_count'].iloc[0]}  "
-        f"(expected {true_order_count})"
+        f"  ✓  order_count = {naive_result['order_count'].iloc[0]}  (expected {true_order_count})"
     )
     print(
         f"  ✓  total_order_amount = {naive_result['total_order_amount'].iloc[0]}  "
         f"(expected {true_total_amount})"
     )
-    print(
-        "\n  → lifetime_value is INFLATED because each customer row was "
-        "duplicated per order!"
-    )
+    print("\n  → lifetime_value is INFLATED because each customer row was duplicated per order!")
 
     # --- 1c. BSL with join_many (CORRECT) ---------------------------------
     print("\n--- BSL with join_many (pre-aggregation) ---")
@@ -160,19 +151,14 @@ def main():
     )
 
     # Scalar aggregate — measures from BOTH tables
-    fan_result = (
-        customer_orders
-        .aggregate(
-            "customers.total_ltv",
-            "orders.order_count",
-            "orders.total_order_amount",
-        )
-        .execute()
-    )
+    fan_result = customer_orders.aggregate(
+        "customers.total_ltv",
+        "orders.order_count",
+        "orders.total_order_amount",
+    ).execute()
     print(fan_result.to_string(index=False))
     print(
-        f"\n  ✓  total_ltv = {fan_result['customers.total_ltv'].iloc[0]}  "
-        f"(expected {true_revenue})"
+        f"\n  ✓  total_ltv = {fan_result['customers.total_ltv'].iloc[0]}  (expected {true_revenue})"
     )
     print(
         f"  ✓  order_count = {fan_result['orders.order_count'].iloc[0]}  "
@@ -186,8 +172,7 @@ def main():
     # --- 1d. Group-by a dimension from the "one" side --------------------
     print("\n--- BSL: group by region, aggregate both sides ---")
     fan_by_region = (
-        customer_orders
-        .group_by("customers.region")
+        customer_orders.group_by("customers.region")
         .aggregate(
             "customers.total_ltv",
             "orders.order_count",
@@ -233,14 +218,8 @@ def main():
 
     actual_orders = naive_chasm_result["order_count"].iloc[0]
     actual_tickets = naive_chasm_result["ticket_count"].iloc[0]
-    print(
-        f"\n  ❌  order_count = {actual_orders}  "
-        f"(expected {true_order_count})"
-    )
-    print(
-        f"  ❌  ticket_count = {actual_tickets}  "
-        f"(expected {true_ticket_count})"
-    )
+    print(f"\n  ❌  order_count = {actual_orders}  (expected {true_order_count})")
+    print(f"  ❌  ticket_count = {actual_tickets}  (expected {true_ticket_count})")
     print(
         "\n  → Cross-product: Alice (3 orders × 2 tickets = 6 rows), "
         "Bob (2×1 = 2), Carol (3×2 = 6).\n"
@@ -263,22 +242,16 @@ def main():
     )
 
     # Two independent 1:M relationships from customers
-    full_model = (
-        customers_st
-        .join_many(orders_st, on="customer_id")
-        .join_many(tickets_st, on="customer_id")
+    full_model = customers_st.join_many(orders_st, on="customer_id").join_many(
+        tickets_st, on="customer_id"
     )
 
-    chasm_result = (
-        full_model
-        .aggregate(
-            "customers.total_ltv",
-            "orders.order_count",
-            "orders.total_order_amount",
-            "tickets.ticket_count",
-        )
-        .execute()
-    )
+    chasm_result = full_model.aggregate(
+        "customers.total_ltv",
+        "orders.order_count",
+        "orders.total_order_amount",
+        "tickets.ticket_count",
+    ).execute()
     print(chasm_result.to_string(index=False))
     print(
         f"\n  ✓  total_ltv = {chasm_result['customers.total_ltv'].iloc[0]}  "
@@ -296,8 +269,7 @@ def main():
     # --- 2d. Group-by region with all three fact tables -------------------
     print("\n--- BSL: group by region, aggregate across all three tables ---")
     chasm_by_region = (
-        full_model
-        .group_by("customers.region")
+        full_model.group_by("customers.region")
         .aggregate(
             "customers.total_ltv",
             "customers.customer_count",
@@ -314,13 +286,9 @@ def main():
     for _, row in chasm_by_region.iterrows():
         region = row["customers.region"]
         cids = customers_df[customers_df["region"] == region]["customer_id"]
-        expected_ltv = customers_df[customers_df["region"] == region][
-            "lifetime_value"
-        ].sum()
+        expected_ltv = customers_df[customers_df["region"] == region]["lifetime_value"].sum()
         expected_orders = orders_df[orders_df["customer_id"].isin(cids)].shape[0]
-        expected_tickets = support_tickets_df[
-            support_tickets_df["customer_id"].isin(cids)
-        ].shape[0]
+        expected_tickets = support_tickets_df[support_tickets_df["customer_id"].isin(cids)].shape[0]
         ltv_ok = row["customers.total_ltv"] == expected_ltv
         ord_ok = row["orders.order_count"] == expected_orders
         tkt_ok = row["tickets.ticket_count"] == expected_tickets
@@ -336,14 +304,10 @@ def main():
     print_section("PART 3: INSPECT THE GENERATED SQL")
 
     print("\nSQL for chasm-safe query (group by region, all measures):")
-    query = (
-        full_model
-        .group_by("customers.region")
-        .aggregate(
-            "customers.total_ltv",
-            "orders.order_count",
-            "tickets.ticket_count",
-        )
+    query = full_model.group_by("customers.region").aggregate(
+        "customers.total_ltv",
+        "orders.order_count",
+        "tickets.ticket_count",
     )
     print(query.sql())
 

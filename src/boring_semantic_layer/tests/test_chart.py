@@ -51,7 +51,6 @@ def flights_model(con):
     return flights
 
 
-
 class TestAltairChart:
     """Test Altair chart generation."""
 
@@ -109,7 +108,6 @@ class TestAltairChart:
         import altair as alt
 
         assert isinstance(chart, alt.Chart)
-
 
 
 class TestPlotlyChart:
@@ -186,7 +184,6 @@ class TestChartErrors:
         assert callable(result.chart)
 
 
-
 class TestChartFieldNameSanitization:
     """Test that field names with dots are sanitized for Vega-Lite compatibility."""
 
@@ -223,7 +220,9 @@ class TestChartFieldNameSanitization:
         joined = flights_sm.join_many(carriers_sm, lambda f, c: f.carrier == c.code)
 
         # Query with the joined field
-        result = joined.group_by("carriers.name").aggregate("flights.flight_count", "flights.total_distance")
+        result = joined.group_by("carriers.name").aggregate(
+            "flights.flight_count", "flights.total_distance"
+        )
 
         # Create chart - this should sanitize the dotted field name
         chart = result.chart(backend="altair")
@@ -250,7 +249,6 @@ class TestChartFieldNameSanitization:
 class TestChartFormats:
     """Test chart output formats (PNG, SVG, JSON)."""
 
-    
     def test_chart_png_format_altair(self, flights_model):
         """Test PNG export with Altair backend."""
         result = flights_model.group_by("carrier").aggregate("flight_count")
@@ -261,7 +259,6 @@ class TestChartFormats:
         # PNG files start with this signature
         assert png_bytes[:8] == b"\x89PNG\r\n\x1a\n"
 
-    
     def test_chart_svg_format_altair(self, flights_model):
         """Test SVG export with Altair backend."""
         result = flights_model.group_by("carrier").aggregate("flight_count")
@@ -272,7 +269,6 @@ class TestChartFormats:
         # SVG files are XML, should contain <svg
         assert b"<svg" in svg_bytes
 
-    
     def test_chart_json_format_altair(self, flights_model):
         """Test JSON export with Altair backend."""
         result = flights_model.group_by("carrier").aggregate("flight_count")
@@ -284,7 +280,6 @@ class TestChartFormats:
         assert "$schema" in json_spec
         assert "vega-lite" in json_spec["$schema"]
 
-    
     def test_chart_png_format_plotly(self, flights_model):
         """Test PNG export with Plotly backend."""
         result = flights_model.group_by("carrier").aggregate("flight_count")
@@ -295,7 +290,6 @@ class TestChartFormats:
         # PNG files start with this signature
         assert png_bytes[:8] == b"\x89PNG\r\n\x1a\n"
 
-    
     def test_chart_json_format_plotly(self, flights_model):
         """Test JSON export with Plotly backend."""
         result = flights_model.group_by("carrier").aggregate("flight_count")
@@ -309,7 +303,6 @@ class TestChartFormats:
         parsed = json.loads(json_spec)
         assert "data" in parsed
 
-    
     def test_chart_json_roundtrip_plotly(self, flights_model):
         """Test JSON export/import roundtrip with Plotly."""
         import plotly.io
@@ -327,7 +320,6 @@ class TestChartFormats:
 class TestChartWithFilters:
     """Test chart generation with filtered data."""
 
-    
     def test_chart_with_filter(self, flights_model):
         """Test chart generation on filtered data."""
         result = (
@@ -342,7 +334,6 @@ class TestChartWithFilters:
 
         assert isinstance(chart, alt.Chart)
 
-    
     def test_chart_with_order_by(self, flights_model):
         """Test chart generation with ordered data."""
         result = (
@@ -357,7 +348,6 @@ class TestChartWithFilters:
 
         assert isinstance(chart, go.Figure)
 
-    
     def test_chart_with_limit(self, flights_model):
         """Test chart generation with limited results."""
         result = flights_model.group_by("carrier").aggregate("flight_count").limit(2)
@@ -368,7 +358,6 @@ class TestChartWithFilters:
 
         assert isinstance(chart, alt.Chart)
 
-    
     def test_chart_with_mutate(self, flights_model):
         """Test chart generation after mutate operation."""
         result = (

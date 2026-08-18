@@ -269,9 +269,7 @@ def test_apply_calc_measures_join_with_mean_totals():
             "distance": [100, 200, 300, 400],
         }
     )
-    carriers = pd.DataFrame(
-        {"code": ["AA", "UA"], "carrier_name": ["American", "United"]}
-    )
+    carriers = pd.DataFrame({"code": ["AA", "UA"], "carrier_name": ["American", "United"]})
     f_tbl = con.create_table("join_flights", flights)
     c_tbl = con.create_table("join_carriers", carriers)
 
@@ -335,8 +333,7 @@ def test_apply_calc_measures_non_sum_totals(reducer, expected_total, per_group):
         to_semantic_table(tbl, f"flights_nonsum_{reducer}")
         .with_measures(**{f"d_{reducer}": lambda t, op=reducer: getattr(t.distance, op)()})
         .with_measures(
-            ratio=lambda t, op=reducer: getattr(t, f"d_{op}")
-            / t.all(getattr(t, f"d_{op}")),
+            ratio=lambda t, op=reducer: getattr(t, f"d_{op}") / t.all(getattr(t, f"d_{op}")),
         )
     )
     df_out = (
@@ -388,9 +385,7 @@ def test_cast_to_float_survives_int_measure_substitution():
             flight_count=lambda t: t.count(),  # int64
         )
         .with_measures(
-            share_pct=(
-                lambda t: t.flight_count.cast("float64") / t.all(t.flight_count) * 100
-            ),
+            share_pct=(lambda t: t.flight_count.cast("float64") / t.all(t.flight_count) * 100),
         )
     )
     result = (
@@ -466,9 +461,7 @@ def test_joined_model_totals_via_windowed_aggregation():
     # Three carriers — non-empty result is the regression-blocking property.
     assert len(df) == 3
     # Per-carrier counts: AA=3, UA=2, DL=1; total=6.
-    by_name = dict(
-        zip(df["carriers.carrier_name"], df["flights.flight_count"], strict=True)
-    )
+    by_name = dict(zip(df["carriers.carrier_name"], df["flights.flight_count"], strict=True))
     assert by_name == {"American": 3, "United": 2, "Delta": 1}
     # Shares sum to exactly 100% (windowed totals are constant across rows
     # — no per-group / totals snapshot drift).
@@ -490,9 +483,7 @@ def test_joined_model_totals_does_not_emit_cross_join():
     from boring_semantic_layer import to_semantic_table
 
     con = xo.duckdb.connect()
-    flights = pd.DataFrame(
-        {"carrier_code": ["AA", "AA", "UA"], "distance": [100, 200, 300]}
-    )
+    flights = pd.DataFrame({"carrier_code": ["AA", "AA", "UA"], "distance": [100, 200, 300]})
     carriers = pd.DataFrame({"code": ["AA", "UA"], "name": ["American", "United"]})
     f_tbl = con.create_table("nocrossjoin_flights", flights)
     c_tbl = con.create_table("nocrossjoin_carriers", carriers)
@@ -505,9 +496,7 @@ def test_joined_model_totals_does_not_emit_cross_join():
     carriers_st = to_semantic_table(c_tbl, "carriers").with_dimensions(
         name=lambda t: t.name,
     )
-    joined = flights_st.join_one(
-        carriers_st, on=lambda l, r: l.carrier_code == r.code
-    )
+    joined = flights_st.join_one(carriers_st, on=lambda l, r: l.carrier_code == r.code)
 
     sql = joined.group_by("carriers.name").aggregate("flights.share").compile()
     assert sql.upper().count("CROSS JOIN") == 0
@@ -528,18 +517,14 @@ def test_attach_windowed_totals_helper():
     )
 
     con = xo.duckdb.connect()
-    df = pd.DataFrame(
-        {"g": ["a", "a", "b", "b"], "v": [10, 20, 30, 40]}
-    )
+    df = pd.DataFrame({"g": ["a", "a", "b", "b"], "v": [10, 20, 30, 40]})
     base = con.create_table("attach_helper", df)
 
     agg_specs = {
         "v_sum": lambda t: t.v.sum(),
         "v_mean": lambda t: t.v.mean(),
     }
-    new_base, totals_arbitrary_specs = attach_windowed_totals(
-        base, agg_specs, ["v_sum", "v_mean"]
-    )
+    new_base, totals_arbitrary_specs = attach_windowed_totals(base, agg_specs, ["v_sum", "v_mean"])
     # Two new columns added to the base.
     assert f"{TOTALS_PREFIX}v_sum" in new_base.columns
     assert f"{TOTALS_PREFIX}v_mean" in new_base.columns
@@ -596,9 +581,7 @@ def test_attach_calc_totals_handles_calc_of_calc():
         .sort_values("carrier")
         .reset_index(drop=True)
     )
-    by_carrier = dict(
-        zip(df_out["carrier"], df_out["avg_distance"], strict=True)
-    )
+    by_carrier = dict(zip(df_out["carrier"], df_out["avg_distance"], strict=True))
     # AA mean=150, UA mean=350; overall mean=250 (NOT sum-of-means=500).
     assert pytest.approx(by_carrier["AA"]) == 150.0
     assert pytest.approx(by_carrier["UA"]) == 350.0

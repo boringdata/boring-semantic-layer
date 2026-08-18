@@ -83,18 +83,18 @@ def test_qualified_dict_filter_targets_undeclared_raw_right_column(con):
             }
         ),
     )
-    orders = to_semantic_table(orders_tbl, "orders").with_dimensions(
-        status=lambda t: t.status
-    )
+    orders = to_semantic_table(orders_tbl, "orders").with_dimensions(status=lambda t: t.status)
     # ``status`` intentionally remains an undeclared raw column on this side.
-    items = to_semantic_table(items_tbl, "items").with_measures(
-        total=lambda t: t.amount.sum()
-    )
+    items = to_semantic_table(items_tbl, "items").with_measures(total=lambda t: t.amount.sum())
 
-    result = orders.join_many(items, on="order_id").query(
-        measures=["items.total"],
-        filters=[{"field": "items.status", "operator": "=", "value": "bad"}],
-    ).execute()
+    result = (
+        orders.join_many(items, on="order_id")
+        .query(
+            measures=["items.total"],
+            filters=[{"field": "items.status", "operator": "=", "value": "bad"}],
+        )
+        .execute()
+    )
 
     assert result["items.total"].iloc[0] == 30
 
@@ -122,9 +122,7 @@ def test_qualified_dict_filter_metadata_survives_metadata_overlay(con, overlay):
         ),
     )
     orders = to_semantic_table(orders_tbl, "orders")
-    items = to_semantic_table(items_tbl, "items").with_measures(
-        total=lambda t: t.amount.sum()
-    )
+    items = to_semantic_table(items_tbl, "items").with_measures(total=lambda t: t.amount.sum())
     predicate = Filter(
         filter={"field": "items.status", "operator": "=", "value": "bad"}
     ).to_callable()
@@ -161,16 +159,12 @@ def test_qualified_dict_filter_rejects_unknown_join_prefix(con):
         ),
     )
     orders = to_semantic_table(orders_tbl, "orders")
-    items = to_semantic_table(items_tbl, "items").with_measures(
-        total=lambda t: t.amount.sum()
-    )
+    items = to_semantic_table(items_tbl, "items").with_measures(total=lambda t: t.amount.sum())
 
     with pytest.raises(KeyError, match="Unknown semantic model prefix 'bogus'"):
         orders.join_many(items, on="order_id").query(
             measures=["items.total"],
-            filters=[
-                {"field": "bogus.status", "operator": "=", "value": "bad"}
-            ],
+            filters=[{"field": "bogus.status", "operator": "=", "value": "bad"}],
         ).execute()
 
 
@@ -200,9 +194,7 @@ def test_standalone_model_prefixed_raw_dict_filter_remains_supported(con):
         "query_soundness_standalone_raw",
         pd.DataFrame({"status": ["open", "closed"], "amount": [10, 20]}),
     )
-    model = to_semantic_table(tbl, "orders").with_measures(
-        total=lambda t: t.amount.sum()
-    )
+    model = to_semantic_table(tbl, "orders").with_measures(total=lambda t: t.amount.sum())
 
     result = model.query(
         measures=["total"],

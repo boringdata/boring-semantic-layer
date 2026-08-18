@@ -5,8 +5,8 @@ Tests the .dimensions and .measures properties that allow inspecting
 what dimensions and measures are available on a semantic table.
 """
 
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 import duckdb
 import ibis
@@ -199,9 +199,13 @@ def test_dims_after_join_duckdb_read_only():
         rw.close()
 
         con = ibis.duckdb.connect(str(lake), read_only=True)
-        a = to_semantic_table(con.table("raw_a"), name="a").with_dimensions(
-            key=lambda t: t.key,
-        ).with_measures(row_count=lambda t: t.count())
+        a = (
+            to_semantic_table(con.table("raw_a"), name="a")
+            .with_dimensions(
+                key=lambda t: t.key,
+            )
+            .with_measures(row_count=lambda t: t.count())
+        )
         b = to_semantic_table(con.table("raw_b"), name="b").with_dimensions(
             key=lambda t: t.key,
         )

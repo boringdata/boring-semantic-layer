@@ -65,9 +65,7 @@ class _ColumnPrefixProxy:
         full_name = f"{self._prefix}.{name}"
         if hasattr(self._tbl, "columns") and full_name in self._tbl.columns:
             return self._tbl[full_name]
-        raise KeyError(
-            f"No column '{full_name}' found on the table."
-        )
+        raise KeyError(f"No column '{full_name}' found on the table.")
 
 
 def _resolve_column_short_name(tbl, name):
@@ -87,7 +85,7 @@ def _resolve_column_short_name(tbl, name):
         if matches:
             raise AttributeError(
                 f"Column '{name}' not found. Did you mean one of the fully qualified names: "
-                f"{matches}? Use bracket notation, e.g. t[\"{matches[0]}\"]."
+                f'{matches}? Use bracket notation, e.g. t["{matches[0]}"].'
             )
 
     return getattr(tbl, name)

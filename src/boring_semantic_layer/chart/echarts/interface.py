@@ -87,7 +87,7 @@ class EChartsBackendInterface(ABC):
         supported = self.supported_chart_types()
         if chart_type not in supported:
             raise ValueError(
-                f"Unsupported chart type: {chart_type}. " f"Supported types: {', '.join(supported)}"
+                f"Unsupported chart type: {chart_type}. Supported types: {', '.join(supported)}"
             )
         return chart_type
 

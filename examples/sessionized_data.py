@@ -12,11 +12,11 @@ from pathlib import Path
 
 import pandas as pd
 
+from boring_semantic_layer import from_yaml, to_untagged
+
 # CI runs this example with and without xorq. xibis matches BSL's active ibis
 # flavor in both modes; users who are not using xorq can simply use `import ibis`.
 from boring_semantic_layer._xorq import ibis as xibis
-
-from boring_semantic_layer import from_yaml, to_untagged
 
 # Show all columns in output
 pd.set_option("display.max_columns", None)
@@ -45,14 +45,16 @@ def main():
             "flights.max_delay",
             "flights.total_distance",
             nest={
-                "flight_legs": lambda t: t.group_by([
-                    "tail_num",
-                    "dep_time",
-                    "origin",
-                    "destination",
-                    "dep_delay",
-                    "arr_delay",
-                ]),
+                "flight_legs": lambda t: t.group_by(
+                    [
+                        "tail_num",
+                        "dep_time",
+                        "origin",
+                        "destination",
+                        "dep_delay",
+                        "arr_delay",
+                    ]
+                ),
             },
         )
         .mutate(session_id=xibis.row_number().over(xibis.window()))

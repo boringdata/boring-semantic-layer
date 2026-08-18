@@ -121,6 +121,8 @@ email-validator==2.3.0
     # via pydantic
 exceptiongroup==1.3.0
     # via fastmcp
+execnet==2.1.2
+    # via pytest-xdist
 executing==2.2.1
     # via stack-data
 fastapi==0.135.3
@@ -483,10 +485,13 @@ pytest==8.4.2
     #   boring-semantic-layer
     #   pytest-asyncio
     #   pytest-timeout
+    #   pytest-xdist
 pytest-asyncio==1.2.0
     # via boring-semantic-layer
 pytest-timeout==2.4.0
     # via kaleido
+pytest-xdist==3.8.0
+    # via boring-semantic-layer
 python-dateutil==2.9.0.post0
     # via
     #   botocore

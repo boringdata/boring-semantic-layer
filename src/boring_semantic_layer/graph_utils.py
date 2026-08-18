@@ -166,9 +166,7 @@ def replace_nodes(replacer, expr):
     """
     node = to_node(expr)
     if isinstance(node, IbisNode):
-        new_node = node.replace(
-            lambda n, kwargs: replacer(n, kwargs if kwargs is not None else {})
-        )
+        new_node = node.replace(lambda n, kwargs: replacer(n, kwargs if kwargs is not None else {}))
         return new_node.to_expr()
     return _xorq_replace_nodes(replacer, node).to_expr()
 
@@ -374,10 +372,7 @@ def build_dependency_graph(
             graph[name] = {"deps": {}, "type": "dimension" if name in dimensions else "measure"}
 
     for name, calc in calc_measures.items():
-        if isinstance(calc, CalcMeasure):
-            refs = set(calc.depends_on)
-        else:
-            refs = set()
+        refs = set(calc.depends_on) if isinstance(calc, CalcMeasure) else set()
         graph[name] = {"deps": {ref: "measure" for ref in refs}, "type": "calc_measure"}
 
     return graph
