@@ -57,6 +57,7 @@ server = [
 test-core = [
     "ibis-framework[duckdb]>=11.0.0",
     "pytest",
+    "pytest-xdist",
     "pandas>=2.3.0",
     "pytest-asyncio",
 ]
@@ -70,6 +71,7 @@ dev = [
     "ruff>=0.6.7",
     "pre-commit>=4.2.0",
     "pytest",
+    "pytest-xdist",
     "pandas>=2.3.0",
     "urllib3>=2.2.3",
     "pytest-asyncio",
@@ -82,6 +84,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/boring_semantic_layer"]
+# Test suites (and their fixture data / sys.path-mutating conftests) are
+# development-only; they do not ship to end users.
+exclude = ["**/tests"]
 
 [tool.hatch.build.targets.wheel.shared-data]
 "docs/md/skills" = "share/bsl/skills"
@@ -90,8 +95,10 @@ packages = ["src/boring_semantic_layer"]
 "docs/md/index.json" = "share/bsl/index.json"
 
 [tool.pytest.ini_options]
+addopts = "--strict-markers"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: tests that need external services or downloaded datasets",
 ]
 
 [tool.ruff]
