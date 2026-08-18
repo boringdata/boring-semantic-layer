@@ -257,30 +257,11 @@ def _build_scope(
     )
 
 
-def to_untagged_with_preagg(
-    op,
-    all_roots: list,
-    join_op: SemanticJoinOp,
-    join_tree_info: _JoinTreeInfo,
-    filters: list | None = None,
-):
-    """Pre-aggregate each source table's measures at its own grain, then join.
-
-    This prevents fan-out inflation when ``join_many`` is used.
-    """
-    scope = _build_scope(op, all_roots, join_op, join_tree_info, filters)
+def _resolve_filter_ownership(scope: _PreaggScope) -> tuple[dict, list]:
+    """Phase 1b: attribute each filter to the source table(s) it resolves on."""
     filter_fns = scope.filter_fns
-    merged_dimensions = scope.merged_dimensions
-    merged_base_measures = scope.merged_base_measures
-    merged_calc_measures = scope.merged_calc_measures
-    group_by_cols = scope.group_by_cols
-    join_column_lineage = scope.join_column_lineage
-    wrapper_local_dimensions = scope.wrapper_local_dimensions
-    wrapper_dimension_owners = scope.wrapper_dimension_owners
-    tbl = scope.tbl
+    join_tree_info = scope.join_tree_info
     filters_on_tbl = scope.filters_on_tbl
-    tbl_filter_exprs = scope.tbl_filter_exprs
-
     # --- 1b. Determine which source table(s) each filter belongs to ---
     # Ownership resolution uses each table's own dimensions (bare and
     # table-prefixed) so ``t["orders.status"]`` resolves only against
@@ -331,7 +312,12 @@ def to_untagged_with_preagg(
                 "Check the dimension/column name, or qualify it with a "
                 'table prefix (e.g. t["orders.status"]).'
             )
+    return raw_tables, filter_owners
 
+
+def _split_cross_table_legs(scope: _PreaggScope, raw_tables: dict, filter_owners: list) -> dict:
+    """Phase 1c: split cross-table AND conjunctions into per-table legs."""
+    tbl_filter_exprs = scope.tbl_filter_exprs
     # --- 1c. Split cross-table conjunctions into per-table legs ---
     # A compound like (t["orders.status"]=="open") & (t.qty >= 2) has no
     # single owner, so it used to reach the many side only through a
@@ -359,7 +345,15 @@ def to_untagged_with_preagg(
                 (leg, _leg_source_tables(leg, base_rel_to_table, leaf_types))
                 for leg in _flatten_and_legs(expr)
             ]
+    return filter_legs
 
+
+def _build_plan(scope: _PreaggScope):
+    """Phase 2: build the aggregation plan (or its chasm-fallback shape)."""
+    op = scope.op
+    tbl = scope.tbl
+    merged_base_measures = scope.merged_base_measures
+    merged_calc_measures = scope.merged_calc_measures
     # --- 2. Build aggregation plan ---
     if tbl is not None:
         scope = MeasureScope(
@@ -387,7 +381,14 @@ def to_untagged_with_preagg(
             requested_measures=tuple(op.aggs.keys()),
             group_by_cols=tuple(op.keys),
         )
+    return plan
 
+
+def _partition_by_source(scope: _PreaggScope, plan) -> dict:
+    """Phase 3: partition agg specs by owning source table."""
+    join_op = scope.join_op
+    join_tree_info = scope.join_tree_info
+    merged_base_measures = scope.merged_base_measures
     # --- 3. Partition agg_specs by source table ---
     # Partition by the join's per-table roots, not ``all_roots``. When a
     # wrapper SemanticTableOp from ``SemanticJoin.with_measures()`` /
@@ -396,7 +397,6 @@ def to_untagged_with_preagg(
     # unprefixed bucket and bypass per-grain pre-aggregation.
     partition_roots = _find_all_root_models(join_op)
     partitioned = _partition_agg_specs_by_source(dict(plan.agg_specs), partition_roots)
-
     # Measures declared on a joined wrapper have unprefixed result names.
     # Route field-bearing reductions back to their unique owning leaf so
     # they do not aggregate the fanned-out join. Relation-only reductions
@@ -413,6 +413,34 @@ def to_untagged_with_preagg(
         del wrapper_specs[measure_name]
     if not wrapper_specs:
         partitioned.pop(None, None)
+    return partitioned
+
+
+def to_untagged_with_preagg(
+    op,
+    all_roots: list,
+    join_op: SemanticJoinOp,
+    join_tree_info: _JoinTreeInfo,
+    filters: list | None = None,
+):
+    """Pre-aggregate each source table's measures at its own grain, then join.
+
+    This prevents fan-out inflation when ``join_many`` is used.
+    """
+    scope = _build_scope(op, all_roots, join_op, join_tree_info, filters)
+    filter_fns = scope.filter_fns
+    merged_dimensions = scope.merged_dimensions
+    merged_base_measures = scope.merged_base_measures
+    group_by_cols = scope.group_by_cols
+    join_column_lineage = scope.join_column_lineage
+    wrapper_local_dimensions = scope.wrapper_local_dimensions
+    wrapper_dimension_owners = scope.wrapper_dimension_owners
+    tbl = scope.tbl
+
+    raw_tables, filter_owners = _resolve_filter_ownership(scope)
+    filter_legs = _split_cross_table_legs(scope, raw_tables, filter_owners)
+    plan = _build_plan(scope)
+    partitioned = _partition_by_source(scope, plan)
 
     # --- 4. Pre-aggregate each source table on its raw table ---
     _preagg_results: list = []
