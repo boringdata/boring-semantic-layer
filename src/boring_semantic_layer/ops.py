@@ -341,7 +341,12 @@ def _ensure_xorq_table(table):
             from ._xorq import from_ibis
 
             return from_ibis(table)
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "xorq conversion unavailable for %s table (%s); continuing on the plain-ibis path.",
+                type(table).__name__,
+                exc,
+            )
             return table
     return table
 
@@ -943,25 +948,29 @@ def _reject_shadowed_group_keys(
         dim_fn = merged_dimensions[key]
         try:
             dim_expr = dim_fn(tbl)
-        except Exception:
+        except Exception as exc:
+            logger.debug("Shadowed-key guard could not evaluate dimension %r: %s", key, exc)
             continue
         target = tbl[key].op()
         try:
             if dim_expr.op() == target:
                 continue
-        except Exception:
+        except Exception as exc:
+            logger.debug("Shadowed-key guard could not compare dimension %r: %s", key, exc)
             continue
         for name, agg in aggs.items():
             measure = merged_base_measures.get(name)
             try:
                 measure_expr = measure(tbl) if measure is not None else _unwrap(agg)(tbl)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Shadowed-key guard could not evaluate measure %r: %s", name, exc)
                 continue
             try:
                 reads_shadowed = any(
                     node == target for node in measure_expr.op().find(type(target))
                 )
-            except Exception:
+            except Exception as exc:
+                logger.debug("Shadowed-key guard could not inspect measure %r: %s", name, exc)
                 continue
             if reads_shadowed:
                 raise ValueError(

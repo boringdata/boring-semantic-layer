@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -47,6 +48,8 @@ from .ops import (
 )
 from .query import compare_periods as build_compare_periods
 from .query import query as build_query
+
+logger = logging.getLogger(__name__)
 
 _JOIN_REMOVED_MESSAGE = (
     "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
@@ -696,10 +699,11 @@ def _detect_grain_cardinality(left_op, right_op, on=None) -> str:
                     left_entity_columns <= join_columns.left_columns
                     and right_entity_columns <= join_columns.right_columns
                 )
-        except Exception:
+        except Exception as exc:
             # Inconclusive predicate analysis keeps the explicit join_one
             # contract; aggregation-time validation still fails closed where
             # source-aware preaggregation depends on predicate shape.
+            logger.debug("Grain-cardinality predicate analysis inconclusive: %s", exc)
             join_misses_entity_grain = False
 
     if (
