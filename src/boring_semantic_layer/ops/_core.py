@@ -16,7 +16,6 @@ from ibis.expr import operations as ibis_ops
 from ibis.expr import types as ir
 from ibis.expr.operations.relations import Relation
 from ibis.expr.schema import Schema
-from returns.result import safe
 
 from .. import projection_utils
 from .._xorq import (
@@ -70,6 +69,14 @@ from ..measure_scope import (
 )
 from ..nested_access import NestedAccessMarker
 from ._compat import _rebind_to_backend, _rebind_to_canonical_backend
+from ._reductions import (
+    _build_reagg,
+    _fill_missing_count_identities,
+    _is_count_distinct_expr,
+    _is_count_expr,
+    _is_mean_expr,
+    _reagg_op_for_expr,
+)
 from ._tracking import (
     _extract_columns_from_callable,
     _extract_join_key_columns,
@@ -79,19 +86,6 @@ logger = logging.getLogger(__name__)
 
 _SchemaClass = XorqSchema
 _FrozenOrderedDict = FrozenOrderedDict
-
-
-def _reductions_for_expr(expr):
-    """Return the ``reductions`` ops module matching *expr*'s ibis flavor.
-
-    A user-supplied callable produces expressions against exactly one of
-    ``ibis`` or ``xorq.vendor.ibis`` — whichever the underlying table came
-    from. Pick that module so isinstance checks compare against a single
-    concrete type rather than a cross-module union.
-    """
-    if type(expr.op()).__module__.startswith("xorq.vendor.ibis"):
-        return xorq_ops.reductions
-    return ibis_ops.reductions
 
 
 _JOIN_REMOVED_MESSAGE = (
@@ -3037,77 +3031,6 @@ def _attach_dim_column(pt, gb_col, measure_names, join_tree_info, merged_dimensi
         case _:
             bridge = raw.select([raw[c] for c in (gb_col, *common_keys)]).distinct()
             return _left_join_bridge(bridge, pt, common_keys)
-
-
-def _is_mean_expr(expr):
-    """Check if an ibis expression is a Mean/Average reduction."""
-    try:
-        return isinstance(expr.op(), _reductions_for_expr(expr).Mean)
-    except Exception:
-        return False
-
-
-def _is_count_distinct_expr(expr):
-    """Check if an ibis expression is a CountDistinct (nunique) reduction."""
-    return safe(lambda: isinstance(expr.op(), _reductions_for_expr(expr).CountDistinct))().value_or(
-        False
-    )
-
-
-def _is_count_expr(expr):
-    """Check if an expression is COUNT(column) or COUNT(*)."""
-    try:
-        reductions = _reductions_for_expr(expr)
-        return isinstance(expr.op(), (reductions.Count, reductions.CountStar))
-    except Exception:
-        return False
-
-
-def _fill_missing_count_identities(table, measure_names):
-    """Restore COUNT's empty-set identity after a dimension-bridge join."""
-    replacements = {
-        name: table[name].fill_null(0) for name in measure_names if name in table.columns
-    }
-    return table.mutate(**replacements) if replacements else table
-
-
-def _reagg_op_for_expr(expr):
-    """Return the re-aggregation operation name for an ibis expression.
-
-    Additive measures (SUM, COUNT) re-aggregate with ``sum``; MIN and MAX
-    with ``min``/``max``. MEAN never reaches here (decomposed by
-    ``_is_mean_expr``), nor does COUNT DISTINCT (deferred).
-
-    Returns ``None`` for everything else — median, stddev, variance,
-    compound expressions like ``sum()/count()`` — which cannot be
-    re-aggregated from a finer pre-aggregate at all. Those measures must
-    be computed at the exact target grain (``_exact_grain_preagg``);
-    the previous ``"sum"`` default silently summed per-key medians.
-    """
-    op = expr.op()
-    reductions = _reductions_for_expr(expr)
-    if isinstance(op, reductions.Min):
-        return "min"
-    if isinstance(op, reductions.Max):
-        return "max"
-    if isinstance(op, (reductions.Sum, reductions.Count, reductions.CountStar)):
-        return "sum"
-    if isinstance(op, reductions.Mean):
-        raise ValueError(
-            f"Mean expression {expr.get_name()!r} was not decomposed — "
-            "this is a bug in the pre-aggregation logic"
-        )
-    if isinstance(op, reductions.CountDistinct):
-        raise ValueError(
-            f"CountDistinct expression {expr.get_name()!r} was not deferred — "
-            "this is a bug in the pre-aggregation logic"
-        )
-    return None
-
-
-def _build_reagg(col_ref, op_name):
-    """Apply the correct re-aggregation to a column reference."""
-    return getattr(col_ref, op_name)()
 
 
 def _is_direct_physical_field(expr, table, column_name: str) -> bool:
