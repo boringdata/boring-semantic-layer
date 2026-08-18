@@ -15,6 +15,8 @@ respective modules.
 
 from __future__ import annotations
 
+import ibis as _plain_ibis
+
 try:
     import xorq.api as api
     from xorq.api import selectors
@@ -266,4 +268,46 @@ __all__ = [
     "to_node",
     "types",
     "walk_nodes",
+    "get_ibis_module",
+    "null_safe_equal",
 ]
+
+
+def _unwrap_table_proxy(obj):
+    for _ in range(8):
+        if not type(obj).__module__.startswith("boring_semantic_layer"):
+            return obj
+        inner = getattr(obj, "_t", None)
+        if inner is None:
+            resolver = getattr(obj, "_resolver", None)
+            inner = getattr(resolver, "_t", None) if resolver is not None else None
+        if inner is None:
+            return obj
+        obj = inner
+    return obj
+
+
+def get_ibis_module(table):
+    """Return the ibis module that built ``table`` (regular vs xorq-vendored).
+
+    BSL coexists with both flavors of ibis. Picking the right module avoids
+    cross-flavor literal/struct construction errors. Filter and dimension
+    callables receive resolver proxies rather than the table itself, so
+    unwrap those first — otherwise flavor detection would report plain ibis
+    for a xorq-backed table.
+    """
+    table = _unwrap_table_proxy(table)
+    if type(table).__module__.startswith("xorq.vendor.ibis"):
+        return ibis
+    return _plain_ibis
+
+
+def null_safe_equal(left, right):
+    """Return equality that also matches two NULL values.
+
+    xorq/DataFusion currently misplans multiple ``identical_to`` join
+    predicates by folding an integer key into a boolean ``AND``. Expressing
+    the same semantics with ordinary equality and explicit NULL checks keeps
+    multi-key joins portable across the plain-ibis and xorq backends.
+    """
+    return (left == right) | (left.isnull() & right.isnull())

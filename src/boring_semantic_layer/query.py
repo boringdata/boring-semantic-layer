@@ -575,7 +575,7 @@ def compare_periods(
 ) -> Any:
     """Compare two time ranges and return current/previous/delta columns."""
     from .api import to_semantic_table
-    from .join_utils import null_safe_equal
+    from ._xorq import null_safe_equal
 
     dimensions = list(dimensions or [])
     measures = list(measures or [])

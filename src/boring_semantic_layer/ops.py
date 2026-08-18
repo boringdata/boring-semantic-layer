@@ -58,8 +58,8 @@ from .calc_compiler import (
 from .calc_compiler import (
     compile_calc_measure as _compile_calc_measure_impl,
 )
+from ._xorq import null_safe_equal
 from .graph_utils import walk_nodes
-from .join_utils import null_safe_equal
 from .measure_scope import (
     ColumnScope,
     MeasureScope,
