@@ -16,10 +16,11 @@ from collections.abc import Iterable
 from functools import reduce
 from typing import Any
 
-import ibis
 from toolz import curry
 
-from ._xorq import get_ibis_module, null_safe_equal
+# Back-compat re-export: user-facing error messages document this import path.
+from ._xorq import get_ibis_module as get_ibis_module  # noqa: PLC0414
+from ._xorq import null_safe_equal
 
 
 def _allocate_nested_array_name(table, idx: int) -> str:

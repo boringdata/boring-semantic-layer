@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import ast
 import importlib
-import inspect
 import operator
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import yaml
-from returns.maybe import Maybe, Nothing, Some
 from returns.result import Result, safe
 from toolz import curry
 
@@ -141,13 +139,13 @@ SAFE_NODES = {
     ast.Dict,
     ast.keyword,
     ast.IfExp,
-    ast.Lambda,  # Allow lambda expressions for ibis_string_to_expr
+    ast.Lambda,  # Allow lambda expressions in YAML/agent-supplied strings
     ast.arguments,  # Required for lambda function arguments
     ast.arg,  # Required for individual lambda arguments
 }
 
 
-# Helpers exposed by the Ibis modules in ``ibis_string_to_expr`` and agent
+# Helpers exposed by the Ibis modules in agent
 # query contexts.  In particular, backend/IO namespaces (duckdb, postgres,
 # read_*, connect, ...) are intentionally absent.
 SAFE_MODULE_CALLS = frozenset(
@@ -464,175 +462,6 @@ def safe_eval(
         return _eval_in_context(eval_context, code)
 
     return do_eval()
-
-
-def _extract_lambda_from_source(source: str) -> str:
-    if "lambda" not in source:
-        return source
-
-    lambda_start = source.index("lambda")
-    lambda_expr = source[lambda_start:]
-
-    for end_marker in [" #", "  #", ",\n", "\n"]:
-        if end_marker in lambda_expr:
-            end_idx = lambda_expr.index(end_marker)
-            return lambda_expr[:end_idx].strip().rstrip(",")
-
-    return lambda_expr.strip().rstrip(",")
-
-
-def lambda_to_string(fn: Callable) -> Result[str, Exception]:
-    @safe
-    def do_extract():
-        source_lines = inspect.getsourcelines(fn)[0]
-        source = "".join(source_lines).strip()
-        return _extract_lambda_from_source(source)
-
-    return do_extract()
-
-
-def _check_deferred(fn: Any) -> Maybe[str]:
-    from ibis.common.deferred import Deferred
-
-    return Some(str(fn)) if isinstance(fn, Deferred) else Nothing
-
-
-def _check_closure_vars(fn: Callable) -> Maybe[str]:
-    from ibis.common.deferred import Deferred
-    from returns.result import Success
-
-    closure_vars = inspect.getclosurevars(fn)
-
-    if not closure_vars.nonlocals:
-        return Nothing
-
-    for name, value in closure_vars.nonlocals.items():
-        if isinstance(value, Deferred):
-            return Some(str(value))
-        if callable(value) and name == "expr":
-            result = expr_to_ibis_string(value)
-            if isinstance(result, Success):
-                return Some(result.unwrap())
-
-    return Nothing
-
-
-@safe
-def _try_ibis_introspection(fn: Callable) -> Maybe[str]:
-    from returns.result import Success
-
-    from ._xorq import Deferred, _
-
-    result = fn(_)
-    if not isinstance(result, Deferred):
-        return Nothing
-    expr_str = str(result)
-    # Validate by attempting deserialization — if the string can't round-trip,
-    # it's useless (catches invalid syntax, internal function names like
-    # _finish_searched_case/ifelse that aren't in the eval context, etc.)
-    if not isinstance(ibis_string_to_expr(expr_str), Success):
-        return Nothing
-    return Some(expr_str)
-
-
-def _extract_ibis_from_lambda_str(lambda_str: str) -> Maybe[str]:
-    if ":" not in lambda_str:
-        return Nothing
-
-    body = lambda_str.split(":", 1)[1].strip()
-    param_part = lambda_str.split(":")[0]
-    param_names = param_part.replace("lambda", "").strip().split(",")
-    first_param = param_names[0].strip()
-    ibis_expr = body.replace(f"{first_param}.", "_.")
-
-    return Some(ibis_expr)
-
-
-def _try_source_extraction(fn: Callable) -> Maybe[str]:
-    from returns.result import Success
-
-    lambda_str_result = lambda_to_string(fn)
-    return (
-        _extract_ibis_from_lambda_str(lambda_str_result.unwrap())
-        if isinstance(lambda_str_result, Success)
-        else Nothing
-    )
-
-
-def expr_to_ibis_string(fn: Callable) -> Result[str, Exception]:
-    @safe
-    def do_convert():
-        if not callable(fn):
-            deferred_check = _check_deferred(fn)
-            if isinstance(deferred_check, Some):
-                return deferred_check.unwrap()
-            raise ValueError(f"Expected callable or Deferred, got {type(fn)}")
-
-        checks = [
-            lambda: _try_ibis_introspection(fn).value_or(Nothing),
-            lambda: _check_closure_vars(fn),
-            lambda: _try_source_extraction(fn),
-        ]
-
-        for check in checks:
-            result = check()
-            if isinstance(result, Some):
-                return result.unwrap()
-
-        return None
-
-    return do_convert()
-
-
-def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
-    from returns.result import Failure, Success
-
-    @safe
-    def do_convert():
-        t_expr = expr_str.replace("_.", "t.")
-        lambda_str = f"lambda t: {t_expr}"
-
-        import ibis
-
-        def _build(flavor_ibis):
-            """Evaluate the lambda with ``ibis``/``_`` bound to one flavor."""
-            eval_context = {"ibis": flavor_ibis, "_": flavor_ibis._}
-            allowed_names = {"ibis", "_", "t"}
-            try:
-                from ._xorq import api as xo
-                from ._xorq import ibis as xorq_ibis
-
-                eval_context.update({"xorq_ibis": xorq_ibis, "xo": xo})
-                allowed_names |= {"xorq_ibis", "xo"}
-            except ImportError:
-                pass
-
-            result = safe_eval(lambda_str, context=eval_context, allowed_names=allowed_names)
-            if isinstance(result, Success):
-                return result.unwrap()
-            elif isinstance(result, Failure):
-                raise result.failure()
-            else:
-                raise ValueError(f"Unexpected result type: {type(result)}")
-
-        # Eager evaluation validates the string up front; the returned wrapper
-        # re-binds ``ibis``/``_`` to the flavor (plain vs xorq-vendored) of the
-        # table it is called with, so eager constructors like ``ibis.literal``
-        # compose with either flavor instead of silently mis-comparing.
-        fns = {id(ibis): _build(ibis)}
-
-        def _flavored(t):
-            from .nested_compile import get_ibis_module
-
-            flavor = get_ibis_module(t)
-            key = id(flavor)
-            if key not in fns:
-                fns[key] = _build(flavor)
-            return fns[key](t)
-
-        return _flavored
-
-    return do_convert()
 
 
 def _is_ibis_literal_node(value) -> bool:
@@ -1155,8 +984,6 @@ def read_yaml_file(yaml_path: str | Path) -> dict:
 __all__ = [
     "safe_eval",
     "SafeEvalError",
-    "expr_to_ibis_string",
-    "ibis_string_to_expr",
     "expr_to_structured",
     "structured_to_expr",
     "join_predicate_to_structured",

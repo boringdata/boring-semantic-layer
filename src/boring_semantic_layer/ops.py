@@ -22,6 +22,7 @@ from . import projection_utils
 from ._xorq import (
     FrozenDict,
     FrozenOrderedDict,
+    null_safe_equal,
 )
 from ._xorq import (
     Schema as XorqSchema,
@@ -58,7 +59,6 @@ from .calc_compiler import (
 from .calc_compiler import (
     compile_calc_measure as _compile_calc_measure_impl,
 )
-from ._xorq import null_safe_equal
 from .graph_utils import walk_nodes
 from .measure_scope import (
     ColumnScope,
