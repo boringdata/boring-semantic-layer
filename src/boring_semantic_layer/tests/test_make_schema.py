@@ -20,13 +20,15 @@ def test_make_schema_postgres_varchar():
 
 def test_make_schema_mixed_postgres_types():
     """Realistic Postgres join schema with VARCHAR, DECIMAL, and plain types."""
-    schema = _make_schema({
-        "snapshot_date": "!date",
-        "balance": "!decimal(15, 2)",
-        "bank_id": "string",
-        "bank_name": "!string(50)",
-        "bank": "!string(50)",
-    })
+    schema = _make_schema(
+        {
+            "snapshot_date": "!date",
+            "balance": "!decimal(15, 2)",
+            "bank_id": "string",
+            "bank_name": "!string(50)",
+            "bank": "!string(50)",
+        }
+    )
     assert set(schema.names) == {"snapshot_date", "balance", "bank_id", "bank_name", "bank"}
     # decimal(15, 2) must be preserved
     assert "decimal" in str(schema["balance"])

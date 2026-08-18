@@ -45,14 +45,16 @@ def main():
             "flights.max_delay",
             "flights.total_distance",
             nest={
-                "flight_legs": lambda t: t.group_by([
-                    "tail_num",
-                    "dep_time",
-                    "origin",
-                    "destination",
-                    "dep_delay",
-                    "arr_delay",
-                ]),
+                "flight_legs": lambda t: t.group_by(
+                    [
+                        "tail_num",
+                        "dep_time",
+                        "origin",
+                        "destination",
+                        "dep_delay",
+                        "arr_delay",
+                    ]
+                ),
             },
         )
         .mutate(session_id=xibis.row_number().over(xibis.window()))

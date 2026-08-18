@@ -289,9 +289,7 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
                         case Success():
                             entry["expr_struct"] = struct_result.unwrap()
                         case _:
-                            raise ValueError(
-                                f"Dimension '{name}': failed to serialize expression"
-                            )
+                            raise ValueError(f"Dimension '{name}': failed to serialize expression")
             dim_metadata[name] = entry
         return dim_metadata
 

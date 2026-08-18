@@ -13,24 +13,20 @@ def con():
 
 
 def test_join_one_right_measures_stay_bound_to_right_rows(con):
-    left = con.create_table(
-        "source_left", pd.DataFrame({"id": [1, 2], "value": [10, 20]})
-    )
-    right = con.create_table(
-        "source_right", pd.DataFrame({"id": [1, 3], "value": [100, 900]})
-    )
-    left_model = to_semantic_table(left, "left").with_measures(
-        total=lambda t: t.value.sum()
-    )
+    left = con.create_table("source_left", pd.DataFrame({"id": [1, 2], "value": [10, 20]}))
+    right = con.create_table("source_right", pd.DataFrame({"id": [1, 3], "value": [100, 900]}))
+    left_model = to_semantic_table(left, "left").with_measures(total=lambda t: t.value.sum())
     right_model = to_semantic_table(right, "right").with_measures(
         total=lambda t: t.value.sum(),
         row_count=lambda t: t.count(),
         id_count=lambda t: t.id.count(),
     )
 
-    result = left_model.join_one(right_model, on="id").aggregate(
-        "left.total", "right.total", "right.row_count", "right.id_count"
-    ).execute()
+    result = (
+        left_model.join_one(right_model, on="id")
+        .aggregate("left.total", "right.total", "right.row_count", "right.id_count")
+        .execute()
+    )
 
     assert result.iloc[0].to_dict() == {
         "left.total": 30,
@@ -62,9 +58,7 @@ def test_grouped_right_measures_use_the_right_executable_join_key_alias(con):
             }
         ),
     )
-    left_model = to_semantic_table(left, "left").with_dimensions(
-        group=lambda t: t.group
-    )
+    left_model = to_semantic_table(left, "left").with_dimensions(group=lambda t: t.group)
     right_model = to_semantic_table(right, "right").with_measures(
         total=lambda t: t.value.sum(),
         median=lambda t: t.value.median(),
@@ -95,21 +89,13 @@ def test_grouped_right_measures_use_the_right_executable_join_key_alias(con):
         .aggregate("right.total")
         .execute()
     )
-    assert filtered.to_dict("records") == [
-        {"left.group": "a", "right.total": 21}
-    ]
+    assert filtered.to_dict("records") == [{"left.group": "a", "right.total": 21}]
 
 
 def test_join_one_unmatched_right_counts_are_zero_but_sum_is_null(con):
-    left = con.create_table(
-        "count_identity_left", pd.DataFrame({"id": [1, 2]})
-    )
-    right = con.create_table(
-        "count_identity_right", pd.DataFrame({"id": [1], "value": [100]})
-    )
-    left_model = to_semantic_table(left, "left").with_dimensions(
-        id=lambda t: t.id
-    )
+    left = con.create_table("count_identity_left", pd.DataFrame({"id": [1, 2]}))
+    right = con.create_table("count_identity_right", pd.DataFrame({"id": [1], "value": [100]}))
+    left_model = to_semantic_table(left, "left").with_dimensions(id=lambda t: t.id)
     right_model = to_semantic_table(right, "right").with_measures(
         row_count=lambda t: t.count(),
         id_count=lambda t: t.id.count(),
@@ -162,9 +148,7 @@ def test_exact_measures_use_their_real_empty_source_result(con, join_method):
             }
         ),
     )
-    left_model = to_semantic_table(left, "left").with_dimensions(
-        group=lambda t: t.group
-    )
+    left_model = to_semantic_table(left, "left").with_dimensions(group=lambda t: t.group)
     right_model = (
         to_semantic_table(right, "right")
         .with_dimensions(kind=lambda t: t.kind)
@@ -183,12 +167,7 @@ def test_exact_measures_use_their_real_empty_source_result(con, join_method):
         "right.median",
     )
 
-    by_left = (
-        joined.group_by("left.group")
-        .aggregate(*measures)
-        .execute()
-        .set_index("left.group")
-    )
+    by_left = joined.group_by("left.group").aggregate(*measures).execute().set_index("left.group")
     assert by_left.loc["hit", "right.row_count_plus_one"] == 2
     assert by_left.loc["hit", "right.zero_sum"] == 10
     assert by_left.loc["hit", "right.ratio"] == 10
@@ -203,11 +182,7 @@ def test_exact_measures_use_their_real_empty_source_result(con, join_method):
     assert pd.isna(by_left.loc["all_null", "right.ratio"])
     assert pd.isna(by_left.loc["all_null", "right.median"])
 
-    by_right = (
-        joined.group_by("right.kind")
-        .aggregate(*measures)
-        .execute()
-    )
+    by_right = joined.group_by("right.kind").aggregate(*measures).execute()
     unmatched = by_right[by_right["right.kind"].isna()].iloc[0]
     assert unmatched["right.row_count_plus_one"] == 1
     assert unmatched["right.zero_sum"] == 0
@@ -228,12 +203,8 @@ def test_join_one_count_distinct_uses_right_collision_alias_and_zero_identity(co
             }
         ),
     )
-    right = con.create_table(
-        "distinct_identity_right", pd.DataFrame({"id": [1], "value": [10]})
-    )
-    left_model = to_semantic_table(left, "left").with_dimensions(
-        group=lambda t: t.group
-    )
+    right = con.create_table("distinct_identity_right", pd.DataFrame({"id": [1], "value": [10]}))
+    left_model = to_semantic_table(left, "left").with_dimensions(group=lambda t: t.group)
     right_model = to_semantic_table(right, "right").with_measures(
         distinct_ids=lambda t: t.id.nunique(),
         doubled_distinct=lambda t: t.distinct_ids * 2,
@@ -270,9 +241,7 @@ def test_colliding_derived_dimension_keeps_complete_expression(con):
             }
         ),
     )
-    left_model = to_semantic_table(left, "left").with_measures(
-        row_count=lambda t: t.count()
-    )
+    left_model = to_semantic_table(left, "left").with_measures(row_count=lambda t: t.count())
     right_model = to_semantic_table(right, "right").with_dimensions(
         label=lambda t: t.name.upper() + "-" + t.suffix.upper(),
         right_id=lambda t: t.id,
@@ -296,9 +265,7 @@ def test_join_many_derived_dimension_is_measure_selection_invariant(con):
         "selection_customers",
         pd.DataFrame({"id": [1, 2], "name": ["alice", "bob"]}),
     )
-    order_model = to_semantic_table(orders, "orders").with_measures(
-        total=lambda t: t.amount.sum()
-    )
+    order_model = to_semantic_table(orders, "orders").with_measures(total=lambda t: t.amount.sum())
     customer_model = (
         to_semantic_table(customers, "customers")
         .with_dimensions(label=lambda t: t.name.upper())
@@ -308,9 +275,11 @@ def test_join_many_derived_dimension_is_measure_selection_invariant(con):
 
     left_only = joined.group_by("customers.label").aggregate("orders.total").execute()
     right_only = joined.group_by("customers.label").aggregate("customers.row_count").execute()
-    together = joined.group_by("customers.label").aggregate(
-        "orders.total", "customers.row_count"
-    ).execute()
+    together = (
+        joined.group_by("customers.label")
+        .aggregate("orders.total", "customers.row_count")
+        .execute()
+    )
 
     assert set(left_only["customers.label"]) == {"ALICE", "BOB"}
     assert set(right_only["customers.label"]) == {"ALICE", "BOB"}
@@ -322,17 +291,13 @@ def test_join_many_derived_dimension_is_measure_selection_invariant(con):
 
 
 def test_non_equi_join_rejected_when_preaggregation_depends_on_it(con):
-    left = con.create_table(
-        "predicate_left", pd.DataFrame({"customer": [1, 1], "id": [1, 2]})
-    )
+    left = con.create_table("predicate_left", pd.DataFrame({"customer": [1, 1], "id": [1, 2]}))
     right = con.create_table(
         "predicate_right",
         pd.DataFrame({"customer": [1, 1], "id": [1, 2], "value": [100, 200]}),
     )
     left_model = to_semantic_table(left, "left")
-    right_model = to_semantic_table(right, "right").with_measures(
-        total=lambda t: t.value.sum()
-    )
+    right_model = to_semantic_table(right, "right").with_measures(total=lambda t: t.value.sum())
     joined = left_model.join_many(
         right_model,
         on=lambda left_row, right_row: (left_row.customer == right_row.customer)
@@ -358,13 +323,9 @@ def test_join_one_orphans_stay_excluded_in_a_larger_join_tree(con):
     lookup = con.create_table(
         "orphan_lookup", pd.DataFrame({"id": [1, 2, 3], "value": [10, 20, 900]})
     )
-    children = con.create_table(
-        "orphan_children", pd.DataFrame({"id": [1, 1, 2]})
-    )
+    children = con.create_table("orphan_children", pd.DataFrame({"id": [1, 1, 2]}))
     root_model = to_semantic_table(root, "root")
-    lookup_model = to_semantic_table(lookup, "lookup").with_measures(
-        total=lambda t: t.value.sum()
-    )
+    lookup_model = to_semantic_table(lookup, "lookup").with_measures(total=lambda t: t.value.sum())
     child_model = to_semantic_table(children, "children").with_measures(
         row_count=lambda t: t.count()
     )
@@ -381,9 +342,7 @@ def test_join_one_orphans_stay_excluded_in_a_larger_join_tree(con):
 
 
 def test_post_join_field_reduction_is_routed_to_its_unique_source(con):
-    orders = con.create_table(
-        "wrapper_orders", pd.DataFrame({"id": [1, 2], "amount": [100, 200]})
-    )
+    orders = con.create_table("wrapper_orders", pd.DataFrame({"id": [1, 2], "amount": [100, 200]}))
     items = con.create_table(
         "wrapper_items", pd.DataFrame({"id": [1, 1, 2], "quantity": [1, 2, 3]})
     )
@@ -391,10 +350,14 @@ def test_post_join_field_reduction_is_routed_to_its_unique_source(con):
         to_semantic_table(items, "items"), on="id"
     )
 
-    result = joined.with_measures(
-        source_total=lambda t: t.amount.sum(),
-        joined_row_count=lambda t: t.count(),
-    ).aggregate("source_total", "joined_row_count").execute()
+    result = (
+        joined.with_measures(
+            source_total=lambda t: t.amount.sum(),
+            joined_row_count=lambda t: t.count(),
+        )
+        .aggregate("source_total", "joined_row_count")
+        .execute()
+    )
 
     assert result["source_total"].iloc[0] == 300
     assert result["joined_row_count"].iloc[0] == 3
@@ -412,9 +375,7 @@ def test_count_distinct_matches_null_group_when_combined(con):
             }
         ),
     )
-    items = con.create_table(
-        "null_distinct_items", pd.DataFrame({"id": [1, 1, 2, 3]})
-    )
+    items = con.create_table("null_distinct_items", pd.DataFrame({"id": [1, 1, 2, 3]}))
     order_model = (
         to_semantic_table(orders, "orders")
         .with_dimensions(group=lambda t: t.group)
@@ -425,9 +386,11 @@ def test_count_distinct_matches_null_group_when_combined(con):
     )
     joined = order_model.join_many(to_semantic_table(items, "items"), on="id")
 
-    result = joined.group_by("orders.group").aggregate(
-        "orders.total", "orders.distinct_values"
-    ).execute()
+    result = (
+        joined.group_by("orders.group")
+        .aggregate("orders.total", "orders.distinct_values")
+        .execute()
+    )
     null_row = result[result["orders.group"].isna()].iloc[0]
 
     assert null_row["orders.total"] == 4
@@ -485,13 +448,9 @@ def test_right_count_distinct_respects_right_dimension_with_reused_join_key(con)
         .nunique()
     )
 
-    actual_by_kind = {
-        "<NULL>" if pd.isna(kind) else kind: value
-        for kind, value in actual.items()
-    }
+    actual_by_kind = {"<NULL>" if pd.isna(kind) else kind: value for kind, value in actual.items()}
     expected_by_kind = {
-        "<NULL>" if pd.isna(kind) else kind: value
-        for kind, value in expected.items()
+        "<NULL>" if pd.isna(kind) else kind: value for kind, value in expected.items()
     }
     assert actual_by_kind == expected_by_kind == {"<NULL>": 0, "P": 2, "Q": 1}
 
@@ -519,9 +478,7 @@ def test_right_median_respects_local_dimension_at_mixed_group_grain(con):
     )
     orders = con.create_table("dimension_median_orders", orders_df)
     items = con.create_table("dimension_median_items", items_df)
-    order_model = to_semantic_table(orders, "orders").with_dimensions(
-        cohort=lambda t: t.cohort
-    )
+    order_model = to_semantic_table(orders, "orders").with_dimensions(cohort=lambda t: t.cohort)
     item_model = (
         to_semantic_table(items, "items")
         .with_dimensions(kind=lambda t: t.kind)
@@ -533,9 +490,7 @@ def test_right_median_respects_local_dimension_at_mixed_group_grain(con):
     )
 
     actual = (
-        joined.group_by("orders.cohort", "items.kind")
-        .aggregate("items.median_value")
-        .execute()
+        joined.group_by("orders.cohort", "items.kind").aggregate("items.median_value").execute()
     )
     expected = (
         orders_df.merge(
@@ -577,17 +532,13 @@ def test_join_wrapper_dimension_keeps_flattened_source_lineage(con):
     )
     left = con.create_table("wrapper_dimension_left", left_df)
     right = con.create_table("wrapper_dimension_right", right_df)
-    left_model = to_semantic_table(left, "left").with_dimensions(
-        status=lambda t: t.status
-    )
+    left_model = to_semantic_table(left, "left").with_dimensions(status=lambda t: t.status)
     right_model = to_semantic_table(right, "right").with_measures(
         total=lambda t: t.value.sum(),
         median=lambda t: t.value.median(),
         distinct_statuses=lambda t: t.status.nunique(),
     )
-    joined = left_model.join_many(right_model, on="id").with_dimensions(
-        bucket=lambda t: t.status
-    )
+    joined = left_model.join_many(right_model, on="id").with_dimensions(bucket=lambda t: t.status)
 
     actual = (
         joined.group_by("bucket")
@@ -627,9 +578,7 @@ def test_cross_source_wrapper_dimension_fails_closed_for_source_aggregates(con):
             }
         ),
     )
-    left_model = to_semantic_table(left, "left").with_dimensions(
-        prefix=lambda t: t.prefix
-    )
+    left_model = to_semantic_table(left, "left").with_dimensions(prefix=lambda t: t.prefix)
     right_model = (
         to_semantic_table(right, "right")
         .with_dimensions(status=lambda t: t.status)
@@ -677,9 +626,7 @@ def test_transformed_same_name_right_dimension_preserves_every_measure_grain(con
             }
         ),
     )
-    order_model = to_semantic_table(orders, "orders").with_dimensions(
-        cohort=lambda t: t.cohort
-    )
+    order_model = to_semantic_table(orders, "orders").with_dimensions(cohort=lambda t: t.cohort)
     item_model = (
         to_semantic_table(items, "items")
         # upper() retains the input expression name "kind". It must not be
@@ -700,12 +647,7 @@ def test_transformed_same_name_right_dimension_preserves_every_measure_grain(con
         "items.median_value",
     )
 
-    local = (
-        joined.group_by("items.kind")
-        .aggregate(*measures)
-        .execute()
-        .set_index("items.kind")
-    )
+    local = joined.group_by("items.kind").aggregate(*measures).execute().set_index("items.kind")
     assert local.loc["P"].to_dict() == {
         "items.total": 40,
         "items.row_count": 2,
@@ -724,11 +666,7 @@ def test_transformed_same_name_right_dimension_preserves_every_measure_grain(con
     assert null_local["items.distinct_values"] == 0
     assert pd.isna(null_local["items.median_value"])
 
-    mixed = (
-        joined.group_by("orders.cohort", "items.kind")
-        .aggregate(*measures)
-        .execute()
-    )
+    mixed = joined.group_by("orders.cohort", "items.kind").aggregate(*measures).execute()
     matched = mixed[mixed["items.kind"].notna()].set_index("items.kind")
     assert matched.loc["P", "items.total"] == 40
     assert matched.loc["P", "items.distinct_values"] == 2
@@ -752,23 +690,19 @@ def test_calculated_measure_dependencies_keep_root_scope(con):
         row_count=lambda t: t.count(), doubled=lambda t: t.row_count * 2
     )
 
-    result = left_model.join_one(right_model, on="id").aggregate(
-        "left.doubled", "right.doubled"
-    ).execute()
+    result = (
+        left_model.join_one(right_model, on="id")
+        .aggregate("left.doubled", "right.doubled")
+        .execute()
+    )
 
     assert result.iloc[0].to_dict() == {"left.doubled": 4, "right.doubled": 4}
 
 
 def test_join_schema_matches_executable_collision_aliases(con):
-    left = con.create_table(
-        "schema_left", pd.DataFrame({"id": [1], "value": [1]})
-    )
-    right = con.create_table(
-        "schema_right", pd.DataFrame({"id": [1], "value": ["x"]})
-    )
-    joined = to_semantic_table(left, "left").join_one(
-        to_semantic_table(right, "right"), on="id"
-    )
+    left = con.create_table("schema_left", pd.DataFrame({"id": [1], "value": [1]}))
+    right = con.create_table("schema_right", pd.DataFrame({"id": [1], "value": ["x"]}))
+    joined = to_semantic_table(left, "left").join_one(to_semantic_table(right, "right"), on="id")
 
     assert tuple(joined.columns) == tuple(joined.table.columns)
     assert tuple(joined.columns) == ("id", "value", "id_right", "value_right")
@@ -825,9 +759,7 @@ def test_preexisting_right_suffix_is_preserved_and_right_fields_stay_bound(con):
 def test_dynamic_aliases_are_measure_selection_invariant_across_three_legs(con):
     root = con.create_table(
         "dynamic_alias_root",
-        pd.DataFrame(
-            {"id": [1, 2], "value": [1, 2], "value_right": [900, 901]}
-        ),
+        pd.DataFrame({"id": [1, 2], "value": [1, 2], "value_right": [900, 901]}),
     )
     middle = con.create_table(
         "dynamic_alias_middle",
@@ -837,9 +769,7 @@ def test_dynamic_aliases_are_measure_selection_invariant_across_three_legs(con):
         "dynamic_alias_later",
         pd.DataFrame({"id": [1, 2], "value": [10, 20]}),
     )
-    middle_model = to_semantic_table(middle, "middle").with_measures(
-        total=lambda t: t.value.sum()
-    )
+    middle_model = to_semantic_table(middle, "middle").with_measures(total=lambda t: t.value.sum())
     later_model = (
         to_semantic_table(later, "later")
         .with_dimensions(doubled=lambda t: t.value * 2)
@@ -880,9 +810,7 @@ def test_user_column_with_internal_join_prefix_does_not_change_predicate(con):
         "temporary_alias_right",
         pd.DataFrame({"id": [1], "value": [2]}),
     )
-    joined = to_semantic_table(left, "left").join_one(
-        to_semantic_table(right, "right"), on="id"
-    )
+    joined = to_semantic_table(left, "left").join_one(to_semantic_table(right, "right"), on="id")
 
     result = joined.execute()
     assert result.iloc[0].to_dict() == {
@@ -902,9 +830,7 @@ def test_cross_join_uses_the_same_collision_safe_aliases(con):
         "cross_alias_right",
         pd.DataFrame({"value": [2]}),
     )
-    joined = to_semantic_table(left, "left").join_cross(
-        to_semantic_table(right, "right")
-    )
+    joined = to_semantic_table(left, "left").join_cross(to_semantic_table(right, "right"))
 
     assert tuple(joined.columns) == ("value", "value_right", "value_right2")
     assert joined.execute().iloc[0].to_dict() == {
@@ -972,17 +898,15 @@ def _cross_table_filter_models(con):
         .with_dimensions(status=lambda t: t.status)
         .with_measures(total=lambda t: t.value.sum())
     )
-    right_model = to_semantic_table(right, "right").with_dimensions(
-        flag=lambda t: t.flag
-    )
+    right_model = to_semantic_table(right, "right").with_dimensions(flag=lambda t: t.flag)
     return left_model.join_many(right_model, on="id")
 
 
 def test_cross_table_or_with_root_only_measure_fails_closed(con):
     joined = _cross_table_filter_models(con)
-    query = joined.filter(
-        lambda t: (t["left.status"] == "A") | t["right.flag"]
-    ).aggregate("left.total")
+    query = joined.filter(lambda t: (t["left.status"] == "A") | t["right.flag"]).aggregate(
+        "left.total"
+    )
 
     with pytest.raises(ValueError, match="row-precisely"):
         query.execute()
@@ -990,8 +914,10 @@ def test_cross_table_or_with_root_only_measure_fails_closed(con):
 
 def test_cross_table_and_with_root_only_measure_remains_row_precise(con):
     joined = _cross_table_filter_models(con)
-    result = joined.filter(
-        lambda t: (t["left.status"] == "A") & ~t["right.flag"]
-    ).aggregate("left.total").execute()
+    result = (
+        joined.filter(lambda t: (t["left.status"] == "A") & ~t["right.flag"])
+        .aggregate("left.total")
+        .execute()
+    )
 
     assert result["left.total"].iloc[0] == 10

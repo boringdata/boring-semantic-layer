@@ -91,9 +91,7 @@ class TestPlainIbisExecution:
 
     def test_multiple_measures(self, flights_model):
         result = (
-            flights_model.group_by("carrier")
-            .aggregate("flight_count", "total_distance")
-            .execute()
+            flights_model.group_by("carrier").aggregate("flight_count", "total_distance").execute()
         )
         assert "flight_count" in result.columns
         assert "total_distance" in result.columns
@@ -118,12 +116,7 @@ class TestPlainIbisExecution:
         assert result.flight_count.iloc[0] >= result.flight_count.iloc[-1]
 
     def test_limit(self, flights_model):
-        result = (
-            flights_model.group_by("carrier")
-            .aggregate("flight_count")
-            .limit(2)
-            .execute()
-        )
+        result = flights_model.group_by("carrier").aggregate("flight_count").limit(2).execute()
         assert len(result) == 2
 
     def test_sql_compilation(self, flights_model):
@@ -132,9 +125,7 @@ class TestPlainIbisExecution:
         assert "carrier" in sql.lower()
 
     def test_to_pandas(self, flights_model):
-        result = (
-            flights_model.group_by("carrier").aggregate("flight_count").to_pandas()
-        )
+        result = flights_model.group_by("carrier").aggregate("flight_count").to_pandas()
         assert hasattr(result, "columns")
         assert len(result) == 3
 
@@ -183,12 +174,8 @@ class TestPlainIbisJoins:
         """
         from boring_semantic_layer.ops import SemanticJoinOp
 
-        t1 = plain_ibis_con.create_table(
-            "rebind_l", pd.DataFrame({"a": [1]})
-        )
-        t2 = plain_ibis_con.create_table(
-            "rebind_r", pd.DataFrame({"a": [2]})
-        )
+        t1 = plain_ibis_con.create_table("rebind_l", pd.DataFrame({"a": [1]}))
+        t2 = plain_ibis_con.create_table("rebind_r", pd.DataFrame({"a": [2]}))
         result_l, result_r = SemanticJoinOp._rebind_join_backends(t1, t2)
         assert result_l is t1
         assert result_r is t2
@@ -208,16 +195,10 @@ class TestPlainIbisJoins:
             pytest.skip("xorq not available")
 
         con = ibis.duckdb.connect()
-        plain_right = con.create_table(
-            "mixed_r", pd.DataFrame({"id": [1, 2]})
-        )
-        xorq_left = from_ibis(
-            con.create_table("mixed_l", pd.DataFrame({"id": [1, 2]}))
-        )
+        plain_right = con.create_table("mixed_r", pd.DataFrame({"id": [1, 2]}))
+        xorq_left = from_ibis(con.create_table("mixed_l", pd.DataFrame({"id": [1, 2]})))
         # Should not raise — replacer is no-op on plain ibis ops
-        result_l, result_r = SemanticJoinOp._rebind_join_backends(
-            xorq_left, plain_right
-        )
+        result_l, result_r = SemanticJoinOp._rebind_join_backends(xorq_left, plain_right)
         assert result_l is not None
         assert result_r is not None
 
@@ -243,9 +224,7 @@ class TestPlainIbisJoins:
         assert result_l.execute() is not None
         assert result_r.execute() is not None
 
-    def test_join_one_unsupported_backend(
-        self, flights_table, carriers_table, monkeypatch
-    ):
+    def test_join_one_unsupported_backend(self, flights_table, carriers_table, monkeypatch):
         """Simulate a backend xorq cannot wrap (e.g. BigQuery) by forcing
         ``_ensure_xorq_table`` to return the plain ibis table. The join
         must still execute natively rather than crashing inside
@@ -267,12 +246,9 @@ class TestPlainIbisJoins:
             )
             .with_measures(flight_count=lambda t: t.count())
         )
-        carriers = (
-            to_semantic_table(carriers_table, name="carriers")
-            .with_dimensions(
-                code=lambda t: t.code,
-                name=lambda t: t.name,
-            )
+        carriers = to_semantic_table(carriers_table, name="carriers").with_dimensions(
+            code=lambda t: t.code,
+            name=lambda t: t.name,
         )
 
         joined = flights.join_one(
@@ -355,10 +331,7 @@ class TestPlainIbisJoins:
                 },
             )
             result = (
-                models["users"]
-                .group_by("programs.program")
-                .aggregate("users.user_count")
-                .execute()
+                models["users"].group_by("programs.program").aggregate("users.user_count").execute()
             )
         finally:
             os.unlink(yaml_path)
@@ -372,23 +345,32 @@ class TestPlainIbisJoins:
     def test_chained_joins_plain_ibis(self, plain_ibis_con):
         """Multi-table chained joins work on plain ibis backends (GH-221)."""
         orders_tbl = plain_ibis_con.create_table(
-            "orders_pi", pd.DataFrame({
-                "order_id": [1, 2, 3],
-                "customer_id": [10, 20, 10],
-                "product_id": [100, 100, 200],
-            })
+            "orders_pi",
+            pd.DataFrame(
+                {
+                    "order_id": [1, 2, 3],
+                    "customer_id": [10, 20, 10],
+                    "product_id": [100, 100, 200],
+                }
+            ),
         )
         customers_tbl = plain_ibis_con.create_table(
-            "customers_pi", pd.DataFrame({
-                "customer_id": [10, 20],
-                "name": ["Alice", "Bob"],
-            })
+            "customers_pi",
+            pd.DataFrame(
+                {
+                    "customer_id": [10, 20],
+                    "name": ["Alice", "Bob"],
+                }
+            ),
         )
         products_tbl = plain_ibis_con.create_table(
-            "products_pi", pd.DataFrame({
-                "product_id": [100, 200],
-                "product_name": ["Widget", "Gadget"],
-            })
+            "products_pi",
+            pd.DataFrame(
+                {
+                    "product_id": [100, 200],
+                    "product_name": ["Widget", "Gadget"],
+                }
+            ),
         )
 
         orders = (
@@ -400,31 +382,19 @@ class TestPlainIbisJoins:
             )
             .with_measures(order_count=lambda t: t.count())
         )
-        customers = (
-            to_semantic_table(customers_tbl, name="customers")
-            .with_dimensions(
-                customer_id=lambda t: t.customer_id,
-                name=lambda t: t.name,
-            )
+        customers = to_semantic_table(customers_tbl, name="customers").with_dimensions(
+            customer_id=lambda t: t.customer_id,
+            name=lambda t: t.name,
         )
-        products = (
-            to_semantic_table(products_tbl, name="products")
-            .with_dimensions(
-                product_id=lambda t: t.product_id,
-                product_name=lambda t: t.product_name,
-            )
+        products = to_semantic_table(products_tbl, name="products").with_dimensions(
+            product_id=lambda t: t.product_id,
+            product_name=lambda t: t.product_name,
         )
 
         joined = orders.join_one(
             customers, on=lambda o, c: o.customer_id == c.customer_id
-        ).join_one(
-            products, on=lambda o, p: o.product_id == p.product_id
-        )
-        result = (
-            joined.group_by("name", "product_name")
-            .aggregate("order_count")
-            .execute()
-        )
+        ).join_one(products, on=lambda o, p: o.product_id == p.product_id)
+        result = joined.group_by("name", "product_name").aggregate("order_count").execute()
         assert len(result) >= 2
         assert "name" in result.columns
         assert "product_name" in result.columns

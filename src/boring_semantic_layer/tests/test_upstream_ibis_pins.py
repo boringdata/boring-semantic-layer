@@ -55,9 +55,7 @@ def test_pin_three_way_join_default_rname_collides(flavor):
     flights = _make_table(
         flavor,
         f"fl_pin_{flavor}",
-        pd.DataFrame(
-            {"carrier": ["AA"], "origin": ["JFK"], "destination": ["LAX"]}
-        ),
+        pd.DataFrame({"carrier": ["AA"], "origin": ["JFK"], "destination": ["LAX"]}),
     )
     carriers = _make_table(
         flavor,

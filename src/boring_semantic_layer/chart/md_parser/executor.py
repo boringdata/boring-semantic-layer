@@ -53,7 +53,12 @@ class QueryExecutor:
             sys.stdout = captured
 
         try:
-            namespace = {"ibis": ibis, "xo": xo, "to_semantic_table": to_semantic_table, **self.context}
+            namespace = {
+                "ibis": ibis,
+                "xo": xo,
+                "to_semantic_table": to_semantic_table,
+                **self.context,
+            }
             last_expr = self._eval_last_expression(code, namespace)
 
             # Update context with new variables
@@ -207,6 +212,7 @@ class QueryExecutor:
         # Pandas DataFrame directly
         try:
             import pandas as pd
+
             if isinstance(result, pd.DataFrame):
                 return {"table": {"columns": list(result.columns), "data": result.values.tolist()}}
         except ImportError:

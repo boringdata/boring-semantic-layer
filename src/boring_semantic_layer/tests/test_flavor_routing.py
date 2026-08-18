@@ -29,9 +29,7 @@ def con():
 
 @pytest.fixture(scope="module")
 def flights_table(con):
-    df = pd.DataFrame(
-        {"carrier": ["AA", "UA", "AA", "DL"], "dep_delay": [5.0, 10.0, 15.0, 2.0]}
-    )
+    df = pd.DataFrame({"carrier": ["AA", "UA", "AA", "DL"], "dep_delay": [5.0, 10.0, 15.0, 2.0]})
     return con.create_table("flavor_flights", df)
 
 
@@ -113,12 +111,7 @@ class TestCrossFlavorBoolTrap:
 
     def test_plain_value_comparison_still_works(self, flights_table):
         sm = _flights_model(flights_table)
-        out = (
-            sm.filter(lambda t: t.carrier == "AA")
-            .group_by("carrier")
-            .aggregate("cnt")
-            .execute()
-        )
+        out = sm.filter(lambda t: t.carrier == "AA").group_by("carrier").aggregate("cnt").execute()
         assert len(out) == 1
         assert out["cnt"].iloc[0] == 2
 
@@ -137,9 +130,7 @@ class TestFilterFlavorByTable:
         assert len(out) == 2
 
     @pytest.mark.skipif(not HAS_XORQ, reason="fallback only differs with xorq installed")
-    def test_dict_date_ordering_filter_fallback_backend(
-        self, events_table, unsupported_backend
-    ):
+    def test_dict_date_ordering_filter_fallback_backend(self, events_table, unsupported_backend):
         # Previously: xorq-flavored timestamp literal vs plain column -> TypeError.
         sm = _events_model(events_table)
         assert "xorq" not in type(sm.op().table).__module__
@@ -151,9 +142,7 @@ class TestFilterFlavorByTable:
         assert len(out) == 2
 
     @pytest.mark.skipif(not HAS_XORQ, reason="fallback only differs with xorq installed")
-    def test_dict_date_equality_filter_fallback_backend(
-        self, events_table, unsupported_backend
-    ):
+    def test_dict_date_equality_filter_fallback_backend(self, events_table, unsupported_backend):
         # Previously: silent constant-false predicate -> empty result.
         sm = _events_model(events_table)
         out = sm.query(
@@ -165,9 +154,7 @@ class TestFilterFlavorByTable:
         assert out["total"].iloc[0] == 1.0
 
     @pytest.mark.skipif(not HAS_XORQ, reason="fallback only differs with xorq installed")
-    def test_string_filter_with_literal_fallback_backend(
-        self, events_table, unsupported_backend
-    ):
+    def test_string_filter_with_literal_fallback_backend(self, events_table, unsupported_backend):
         # ibis.literal inside a string filter must use the table's flavor.
         sm = _events_model(events_table)
         out = sm.query(
@@ -220,10 +207,10 @@ class TestAgentContextFlavor:
         sm = _flights_model(flights_table)
         models = {"flights": sm}
         module = _models_ibis_module(models)
-        query = "flights.filter(_.carrier == ibis.literal('AA')).group_by('carrier').aggregate('cnt')"
-        result = safe_eval(
-            query, context={**models, "ibis": module, "_": module._}
-        ).unwrap()
+        query = (
+            "flights.filter(_.carrier == ibis.literal('AA')).group_by('carrier').aggregate('cnt')"
+        )
+        result = safe_eval(query, context={**models, "ibis": module, "_": module._}).unwrap()
         out = result.execute()
         assert len(out) == 1
         assert out["cnt"].iloc[0] == 2

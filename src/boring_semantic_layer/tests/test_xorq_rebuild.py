@@ -226,9 +226,7 @@ def catalog_with_bsl_query(tmpdir):
         measures={"avg_delay": lambda t: t.delay.mean()},
         name="flights_model",
     )
-    tagged = to_tagged(
-        model.query(dimensions=("origin",), measures=("avg_delay",))
-    )
+    tagged = to_tagged(model.query(dimensions=("origin",), measures=("avg_delay",)))
     bsl_entry = catalog.add(tagged, aliases=("origin-delays",))
 
     return catalog, source_entry, bsl_entry

@@ -391,9 +391,7 @@ def test_calc_measure_downstream_chaining():
     """Downstream operations (order_by, limit) should work after aggregating
     calc measures, confirming .schema/.columns propagate correctly."""
     con = ibis.duckdb.connect(":memory:")
-    data = pd.DataFrame(
-        {"carrier": ["AA", "AA", "UA", "DL"], "distance": [100, 200, 300, 400]}
-    )
+    data = pd.DataFrame({"carrier": ["AA", "AA", "UA", "DL"], "distance": [100, 200, 300, 400]})
     tbl = con.create_table("flights", data)
 
     st = to_semantic_table(tbl, "flights").with_measures(
@@ -402,12 +400,7 @@ def test_calc_measure_downstream_chaining():
         avg_distance=lambda t: t.total_distance / t.flight_count,
     )
 
-    result = (
-        st.group_by("carrier")
-        .aggregate("avg_distance")
-        .order_by("avg_distance")
-        .limit(2)
-    )
+    result = st.group_by("carrier").aggregate("avg_distance").order_by("avg_distance").limit(2)
 
     df = result.execute()
     assert len(df) == 2
@@ -549,10 +542,7 @@ def test_method_call_serialization_roundtrip():
     reconstructed = from_tagged(to_tagged(st))
     df_orig = st.group_by("carrier").aggregate("avg_distance").execute().sort_values("carrier")
     df_round = (
-        reconstructed.group_by("carrier")
-        .aggregate("avg_distance")
-        .execute()
-        .sort_values("carrier")
+        reconstructed.group_by("carrier").aggregate("avg_distance").execute().sort_values("carrier")
     )
     pd.testing.assert_frame_equal(
         df_orig.reset_index(drop=True),
@@ -613,9 +603,7 @@ def test_extra_reductions_classified_as_base(method, expected_kind):
     op = st.op()
     base_names = set(op.get_measures().keys())
     calc_names = set(op.get_calculated_measures().keys())
-    assert "derived" in base_names, (
-        f"{method!r} measure should classify as base, got calc"
-    )
+    assert "derived" in base_names, f"{method!r} measure should classify as base, got calc"
     assert "derived" not in calc_names
 
 

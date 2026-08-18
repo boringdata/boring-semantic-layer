@@ -64,7 +64,6 @@ class TestEChartsBackendRegistration:
         assert "echarts" in backends
 
 
-
 class TestEChartsBasicCharts:
     """Test basic ECharts chart generation."""
 
@@ -232,9 +231,7 @@ class TestEChartsFieldSanitization:
         )
         carriers_tbl = con.create_table("carriers_echarts", carriers_df, overwrite=True)
 
-        flights_df = pd.DataFrame(
-            {"carrier": ["AA", "UA", "DL"], "distance": [2475, 337, 382]}
-        )
+        flights_df = pd.DataFrame({"carrier": ["AA", "UA", "DL"], "distance": [2475, 337, 382]})
         flights_tbl = con.create_table("flights_join_echarts", flights_df, overwrite=True)
 
         # Create semantic tables

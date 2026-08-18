@@ -132,11 +132,7 @@ class TestBasicPrefixing:
             joined.group_by("orders.customer_id").aggregate("total").execute()
 
         # FQDN should work
-        result = (
-            joined.group_by("orders.customer_id")
-            .aggregate("orders.total")
-            .execute()
-        )
+        result = joined.group_by("orders.customer_id").aggregate("orders.total").execute()
         assert "orders.total" in result.columns
         alice_total = result[result["orders.customer_id"] == 101]["orders.total"].iloc[0]
         assert alice_total == 250.0
@@ -1116,11 +1112,7 @@ class TestShortNameResolution:
         )
 
         # "revenue" is unambiguous — only "orders.revenue" exists
-        result = (
-            joined.group_by("orders.customer_id")
-            .aggregate("revenue")
-            .execute()
-        )
+        result = joined.group_by("orders.customer_id").aggregate("revenue").execute()
 
         assert "revenue" in result.columns
         alice_rev = result[result["orders.customer_id"] == 101]["revenue"].iloc[0]

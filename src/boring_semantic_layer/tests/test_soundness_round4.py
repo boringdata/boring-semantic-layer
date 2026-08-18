@@ -200,10 +200,7 @@ class TestDimensionShadowing:
         # Measures aggregate RAW amounts: b -> 30+40, c -> 50+60.
         expected = [["b", 70.0], ["c", 110.0]]
         lam = (
-            shadowed.filter(lambda t: t.amount > 55)
-            .group_by("status")
-            .aggregate("total")
-            .execute()
+            shadowed.filter(lambda t: t.amount > 55).group_by("status").aggregate("total").execute()
         )
         dic = shadowed.query(
             dimensions=["status"],
@@ -225,9 +222,9 @@ class TestDimensionShadowing:
             shadowed.group_by("amount").aggregate("total").execute()
 
     def test_group_by_shadow_dim_with_unrelated_measures_allowed(self, shadowed):
-        result = (
-            shadowed.group_by("amount").aggregate("cnt", "qty_sum").execute()
-        ).sort_values("amount")
+        result = (shadowed.group_by("amount").aggregate("cnt", "qty_sum").execute()).sort_values(
+            "amount"
+        )
         assert result["amount"].tolist() == [20.0, 40.0, 60.0, 80.0, 100.0, 120.0]
         assert result["qty_sum"].tolist() == [1, 2, 3, 4, 5, 6]
 
@@ -297,9 +294,7 @@ class TestJoinCrossGroupKeys:
 
     def test_cross_grand_totals_stay_defanned(self, crossed):
         result = (
-            crossed.group_by()
-            .aggregate("orders.order_total", "customers.cust_count")
-            .execute()
+            crossed.group_by().aggregate("orders.order_total", "customers.cust_count").execute()
         )
         assert result["orders.order_total"].tolist() == [60.0]
         assert result["customers.cust_count"].tolist() == [4]

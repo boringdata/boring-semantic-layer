@@ -187,7 +187,7 @@ class MCPSemanticModel(FastMCP):
                 BeforeValidator(_parse_json_string),
                 Field(
                     default=None,
-                    description="Per-dimension time grains as a dict mapping dimension names to grain values (e.g., {\"order_date\": \"month\", \"ship_date\": \"quarter\"}). Cannot be used with time_grain.",
+                    description='Per-dimension time grains as a dict mapping dimension names to grain values (e.g., {"order_date": "month", "ship_date": "quarter"}). Cannot be used with time_grain.',
                 ),
             ] = None,
             time_range: Annotated[
@@ -352,28 +352,46 @@ class MCPSemanticModel(FastMCP):
             ] = None,
             get_records: Annotated[
                 bool,
-                Field(default=True, description=load_prompt(PROMPTS_DIR, "tool-query-param-get_records.md")),
+                Field(
+                    default=True,
+                    description=load_prompt(PROMPTS_DIR, "tool-query-param-get_records.md"),
+                ),
             ] = True,
             records_limit: Annotated[
                 int | None,
-                Field(default=None, description=load_prompt(PROMPTS_DIR, "tool-query-param-records_limit.md")),
+                Field(
+                    default=None,
+                    description=load_prompt(PROMPTS_DIR, "tool-query-param-records_limit.md"),
+                ),
             ] = None,
             get_chart: Annotated[
                 bool,
-                Field(default=True, description=load_prompt(PROMPTS_DIR, "tool-query-param-get_chart.md")),
+                Field(
+                    default=True,
+                    description=load_prompt(PROMPTS_DIR, "tool-query-param-get_chart.md"),
+                ),
             ] = True,
             chart_backend: Annotated[
                 str | None,
-                Field(default=None, description=load_prompt(PROMPTS_DIR, "tool-query-param-chart_backend.md")),
+                Field(
+                    default=None,
+                    description=load_prompt(PROMPTS_DIR, "tool-query-param-chart_backend.md"),
+                ),
             ] = None,
             chart_format: Annotated[
                 str | None,
-                Field(default=None, description=load_prompt(PROMPTS_DIR, "tool-query-param-chart_format.md")),
+                Field(
+                    default=None,
+                    description=load_prompt(PROMPTS_DIR, "tool-query-param-chart_format.md"),
+                ),
             ] = None,
             chart_spec: Annotated[
                 dict[str, Any] | None,
                 BeforeValidator(_parse_json_string),
-                Field(default=None, description=load_prompt(PROMPTS_DIR, "tool-query-param-chart_spec.md")),
+                Field(
+                    default=None,
+                    description=load_prompt(PROMPTS_DIR, "tool-query-param-chart_spec.md"),
+                ),
             ] = None,
         ) -> str:
             if model_name not in self.models:
@@ -438,8 +456,7 @@ class MCPSemanticModel(FastMCP):
 
             # Aggregate by value to get frequency counts
             agg = (
-                tbl
-                .select(col_expr.name("_value"))
+                tbl.select(col_expr.name("_value"))
                 .filter(lambda t: t["_value"].notnull())
                 .group_by("_value")
                 .aggregate(frequency=lambda t: t.count())
@@ -456,12 +473,7 @@ class MCPSemanticModel(FastMCP):
 
             def _fetch(base_agg, n):
                 """Fetch top n+1 rows and return (values_list, is_complete)."""
-                df = (
-                    base_agg
-                    .order_by(ibis_module.desc("frequency"))
-                    .limit(n + 1)
-                    .execute()
-                )
+                df = base_agg.order_by(ibis_module.desc("frequency")).limit(n + 1).execute()
                 complete = len(df) <= n
                 return _to_value_list(df.head(n)), complete
 
@@ -472,8 +484,11 @@ class MCPSemanticModel(FastMCP):
                 search_normalized = re.sub(_SEP, " ", search_term.lower()).strip()
                 filtered_agg = agg.filter(
                     lambda t: (
-                        t["_value"].cast("string").lower()
-                        .re_replace(_SEP, " ").strip()
+                        t["_value"]
+                        .cast("string")
+                        .lower()
+                        .re_replace(_SEP, " ")
+                        .strip()
                         .contains(search_normalized)
                     )
                 )

@@ -66,7 +66,9 @@ def _discover_modules() -> dict[str, Path]:
     return modules
 
 
-def _sibling_imports(node: ast.Import | ast.ImportFrom, current_mod: str, is_pkg_init: bool, mod_names: set[str]):
+def _sibling_imports(
+    node: ast.Import | ast.ImportFrom, current_mod: str, is_pkg_init: bool, mod_names: set[str]
+):
     """Yield dotted names of sibling modules this import statement depends on."""
     cur_parts = current_mod.split(".")
     if isinstance(node, ast.Import):
@@ -85,7 +87,9 @@ def _sibling_imports(node: ast.Import | ast.ImportFrom, current_mod: str, is_pkg
         base = base[: len(base) - (node.level - 1)]
         prefix = ".".join(base)
     else:
-        if not (node.module and (node.module == PKG_NAME or node.module.startswith(PKG_NAME + "."))):
+        if not (
+            node.module and (node.module == PKG_NAME or node.module.startswith(PKG_NAME + "."))
+        ):
             return
         prefix = ""
     full = ".".join(p for p in (prefix, node.module or "") if p)

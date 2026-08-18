@@ -216,7 +216,9 @@ def _search_dimension_values_response(
         search_normalized = re.sub(separator_pattern, " ", search_term.lower()).strip()
         filtered_agg = agg.filter(
             lambda t: (
-                t["_value"].cast("string").lower()
+                t["_value"]
+                .cast("string")
+                .lower()
                 .re_replace(separator_pattern, " ")
                 .strip()
                 .contains(search_normalized)
@@ -351,7 +353,9 @@ def create_app(
         limit: int = Query(default=20, ge=1, le=1_000),
     ) -> dict[str, Any]:
         model = _get_model_or_404(_get_models(request), model_name)
-        return _search_dimension_values_response(model, model_name, dimension_name, search_term, limit)
+        return _search_dimension_values_response(
+            model, model_name, dimension_name, search_term, limit
+        )
 
     @app.post("/query")
     def query_model(payload: QueryRequest, request: Request) -> dict[str, Any]:

@@ -55,23 +55,15 @@ def main():
             total_qty=_.quantity.sum(),
         )
     )
-    customers_st = (
-        to_semantic_table(customers, "customers")
-        .with_dimensions(
-            customer_id=_.customer_id,
-            name=_.name,
-            region=_.region,
-        )
+    customers_st = to_semantic_table(customers, "customers").with_dimensions(
+        customer_id=_.customer_id,
+        name=_.name,
+        region=_.region,
     )
 
     # -- Example 1: Deferred in group_by and aggregate ---------------------
     print("=== Example 1: Deferred group_by / aggregate ===")
-    df = (
-        orders_st
-        .group_by(_.customer_id)
-        .aggregate(_.total_revenue, _.order_count)
-        .execute()
-    )
+    df = orders_st.group_by(_.customer_id).aggregate(_.total_revenue, _.order_count).execute()
     print(df, "\n")
 
     # -- Example 2: Join using Deferred predicate --------------------------
@@ -79,8 +71,7 @@ def main():
     joined = orders_st.join_one(customers_st, on=_.customer_id)
 
     df = (
-        joined
-        .group_by(_["customers.region"])
+        joined.group_by(_["customers.region"])
         .aggregate(_["orders.total_revenue"], _["orders.order_count"])
         .execute()
     )
@@ -89,19 +80,13 @@ def main():
     # -- Example 3: Filter with Deferred -----------------------------------
     print("=== Example 3: Filter with Deferred ===")
     big_orders = joined.filter(_.amount > 70)
-    df = (
-        big_orders
-        .group_by(_["customers.region"])
-        .aggregate(_["orders.total_revenue"])
-        .execute()
-    )
+    df = big_orders.group_by(_["customers.region"]).aggregate(_["orders.total_revenue"]).execute()
     print(df, "\n")
 
     # -- Example 4: Mutate with Deferred -----------------------------------
     print("=== Example 4: Mutate (computed column) ===")
     df = (
-        joined
-        .group_by(_["customers.region"])
+        joined.group_by(_["customers.region"])
         .aggregate(_["orders.total_revenue"], _["orders.order_count"])
         .mutate(avg_order_value=lambda t: t["orders.total_revenue"] / t["orders.order_count"])
         .order_by(lambda t: t.avg_order_value.desc())
@@ -112,8 +97,7 @@ def main():
     # -- Example 5: Mixing strings and Deferred ----------------------------
     print("=== Example 5: Mixed string / Deferred syntax ===")
     df = (
-        joined
-        .group_by(_["customers.name"], _["customers.region"])
+        joined.group_by(_["customers.name"], _["customers.region"])
         .aggregate("orders.total_revenue", _["orders.total_qty"])
         .order_by(lambda t: t["orders.total_revenue"].desc())
         .execute()

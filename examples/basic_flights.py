@@ -19,7 +19,9 @@ def main():
 
     flights = models["flights"]
 
-    result = flights.group_by("flights.origin").aggregate("flights.flight_count").limit(10).execute()
+    result = (
+        flights.group_by("flights.origin").aggregate("flights.flight_count").limit(10).execute()
+    )
     print("\nFlight counts by origin:")
     print(result)
 

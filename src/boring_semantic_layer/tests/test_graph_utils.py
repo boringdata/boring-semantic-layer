@@ -212,5 +212,3 @@ def test_find_entity_and_event_timestamp_together():
 
     assert len(timestamps) == 1
     assert "balance.statement_date" in timestamps
-
-

@@ -178,9 +178,7 @@ def _reconstruct_semantic_table(
 
 
 @register_reconstructor("SemanticFilterOp")
-def _reconstruct_filter(
-    metadata: dict, xorq_expr, source, context: BSLSerializationContext
-):
+def _reconstruct_filter(metadata: dict, xorq_expr, source, context: BSLSerializationContext):
     if source is None:
         raise ValueError("SemanticFilterOp requires source")
     predicate = context.deserialize_expr(
@@ -210,9 +208,7 @@ def _reconstruct_filter(
 
 
 @register_reconstructor("SemanticGroupByOp")
-def _reconstruct_group_by(
-    metadata: dict, xorq_expr, source, context: BSLSerializationContext
-):
+def _reconstruct_group_by(metadata: dict, xorq_expr, source, context: BSLSerializationContext):
     if source is None:
         raise ValueError("SemanticGroupByOp requires source")
     keys = tuple(context.parse_field(metadata, "keys")) or ()
@@ -220,9 +216,7 @@ def _reconstruct_group_by(
 
 
 @register_reconstructor("SemanticAggregateOp")
-def _reconstruct_aggregate(
-    metadata: dict, xorq_expr, source, context: BSLSerializationContext
-):
+def _reconstruct_aggregate(metadata: dict, xorq_expr, source, context: BSLSerializationContext):
     if source is None:
         raise ValueError("SemanticAggregateOp requires source")
     aggs_struct = context.parse_structured_dict(metadata.get("aggs_struct", ()))
@@ -292,10 +286,9 @@ def _bare_ref_names(metadata: dict, aggs_struct: dict, source) -> set[str]:
             recovered.add(name)
     return recovered
 
+
 @register_reconstructor("SemanticProjectOp")
-def _reconstruct_project(
-    metadata: dict, xorq_expr, source, context: BSLSerializationContext
-):
+def _reconstruct_project(metadata: dict, xorq_expr, source, context: BSLSerializationContext):
     if source is None:
         raise ValueError("SemanticProjectOp requires source")
     fields = tuple(context.parse_field(metadata, "fields")) or ()
@@ -303,9 +296,7 @@ def _reconstruct_project(
 
 
 @register_reconstructor("SemanticOrderByOp")
-def _reconstruct_order_by(
-    metadata: dict, xorq_expr, source, context: BSLSerializationContext
-):
+def _reconstruct_order_by(metadata: dict, xorq_expr, source, context: BSLSerializationContext):
     if source is None:
         raise ValueError("SemanticOrderByOp requires source")
 
@@ -329,9 +320,7 @@ def _reconstruct_order_by(
 
 
 @register_reconstructor("SemanticLimitOp")
-def _reconstruct_limit(
-    metadata: dict, xorq_expr, source, context: BSLSerializationContext
-):
+def _reconstruct_limit(metadata: dict, xorq_expr, source, context: BSLSerializationContext):
     if source is None:
         raise ValueError("SemanticLimitOp requires source")
     return source.limit(n=int(metadata.get("n", 0)), offset=int(metadata.get("offset", 0)))
@@ -372,9 +361,7 @@ def _validate_join_leaf(model, metadata, side: str) -> None:
 
 
 @register_reconstructor("SemanticJoinOp")
-def _reconstruct_join(
-    metadata: dict, xorq_expr, source, context: BSLSerializationContext
-):
+def _reconstruct_join(metadata: dict, xorq_expr, source, context: BSLSerializationContext):
     from .. import expr as bsl_expr
     from .._xorq import relations as xorq_rel
     from .._xorq import walk_nodes

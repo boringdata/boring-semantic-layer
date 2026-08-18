@@ -122,9 +122,7 @@ class TestInlineCountStarTotals:
 
     def test_inline_count_star_on_joined_model(self, orders_customers):
         orders_tbl, cust_tbl = orders_customers
-        customers = to_semantic_table(cust_tbl, name="customers").with_dimensions(
-            region=_.region
-        )
+        customers = to_semantic_table(cust_tbl, name="customers").with_dimensions(region=_.region)
         orders = to_semantic_table(orders_tbl, name="orders").with_measures(
             order_count=_.count(),
             pct=lambda t: t.count() / t.all(t.count()) * 100,
@@ -149,12 +147,8 @@ class TestCollidingRightDimension:
     def test_declared_dim_when_fact_table_has_no_dims(self, orders_customers):
         """Fact table with no declared dims must not disable rename-wrapping."""
         orders_tbl, cust_tbl = orders_customers
-        customers = to_semantic_table(cust_tbl, name="customers").with_dimensions(
-            cust_name=_.name
-        )
-        orders = to_semantic_table(orders_tbl, name="orders").with_measures(
-            order_count=_.count()
-        )
+        customers = to_semantic_table(cust_tbl, name="customers").with_dimensions(cust_name=_.name)
+        orders = to_semantic_table(orders_tbl, name="orders").with_measures(order_count=_.count())
         j = orders.join_one(customers, on="cust_id", how="left")
         df = (
             j.group_by("customers.cust_name")
@@ -177,9 +171,7 @@ class TestRawPrefixedGroupKeys:
     @pytest.fixture
     def joined(self, orders_customers):
         orders_tbl, cust_tbl = orders_customers
-        customers = to_semantic_table(cust_tbl, name="customers").with_dimensions(
-            region=_.region
-        )
+        customers = to_semantic_table(cust_tbl, name="customers").with_dimensions(region=_.region)
         orders = to_semantic_table(orders_tbl, name="orders").with_measures(
             order_count=_.count(),
             total_amount=_.amount.sum(),
@@ -248,9 +240,7 @@ class TestRawPrefixedGroupKeys:
         customers = to_semantic_table(cust_tbl, name="customers").with_dimensions(
             region=lambda t: t.region.upper()
         )
-        orders = to_semantic_table(orders_tbl, name="orders").with_measures(
-            order_count=_.count()
-        )
+        orders = to_semantic_table(orders_tbl, name="orders").with_measures(order_count=_.count())
         j = orders.join_one(customers, on="cust_id", how="left")
         df = j.group_by("customers.region").aggregate("orders.order_count").execute()
         assert sorted(df["customers.region"]) == ["EAST", "WEST"]

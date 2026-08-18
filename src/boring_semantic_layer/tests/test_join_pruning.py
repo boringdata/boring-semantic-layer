@@ -83,29 +83,20 @@ def _build_star_model(star_schema):
             total_qty=lambda t: t.quantity.sum(),
         )
     )
-    dates = (
-        to_semantic_table(star_schema["dates"], name="dates")
-        .with_dimensions(
-            date_id=lambda t: t.date_id,
-            date_name=lambda t: t.date_name,
-            quarter=lambda t: t.quarter,
-        )
+    dates = to_semantic_table(star_schema["dates"], name="dates").with_dimensions(
+        date_id=lambda t: t.date_id,
+        date_name=lambda t: t.date_name,
+        quarter=lambda t: t.quarter,
     )
-    stores = (
-        to_semantic_table(star_schema["stores"], name="stores")
-        .with_dimensions(
-            store_id=lambda t: t.store_id,
-            store_name=lambda t: t.store_name,
-            city=lambda t: t.city,
-        )
+    stores = to_semantic_table(star_schema["stores"], name="stores").with_dimensions(
+        store_id=lambda t: t.store_id,
+        store_name=lambda t: t.store_name,
+        city=lambda t: t.city,
     )
-    items = (
-        to_semantic_table(star_schema["items"], name="items")
-        .with_dimensions(
-            item_id=lambda t: t.item_id,
-            item_name=lambda t: t.item_name,
-            category=lambda t: t.category,
-        )
+    items = to_semantic_table(star_schema["items"], name="items").with_dimensions(
+        item_id=lambda t: t.item_id,
+        item_name=lambda t: t.item_name,
+        category=lambda t: t.category,
     )
 
     return (
@@ -243,9 +234,11 @@ class TestJoinPruningCorrectness:
         pruned = model.aggregate("facts.total_sales").execute()
 
         # Manual: query directly on fact table
-        manual = star_schema["facts"].aggregate(
-            total_sales=star_schema["facts"].sale_amount.sum()
-        ).execute()
+        manual = (
+            star_schema["facts"]
+            .aggregate(total_sales=star_schema["facts"].sale_amount.sum())
+            .execute()
+        )
 
         assert pruned["facts.total_sales"].iloc[0] == manual["total_sales"].iloc[0]
 
@@ -329,10 +322,7 @@ class TestJoinPruningEdgeCases:
         """When grouping by one dim, other dim tables should be absent from SQL."""
         model = _build_star_model(star_schema)
         ibis_expr = (
-            model.group_by("stores.store_name")
-            .aggregate("facts.total_sales")
-            .op()
-            .to_untagged()
+            model.group_by("stores.store_name").aggregate("facts.total_sales").op().to_untagged()
         )
         sql = str(ibis.to_sql(ibis_expr)).lower()
 

@@ -54,13 +54,10 @@ def _make_users_model(tbl):
 
 
 def _make_cost_centers_model(tbl):
-    return (
-        to_semantic_table(tbl, name="cost_centers")
-        .with_dimensions(
-            cc_id=Dimension(expr=lambda t: t.cc_id, is_entity=True),
-            cc_name=lambda t: t.cc_name,
-            location=lambda t: t.location,
-        )
+    return to_semantic_table(tbl, name="cost_centers").with_dimensions(
+        cc_id=Dimension(expr=lambda t: t.cc_id, is_entity=True),
+        cc_name=lambda t: t.cc_name,
+        location=lambda t: t.location,
     )
 
 
@@ -72,9 +69,7 @@ class TestDeferredJoinDetection:
         users = _make_users_model(lookup_tables["users"])
         cc = _make_cost_centers_model(lookup_tables["cost_centers"])
 
-        joined = users.join_one(
-            cc, on=lambda u, c: u.cost_center_id == c.cc_id
-        )
+        joined = users.join_one(cc, on=lambda u, c: u.cost_center_id == c.cc_id)
 
         # Query only user measures — cost_centers should be deferred
         result = (
@@ -92,17 +87,14 @@ class TestDeferredJoinDetection:
     def test_no_deferral_without_entity(self, lookup_tables):
         """No deferral when dimension table has no is_entity dims."""
         users = _make_users_model(lookup_tables["users"])
-        cc_no_pk = (
-            to_semantic_table(lookup_tables["cost_centers"], name="cost_centers")
-            .with_dimensions(
-                cc_id=lambda t: t.cc_id,  # NOT is_entity
-                cc_name=lambda t: t.cc_name,
-            )
+        cc_no_pk = to_semantic_table(
+            lookup_tables["cost_centers"], name="cost_centers"
+        ).with_dimensions(
+            cc_id=lambda t: t.cc_id,  # NOT is_entity
+            cc_name=lambda t: t.cc_name,
         )
 
-        joined = users.join_one(
-            cc_no_pk, on=lambda u, c: u.cost_center_id == c.cc_id
-        )
+        joined = users.join_one(cc_no_pk, on=lambda u, c: u.cost_center_id == c.cc_id)
 
         # Should still work via standard path
         result = (
@@ -123,9 +115,7 @@ class TestDeferredJoinWithDimensions:
         users = _make_users_model(lookup_tables["users"])
         cc = _make_cost_centers_model(lookup_tables["cost_centers"])
 
-        joined = users.join_one(
-            cc, on=lambda u, c: u.cost_center_id == c.cc_id
-        )
+        joined = users.join_one(cc, on=lambda u, c: u.cost_center_id == c.cc_id)
 
         # Include cost_center dims in group-by — should be deferred
         result = (
@@ -149,14 +139,10 @@ class TestDeferredJoinWithDimensions:
         users = _make_users_model(lookup_tables["users"])
         cc = _make_cost_centers_model(lookup_tables["cost_centers"])
 
-        joined = users.join_one(
-            cc, on=lambda u, c: u.cost_center_id == c.cc_id
-        )
+        joined = users.join_one(cc, on=lambda u, c: u.cost_center_id == c.cc_id)
 
         result = (
-            joined.group_by(
-                "users.user_id", "cost_centers.cc_name", "cost_centers.location"
-            )
+            joined.group_by("users.user_id", "cost_centers.cc_name", "cost_centers.location")
             .aggregate("users.login_count")
             .execute()
             .sort_values("users.user_id")
@@ -180,21 +166,16 @@ class TestDeferredJoinCorrectness:
 
         # Deferred path: cost_centers WITH is_entity PK
         cc_with_pk = _make_cost_centers_model(lookup_tables["cost_centers"])
-        joined_deferred = users.join_one(
-            cc_with_pk, on=lambda u, c: u.cost_center_id == c.cc_id
-        )
+        joined_deferred = users.join_one(cc_with_pk, on=lambda u, c: u.cost_center_id == c.cc_id)
 
         # Standard path: cost_centers WITHOUT is_entity → no deferral
-        cc_no_pk = (
-            to_semantic_table(lookup_tables["cost_centers"], name="cost_centers")
-            .with_dimensions(
-                cc_id=lambda t: t.cc_id,
-                cc_name=lambda t: t.cc_name,
-            )
+        cc_no_pk = to_semantic_table(
+            lookup_tables["cost_centers"], name="cost_centers"
+        ).with_dimensions(
+            cc_id=lambda t: t.cc_id,
+            cc_name=lambda t: t.cc_name,
         )
-        joined_standard = users.join_one(
-            cc_no_pk, on=lambda u, c: u.cost_center_id == c.cc_id
-        )
+        joined_standard = users.join_one(cc_no_pk, on=lambda u, c: u.cost_center_id == c.cc_id)
 
         # Both should produce the same result
         result_deferred = (
@@ -220,9 +201,7 @@ class TestDeferredJoinCorrectness:
         users = _make_users_model(lookup_tables["users"])
         cc = _make_cost_centers_model(lookup_tables["cost_centers"])
 
-        joined = users.join_one(
-            cc, on=lambda u, c: u.cost_center_id == c.cc_id
-        )
+        joined = users.join_one(cc, on=lambda u, c: u.cost_center_id == c.cc_id)
 
         result = joined.aggregate("users.login_count").execute()
         assert result["users.login_count"].iloc[0] == 5
@@ -232,9 +211,7 @@ class TestDeferredJoinCorrectness:
         users = _make_users_model(lookup_tables["users"])
         cc = _make_cost_centers_model(lookup_tables["cost_centers"])
 
-        joined = users.join_one(
-            cc, on=lambda u, c: u.cost_center_id == c.cc_id
-        )
+        joined = users.join_one(cc, on=lambda u, c: u.cost_center_id == c.cc_id)
 
         # Filter on the dimension table's column — must not defer
         result = (
@@ -263,9 +240,7 @@ class TestJoinCardinalitySerialization:
         users = _make_users_model(lookup_tables["users"])
         cc = _make_cost_centers_model(lookup_tables["cost_centers"])
 
-        joined = users.join_one(
-            cc, on=lambda u, c: u.cost_center_id == c.cc_id
-        )
+        joined = users.join_one(cc, on=lambda u, c: u.cost_center_id == c.cc_id)
 
         ctx = BSLSerializationContext()
         agg_op = joined.group_by("users.user_id").aggregate("users.login_count").op()
@@ -300,9 +275,7 @@ class TestJoinCardinalitySerialization:
             .with_measures(cc_count=lambda t: t.count())
         )
 
-        joined = users.join_many(
-            cc_with_measures, on=lambda u, c: u.cost_center_id == c.cc_id
-        )
+        joined = users.join_many(cc_with_measures, on=lambda u, c: u.cost_center_id == c.cc_id)
 
         ctx = BSLSerializationContext()
         agg_op = joined.group_by("users.user_id").aggregate("users.login_count").op()
@@ -370,25 +343,19 @@ class TestSnowflakeChainedJoinOne:
             )
             .with_measures(total_amount=lambda t: t.amount.sum())
         )
-        regions = (
-            to_semantic_table(snowflake_tables["regions"], name="regions")
-            .with_dimensions(
-                region_id=Dimension(expr=lambda t: t.region_id, is_entity=True),
-                region_name=lambda t: t.region_name,
-                country_id=lambda t: t.country_id,
-            )
+        regions = to_semantic_table(snowflake_tables["regions"], name="regions").with_dimensions(
+            region_id=Dimension(expr=lambda t: t.region_id, is_entity=True),
+            region_name=lambda t: t.region_name,
+            country_id=lambda t: t.country_id,
         )
-        countries = (
-            to_semantic_table(snowflake_tables["countries"], name="countries")
-            .with_dimensions(
-                country_id=Dimension(expr=lambda t: t.country_id, is_entity=True),
-                country_name=lambda t: t.country_name,
-            )
+        countries = to_semantic_table(
+            snowflake_tables["countries"], name="countries"
+        ).with_dimensions(
+            country_id=Dimension(expr=lambda t: t.country_id, is_entity=True),
+            country_name=lambda t: t.country_name,
         )
 
-        joined = orders.join_one(
-            regions, on=lambda o, r: o.region_id == r.region_id
-        ).join_one(
+        joined = orders.join_one(regions, on=lambda o, r: o.region_id == r.region_id).join_one(
             countries, on=lambda j, c: j.country_id == c.country_id
         )
 
@@ -415,20 +382,18 @@ class TestSnowflakeChainedJoinOne:
         )
 
         # Deferred: regions WITH is_entity
-        regions_deferred = (
-            to_semantic_table(snowflake_tables["regions"], name="regions")
-            .with_dimensions(
-                region_id=Dimension(expr=lambda t: t.region_id, is_entity=True),
-                region_name=lambda t: t.region_name,
-            )
+        regions_deferred = to_semantic_table(
+            snowflake_tables["regions"], name="regions"
+        ).with_dimensions(
+            region_id=Dimension(expr=lambda t: t.region_id, is_entity=True),
+            region_name=lambda t: t.region_name,
         )
         # Standard: regions WITHOUT is_entity
-        regions_standard = (
-            to_semantic_table(snowflake_tables["regions"], name="regions")
-            .with_dimensions(
-                region_id=lambda t: t.region_id,
-                region_name=lambda t: t.region_name,
-            )
+        regions_standard = to_semantic_table(
+            snowflake_tables["regions"], name="regions"
+        ).with_dimensions(
+            region_id=lambda t: t.region_id,
+            region_name=lambda t: t.region_name,
         )
 
         joined_deferred = orders.join_one(
@@ -464,17 +429,14 @@ class TestDerivedDimensions:
         users = _make_users_model(lookup_tables["users"])
 
         # Dimension with a derived expression
-        cc_derived = (
-            to_semantic_table(lookup_tables["cost_centers"], name="cost_centers")
-            .with_dimensions(
-                cc_id=Dimension(expr=lambda t: t.cc_id, is_entity=True),
-                cc_name_upper=lambda t: t.cc_name.upper(),
-            )
+        cc_derived = to_semantic_table(
+            lookup_tables["cost_centers"], name="cost_centers"
+        ).with_dimensions(
+            cc_id=Dimension(expr=lambda t: t.cc_id, is_entity=True),
+            cc_name_upper=lambda t: t.cc_name.upper(),
         )
 
-        joined = users.join_one(
-            cc_derived, on=lambda u, c: u.cost_center_id == c.cc_id
-        )
+        joined = users.join_one(cc_derived, on=lambda u, c: u.cost_center_id == c.cc_id)
 
         # This should still produce correct results — either via deferred path
         # (if the derived dim resolves) or via standard fallback
@@ -504,9 +466,7 @@ class TestPrefixedFilterOnDeferredTable:
         users = _make_users_model(lookup_tables["users"])
         cc = _make_cost_centers_model(lookup_tables["cost_centers"])
 
-        joined = users.join_one(
-            cc, on=lambda u, c: u.cost_center_id == c.cc_id
-        )
+        joined = users.join_one(cc, on=lambda u, c: u.cost_center_id == c.cc_id)
 
         # Filter on location (from deferred table) — should fall back to standard path
         result = (

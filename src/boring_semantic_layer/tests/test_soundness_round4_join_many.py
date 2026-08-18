@@ -96,9 +96,7 @@ class TestGrandTotalJoinParticipation:
             to_semantic_table(c, name="customers")
             .with_dimensions(tier=lambda t: t.tier)
             .join_many(
-                to_semantic_table(o, name="orders").with_measures(
-                    n=lambda t: t.count()
-                ),
+                to_semantic_table(o, name="orders").with_measures(n=lambda t: t.count()),
                 lambda c, o: c.cust_id == o.cust_id,
             )
         )
@@ -115,9 +113,7 @@ class TestGrandTotalJoinParticipation:
             to_semantic_table(c, name="customers")
             .with_dimensions(tier=lambda t: t.tier)
             .join_many(
-                to_semantic_table(o, name="orders").with_measures(
-                    n=lambda t: t.count()
-                ),
+                to_semantic_table(o, name="orders").with_measures(n=lambda t: t.count()),
                 lambda c, o: c.cust_id == o.cust_id,
             )
         )
@@ -131,10 +127,7 @@ class TestGroupedJoinParticipation:
 
     def test_group_by_many_side_dim_only(self, joined):
         truth = (
-            _left_join_truth()
-            .groupby("status", dropna=False)["id"]
-            .count()
-            .loc[lambda s: s > 0]
+            _left_join_truth().groupby("status", dropna=False)["id"].count().loc[lambda s: s > 0]
         )
         df = (
             joined.group_by("orders.status")
@@ -148,9 +141,7 @@ class TestGroupedJoinParticipation:
         assert df.loc[[pd.isna(i) for i in df.index], "orders.n"].iloc[0] == 1
 
     def test_group_by_left_dim_only(self, joined):
-        truth = (
-            _left_join_truth().groupby("tier", dropna=False)["id"].count()
-        )
+        truth = _left_join_truth().groupby("tier", dropna=False)["id"].count()
         df = (
             joined.group_by("customers.tier")
             .aggregate("orders.n")
@@ -171,11 +162,7 @@ class TestGroupedJoinParticipation:
         """'weird' lives only on an orphan row: absent from every result."""
         by_status = joined.group_by("orders.status").aggregate("orders.n").execute()
         assert "weird" not in set(by_status["orders.status"].dropna())
-        mixed = (
-            joined.group_by("customers.tier", "orders.status")
-            .aggregate("orders.n")
-            .execute()
-        )
+        mixed = joined.group_by("customers.tier", "orders.status").aggregate("orders.n").execute()
         assert "weird" not in set(mixed["orders.status"].dropna())
         # ...and its amount is absent from the grand total too
         total = joined.aggregate("orders.total").execute()["orders.total"].iloc[0]
@@ -187,40 +174,22 @@ class TestSumOverGroupsInvariant:
 
     def test_many_side_dim_groups_sum_to_grand_total(self, joined):
         grand = joined.aggregate("orders.n", "orders.total").execute()
-        by_status = (
-            joined.group_by("orders.status")
-            .aggregate("orders.n", "orders.total")
-            .execute()
-        )
+        by_status = joined.group_by("orders.status").aggregate("orders.n", "orders.total").execute()
         assert by_status["orders.n"].sum() == grand["orders.n"].iloc[0]
-        assert by_status["orders.total"].sum() == pytest.approx(
-            grand["orders.total"].iloc[0]
-        )
+        assert by_status["orders.total"].sum() == pytest.approx(grand["orders.total"].iloc[0])
 
     def test_left_dim_groups_sum_to_grand_total(self, joined):
         grand = joined.aggregate("orders.n", "orders.total").execute()
-        by_tier = (
-            joined.group_by("customers.tier")
-            .aggregate("orders.n", "orders.total")
-            .execute()
-        )
-        assert pd.to_numeric(by_tier["orders.n"]).fillna(0).sum() == grand[
-            "orders.n"
-        ].iloc[0]
+        by_tier = joined.group_by("customers.tier").aggregate("orders.n", "orders.total").execute()
+        assert pd.to_numeric(by_tier["orders.n"]).fillna(0).sum() == grand["orders.n"].iloc[0]
         assert pd.to_numeric(by_tier["orders.total"]).fillna(0).sum() == pytest.approx(
             grand["orders.total"].iloc[0]
         )
 
     def test_mixed_dim_groups_sum_to_grand_total(self, joined):
         grand = joined.aggregate("orders.n").execute()
-        mixed = (
-            joined.group_by("customers.tier", "orders.status")
-            .aggregate("orders.n")
-            .execute()
-        )
-        assert pd.to_numeric(mixed["orders.n"]).fillna(0).sum() == grand[
-            "orders.n"
-        ].iloc[0]
+        mixed = joined.group_by("customers.tier", "orders.status").aggregate("orders.n").execute()
+        assert pd.to_numeric(mixed["orders.n"]).fillna(0).sum() == grand["orders.n"].iloc[0]
 
 
 class TestNullDimValueStillGroups:
@@ -229,11 +198,7 @@ class TestNullDimValueStillGroups:
     def test_null_status_group_measures(self, joined):
         truth = _left_join_truth()
         null_truth = truth[truth["id"].notna() & truth["status"].isna()]
-        df = (
-            joined.group_by("orders.status")
-            .aggregate("orders.n", "orders.total")
-            .execute()
-        )
+        df = joined.group_by("orders.status").aggregate("orders.n", "orders.total").execute()
         null_rows = df[df["orders.status"].isna()]
         assert len(null_rows) == 1
         assert null_rows["orders.n"].iloc[0] == len(null_truth)  # 1
@@ -243,18 +208,10 @@ class TestNullDimValueStillGroups:
 
     def test_null_tier_by_null_status(self, joined):
         """NULL keys on BOTH sides of a mixed group-by stay distinct groups."""
-        df = (
-            joined.group_by("customers.tier", "orders.status")
-            .aggregate("orders.n")
-            .execute()
-        )
-        gold_null = df[
-            (df["customers.tier"] == "gold") & (df["orders.status"].isna())
-        ]
+        df = joined.group_by("customers.tier", "orders.status").aggregate("orders.n").execute()
+        gold_null = df[(df["customers.tier"] == "gold") & (df["orders.status"].isna())]
         assert len(gold_null) == 1
         assert gold_null["orders.n"].iloc[0] == 1  # order id 5
-        null_open = df[
-            (df["customers.tier"].isna()) & (df["orders.status"] == "open")
-        ]
+        null_open = df[(df["customers.tier"].isna()) & (df["orders.status"] == "open")]
         assert len(null_open) == 1
         assert null_open["orders.n"].iloc[0] == 1  # order id 6, cust 30

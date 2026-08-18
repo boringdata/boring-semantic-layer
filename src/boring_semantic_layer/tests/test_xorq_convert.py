@@ -266,7 +266,9 @@ def test_different_measures_produce_different_hashes():
     hash_sum = compute_expr_hash(tagged_sum, strategy=strategy)
     hash_mean = compute_expr_hash(tagged_mean, strategy=strategy)
 
-    assert hash_sum != hash_mean, "Same table with different measures should produce different hashes"
+    assert hash_sum != hash_mean, (
+        "Same table with different measures should produce different hashes"
+    )
 
 
 @pytest.mark.skipif(not xorq, reason="xorq not available")

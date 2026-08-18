@@ -76,9 +76,7 @@ class TestGrainMismatchDetection:
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            joined = fin.join_one(
-                hrs, on=lambda f, h: (f.year == h.year) & (f.month == h.month)
-            )
+            joined = fin.join_one(hrs, on=lambda f, h: (f.year == h.year) & (f.month == h.month))
             assert len(w) == 1
             assert "Grain mismatch" in str(w[0].message)
             assert "join_many" in str(w[0].message)
@@ -102,9 +100,7 @@ class TestGrainMismatchDetection:
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            joined = fin.join_one(
-                other, on=lambda f, h: (f.year == h.year) & (f.month == h.month)
-            )
+            joined = fin.join_one(other, on=lambda f, h: (f.year == h.year) & (f.month == h.month))
             grain_warnings = [x for x in w if "Grain mismatch" in str(x.message)]
             assert len(grain_warnings) == 0
 
@@ -130,9 +126,7 @@ class TestGrainMismatchDetection:
             .with_measures(total_hours=lambda t: t.hours_worked.sum())
         )
 
-        joined = fin.join_one(
-            hrs, on=lambda f, h: (f.year == h.year) & (f.month == h.month)
-        )
+        joined = fin.join_one(hrs, on=lambda f, h: (f.year == h.year) & (f.month == h.month))
         assert joined.op().cardinality == "one"
 
     def test_one_side_has_entities_other_doesnt_stays_one(self, multi_fact_tables):
@@ -148,9 +142,7 @@ class TestGrainMismatchDetection:
             .with_measures(total_hours=lambda t: t.hours_worked.sum())
         )
 
-        joined = fin.join_one(
-            hrs, on=lambda f, h: (f.year == h.year) & (f.month == h.month)
-        )
+        joined = fin.join_one(hrs, on=lambda f, h: (f.year == h.year) & (f.month == h.month))
         assert joined.op().cardinality == "one"
 
 
@@ -164,9 +156,7 @@ class TestGrainAwareQueryResults:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            combined = fin.join_one(
-                hrs, on=lambda f, h: (f.year == h.year) & (f.month == h.month)
-            )
+            combined = fin.join_one(hrs, on=lambda f, h: (f.year == h.year) & (f.month == h.month))
 
         result = (
             combined.group_by("financials.month")
@@ -191,13 +181,9 @@ class TestGrainAwareQueryResults:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            combined = fin.join_one(
-                hrs, on=lambda f, h: (f.year == h.year) & (f.month == h.month)
-            )
+            combined = fin.join_one(hrs, on=lambda f, h: (f.year == h.year) & (f.month == h.month))
 
-        result = combined.aggregate(
-            "financials.total_revenue", "hours.total_hours"
-        ).execute()
+        result = combined.aggregate("financials.total_revenue", "hours.total_hours").execute()
 
         # Total revenue: 10000 + 12000 + 11000 = 33000
         assert result["financials.total_revenue"].iloc[0] == 33000.0
@@ -281,7 +267,8 @@ class TestMissingCardinalityDefault:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             joined = fin.join_one(
-                hrs, on=lambda f, h: (f.year == h.year) & (f.month == h.month),
+                hrs,
+                on=lambda f, h: (f.year == h.year) & (f.month == h.month),
             )
 
         # The join was upgraded to "many" due to grain mismatch
@@ -331,7 +318,8 @@ class TestMissingCardinalityDefault:
         )
 
         joined = fin.join_one(
-            other, on=lambda f, h: (f.year == h.year) & (f.month == h.month),
+            other,
+            on=lambda f, h: (f.year == h.year) & (f.month == h.month),
         )
         assert joined.op().cardinality == "one"
 

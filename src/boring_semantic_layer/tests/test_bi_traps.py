@@ -269,33 +269,19 @@ class TestChasmTrap:
     def test_chasm_single_arm_correct(self, models):
         """Each join arm individually produces the correct result."""
         # orders arm only
-        joined_orders = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined_orders = models["customers"].join_many(models["orders"], on="customer_id")
         df_o = joined_orders.aggregate("orders.order_count").execute()
         assert df_o["orders.order_count"].iloc[0] == 3  # correct
 
         # tickets arm only
-        joined_tickets = models["customers"].join_many(
-            models["tickets"], on="customer_id"
-        )
+        joined_tickets = models["customers"].join_many(models["tickets"], on="customer_id")
         df_t = joined_tickets.aggregate("tickets.ticket_count").execute()
         assert df_t["tickets.ticket_count"].iloc[0] == 3  # correct
 
     def test_chasm_workaround_separate_queries(self, models):
         """Aggregate each arm separately, then combine — correct values."""
-        df_orders = (
-            models["orders"]
-            .group_by("customer_id")
-            .aggregate("order_count")
-            .execute()
-        )
-        df_tickets = (
-            models["tickets"]
-            .group_by("customer_id")
-            .aggregate("ticket_count")
-            .execute()
-        )
+        df_orders = models["orders"].group_by("customer_id").aggregate("order_count").execute()
+        df_tickets = models["tickets"].group_by("customer_id").aggregate("ticket_count").execute()
 
         merged = df_orders.merge(df_tickets, on="customer_id", how="outer")
         assert merged["order_count"].sum() == 3
@@ -434,12 +420,7 @@ class TestDoubleCounting:
 
     def test_double_counting_workaround_aggregate_then_join(self, models):
         """Pre-aggregate employees, then combine with departments — correct."""
-        df_salary = (
-            models["employees"]
-            .group_by("dept_id")
-            .aggregate("total_salary")
-            .execute()
-        )
+        df_salary = models["employees"].group_by("dept_id").aggregate("total_salary").execute()
 
         assert df_salary["total_salary"].sum() == 300_000  # correct
 
@@ -525,19 +506,13 @@ class TestConvergentPathTrap:
                 total_passengers=_.passengers.sum(),
             )
         )
-        origin_st = (
-            to_semantic_table(origin_airports_tbl, name="origins")
-            .with_dimensions(
-                airport_id=lambda t: t.airport_id,
-                city=lambda t: t.city,
-            )
+        origin_st = to_semantic_table(origin_airports_tbl, name="origins").with_dimensions(
+            airport_id=lambda t: t.airport_id,
+            city=lambda t: t.city,
         )
-        dest_st = (
-            to_semantic_table(dest_airports_tbl, name="destinations")
-            .with_dimensions(
-                airport_id=lambda t: t.airport_id,
-                city=lambda t: t.city,
-            )
+        dest_st = to_semantic_table(dest_airports_tbl, name="destinations").with_dimensions(
+            airport_id=lambda t: t.airport_id,
+            city=lambda t: t.city,
         )
         return {
             "flights": flights_st,
@@ -584,11 +559,7 @@ class TestConvergentPathTrap:
                 on=lambda l, r: l.dest_id == r.airport_id,
             )
         )
-        df = (
-            joined.group_by("origins.city")
-            .aggregate("flights.total_passengers")
-            .execute()
-        )
+        df = joined.group_by("origins.city").aggregate("flights.total_passengers").execute()
 
         # New York as origin: flight 1 (150) + flight 4 (180) = 330
         ny = df[df["origins.city"] == "New York"]
@@ -763,14 +734,8 @@ class TestNonAdditiveMeasures:
         West customers (1, 2) have orders: 100, 200, 300, 400 → avg = 250
         East customer (3) has orders: 500, 600 → avg = 550
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
-        df = (
-            joined.group_by("customers.region")
-            .aggregate("orders.avg_amount")
-            .execute()
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
+        df = joined.group_by("customers.region").aggregate("orders.avg_amount").execute()
 
         west = df[df["customers.region"] == "West"]
         east = df[df["customers.region"] == "East"]
@@ -781,9 +746,7 @@ class TestNonAdditiveMeasures:
         """Scalar aggregate orders.avg_amount across the join should still
         produce the correct flat average: (100+200+300+400+500+600)/6 = 350.
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = joined.aggregate("orders.avg_amount").execute()
         assert df["orders.avg_amount"].iloc[0] == pytest.approx(350.0)
 
@@ -868,14 +831,8 @@ class TestFilterPushdown:
 
         Orders with amount > 100: #2(150), #3(200), #4(300), #5(400) → 4 orders
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
-        df = (
-            joined.filter(lambda t: t.amount > 100)
-            .aggregate("orders.order_count")
-            .execute()
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
+        df = joined.filter(lambda t: t.amount > 100).aggregate("orders.order_count").execute()
         assert df["orders.order_count"].iloc[0] == 4
 
     def test_filter_pushdown_restricts_one_side(self, models):
@@ -885,14 +842,8 @@ class TestFilterPushdown:
         Orders with amount > 100 come from customers 1,2,3.
         Customer LTVs: 1→1000, 2→2000, 3→1500. Total = 4500.
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
-        df = (
-            joined.filter(lambda t: t.amount > 100)
-            .aggregate("customers.total_ltv")
-            .execute()
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
+        df = joined.filter(lambda t: t.amount > 100).aggregate("customers.total_ltv").execute()
         assert df["customers.total_ltv"].iloc[0] == 4500
 
     def test_filter_pushdown_one_side_dim(self, models):
@@ -904,14 +855,8 @@ class TestFilterPushdown:
         Customer 3 orders: #4(300), #5(400) → 2
         Total: 4 orders
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
-        df = (
-            joined.filter(lambda t: t.region == "West")
-            .aggregate("orders.order_count")
-            .execute()
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
+        df = joined.filter(lambda t: t.region == "West").aggregate("orders.order_count").execute()
         assert df["orders.order_count"].iloc[0] == 4
 
     def test_filter_with_chasm(self, models):
@@ -980,10 +925,8 @@ class TestFilterPushdown:
             .with_measures(ticket_count=_.count())
         )
 
-        joined = (
-            customers_st
-            .join_many(orders_st, on="customer_id")
-            .join_many(tickets_st, on="customer_id")
+        joined = customers_st.join_many(orders_st, on="customer_id").join_many(
+            tickets_st, on="customer_id"
         )
 
         # Filter on region == 'West' (customer 1 only)
@@ -1071,17 +1014,13 @@ class TestMinMaxReaggregation:
 
     def test_min_across_join_scalar(self, models):
         """Scalar MIN across join_many should return the global minimum."""
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = joined.aggregate("orders.min_amount").execute()
         assert df["orders.min_amount"].iloc[0] == 50
 
     def test_max_across_join_scalar(self, models):
         """Scalar MAX across join_many should return the global maximum."""
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = joined.aggregate("orders.max_amount").execute()
         assert df["orders.max_amount"].iloc[0] == 800
 
@@ -1091,9 +1030,7 @@ class TestMinMaxReaggregation:
         West customers (1, 2): orders [100, 500, 200, 300] → min=100, max=500
         East customer (3): orders [50, 800] → min=50, max=800
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = (
             joined.group_by("customers.region")
             .aggregate("orders.min_amount", "orders.max_amount")
@@ -1113,9 +1050,7 @@ class TestMinMaxReaggregation:
         Global: amounts = [100, 500, 200, 300, 50, 800]
         sum=1950, min=50, max=800, avg=325, count=6
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = joined.aggregate(
             "orders.total_amount",
             "orders.min_amount",
@@ -1136,9 +1071,7 @@ class TestMinMaxReaggregation:
         West: [100, 500, 200, 300] → sum=1100, min=100, max=500, avg=275
         East: [50, 800] → sum=850, min=50, max=800, avg=425
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = (
             joined.group_by("customers.region")
             .aggregate(
@@ -1236,12 +1169,8 @@ class TestMultipleMeanMeasures:
         avg_amount = (100+200+300+400)/4 = 250
         avg_weight = (10+30+20+40)/4 = 25
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
-        df = joined.aggregate(
-            "orders.avg_amount", "orders.avg_weight"
-        ).execute()
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
+        df = joined.aggregate("orders.avg_amount", "orders.avg_weight").execute()
         assert df["orders.avg_amount"].iloc[0] == pytest.approx(250.0)
         assert df["orders.avg_weight"].iloc[0] == pytest.approx(25.0)
 
@@ -1251,9 +1180,7 @@ class TestMultipleMeanMeasures:
         West (cust 1): avg_amount=(100+200)/2=150, avg_weight=(10+30)/2=20
         East (cust 2): avg_amount=(300+400)/2=350, avg_weight=(20+40)/2=30
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = (
             joined.group_by("customers.region")
             .aggregate("orders.avg_amount", "orders.avg_weight")
@@ -1272,12 +1199,8 @@ class TestMultipleMeanMeasures:
 
         Global: avg_amount=250, total_amount=1000
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
-        df = joined.aggregate(
-            "orders.avg_amount", "orders.total_amount"
-        ).execute()
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
+        df = joined.aggregate("orders.avg_amount", "orders.total_amount").execute()
         assert df["orders.avg_amount"].iloc[0] == pytest.approx(250.0)
         assert df["orders.total_amount"].iloc[0] == 1000
 
@@ -1287,9 +1210,7 @@ class TestMultipleMeanMeasures:
         West: avg_amount=150, total_amount=300
         East: avg_amount=350, total_amount=700
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = (
             joined.group_by("customers.region")
             .aggregate("orders.avg_amount", "orders.total_amount")
@@ -1385,9 +1306,7 @@ class TestFilterPushdownEdgeCases:
         filter(amount > 100) then filter(amount < 500):
         Orders passing: #2(200), #3(300), #4(400) → 3 orders, sum=900
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = (
             joined.filter(lambda t: t.amount > 100)
             .filter(lambda t: t.amount < 500)
@@ -1404,9 +1323,7 @@ class TestFilterPushdownEdgeCases:
         filter(region == 'West') → customer 3 only
         Customer 3 orders > 200: #5(500), #6(600) → 2 orders
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = (
             joined.filter(lambda t: t.amount > 200)
             .filter(lambda t: t.region == "West")
@@ -1420,9 +1337,7 @@ class TestFilterPushdownEdgeCases:
 
         category == 'A': orders #1(100),#3(300),#5(500),#6(600) → 4 orders, sum=1500
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = (
             joined.filter(lambda t: t.category == "A")
             .aggregate("orders.order_count", "orders.total_amount")
@@ -1439,9 +1354,7 @@ class TestFilterPushdownEdgeCases:
         West (cust 1,3): #2(200),#5(500),#6(600) → 3 orders
         East (cust 2): #3(300),#4(400) → 2 orders
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = (
             joined.filter(lambda t: t.amount > 100)
             .group_by("customers.region")
@@ -1463,9 +1376,7 @@ class TestFilterPushdownEdgeCases:
         con = ibis.duckdb.connect(":memory:")
         customers_tbl = con.create_table(
             "customers",
-            pd.DataFrame(
-                {"customer_id": [1, 2, 3], "region": ["W", "E", "W"]}
-            ),
+            pd.DataFrame({"customer_id": [1, 2, 3], "region": ["W", "E", "W"]}),
         )
         orders_tbl = con.create_table(
             "orders",
@@ -1492,23 +1403,13 @@ class TestFilterPushdownEdgeCases:
         )
 
         joined = customers_st.join_many(orders_st, on="customer_id")
-        df = (
-            joined.filter(lambda t: t.amount > 100)
-            .aggregate("orders.avg_amount")
-            .execute()
-        )
+        df = joined.filter(lambda t: t.amount > 100).aggregate("orders.avg_amount").execute()
         assert df["orders.avg_amount"].iloc[0] == pytest.approx(400.0)
 
     def test_filter_producing_empty_result(self, models):
         """Filter that eliminates all rows should produce empty or zero results."""
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
-        df = (
-            joined.filter(lambda t: t.amount > 10000)
-            .aggregate("orders.order_count")
-            .execute()
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
+        df = joined.filter(lambda t: t.amount > 10000).aggregate("orders.order_count").execute()
         # With all rows filtered, count should be 0
         assert df["orders.order_count"].iloc[0] == 0
 
@@ -1585,9 +1486,7 @@ class TestNullForeignKeys:
 
         All orders: 100+200+300+400 = 1000
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = joined.aggregate("orders.total_amount").execute()
         assert df["orders.total_amount"].iloc[0] == 1000
 
@@ -1599,14 +1498,8 @@ class TestNullForeignKeys:
         East (cust 3): 400
         Total: 1000
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
-        df = (
-            joined.group_by("customers.region")
-            .aggregate("orders.total_amount")
-            .execute()
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
+        df = joined.group_by("customers.region").aggregate("orders.total_amount").execute()
         assert df["orders.total_amount"].sum() == 1000
 
 
@@ -1689,9 +1582,7 @@ class TestMultiDimensionalGroupBy:
         East/paid: #3(300), #4(400) → 2 orders, sum=700
         Total: 6 orders, sum=2100
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = (
             joined.group_by("customers.region", "orders.status")
             .aggregate("orders.order_count", "orders.total_amount")
@@ -1701,9 +1592,7 @@ class TestMultiDimensionalGroupBy:
         assert df["orders.order_count"].sum() == 6
         assert df["orders.total_amount"].sum() == 2100
 
-        west_paid = df[
-            (df["customers.region"] == "West") & (df["orders.status"] == "paid")
-        ]
+        west_paid = df[(df["customers.region"] == "West") & (df["orders.status"] == "paid")]
         assert west_paid["orders.order_count"].iloc[0] == 2
         assert west_paid["orders.total_amount"].iloc[0] == 700
 
@@ -1713,9 +1602,7 @@ class TestMultiDimensionalGroupBy:
         status/customer_id → should just group orders directly.
         Total across all groups: 6 orders, sum=2100
         """
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = (
             joined.group_by("orders.status", "orders.customer_id")
             .aggregate("orders.total_amount")
@@ -1867,9 +1754,7 @@ class TestChasmFilterPushdown:
             .join_many(models["projects"], on="dept_id")
             .join_many(models["expenses"], on="dept_id")
         )
-        df = joined.aggregate(
-            "projects.total_budget", "expenses.total_expenses"
-        ).execute()
+        df = joined.aggregate("projects.total_budget", "expenses.total_expenses").execute()
         assert df["projects.total_budget"].iloc[0] == 110000
         assert df["expenses.total_expenses"].iloc[0] == 18000
 
@@ -1909,9 +1794,7 @@ class TestDeepChainEdgeCases:
 
         regions_tbl = con.create_table(
             "regions",
-            pd.DataFrame(
-                {"region_id": [1, 2], "region_name": ["North", "South"]}
-            ),
+            pd.DataFrame({"region_id": [1, 2], "region_name": ["North", "South"]}),
         )
         stores_tbl = con.create_table(
             "stores",
@@ -2039,11 +1922,7 @@ class TestDeepChainEdgeCases:
             .join_many(models["stores"], on="region_id")
             .join_many(models["orders"], on="store_id")
         )
-        df = (
-            joined.group_by("regions.region_name")
-            .aggregate("orders.avg_amount")
-            .execute()
-        )
+        df = joined.group_by("regions.region_name").aggregate("orders.avg_amount").execute()
 
         north = df[df["regions.region_name"] == "North"]
         south = df[df["regions.region_name"] == "South"]
@@ -2195,62 +2074,36 @@ class TestLeftJoinUnmatchedRows:
 
     def test_unmatched_rows_preserved(self, models):
         """East region has no orders but must still appear in results."""
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
-        df = (
-            joined.group_by("customers.region")
-            .aggregate("orders.order_count")
-            .execute()
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
+        df = joined.group_by("customers.region").aggregate("orders.order_count").execute()
         assert len(df) == 2
         east = df[df["customers.region"] == "East"]
         assert len(east) == 1
 
     def test_unmatched_measures_are_null(self, models):
         """Unmatched dimension values have NULL (not 0) for aggregated measures."""
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
-        df = (
-            joined.group_by("customers.region")
-            .aggregate("orders.total_amount")
-            .execute()
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
+        df = joined.group_by("customers.region").aggregate("orders.total_amount").execute()
         east = df[df["customers.region"] == "East"]
         assert east["orders.total_amount"].isna().iloc[0]
 
     def test_matched_measures_correct(self, models):
         """West region totals are still correct."""
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
-        df = (
-            joined.group_by("customers.region")
-            .aggregate("orders.total_amount")
-            .execute()
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
+        df = joined.group_by("customers.region").aggregate("orders.total_amount").execute()
         west = df[df["customers.region"] == "West"]
         assert west["orders.total_amount"].iloc[0] == 600  # 100 + 200 + 300
 
     def test_scalar_aggregate_only_counts_matched(self, models):
         """Grand total should only count matched rows (no NULLs added)."""
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = joined.aggregate("orders.total_amount").execute()
         assert df["orders.total_amount"].iloc[0] == 600
 
     def test_by_name_grouping_unmatched(self, models):
         """Individual customers Carol and Dave appear with NULL measures."""
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
-        df = (
-            joined.group_by("customers.name")
-            .aggregate("orders.total_amount")
-            .execute()
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
+        df = joined.group_by("customers.name").aggregate("orders.total_amount").execute()
         carol = df[df["customers.name"] == "Carol"]
         dave = df[df["customers.name"] == "Dave"]
         assert len(carol) == 1
@@ -2260,9 +2113,7 @@ class TestLeftJoinUnmatchedRows:
 
     def test_both_sides_measures(self, models):
         """Aggregating measures from both left AND right — all rows appear."""
-        joined = models["customers"].join_many(
-            models["orders"], on="customer_id"
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
         df = (
             joined.group_by("customers.region")
             .aggregate("customers.customer_count", "orders.order_count")
@@ -2383,9 +2234,7 @@ class TestJoinOneInsideJoinMany:
 
     def _build_nested(self, m):
         """customers -< orders -- categories"""
-        orders_with_cats = m["orders"].join_one(
-            m["categories"], on="category_id"
-        )
+        orders_with_cats = m["orders"].join_one(m["categories"], on="category_id")
         return m["customers"].join_many(orders_with_cats, on="customer_id")
 
     # -- tests ---------------------------------------------------------------
@@ -2427,11 +2276,7 @@ class TestJoinOneInsideJoinMany:
     def test_unmatched_rows_have_null_measures(self, models):
         """East customers have no orders → NULL measures (not 0)."""
         joined = self._build_nested(models)
-        df = (
-            joined.group_by("customers.region")
-            .aggregate("orders.total_amount")
-            .execute()
-        )
+        df = joined.group_by("customers.region").aggregate("orders.total_amount").execute()
         east = df[df["customers.region"] == "East"]
         assert east["orders.total_amount"].isna().iloc[0]
 

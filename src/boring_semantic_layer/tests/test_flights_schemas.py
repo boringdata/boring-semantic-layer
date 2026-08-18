@@ -149,7 +149,8 @@ class TestStarSchema:
     def star(self, semantic_tables):
         s = semantic_tables
         flights_with_carriers = s["flights"].join_one(
-            s["carriers"], on=lambda f, c: f.carrier == c.code,
+            s["carriers"],
+            on=lambda f, c: f.carrier == c.code,
         )
         return s["airports"].join_many(
             flights_with_carriers,
@@ -198,11 +199,7 @@ class TestStarSchema:
 
         Delaware (DE) has 42 airports but zero flights originating there.
         """
-        df = (
-            star.group_by("airports.state")
-            .aggregate("flights.flight_count")
-            .execute()
-        )
+        df = star.group_by("airports.state").aggregate("flights.flight_count").execute()
         de = df[df["airports.state"] == "DE"]
         assert len(de) == 1, "Delaware should appear in results"
         # COUNT preserves its empty-set identity for an unmatched source group.
@@ -210,11 +207,7 @@ class TestStarSchema:
 
     def test_one_side_measure_airport_count_by_state(self, star):
         """One-side measure (airport_count) grouped by one-side dimension."""
-        df = (
-            star.group_by("airports.state")
-            .aggregate("airports.airport_count")
-            .execute()
-        )
+        df = star.group_by("airports.state").aggregate("airports.airport_count").execute()
         ca = df[df["airports.state"] == "CA"]
         tx = df[df["airports.state"] == "TX"]
         assert ca["airports.airport_count"].iloc[0] == 984
@@ -233,11 +226,7 @@ class TestStarSchema:
 
     def test_mean_by_state_not_inflated(self, star):
         """avg_dep_delay grouped by state must not be inflated by fan-out."""
-        df = (
-            star.group_by("airports.state")
-            .aggregate("flights.avg_dep_delay")
-            .execute()
-        )
+        df = star.group_by("airports.state").aggregate("flights.avg_dep_delay").execute()
         ca = df[df["airports.state"] == "CA"]
         # Raw truth: CA avg dep_delay ≈ 7.63
         assert ca["flights.avg_dep_delay"].iloc[0] == pytest.approx(7.63, abs=0.1)
@@ -248,15 +237,16 @@ class TestStarSchema:
 # ===================================================================
 class TestSnowflakeSchema:
     """Snowflake: flights joined to two arms via join_one:
-      - carriers (1 level: carrier → code)
-      - aircraft → models (2 levels: tail_num, then aircraft_model_code)
+    - carriers (1 level: carrier → code)
+    - aircraft → models (2 levels: tail_num, then aircraft_model_code)
     """
 
     @pytest.fixture()
     def snowflake(self, semantic_tables):
         s = semantic_tables
         aircraft_with_models = s["aircraft"].join_one(
-            s["aircraft_models"], on="aircraft_model_code",
+            s["aircraft_models"],
+            on="aircraft_model_code",
         )
         return (
             s["flights"]
@@ -290,11 +280,7 @@ class TestSnowflakeSchema:
 
     def test_group_by_manufacturer(self, snowflake):
         """Group by models.manufacturer — Boeing should have 183236 flights."""
-        df = (
-            snowflake.group_by("models.manufacturer")
-            .aggregate("flights.flight_count")
-            .execute()
-        )
+        df = snowflake.group_by("models.manufacturer").aggregate("flights.flight_count").execute()
         boeing = df[df["models.manufacturer"] == "BOEING"]
         assert boeing["flights.flight_count"].iloc[0] == 183236
 
@@ -307,28 +293,19 @@ class TestSnowflakeSchema:
         )
         # Southwest flies exclusively Boeing
         sw_boeing = df[
-            (df["carriers.nickname"] == "Southwest")
-            & (df["models.manufacturer"] == "BOEING")
+            (df["carriers.nickname"] == "Southwest") & (df["models.manufacturer"] == "BOEING")
         ]
         assert sw_boeing["flights.flight_count"].iloc[0] == 88751
 
     def test_avg_distance_by_manufacturer(self, snowflake):
         """Mean distance by manufacturer — tests sum/count decomposition through 2-level arm."""
-        df = (
-            snowflake.group_by("models.manufacturer")
-            .aggregate("flights.avg_distance")
-            .execute()
-        )
+        df = snowflake.group_by("models.manufacturer").aggregate("flights.avg_distance").execute()
         boeing = df[df["models.manufacturer"] == "BOEING"]
         assert boeing["flights.avg_distance"].iloc[0] == pytest.approx(718.80, abs=0.1)
 
     def test_three_level_measure(self, snowflake):
         """Access model_count (3 levels deep) — should count distinct models per group."""
-        df = (
-            snowflake.group_by("carriers.nickname")
-            .aggregate("models.model_count")
-            .execute()
-        )
+        df = snowflake.group_by("carriers.nickname").aggregate("models.model_count").execute()
         sw = df[df["carriers.nickname"] == "Southwest"]
         assert sw["models.model_count"].iloc[0] > 0
 
@@ -370,21 +347,13 @@ class TestDiamondJoin:
 
     def test_group_by_origin_state(self, diamond):
         """Group by origin_airports.state should match the star schema test."""
-        df = (
-            diamond.group_by("origin_airports.state")
-            .aggregate("flights.flight_count")
-            .execute()
-        )
+        df = diamond.group_by("origin_airports.state").aggregate("flights.flight_count").execute()
         ca = df[df["origin_airports.state"] == "CA"]
         assert ca["flights.flight_count"].iloc[0] == 40670
 
     def test_group_by_dest_state(self, diamond):
         """Group by dest_airports.state — independent of origin grouping."""
-        df = (
-            diamond.group_by("dest_airports.state")
-            .aggregate("flights.flight_count")
-            .execute()
-        )
+        df = diamond.group_by("dest_airports.state").aggregate("flights.flight_count").execute()
         # CA is a top destination too
         ca = df[df["dest_airports.state"] == "CA"]
         assert ca["flights.flight_count"].iloc[0] > 30000
@@ -398,9 +367,10 @@ class TestDiamondJoin:
         )
         # Total flights across all (origin_state, dest_state) combos should
         # equal total flights (no double-counting)
-        assert df["flights.flight_count"].sum() == diamond.aggregate(
-            "flights.flight_count"
-        ).execute()["flights.flight_count"].iloc[0]
+        assert (
+            df["flights.flight_count"].sum()
+            == diamond.aggregate("flights.flight_count").execute()["flights.flight_count"].iloc[0]
+        )
 
     def test_mean_not_inflated_across_diamond(self, diamond):
         """avg_distance should not be inflated by two join arms."""
@@ -424,7 +394,8 @@ class TestFullStarSnowflake:
     def full_schema(self, semantic_tables):
         s = semantic_tables
         aircraft_with_models = s["aircraft"].join_one(
-            s["aircraft_models"], on="aircraft_model_code",
+            s["aircraft_models"],
+            on="aircraft_model_code",
         )
         flights_full = (
             s["flights"]
@@ -468,21 +439,13 @@ class TestFullStarSnowflake:
 
     def test_group_by_manufacturer_through_star(self, full_schema):
         """Group by models.manufacturer (4 levels deep) through a star join."""
-        df = (
-            full_schema.group_by("models.manufacturer")
-            .aggregate("flights.flight_count")
-            .execute()
-        )
+        df = full_schema.group_by("models.manufacturer").aggregate("flights.flight_count").execute()
         boeing = df[df["models.manufacturer"] == "BOEING"]
         assert boeing["flights.flight_count"].iloc[0] == 183236
 
     def test_unmatched_states_appear(self, full_schema):
         """States with airports but no flights should appear with zero counts."""
-        df = (
-            full_schema.group_by("airports.state")
-            .aggregate("flights.flight_count")
-            .execute()
-        )
+        df = full_schema.group_by("airports.state").aggregate("flights.flight_count").execute()
         # Delaware has 42 airports but 0 flights
         de = df[df["airports.state"] == "DE"]
         assert len(de) == 1
@@ -490,11 +453,7 @@ class TestFullStarSnowflake:
 
     def test_mean_not_inflated_through_snowflake_arms(self, full_schema):
         """avg_distance by state should not inflate through snowflake arms."""
-        df = (
-            full_schema.group_by("airports.state")
-            .aggregate("flights.avg_dep_delay")
-            .execute()
-        )
+        df = full_schema.group_by("airports.state").aggregate("flights.avg_dep_delay").execute()
         ca = df[df["airports.state"] == "CA"]
         # Raw truth: CA avg dep_delay ≈ 7.63 — should NOT be 10x or 100x
         assert ca["flights.avg_dep_delay"].iloc[0] == pytest.approx(7.63, abs=0.5)
@@ -510,7 +469,8 @@ class TestStarSchemaFilters:
     def star(self, semantic_tables):
         s = semantic_tables
         flights_with_carriers = s["flights"].join_one(
-            s["carriers"], on=lambda f, c: f.carrier == c.code,
+            s["carriers"],
+            on=lambda f, c: f.carrier == c.code,
         )
         return s["airports"].join_many(
             flights_with_carriers,
@@ -519,20 +479,12 @@ class TestStarSchemaFilters:
 
     def test_filter_on_many_side_column(self, star):
         """Filter on flights.distance > 1000 should restrict correctly."""
-        df = (
-            star.filter(lambda t: t.distance > 1000)
-            .aggregate("flights.flight_count")
-            .execute()
-        )
+        df = star.filter(lambda t: t.distance > 1000).aggregate("flights.flight_count").execute()
         assert df["flights.flight_count"].iloc[0] == pytest.approx(90000, abs=50)
 
     def test_filter_on_one_side_dimension(self, star):
         """Filter on airports.state == 'CA' should restrict via dim bridge."""
-        df = (
-            star.filter(lambda t: t.state == "CA")
-            .aggregate("flights.flight_count")
-            .execute()
-        )
+        df = star.filter(lambda t: t.state == "CA").aggregate("flights.flight_count").execute()
         assert df["flights.flight_count"].iloc[0] == 40670
 
     def test_filter_with_group_by(self, star):
@@ -568,7 +520,8 @@ class TestMinMaxSnowflake:
     def snowflake(self, semantic_tables):
         s = semantic_tables
         aircraft_with_models = s["aircraft"].join_one(
-            s["aircraft_models"], on="aircraft_model_code",
+            s["aircraft_models"],
+            on="aircraft_model_code",
         )
         return (
             s["flights"]
@@ -609,7 +562,8 @@ class TestMixedAggStar:
     def star(self, semantic_tables):
         s = semantic_tables
         flights_with_carriers = s["flights"].join_one(
-            s["carriers"], on=lambda f, c: f.carrier == c.code,
+            s["carriers"],
+            on=lambda f, c: f.carrier == c.code,
         )
         return s["airports"].join_many(
             flights_with_carriers,

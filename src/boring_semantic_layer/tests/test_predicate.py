@@ -20,21 +20,19 @@ def test_from_dict_simple_eq():
 
 
 def test_from_dict_canonicalizes_aliases():
-    assert pred_mod.from_dict(
-        {"operator": "equals", "field": "x", "value": 1}
-    ) == Compare(op="eq", field="x", value=1)
-    assert pred_mod.from_dict(
-        {"operator": "!=", "field": "x", "value": 1}
-    ) == Compare(op="ne", field="x", value=1)
+    assert pred_mod.from_dict({"operator": "equals", "field": "x", "value": 1}) == Compare(
+        op="eq", field="x", value=1
+    )
+    assert pred_mod.from_dict({"operator": "!=", "field": "x", "value": 1}) == Compare(
+        op="ne", field="x", value=1
+    )
 
 
 def test_from_dict_in_and_not_in():
     p = pred_mod.from_dict({"operator": "in", "field": "tier", "values": ["a", "b"]})
     assert p == In(field="tier", values=("a", "b"), negate=False)
 
-    p = pred_mod.from_dict(
-        {"operator": "not in", "field": "tier", "values": ["a"]}
-    )
+    p = pred_mod.from_dict({"operator": "not in", "field": "tier", "values": ["a"]})
     assert p == In(field="tier", values=("a",), negate=True)
 
 
@@ -126,9 +124,7 @@ def test_compile_eq(people_table):
 
 
 def test_compile_in(people_table):
-    df = _execute(
-        In(field="country", values=("FR", "DE"), negate=False), people_table
-    )
+    df = _execute(In(field="country", values=("FR", "DE"), negate=False), people_table)
     assert sorted(df["age"].tolist()) == [30, 45]
 
 

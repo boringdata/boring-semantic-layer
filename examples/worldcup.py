@@ -37,18 +37,17 @@ def canonicalize_team_name(team_name):
 # Lookup models used in fact joins intentionally contain dimensions only.
 # Their standalone counterparts add measures at the entity's native grain,
 # preventing counts and averages from being evaluated over repeated fact rows.
-tournament_dimensions = (
-    to_semantic_table(xo.deferred_read_parquet(f"{BASE_URL}/tournaments.parquet"), name="tournaments")
-    .with_dimensions(
-        tournament_id=entity_dimension(lambda t: t.tournament_id),
-        tournament_name=_.tournament_name,
-        year=_.year,
-        decade=(_.year // 10) * 10,
-        womens=_.tournament_name.contains("Women's"),
-        host_country=_.host_country,
-        winner=_.winner,
-        start_date=_.start_date,
-    )
+tournament_dimensions = to_semantic_table(
+    xo.deferred_read_parquet(f"{BASE_URL}/tournaments.parquet"), name="tournaments"
+).with_dimensions(
+    tournament_id=entity_dimension(lambda t: t.tournament_id),
+    tournament_name=_.tournament_name,
+    year=_.year,
+    decade=(_.year // 10) * 10,
+    womens=_.tournament_name.contains("Women's"),
+    host_country=_.host_country,
+    winner=_.winner,
+    start_date=_.start_date,
 )
 tournaments = tournament_dimensions.with_measures(
     tournament_count=_.count(),
@@ -58,17 +57,16 @@ tournaments = tournament_dimensions.with_measures(
 
 # --------------------------------------------------------------------
 # Teams — national teams with confederation and region.
-team_dimensions = (
-    to_semantic_table(xo.deferred_read_parquet(f"{BASE_URL}/teams.parquet"), name="teams")
-    .with_dimensions(
-        team_id=entity_dimension(lambda t: t.team_id),
-        team_name=_.team_name,
-        canonical_team_name=canonicalize_team_name(_.team_name),
-        team_code=_.team_code,
-        confederation_name=_.confederation_name,
-        confederation_code=_.confederation_code,
-        region_name=_.region_name,
-    )
+team_dimensions = to_semantic_table(
+    xo.deferred_read_parquet(f"{BASE_URL}/teams.parquet"), name="teams"
+).with_dimensions(
+    team_id=entity_dimension(lambda t: t.team_id),
+    team_name=_.team_name,
+    canonical_team_name=canonicalize_team_name(_.team_name),
+    team_code=_.team_code,
+    confederation_name=_.confederation_name,
+    confederation_code=_.confederation_code,
+    region_name=_.region_name,
 )
 teams = team_dimensions.with_measures(
     team_count=_.count(),
@@ -76,15 +74,14 @@ teams = team_dimensions.with_measures(
 
 # --------------------------------------------------------------------
 # Stadiums — venues.
-stadium_dimensions = (
-    to_semantic_table(xo.deferred_read_parquet(f"{BASE_URL}/stadiums.parquet"), name="stadiums")
-    .with_dimensions(
-        stadium_id=entity_dimension(lambda t: t.stadium_id),
-        stadium_name=_.stadium_name,
-        city_name=_.city_name,
-        country_name=_.country_name,
-        stadium_capacity=_.stadium_capacity,
-    )
+stadium_dimensions = to_semantic_table(
+    xo.deferred_read_parquet(f"{BASE_URL}/stadiums.parquet"), name="stadiums"
+).with_dimensions(
+    stadium_id=entity_dimension(lambda t: t.stadium_id),
+    stadium_name=_.stadium_name,
+    city_name=_.city_name,
+    country_name=_.country_name,
+    stadium_capacity=_.stadium_capacity,
 )
 stadiums = stadium_dimensions.with_measures(
     stadium_count=_.count(),

@@ -119,13 +119,9 @@ class TestNonDecomposableReagg:
         )
         items = con.create_table(
             "items_m",
-            pd.DataFrame(
-                {"order_id": [1, 1, 1, 2, 2], "qty": [1, 5, 9, 1, 3]}
-            ),
+            pd.DataFrame({"order_id": [1, 1, 1, 2, 2], "qty": [1, 5, 9, 1, 3]}),
         )
-        o = to_semantic_table(orders, name="orders").with_dimensions(
-            band=lambda t: t.band
-        )
+        o = to_semantic_table(orders, name="orders").with_dimensions(band=lambda t: t.band)
         i = to_semantic_table(items, name="items").with_measures(
             median_qty=lambda t: t.qty.median(),
             avg_qty=lambda t: t.qty.mean(),
@@ -205,20 +201,26 @@ class TestNullGroupKeys:
     def test_null_group_measures_present(self, null_qty):
         # Both a real NULL qty (order 3) and the no-item order 4 land in
         # the NULL group: item_count 1, distinct-order amount 80 + 50.
-        df = null_qty.group_by("items.qty").aggregate(
-            "items.item_count", "orders.total_amount"
-        ).execute()
+        df = (
+            null_qty.group_by("items.qty")
+            .aggregate("items.item_count", "orders.total_amount")
+            .execute()
+        )
         row = self._null_row(df)
         assert row["items.item_count"] == 1
         assert row["orders.total_amount"] == pytest.approx(130.0)
 
     def test_measure_order_does_not_change_answer(self, null_qty):
-        df1 = null_qty.group_by("items.qty").aggregate(
-            "items.item_count", "orders.total_amount"
-        ).execute()
-        df2 = null_qty.group_by("items.qty").aggregate(
-            "orders.total_amount", "items.item_count"
-        ).execute()
+        df1 = (
+            null_qty.group_by("items.qty")
+            .aggregate("items.item_count", "orders.total_amount")
+            .execute()
+        )
+        df2 = (
+            null_qty.group_by("items.qty")
+            .aggregate("orders.total_amount", "items.item_count")
+            .execute()
+        )
         r1, r2 = self._null_row(df1), self._null_row(df2)
         assert r1["items.item_count"] == r2["items.item_count"]
         assert r1["orders.total_amount"] == r2["orders.total_amount"]
@@ -255,9 +257,7 @@ class TestJoinOneDefaults:
             .execute()
         )
         assert (
-            direct["orders.total_amount"].iloc[0]
-            == filtered["orders.total_amount"].iloc[0]
-            == 300
+            direct["orders.total_amount"].iloc[0] == filtered["orders.total_amount"].iloc[0] == 300
         )
 
 
@@ -437,9 +437,7 @@ class TestDimensionOnlyShortcut:
         )
         customers = con.create_table(
             "customers_s",
-            pd.DataFrame(
-                {"customer_id": [10, 20, 30], "region": ["west", "east", "north"]}
-            ),
+            pd.DataFrame({"customer_id": [10, 20, 30], "region": ["west", "east", "north"]}),
         )
         o = (
             to_semantic_table(orders, name="orders")
@@ -527,9 +525,7 @@ class TestSerializationRoundTrip:
                 avg_amount=lambda t: t.amount.mean(),
             )
         )
-        i = to_semantic_table(items, name="items").with_measures(
-            item_count=lambda t: t.count()
-        )
+        i = to_semantic_table(items, name="items").with_measures(item_count=lambda t: t.count())
         return o.join_many(i, lambda a, b: a.order_id == b.order_id).with_measures(
             pot=lambda t: t["orders.total_amount"] / t.all(t["orders.total_amount"]),
         )
