@@ -18,34 +18,34 @@ from ibis.expr.operations.relations import Relation
 from ibis.expr.schema import Schema
 from returns.result import safe
 
-from . import projection_utils
-from ._xorq import (
+from .. import projection_utils
+from .._xorq import (
     Column as XorqColumn,
 )
-from ._xorq import (
+from .._xorq import (
     FrozenDict,
     FrozenOrderedDict,
     null_safe_equal,
 )
-from ._xorq import (
+from .._xorq import (
     Schema as XorqSchema,
 )
-from ._xorq import (
+from .._xorq import (
     operations as xorq_ops,
 )
-from ._xorq import (
+from .._xorq import (
     selectors as s,
 )
-from .calc_analyzer import (
+from ..calc_analyzer import (
     _is_reduction,
     _is_window,
     _to_node,
     analyze_calc_expr,
 )
-from .calc_analyzer import (
+from ..calc_analyzer import (
     _walk as _walk_calc_expr,
 )
-from .calc_compiler import (
+from ..calc_compiler import (
     TOTALS_PREFIX,
     TotalsNotAvailableError,
     UnknownMeasureRefError,
@@ -59,16 +59,16 @@ from .calc_compiler import (
     lift_inline_reductions,
     topological_order_from_deps,
 )
-from .calc_compiler import (
+from ..calc_compiler import (
     compile_calc_measure as _compile_calc_measure_impl,
 )
-from .fieldref import resolve_suffix
-from .graph_utils import walk_nodes
-from .measure_scope import (
+from ..fieldref import resolve_suffix
+from ..graph_utils import walk_nodes
+from ..measure_scope import (
     ColumnScope,
     MeasureScope,
 )
-from .nested_access import NestedAccessMarker
+from ..nested_access import NestedAccessMarker
 
 logger = logging.getLogger(__name__)
 
@@ -292,7 +292,7 @@ def _normalize_join_predicate(on):
 
 
 if TYPE_CHECKING:
-    from .expr import (
+    from ..expr import (
         SemanticFilter,
         SemanticGroupBy,
         SemanticLimit,
@@ -309,8 +309,8 @@ def _patch_xorq_sortkey_compat():
     """
     from ibis.expr.operations.sortkeys import SortKey as IbisSortKey
 
-    from ._xorq import SortKey as XorqSortKey
-    from ._xorq import map_ibis
+    from .._xorq import SortKey as XorqSortKey
+    from .._xorq import map_ibis
 
     if IbisSortKey in map_ibis.registry:
         return  # already patched
@@ -341,7 +341,7 @@ def _ensure_xorq_table(table):
     _patch_xorq_sortkey_compat()
     if "xorq.vendor.ibis" not in type(table).__module__:
         try:
-            from ._xorq import from_ibis
+            from .._xorq import from_ibis
 
             return from_ibis(table)
         except Exception as exc:
@@ -384,7 +384,7 @@ def _rebind_to_backend(expr, target_backend):
     error instead of returning plausible numbers from the wrong database.
     """
     try:
-        from ._xorq import relations as xorq_rel
+        from .._xorq import relations as xorq_rel
     except Exception:
         return expr
 
@@ -430,15 +430,15 @@ def _rebind_to_canonical_backend(expr):
 
     No-op on plain ibis expressions (not xorq-vendored).
     """
-    from ._xorq import HAS_XORQ
+    from .._xorq import HAS_XORQ
 
     # Without xorq there is only one backend, so there is nothing to rebind.
     if not HAS_XORQ:
         return expr
 
     try:
-        from ._xorq import relations as xorq_rel
-        from ._xorq import walk_nodes
+        from .._xorq import relations as xorq_rel
+        from .._xorq import walk_nodes
     except Exception:
         return expr
 
@@ -605,7 +605,7 @@ def _format_root(root_op: SemanticTableOp) -> str:
     try:
         from ibis.expr.format import fmt
     except ImportError:
-        from ._xorq import fmt
+        from .._xorq import fmt
 
     try:
         return fmt(root_op)
@@ -689,7 +689,7 @@ def _resolve_expr(expr: Deferred | Callable | Any, scope: ir.Table) -> ir.Value:
         scope_is_xorq = "xorq.vendor.ibis" in scope_module
 
         if result_is_regular_ibis and scope_is_xorq:
-            from ._xorq import from_ibis
+            from .._xorq import from_ibis
 
             result = from_ibis(result)
 
@@ -1039,7 +1039,7 @@ def _collect_struct(struct_dict: dict[str, Any], **collect_kwargs):
     """
     first_col = next(iter(struct_dict.values()))
     if isinstance(first_col, XorqColumn):
-        from ._xorq import ibis as xibis
+        from .._xorq import ibis as xibis
 
         return xibis.struct(struct_dict).collect(**collect_kwargs)
     return ibis.struct(struct_dict).collect(**collect_kwargs)
@@ -1669,7 +1669,7 @@ class SemanticTableOp(Relation):
         return self.calc_measures
 
     def get_graph(self) -> dict[str, dict[str, Any]]:
-        from .graph_utils import build_dependency_graph
+        from ..graph_utils import build_dependency_graph
 
         return build_dependency_graph(
             self.get_dimensions(),
@@ -1751,7 +1751,7 @@ class SemanticFilterOp(_SourcePassThroughOp, Relation):
         return _semantic_repr(self)
 
     def to_untagged(self):
-        from .convert import _Resolver
+        from ..convert import _Resolver
 
         all_roots = _find_all_root_models(self.source)
         base_tbl = _to_untagged(self.source)
@@ -2540,7 +2540,7 @@ def _compile_aggregation_with_nested(
     The new calc-compiler path layers on top of the resulting joined
     table via :func:`apply_calc_measures`.
     """
-    from .nested_compile import (
+    from ..nested_compile import (
         build_nested_level_table,
         build_session_table,
         join_tables,
@@ -2721,7 +2721,7 @@ def _validate_preaggregation_join_predicates(join_op: SemanticJoinOp) -> None:
     accessed column names produces a different row set from the actual join, so
     fail closed until the planner carries the complete predicate expression.
     """
-    from .convert import _Resolver
+    from ..convert import _Resolver
 
     def _is_field(node) -> bool:
         return type(node).__name__ == "Field"
@@ -2811,7 +2811,7 @@ def _table_filter_resolver(
     ownership checks resolve ``t["orders.status"]`` only against
     ``orders``.
     """
-    from .convert import _Resolver
+    from ..convert import _Resolver
 
     dims = dict(_get_field_dict(table_op, "dimensions"))
     if table_name:
@@ -2833,7 +2833,7 @@ _AND_TYPES = tuple({ibis_ops.And, xorq_ops.And})
 
 def _leaf_rel_types():
     """Base relation classes for both ibis flavors (plus xorq Read)."""
-    from ._xorq import Read as _XorqRead
+    from .._xorq import Read as _XorqRead
 
     types = {
         ibis_ops.DatabaseTable,
@@ -2860,7 +2860,7 @@ def _value_fields(value_op):
     Descending into a Field's relation would surface every column of the
     join tree; provenance only wants the fields the value itself reads.
     """
-    from .graph_utils import gen_children_of
+    from ..graph_utils import gen_children_of
 
     out, stack, seen = [], [value_op], set()
     while stack:
@@ -3435,7 +3435,7 @@ def _exact_grain_preagg(
     )
     joined = bridge.inner_join(raw_tbl, preds)
     pt = _compile_exact_measure_table(joined, tmp.values(), exact_measures)
-    from .nested_compile import get_ibis_module
+    from ..nested_compile import get_ibis_module
 
     pt = pt.mutate(**{presence_name: get_ibis_module(pt).literal(True)})
     # ibis rename convention: {new_name: old_name}
@@ -4258,7 +4258,7 @@ class SemanticAggregateOp(Relation):
         filters_on_tbl: set[int] = set()
         tbl_filter_exprs: dict[int, Any] = {}
         if tbl is not None and filter_fns:
-            from .convert import _Resolver
+            from ..convert import _Resolver
 
             # Bare aliases for prefixed dims: a filter written `t.size`
             # against a join where exactly one table declares `size` must
@@ -5266,7 +5266,7 @@ class SemanticAggregateOp(Relation):
         # filter that fails to resolve here is a genuine error, not a
         # cross-table predicate awaiting another mechanism.
         if filters:
-            from .convert import _Resolver
+            from ..convert import _Resolver
 
             for i, pred in enumerate(filters):
                 pred_fn = _unwrap(pred)
@@ -5412,7 +5412,7 @@ class SemanticAggregateOp(Relation):
 
         ``decomposed_means`` and ``reagg_ops`` are tuples of (key, value) pairs.
         """
-        from .nested_compile import join_tables as _join_tables
+        from ..nested_compile import join_tables as _join_tables
 
         reagg_map = dict(reagg_ops)
         # Include decomposed auxiliary columns in measure names
@@ -5510,7 +5510,7 @@ class SemanticAggregateOp(Relation):
 
         ``decomposed_means`` and ``reagg_ops`` are tuples of (key, value) pairs.
         """
-        from .nested_compile import join_tables as _join_tables
+        from ..nested_compile import join_tables as _join_tables
 
         reagg_map = dict(reagg_ops)
         aux_cols = frozenset(c for _, (sc, cc) in decomposed_means for c in (sc, cc))
@@ -6365,7 +6365,7 @@ class SemanticJoinOp(Relation):
         Returns:
             Ibis join expression (potentially simplified).
         """
-        from .convert import _Resolver
+        from ..convert import _Resolver
 
         augmented_requirements = self._augment_parent_requirements_for_pruning(parent_requirements)
 
@@ -6490,7 +6490,7 @@ class SemanticJoinOp(Relation):
         fall back to returning the inputs unchanged so ibis executes the
         join natively. Rebinding is only needed for xorq-vendored backends.
         """
-        from ._xorq import HAS_XORQ
+        from .._xorq import HAS_XORQ
 
         # Without xorq, from_ibis() is an identity, so both sides already share
         # their backends — nothing to rebind (see _rebind_to_canonical_backend).
@@ -6498,8 +6498,8 @@ class SemanticJoinOp(Relation):
             return left_tbl, right_tbl
 
         try:
-            from ._xorq import relations as xorq_rel
-            from ._xorq import walk_nodes
+            from .._xorq import relations as xorq_rel
+            from .._xorq import walk_nodes
         except ImportError:
             return left_tbl, right_tbl
 
@@ -6633,7 +6633,7 @@ def _get_weight_expr(
     all_roots: list,
     is_string: bool,
 ) -> Any:
-    from ._xorq import api as xo
+    from .._xorq import api as xo
 
     if not by_measure:
         return xo._.count()
@@ -6650,7 +6650,7 @@ def _build_string_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
-    from ._xorq import api as xo
+    from .._xorq import api as xo
 
     return (
         base_tbl.group_by(field_expr.name("value"))
@@ -6673,7 +6673,7 @@ def _build_numeric_index_fragment(
     type_str: str,
     weight_expr: Any,
 ) -> Any:
-    from ._xorq import api as xo
+    from .._xorq import api as xo
 
     return (
         base_tbl.select(field_expr.name("value"))
@@ -6786,7 +6786,7 @@ class SemanticIndexOp(Relation):
 
     @property
     def values(self) -> FrozenOrderedDict[str, Any]:
-        from ._xorq import api as xo
+        from .._xorq import api as xo
 
         return FrozenOrderedDict(
             {
@@ -6834,7 +6834,7 @@ class SemanticIndexOp(Relation):
         )
 
         if not fields_to_index:
-            from ._xorq import api as xo
+            from .._xorq import api as xo
 
             return xo.memtable(
                 {
@@ -7297,7 +7297,7 @@ def _build_column_rename_map(
     # Build column index using graph_utils (returns Result)
     from returns.result import Failure
 
-    from .graph_utils import build_column_index_from_roots
+    from ..graph_utils import build_column_index_from_roots
 
     column_index_result = build_column_index_from_roots(all_roots)
     if isinstance(column_index_result, Failure):
