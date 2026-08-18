@@ -28,13 +28,8 @@ KNOWN_SCC_MEMBERS = frozenset(
     {
         "boring_semantic_layer.api",
         "boring_semantic_layer.expr",
-        "boring_semantic_layer.format",
-        "boring_semantic_layer.ops",
         "boring_semantic_layer.query",
         "boring_semantic_layer.serialization",
-        "boring_semantic_layer.serialization.context",
-        "boring_semantic_layer.serialization.extract",
-        "boring_semantic_layer.serialization.helpers",
         "boring_semantic_layer.serialization.reconstruct",
     }
 )
@@ -96,17 +91,35 @@ def _sibling_imports(
                 yield child
 
 
+def _is_type_checking_if(node: ast.AST) -> bool:
+    """Match ``if TYPE_CHECKING:`` / ``if typing.TYPE_CHECKING:`` blocks."""
+    if not isinstance(node, ast.If):
+        return False
+    test = node.test
+    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    )
+
+
 def _build_edges(modules: dict[str, Path]) -> set[tuple[str, str]]:
     mod_names = set(modules)
     edges: set[tuple[str, str]] = set()
     for mod, path in modules.items():
         tree = ast.parse(path.read_text())
         is_pkg_init = path.name == "__init__.py"
-        for node in ast.walk(tree):
+        stack: list[ast.AST] = [tree]
+        while stack:
+            node = stack.pop()
+            if _is_type_checking_if(node):
+                # Type-only imports are not runtime edges; keep walking the
+                # else-branch, which does execute.
+                stack.extend(node.orelse)
+                continue
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 for dst in _sibling_imports(node, mod, is_pkg_init, mod_names):
                     if dst != mod:
                         edges.add((mod, dst))
+            stack.extend(ast.iter_child_nodes(node))
     return edges
 
 
