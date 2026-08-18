@@ -798,7 +798,6 @@ def _join_one_with_detected_grain(
     left_op,
     other,
     on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-    how: str,
 ) -> SemanticJoin:
     """Construct ``join_one`` consistently for every semantic wrapper."""
     other_op = other.op() if isinstance(other, SemanticTable) else other
@@ -807,7 +806,7 @@ def _join_one_with_detected_grain(
         left=left_op,
         right=other_op,
         on=on,
-        how=how,
+        how="left",
         cardinality=cardinality,
     )
 
@@ -1146,7 +1145,6 @@ class SemanticModel(SemanticTable):
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics.
 
@@ -1160,8 +1158,6 @@ class SemanticModel(SemanticTable):
             on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
                 name string, a Deferred ``_.col``, or a list of strings/Deferred for
                 compound equi-joins.
-            how: Join type. Only ``"left"`` is supported.
-
         Returns:
             SemanticJoin: The joined semantic model
 
@@ -1170,13 +1166,12 @@ class SemanticModel(SemanticTable):
             >>> orders.join_one(customers, on=_.customer_id)
             >>> orders.join_one(customers, on=lambda o, c: o.customer_id == c.customer_id)
         """
-        return _join_one_with_detected_grain(self.op(), other, on, how)
+        return _join_one_with_detected_grain(self.op(), other, on)
 
     def join_many(
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-many relationship semantics.
 
@@ -1185,8 +1180,6 @@ class SemanticModel(SemanticTable):
             on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
                 name string, a Deferred ``_.col``, or a list of strings/Deferred for
                 compound equi-joins.
-            how: Join type. Only ``"left"`` is supported.
-
         Returns:
             SemanticJoin: The joined semantic model
 
@@ -1196,7 +1189,7 @@ class SemanticModel(SemanticTable):
             >>> customer.join_many(orders, on=lambda c, o: c.customer_id == o.customer_id)
         """
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how, cardinality="many")
+        return SemanticJoin(left=self.op(), right=other_op, on=on, how="left", cardinality="many")
 
     def join_cross(self, other: SemanticModel) -> SemanticJoin:
         """Cross join (Cartesian product) with another semantic model.
@@ -1220,7 +1213,7 @@ class SemanticModel(SemanticTable):
 
         The generic join() method has been removed. Please use:
         - join_one(other, lambda l, r: condition) for one-to-one relationships
-        - join_many(other, lambda l, r: condition, how="left") for one-to-many relationships
+        - join_many(other, lambda l, r: condition) for one-to-many relationships
         - join_cross(other) for Cartesian product
 
         Examples:
@@ -1462,23 +1455,21 @@ class SemanticJoin(SemanticTable):
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
-        return _join_one_with_detected_grain(self.op(), other, on, how)
+        return _join_one_with_detected_grain(self.op(), other, on)
 
     def join_many(
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-many relationship semantics."""
         return SemanticJoin(
             left=self.op(),
             right=other.op() if isinstance(other, SemanticModel) else other,
             on=on,
-            how=how,
+            how="left",
             cardinality="many",
         )
 
@@ -1618,23 +1609,21 @@ class SemanticFilter(SemanticTable):
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
-        return _join_one_with_detected_grain(self.op(), other, on, how)
+        return _join_one_with_detected_grain(self.op(), other, on)
 
     def join_many(
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-many relationship semantics."""
         return SemanticJoin(
             left=self.op(),
             right=other.op() if isinstance(other, SemanticModel) else other,
             on=on,
-            how=how,
+            how="left",
             cardinality="many",
         )
 
@@ -1979,23 +1968,21 @@ class SemanticAggregate(SemanticTable):
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
-        return _join_one_with_detected_grain(self.op(), other, on, how)
+        return _join_one_with_detected_grain(self.op(), other, on)
 
     def join_many(
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-many relationship semantics."""
         return SemanticJoin(
             left=self.op(),
             right=other.op(),
             on=on,
-            how=how,
+            how="left",
             cardinality="many",
         )
 

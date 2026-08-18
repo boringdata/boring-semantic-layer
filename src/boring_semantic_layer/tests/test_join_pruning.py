@@ -101,20 +101,19 @@ def _build_star_model(star_schema):
 
     return (
         facts.join_one(dates, on=lambda f, d: f.date_id == d.date_id)
-        .join_one(stores, on=lambda f, s: f.store_id == s.store_id, how="left")
-        .join_one(items, on=lambda f, i: f.item_id == i.item_id, how="left")
+        .join_one(stores, on=lambda f, s: f.store_id == s.store_id)
+        .join_one(items, on=lambda f, i: f.item_id == i.item_id)
     )
 
 
 @pytest.mark.parametrize("join_method", ["join_one", "join_many"])
-@pytest.mark.parametrize("how", ["inner", "right", "outer", "cross"])
-def test_semantic_joins_reject_non_left_join_types(star_schema, join_method, how):
-    """Semantic relationships preserve left rows; cross joins use join_cross()."""
+def test_semantic_joins_have_no_how_parameter(star_schema, join_method):
+    """Semantic joins are always LEFT joins: the parameter no longer exists."""
     facts = to_semantic_table(star_schema["facts"], name="reject_facts")
     dates = to_semantic_table(star_schema["dates"], name="reject_dates")
 
-    with pytest.raises(ValueError, match="only support how='left'"):
-        getattr(facts, join_method)(dates, on="date_id", how=how)
+    with pytest.raises(TypeError, match="how"):
+        getattr(facts, join_method)(dates, on="date_id", how="inner")
 
 
 def test_join_cross_remains_supported(star_schema):

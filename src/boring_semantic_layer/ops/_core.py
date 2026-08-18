@@ -3698,23 +3698,21 @@ class SemanticJoinOp(Relation):
         self,
         other: SemanticTable,
         on: Callable[[Any, Any], ir.BooleanValue],
-        how: str = "left",
     ):
         """Join with one-to-one relationship semantics (left outer join)."""
-        return _expr_module()._join_one_with_detected_grain(self, other, on, how)
+        return _expr_module()._join_one_with_detected_grain(self, other, on)
 
     def join_many(
         self,
         other: SemanticTable,
         on: Callable[[Any, Any], ir.BooleanValue],
-        how: str = "left",
     ):
         """Join with one-to-many relationship semantics."""
         return _expr_module().SemanticJoin(
             left=self,
             right=other.op(),
             on=on,
-            how=how,
+            how="left",
             cardinality="many",
         )
 

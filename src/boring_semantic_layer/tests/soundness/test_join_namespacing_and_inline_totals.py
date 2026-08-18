@@ -127,7 +127,7 @@ class TestInlineCountStarTotals:
             order_count=_.count(),
             pct=lambda t: t.count() / t.all(t.count()) * 100,
         )
-        j = orders.join_one(customers, on="cust_id", how="left")
+        j = orders.join_one(customers, on="cust_id")
         df = (
             j.group_by("customers.region")
             .aggregate("orders.order_count", "orders.pct")
@@ -149,7 +149,7 @@ class TestCollidingRightDimension:
         orders_tbl, cust_tbl = orders_customers
         customers = to_semantic_table(cust_tbl, name="customers").with_dimensions(cust_name=_.name)
         orders = to_semantic_table(orders_tbl, name="orders").with_measures(order_count=_.count())
-        j = orders.join_one(customers, on="cust_id", how="left")
+        j = orders.join_one(customers, on="cust_id")
         df = (
             j.group_by("customers.cust_name")
             .aggregate("orders.order_count")
@@ -180,7 +180,7 @@ class TestRawPrefixedGroupKeys:
 
     def test_raw_right_column(self, joined):
         orders, customers = joined
-        j = orders.join_one(customers, on="cust_id", how="left")
+        j = orders.join_one(customers, on="cust_id")
         df = (
             j.group_by("customers.cust_id")
             .aggregate("orders.order_count")
@@ -192,7 +192,7 @@ class TestRawPrefixedGroupKeys:
 
     def test_raw_left_column(self, joined):
         orders, customers = joined
-        j = orders.join_one(customers, on="cust_id", how="left")
+        j = orders.join_one(customers, on="cust_id")
         df = j.group_by("orders.amount").aggregate("orders.order_count").execute()
         assert len(df) == 4
         assert df["orders.order_count"].sum() == 4
@@ -200,7 +200,7 @@ class TestRawPrefixedGroupKeys:
     def test_raw_colliding_right_column(self, joined):
         """A raw right column colliding with a left column resolves right."""
         orders, customers = joined
-        j = orders.join_one(customers, on="cust_id", how="left")
+        j = orders.join_one(customers, on="cust_id")
         df = (
             j.group_by("customers.name")
             .aggregate("orders.order_count")
@@ -212,7 +212,7 @@ class TestRawPrefixedGroupKeys:
 
     def test_raw_prefixed_on_join_many_preagg(self, joined):
         orders, customers = joined
-        j = orders.join_many(customers, on="cust_id", how="left")
+        j = orders.join_many(customers, on="cust_id")
         df = (
             j.group_by("customers.cust_id")
             .aggregate("orders.order_count")
@@ -241,14 +241,14 @@ class TestRawPrefixedGroupKeys:
             region=lambda t: t.region.upper()
         )
         orders = to_semantic_table(orders_tbl, name="orders").with_measures(order_count=_.count())
-        j = orders.join_one(customers, on="cust_id", how="left")
+        j = orders.join_one(customers, on="cust_id")
         df = j.group_by("customers.region").aggregate("orders.order_count").execute()
         assert sorted(df["customers.region"]) == ["EAST", "WEST"]
 
     def test_unknown_key_raises_semantic_error(self, joined):
         """Typos raise a semantic-layer error, not a physical-schema dump."""
         orders, customers = joined
-        j = orders.join_one(customers, on="cust_id", how="left")
+        j = orders.join_one(customers, on="cust_id")
         with pytest.raises(KeyError) as excinfo:
             j.group_by("customers.regoin").aggregate("orders.order_count").execute()
         msg = str(excinfo.value)

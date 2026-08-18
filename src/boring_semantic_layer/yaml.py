@@ -220,6 +220,12 @@ def _parse_joins(
         # Apply the join based on type
         join_type = join_config.get("type", "one")  # Default to one-to-one
         how = join_config.get("how") or "left"
+        if how != "left":
+            raise DefinitionError(
+                f"Join {alias!r}: how={how!r} is not supported. Semantic joins "
+                "are always LEFT joins for soundness; filter afterwards for "
+                "inner-join semantics (e.g. filter: _.key.notnull())."
+            )
 
         if join_type == "cross":
             # Cross join - no keys needed
@@ -240,7 +246,6 @@ def _parse_joins(
             result_model = result_model.join_one(
                 join_model,
                 on=on_condition,
-                how=how,
             )
         elif join_type == "many":
             left_on = join_config.get("left_on")
@@ -258,7 +263,6 @@ def _parse_joins(
             result_model = result_model.join_many(
                 join_model,
                 on=on_condition,
-                how=how,
             )
         else:
             raise ValueError(f"Invalid join type '{join_type}'. Must be 'one', 'many', or 'cross'")

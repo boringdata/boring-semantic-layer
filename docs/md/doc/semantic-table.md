@@ -347,7 +347,8 @@ all_combinations = flights_st.join_cross(carriers)
 
 ### Requiring a Match
 
-`join_one()` and `join_many()` only support `how="left"`. When a query should
+`join_one()` and `join_many()` are always LEFT joins (there is no `how=`
+parameter). When a query should
 require a match, make the row removal explicit with a filter on a non-nullable
 field from the right table:
 

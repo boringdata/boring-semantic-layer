@@ -392,9 +392,8 @@ def _reconstruct_join(metadata: dict, xorq_expr, source, context: BSLSerializati
     _validate_join_leaf(left_model, left_metadata, "left")
     _validate_join_leaf(right_model, right_metadata, "right")
 
-    # Payloads written before ``how`` was serialized must preserve left-side
-    # rows rather than silently treating the relationship as an inner join.
-    how = metadata.get("how", "left")
+    # ``how`` in stored payloads is informational: semantic joins are always
+    # LEFT joins (join_cross carries how="cross" on the op directly).
     # Default to "many" for payloads serialized before cardinality was
     # emitted — join_many is a safe superset of join_one behaviour, while
     # the reverse silently skips pre-aggregation.  (Fixes #223.)
@@ -406,7 +405,7 @@ def _reconstruct_join(metadata: dict, xorq_expr, source, context: BSLSerializati
             left=left_model.op() if hasattr(left_model, "op") else left_model,
             right=right_model.op() if hasattr(right_model, "op") else right_model,
             on=None,
-            how=how,
+            how="cross" if cardinality == "cross" else "left",
             cardinality=cardinality,
         )
 
@@ -418,7 +417,7 @@ def _reconstruct_join(metadata: dict, xorq_expr, source, context: BSLSerializati
     }.get(cardinality, "join_many")
     if join_method == "join_cross":
         return left_model.join_cross(right_model)
-    return getattr(left_model, join_method)(right_model, on=predicate, how=how)
+    return getattr(left_model, join_method)(right_model, on=predicate)
 
 
 # ---------------------------------------------------------------------------
