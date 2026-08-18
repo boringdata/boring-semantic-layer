@@ -165,7 +165,10 @@ def serialize_resolver(resolver) -> tuple:
         return ("attr", serialize_resolver(resolver.obj), serialize_resolver(resolver.name))
 
     if isinstance(resolver, Item):
-        return ("item", serialize_resolver(resolver.obj), serialize_resolver(resolver.name))
+        # xorq's vendored ibis names the key slot "name"; plain ibis 11
+        # renamed it "indexer". Positionally they are the same argument.
+        key = resolver.name if hasattr(resolver, "name") else resolver.indexer
+        return ("item", serialize_resolver(resolver.obj), serialize_resolver(key))
 
     if isinstance(resolver, Call):
         func_tuple = serialize_resolver(resolver.func)
@@ -224,22 +227,6 @@ _OPERATOR_MAP = {
 }
 
 
-def _finalize_frozen_slotted(obj, *fields) -> None:
-    """Set ``__precomputed_hash__`` on a FrozenSlotted built via ``object.__new__``.
-
-    xorq's vendored ibis FrozenSlotted base implements ``__hash__`` by
-    returning a precomputed value that ``__init__`` would normally set
-    via ``hash((cls, tuple(field_values)))``. When we bypass
-    ``__init__`` to skip validation during deserialization we must
-    mirror that exactly — note the inner ``tuple(...)`` wrap, which is
-    significant: ``hash((cls, *fields))`` produces a different value.
-    Without this the rebuilt resolver raises ``AttributeError`` the
-    first time it is hashed (e.g. as a key in ``op.replace``
-    substitutions).
-    """
-    object.__setattr__(obj, "__precomputed_hash__", hash((type(obj), tuple(fields))))
-
-
 def deserialize_resolver(data: tuple):
     """Reconstruct a Resolver tree from a nested-tuple representation."""
     from .._xorq import (
@@ -273,79 +260,43 @@ def deserialize_resolver(data: tuple):
             return Just(lit_expr.op())
 
         case ("attr", obj_data, name_data):
-            obj_resolver = deserialize_resolver(obj_data)
-            name_resolver = deserialize_resolver(name_data)
-            attr = object.__new__(Attr)
-            object.__setattr__(attr, "obj", obj_resolver)
-            object.__setattr__(attr, "name", name_resolver)
-            _finalize_frozen_slotted(attr, obj_resolver, name_resolver)
-            return attr
+            return Attr(deserialize_resolver(obj_data), deserialize_resolver(name_data))
 
         case ("item", obj_data, name_data):
-            obj_resolver = deserialize_resolver(obj_data)
-            name_resolver = deserialize_resolver(name_data)
-            item = object.__new__(Item)
-            object.__setattr__(item, "obj", obj_resolver)
-            object.__setattr__(item, "name", name_resolver)
-            _finalize_frozen_slotted(item, obj_resolver, name_resolver)
-            return item
+            # Positional to absorb the name/indexer slot rename between flavors.
+            return Item(deserialize_resolver(obj_data), deserialize_resolver(name_data))
 
         case ("call", func_data, args_data, kwargs_data):
-            func_resolver = deserialize_resolver(func_data)
-            args_resolvers = tuple(deserialize_resolver(a) for a in args_data)
-            from .._xorq import FrozenDict
-
-            kwargs_resolvers = FrozenDict({k: deserialize_resolver(v) for k, v in kwargs_data})
-            call = object.__new__(Call)
-            object.__setattr__(call, "func", func_resolver)
-            object.__setattr__(call, "args", args_resolvers)
-            object.__setattr__(call, "kwargs", kwargs_resolvers)
-            _finalize_frozen_slotted(call, func_resolver, args_resolvers, kwargs_resolvers)
-            return call
+            return Call(
+                deserialize_resolver(func_data),
+                *(deserialize_resolver(a) for a in args_data),
+                **{k: deserialize_resolver(v) for k, v in kwargs_data},
+            )
 
         case ("binop", op_name, left_data, right_data):
             func = _OPERATOR_MAP.get(op_name)
             if func is None:
                 raise ValueError(f"Unknown binary operator: {op_name!r}")
-            left = deserialize_resolver(left_data)
-            right = deserialize_resolver(right_data)
-            binop = object.__new__(BinaryOperator)
-            object.__setattr__(binop, "func", func)
-            object.__setattr__(binop, "left", left)
-            object.__setattr__(binop, "right", right)
-            _finalize_frozen_slotted(binop, func, left, right)
-            return binop
+            return BinaryOperator(
+                func, deserialize_resolver(left_data), deserialize_resolver(right_data)
+            )
 
         case ("unop", op_name, arg_data):
             func = _OPERATOR_MAP.get(op_name)
             if func is None:
                 raise ValueError(f"Unknown unary operator: {op_name!r}")
-            arg = deserialize_resolver(arg_data)
-            unop = object.__new__(UnaryOperator)
-            object.__setattr__(unop, "func", func)
-            object.__setattr__(unop, "arg", arg)
-            _finalize_frozen_slotted(unop, func, arg)
-            return unop
+            return UnaryOperator(func, deserialize_resolver(arg_data))
 
         case ("seq", type_name, items_data):
-            typ = {"tuple": tuple, "list": list}[type_name]
-            values = tuple(deserialize_resolver(v) for v in items_data)
-            seq = object.__new__(Sequence)
-            object.__setattr__(seq, "typ", typ)
-            object.__setattr__(seq, "values", values)
-            _finalize_frozen_slotted(seq, typ, values)
-            return seq
+            typ = {"tuple": tuple, "list": list}.get(type_name)
+            if typ is None:
+                raise ValueError(f"Unknown sequence type: {type_name!r}")
+            return Sequence(typ(deserialize_resolver(v) for v in items_data))
 
         case ("map", type_name, items_data):
-            typ = {"dict": dict}[type_name]
-            from .._xorq import FrozenDict
-
-            values = FrozenDict({k: deserialize_resolver(v) for k, v in items_data})
-            mapping = object.__new__(MappingResolver)
-            object.__setattr__(mapping, "typ", typ)
-            object.__setattr__(mapping, "values", values)
-            _finalize_frozen_slotted(mapping, typ, values)
-            return mapping
+            if type_name != "dict":
+                raise ValueError(f"Unknown mapping type: {type_name!r}")
+            return MappingResolver({k: deserialize_resolver(v) for k, v in items_data})
 
         case _:
             raise ValueError(f"Unknown resolver tag: {data[0]}")
