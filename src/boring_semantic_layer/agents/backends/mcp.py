@@ -10,7 +10,7 @@ from fastmcp import FastMCP
 from pydantic import Field
 from pydantic.functional_validators import BeforeValidator
 
-from ...query import _find_time_dimension
+from ...query import find_time_dimension
 from ..utils.chart_handler import generate_chart_with_data
 from ..utils.prompts import load_prompt
 
@@ -109,7 +109,7 @@ class MCPSemanticModel(FastMCP):
 
             model = self.models[model_name]
             all_dims = list(model.dimensions)
-            time_dim_name = _find_time_dimension(model, all_dims)
+            time_dim_name = find_time_dimension(model, all_dims)
 
             if not time_dim_name:
                 raise ValueError(f"Model {model_name} has no time dimension")

@@ -1267,7 +1267,7 @@ def _build_select_or_aggregate(
     return tbl
 
 
-class SemanticProjectOp(Relation):
+class SemanticProjectOp(_SourcePassThroughOp, Relation):
     source: Relation
     fields: tuple[str, ...]
 
@@ -1320,7 +1320,7 @@ class SemanticProjectOp(Relation):
         return _build_select_or_aggregate(active_tbl, dim_exprs, meas_exprs, raw_exprs)
 
 
-class SemanticGroupByOp(Relation):
+class SemanticGroupByOp(_SourcePassThroughOp, Relation):
     source: Relation
     keys: tuple[str, ...]
 

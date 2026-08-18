@@ -17,8 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
-from boring_semantic_layer.agents.utils.chart_handler import generate_chart_with_data
-from boring_semantic_layer.query import _find_time_dimension
+from boring_semantic_layer.query import find_time_dimension
 
 from .loader import load_models
 
@@ -89,6 +88,25 @@ class ComparePeriodsRequest(BaseModel):
         return self
 
 
+def _generate_chart_with_data():
+    """Resolve the chart generator from the agents extra at call time.
+
+    The server extra does not depend on the agents extra; only the chart
+    endpoints need it, and they say so clearly when it is missing.
+    """
+    try:
+        from boring_semantic_layer.agents.utils.chart_handler import (
+            generate_chart_with_data,
+        )
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail="Chart generation requires the agents extra: "
+            "pip install 'boring-semantic-layer[agent]'",
+        ) from exc
+    return generate_chart_with_data
+
+
 def _default_cors_origins() -> list[str]:
     raw = os.environ.get("BSL_CORS_ORIGINS")
     if not raw:
@@ -146,7 +164,7 @@ def _build_model_response(model: Any) -> dict[str, Any]:
 
 def _get_time_range_response(model: Any, model_name: str) -> dict[str, str]:
     dimensions = model.get_dimensions()
-    time_dim_name = _find_time_dimension(model, list(dimensions))
+    time_dim_name = find_time_dimension(model, list(dimensions))
     if not time_dim_name:
         raise HTTPException(status_code=400, detail=f"Model '{model_name}' has no time dimension")
 
@@ -372,7 +390,7 @@ def create_app(
             time_range=payload.time_range,
         )
         response = json.loads(
-            generate_chart_with_data(
+            _generate_chart_with_data()(
                 query_result,
                 get_records=payload.get_records,
                 records_limit=payload.records_limit,
@@ -404,7 +422,7 @@ def create_app(
             limit=payload.limit,
         )
         response = json.loads(
-            generate_chart_with_data(
+            _generate_chart_with_data()(
                 query_result,
                 get_records=payload.get_records,
                 records_limit=payload.records_limit,

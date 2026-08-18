@@ -85,7 +85,7 @@ def _is_time_dimension(dims_dict: dict[str, Any], dim_name: str) -> bool:
     return dim_name in dims_dict and dims_dict[dim_name].is_time_dimension
 
 
-def _find_time_dimension(semantic_table: Any, dimensions: list[str]) -> str | None:
+def find_time_dimension(semantic_table: Any, dimensions: list[str]) -> str | None:
     """
     Find the first time dimension in the query dimensions list.
 
@@ -611,7 +611,7 @@ def compare_periods(
             [resolved_time_dimension], known_dimensions, expected_prefix=model_name
         )[0]
     else:
-        resolved_time_dimension = _find_time_dimension(
+        resolved_time_dimension = find_time_dimension(
             semantic_table, dimensions
         ) or _find_any_time_dimension(semantic_table)
 
@@ -841,7 +841,7 @@ def query(
 
     # Step 0: Add time_range as a filter if specified
     if time_range:
-        time_dim_name = _find_time_dimension(result, dimensions)
+        time_dim_name = find_time_dimension(result, dimensions)
         if not time_dim_name:
             raise ValueError(
                 "time_range filter requires a time dimension in the query dimensions. "
