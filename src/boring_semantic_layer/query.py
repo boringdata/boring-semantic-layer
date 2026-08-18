@@ -14,6 +14,7 @@ from attrs import frozen
 from ibis.common.collections import FrozenDict
 from toolz import curry
 
+from .errors import QueryError, unwrap_or_raise
 from .utils import safe_eval
 
 
@@ -259,7 +260,11 @@ class Filter:
             # fail at build time; the flavor-matched expression is built per
             # table at resolve time and memoized per ibis module.
             _default = _get_ibis_api()
-            safe_eval(filter_str, context={"_": _default._, "ibis": _default}).unwrap()
+            unwrap_or_raise(
+                safe_eval(filter_str, context={"_": _default._, "ibis": _default}),
+                context=f"Invalid filter expression ({filter_str!r})",
+                error=QueryError,
+            )
             _expr_cache: dict[int, Any] = {}
 
             def _str_filter(t):
@@ -267,10 +272,11 @@ class Filter:
                 _ibis = get_ibis_module(tbl)
                 key = id(_ibis)
                 if key not in _expr_cache:
-                    _expr_cache[key] = safe_eval(
-                        filter_str,
-                        context={"_": _ibis._, "ibis": _ibis},
-                    ).unwrap()
+                    _expr_cache[key] = unwrap_or_raise(
+                        safe_eval(filter_str, context={"_": _ibis._, "ibis": _ibis}),
+                        context=f"Invalid filter expression ({filter_str!r})",
+                        error=QueryError,
+                    )
                 return _expr_cache[key].resolve(tbl)
 
             _str_filter.__bsl_deferred_resolution__ = True

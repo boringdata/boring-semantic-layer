@@ -59,6 +59,7 @@ from .calc_compiler import (
 from .calc_compiler import (
     compile_calc_measure as _compile_calc_measure_impl,
 )
+from .fieldref import resolve_suffix
 from .graph_utils import walk_nodes
 from .measure_scope import (
     ColumnScope,
@@ -340,7 +341,12 @@ def _ensure_xorq_table(table):
             from ._xorq import from_ibis
 
             return from_ibis(table)
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "xorq conversion unavailable for %s table (%s); continuing on the plain-ibis path.",
+                type(table).__name__,
+                exc,
+            )
             return table
     return table
 
@@ -942,25 +948,29 @@ def _reject_shadowed_group_keys(
         dim_fn = merged_dimensions[key]
         try:
             dim_expr = dim_fn(tbl)
-        except Exception:
+        except Exception as exc:
+            logger.debug("Shadowed-key guard could not evaluate dimension %r: %s", key, exc)
             continue
         target = tbl[key].op()
         try:
             if dim_expr.op() == target:
                 continue
-        except Exception:
+        except Exception as exc:
+            logger.debug("Shadowed-key guard could not compare dimension %r: %s", key, exc)
             continue
         for name, agg in aggs.items():
             measure = merged_base_measures.get(name)
             try:
                 measure_expr = measure(tbl) if measure is not None else _unwrap(agg)(tbl)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Shadowed-key guard could not evaluate measure %r: %s", name, exc)
                 continue
             try:
                 reads_shadowed = any(
                     node == target for node in measure_expr.op().find(type(target))
                 )
-            except Exception:
+            except Exception as exc:
+                logger.debug("Shadowed-key guard could not inspect measure %r: %s", name, exc)
                 continue
             if reads_shadowed:
                 raise ValueError(
@@ -1657,7 +1667,37 @@ class SemanticTableOp(Relation):
         return self.table
 
 
-class SemanticFilterOp(Relation):
+class _SourcePassThroughOp:
+    """Mixin for relation ops that pass semantic metadata through unchanged.
+
+    Ops that neither add nor materialize dimensions/measures (filter,
+    order-by, limit, unnest) delegate the whole metadata protocol to their
+    ``source``. Subclasses may still override individual members (e.g.
+    unnest overrides ``values``/``schema`` because it changes types).
+    """
+
+    @property
+    def values(self) -> FrozenOrderedDict[str, Any]:
+        return self.source.values
+
+    @property
+    def schema(self) -> Schema:
+        return self.source.schema
+
+    def get_dimensions(self) -> Mapping[str, Dimension]:
+        """Get dictionary of dimensions from source."""
+        return self.source.get_dimensions()
+
+    def get_measures(self) -> Mapping[str, Measure]:
+        """Get dictionary of measures from source."""
+        return self.source.get_measures()
+
+    def get_calculated_measures(self) -> Mapping[str, Any]:
+        """Get dictionary of calculated measures from source."""
+        return self.source.get_calculated_measures()
+
+
+class SemanticFilterOp(_SourcePassThroughOp, Relation):
     source: Relation
     predicate: Callable
 
@@ -1669,14 +1709,6 @@ class SemanticFilterOp(Relation):
 
     def __repr__(self) -> str:
         return _semantic_repr(self)
-
-    @property
-    def values(self) -> FrozenOrderedDict[str, Any]:
-        return self.source.values
-
-    @property
-    def schema(self) -> Schema:
-        return self.source.schema
 
     def to_untagged(self):
         from .convert import _Resolver
@@ -1713,18 +1745,6 @@ class SemanticFilterOp(Relation):
         resolver = _Resolver(enriched, dim_map)
         pred = _resolve_expr(pred_fn, resolver)
         return enriched.filter(pred)
-
-    def get_dimensions(self) -> Mapping[str, Dimension]:
-        """Get dictionary of dimensions from source."""
-        return self.source.get_dimensions()
-
-    def get_measures(self) -> Mapping[str, Measure]:
-        """Get dictionary of measures from source."""
-        return self.source.get_measures()
-
-    def get_calculated_measures(self) -> Mapping[str, Any]:
-        """Get dictionary of calculated measures from source."""
-        return self.source.get_calculated_measures()
 
 
 def _classify_fields(
@@ -2518,14 +2538,7 @@ def _resolve_short_name(
     merged_calc_measures: dict,
 ) -> str | None:
     """Match ``name`` against merged measure dicts, allowing suffix lookup."""
-    if name in merged_base_measures or name in merged_calc_measures:
-        return name
-    suffix = f".{name}"
-    matches = [k for k in merged_base_measures if k.endswith(suffix)]
-    matches += [k for k in merged_calc_measures if k.endswith(suffix)]
-    if len(matches) == 1:
-        return matches[0]
-    return None
+    return resolve_suffix(name, merged_base_measures, merged_calc_measures)
 
 
 def _topological_calc_order(
@@ -5550,7 +5563,7 @@ class SemanticAggregateOp(Relation):
         )
 
 
-class SemanticUnnestOp(Relation):
+class SemanticUnnestOp(_SourcePassThroughOp, Relation):
     """Unnest an array column, expanding rows (like Malloy's nested data pattern)."""
 
     source: Relation
@@ -5606,18 +5619,6 @@ class SemanticUnnestOp(Relation):
             raise ValueError(f"Failed to unnest column '{self.column}': {e}") from e
 
         return unpack_struct_if_needed(unnested, self.column)
-
-    def get_dimensions(self) -> Mapping[str, Dimension]:
-        """Get dictionary of dimensions from source."""
-        return self.source.get_dimensions()
-
-    def get_measures(self) -> Mapping[str, Measure]:
-        """Get dictionary of measures from source."""
-        return self.source.get_measures()
-
-    def get_calculated_measures(self) -> Mapping[str, Any]:
-        """Get dictionary of calculated measures from source."""
-        return self.source.get_calculated_measures()
 
 
 class SemanticJoinOp(Relation):
@@ -6534,7 +6535,7 @@ class SemanticJoinOp(Relation):
         )
 
 
-class SemanticOrderByOp(Relation):
+class SemanticOrderByOp(_SourcePassThroughOp, Relation):
     source: Relation
     keys: tuple[
         str | ir.Value | Callable,
@@ -6553,14 +6554,6 @@ class SemanticOrderByOp(Relation):
     def __repr__(self) -> str:
         return _semantic_repr(self)
 
-    @property
-    def values(self) -> FrozenOrderedDict[str, Any]:
-        return self.source.values
-
-    @property
-    def schema(self) -> Schema:
-        return self.source.schema
-
     def to_untagged(self):
         tbl = _to_untagged(self.source)
 
@@ -6574,20 +6567,8 @@ class SemanticOrderByOp(Relation):
 
         return tbl.order_by([resolve_order_key(key) for key in self.keys])
 
-    def get_dimensions(self) -> Mapping[str, Dimension]:
-        """Get dictionary of dimensions from source."""
-        return self.source.get_dimensions()
 
-    def get_measures(self) -> Mapping[str, Measure]:
-        """Get dictionary of measures from source."""
-        return self.source.get_measures()
-
-    def get_calculated_measures(self) -> Mapping[str, Any]:
-        """Get dictionary of calculated measures from source."""
-        return self.source.get_calculated_measures()
-
-
-class SemanticLimitOp(Relation):
+class SemanticLimitOp(_SourcePassThroughOp, Relation):
     source: Relation
     n: int
     offset: int
@@ -6602,29 +6583,9 @@ class SemanticLimitOp(Relation):
     def __repr__(self) -> str:
         return _semantic_repr(self)
 
-    @property
-    def values(self) -> FrozenOrderedDict[str, Any]:
-        return self.source.values
-
-    @property
-    def schema(self) -> Schema:
-        return self.source.schema
-
     def to_untagged(self):
         tbl = _to_untagged(self.source)
         return tbl.limit(self.n) if self.offset == 0 else tbl.limit(self.n, offset=self.offset)
-
-    def get_dimensions(self) -> Mapping[str, Dimension]:
-        """Get dictionary of dimensions from source."""
-        return self.source.get_dimensions()
-
-    def get_measures(self) -> Mapping[str, Measure]:
-        """Get dictionary of measures from source."""
-        return self.source.get_measures()
-
-    def get_calculated_measures(self) -> Mapping[str, Any]:
-        """Get dictionary of calculated measures from source."""
-        return self.source.get_calculated_measures()
 
 
 def _get_field_type_str(field_type: Any) -> str:
@@ -7736,159 +7697,3 @@ def _extract_join_key_columns(
 # ==============================================================================
 # Table Column Requirements
 # ==============================================================================
-
-
-@frozen
-class TableColumnRequirements:
-    """Immutable representation of column requirements per table.
-
-    Maps table names to sets of required column names.
-    """
-
-    requirements: FrozenDict[str, frozenset[str]] = field(
-        factory=lambda: FrozenDict({}),
-        converter=lambda d: FrozenDict(
-            {k: frozenset(v) if not isinstance(v, frozenset) else v for k, v in d.items()},
-        ),
-    )
-
-    def with_column(self, table_name: str, col_name: str) -> TableColumnRequirements:
-        """Return new requirements with additional column for table."""
-        current_cols = self.requirements.get(table_name, frozenset())
-        updated_cols = current_cols | {col_name}
-
-        return TableColumnRequirements(
-            requirements=dict(self.requirements) | {table_name: updated_cols},
-        )
-
-    def with_columns(
-        self,
-        table_name: str,
-        col_names: Iterable[str],
-    ) -> TableColumnRequirements:
-        """Return new requirements with multiple columns for table."""
-        current_cols = self.requirements.get(table_name, frozenset())
-        updated_cols = current_cols | frozenset(col_names)
-
-        return TableColumnRequirements(
-            requirements=dict(self.requirements) | {table_name: updated_cols},
-        )
-
-    def merge(self, other: TableColumnRequirements) -> TableColumnRequirements:
-        """Merge requirements from another instance."""
-        merged_dict = dict(self.requirements)
-
-        for table, cols in other.requirements.items():
-            if table in merged_dict:
-                merged_dict[table] = merged_dict[table] | cols
-            else:
-                merged_dict[table] = cols
-
-        return TableColumnRequirements(requirements=merged_dict)
-
-    def to_dict(self) -> dict[str, set[str]]:
-        """Convert to mutable dict for API compatibility."""
-        return {table: set(cols) for table, cols in self.requirements.items()}
-
-
-def _parse_prefixed_field(field_name: str) -> tuple[str | None, str]:
-    """Parse potentially prefixed field name.
-
-    Args:
-        field_name: Field name, possibly prefixed (e.g., "table.column")
-
-    Returns:
-        Tuple of (table_name or None, column_name)
-    """
-    if "." in field_name:
-        table, col = field_name.split(".", 1)
-        return (table, col)
-    return (None, field_name)
-
-
-def _extract_requirements_from_keys(
-    keys: Iterable[str],
-    merged_dimensions: Mapping[str, Any],
-    all_roots: Sequence[Any],
-    table: ir.Table,
-) -> TableColumnRequirements:
-    """Extract column requirements from group-by keys using graph traversal."""
-    requirements = TableColumnRequirements()
-
-    for key in keys:
-        table_name, col_name = _parse_prefixed_field(key)
-
-        if table_name:
-            # Prefixed: we know the table
-            requirements = requirements.with_column(table_name, col_name)
-        else:
-            # Unprefixed: resolve dimension or use conservative fallback
-            if key in merged_dimensions:
-                dim_fn = merged_dimensions[key]
-
-                try:
-                    # Evaluate the dimension to get an Ibis expression
-                    dim_expr = dim_fn(table)
-
-                    # Walk the expression graph to find all Field nodes (column references)
-                    field_names = {node.name for node in walk_nodes(ibis_ops.Field, dim_expr)}
-
-                    # Filter to only actual columns in the table schema
-                    actual_cols = {col for col in field_names if col in table.columns}
-
-                    if actual_cols:
-                        for root in all_roots:
-                            if root.name:
-                                requirements = requirements.with_columns(root.name, actual_cols)
-                    else:
-                        # Fallback: assume key name is column name
-                        for root in all_roots:
-                            if root.name:
-                                requirements = requirements.with_column(root.name, key)
-                except Exception:
-                    # Fallback: assume key name is column name
-                    for root in all_roots:
-                        if root.name:
-                            requirements = requirements.with_column(root.name, key)
-            else:
-                # Raw column
-                for root in all_roots:
-                    if root.name:
-                        requirements = requirements.with_column(root.name, key)
-
-    return requirements
-
-
-def _extract_requirements_from_measures(
-    aggs: Mapping[str, Callable],
-    all_roots: Sequence[Any],
-    table: ir.Table,
-) -> TableColumnRequirements:
-    """Extract column requirements from measure aggregations using graph traversal."""
-    requirements = TableColumnRequirements()
-
-    for measure_name, measure_fn in aggs.items():
-        fn = _unwrap(measure_fn)
-
-        try:
-            # Evaluate the measure to get an Ibis expression
-            measure_expr = fn(table)
-
-            # Walk the expression graph to find all Field nodes (column references)
-            field_names = {node.name for node in walk_nodes(ibis_ops.Field, measure_expr)}
-
-            # Filter to only actual columns in the table schema
-            actual_cols = {col for col in field_names if col in table.columns}
-
-            if actual_cols:
-                for root in all_roots:
-                    if root.name:
-                        requirements = requirements.with_columns(root.name, actual_cols)
-        except Exception:
-            # Conservative fallback: if measure name looks like a column, include it
-            if measure_name.isidentifier():
-                for root in all_roots:
-                    if root.name:
-                        requirements = requirements.with_column(root.name, measure_name)
-
-    return requirements

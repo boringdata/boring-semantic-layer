@@ -841,13 +841,16 @@ def _is_deferred(obj) -> bool:
 def expr_to_structured(fn: Callable) -> Result[tuple, Exception]:
     """Convert a callable/Deferred expression to a structured tuple representation."""
     from ._xorq import Deferred as XorqDeferred
-    from .ops import _CallableWrapper
 
     @safe
     def do_convert():
         from ._xorq import _
 
-        expr = fn._fn if isinstance(fn, _CallableWrapper) else fn
+        # ops._CallableWrapper exposes the wrapped callable as ._fn;
+        # duck-type so this bottom-layer module doesn't import ops. Guard
+        # against Deferred first — getattr on a Deferred never falls back,
+        # it builds a new deferred attribute access.
+        expr = fn if _is_deferred(fn) else getattr(fn, "_fn", fn)
         if isinstance(expr, XorqDeferred):
             return serialize_resolver(expr._resolver)
         # For ibis Deferred (not xorq vendor), resolve through xorq _ to get xorq types
@@ -888,9 +891,9 @@ def join_predicate_to_structured(fn: Callable) -> Result[tuple, Exception]:
 
     @safe
     def do_convert():
-        from .ops import _CallableWrapper
-
-        raw_fn = fn._fn if isinstance(fn, _CallableWrapper) else fn
+        # See expr_to_structured: unwrap _CallableWrapper by duck-typing,
+        # guarding against Deferred's synthetic attribute access.
+        raw_fn = fn if _is_deferred(fn) else getattr(fn, "_fn", fn)
         left = Deferred(Variable("left"))
         right = Deferred(Variable("right"))
         result = raw_fn(left, right)

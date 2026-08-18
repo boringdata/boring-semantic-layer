@@ -230,8 +230,6 @@ def build_dependency_graph(
     Returns:
         Dictionary mapping field names to metadata with "deps" and "type" keys
     """
-    from .ops import CalcMeasure
-
     graph = {}
     extended_table = _build_extended_table(base_table, dimensions)
 
@@ -258,7 +256,9 @@ def build_dependency_graph(
             graph[name] = {"deps": {}, "type": "dimension" if name in dimensions else "measure"}
 
     for name, calc in calc_measures.items():
-        refs = set(calc.depends_on) if isinstance(calc, CalcMeasure) else set()
+        # CalcMeasure carries declared dependencies; duck-type on the
+        # attribute so this bottom-layer module doesn't import ops.
+        refs = set(getattr(calc, "depends_on", None) or ())
         graph[name] = {"deps": {ref: "measure" for ref in refs}, "type": "calc_measure"}
 
     return graph
