@@ -416,18 +416,20 @@ def _partition_by_source(scope: _PreaggScope, plan) -> dict:
     return partitioned
 
 
-def to_untagged_with_preagg(
-    op,
-    all_roots: list,
-    join_op: SemanticJoinOp,
-    join_tree_info: _JoinTreeInfo,
-    filters: list | None = None,
-):
-    """Pre-aggregate each source table's measures at its own grain, then join.
+def _preaggregate_sources(
+    scope: _PreaggScope,
+    plan,
+    partitioned: dict,
+    raw_tables: dict,
+    filter_owners: list,
+    filter_legs: dict,
+) -> _PreaggAccumulators:
+    """Phase 4: pre-aggregate each source table at its own grain.
 
-    This prevents fan-out inflation when ``join_many`` is used.
+    The body is verbatim from the original pipeline; scope fields are
+    unpacked into their historical local names.
     """
-    scope = _build_scope(op, all_roots, join_op, join_tree_info, filters)
+    join_tree_info = scope.join_tree_info
     filter_fns = scope.filter_fns
     merged_dimensions = scope.merged_dimensions
     merged_base_measures = scope.merged_base_measures
@@ -436,12 +438,6 @@ def to_untagged_with_preagg(
     wrapper_local_dimensions = scope.wrapper_local_dimensions
     wrapper_dimension_owners = scope.wrapper_dimension_owners
     tbl = scope.tbl
-
-    raw_tables, filter_owners = _resolve_filter_ownership(scope)
-    filter_legs = _split_cross_table_legs(scope, raw_tables, filter_owners)
-    plan = _build_plan(scope)
-    partitioned = _partition_by_source(scope, plan)
-
     # --- 4. Pre-aggregate each source table on its raw table ---
     _preagg_results: list = []
     # Track MEAN measures decomposed into SUM + COUNT for correct re-agg
@@ -998,11 +994,46 @@ def to_untagged_with_preagg(
             else:
                 _preagg_results.append(raw_tbl.aggregate(**agg_exprs))
 
+    return _PreaggAccumulators(
+        preagg_results=_preagg_results,
+        decomposed_means=_decomposed_means,
+        reagg_ops=_reagg_ops,
+        empty_count_measures=_empty_count_measures,
+        deferred_count_distincts=_deferred_count_distincts,
+        totals_sources=_totals_sources,
+    )
+
+
+def to_untagged_with_preagg(
+    op,
+    all_roots: list,
+    join_op: SemanticJoinOp,
+    join_tree_info: _JoinTreeInfo,
+    filters: list | None = None,
+):
+    """Pre-aggregate each source table's measures at its own grain, then join.
+
+    This prevents fan-out inflation when ``join_many`` is used.
+    """
+    scope = _build_scope(op, all_roots, join_op, join_tree_info, filters)
+    merged_dimensions = scope.merged_dimensions
+    group_by_cols = scope.group_by_cols
+    tbl = scope.tbl
+
+    raw_tables, filter_owners = _resolve_filter_ownership(scope)
+    filter_legs = _split_cross_table_legs(scope, raw_tables, filter_owners)
+    plan = _build_plan(scope)
+    partitioned = _partition_by_source(scope, plan)
+
+    acc = _preaggregate_sources(scope, plan, partitioned, raw_tables, filter_owners, filter_legs)
+    _deferred_count_distincts = acc.deferred_count_distincts
+    _totals_sources = acc.totals_sources
+
     # Freeze mutable accumulators
-    preagg_results = tuple(_preagg_results)
-    decomposed_means = tuple(_decomposed_means.items())
-    reagg_ops = tuple(_reagg_ops.items())
-    empty_count_measures = tuple(_empty_count_measures)
+    preagg_results = tuple(acc.preagg_results)
+    decomposed_means = tuple(acc.decomposed_means.items())
+    reagg_ops = tuple(acc.reagg_ops.items())
+    empty_count_measures = tuple(acc.empty_count_measures)
 
     if not preagg_results and not _deferred_count_distincts:
         if tbl is None:
