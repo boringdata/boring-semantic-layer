@@ -1658,7 +1658,37 @@ class SemanticTableOp(Relation):
         return self.table
 
 
-class SemanticFilterOp(Relation):
+class _SourcePassThroughOp:
+    """Mixin for relation ops that pass semantic metadata through unchanged.
+
+    Ops that neither add nor materialize dimensions/measures (filter,
+    order-by, limit, unnest) delegate the whole metadata protocol to their
+    ``source``. Subclasses may still override individual members (e.g.
+    unnest overrides ``values``/``schema`` because it changes types).
+    """
+
+    @property
+    def values(self) -> FrozenOrderedDict[str, Any]:
+        return self.source.values
+
+    @property
+    def schema(self) -> Schema:
+        return self.source.schema
+
+    def get_dimensions(self) -> Mapping[str, Dimension]:
+        """Get dictionary of dimensions from source."""
+        return self.source.get_dimensions()
+
+    def get_measures(self) -> Mapping[str, Measure]:
+        """Get dictionary of measures from source."""
+        return self.source.get_measures()
+
+    def get_calculated_measures(self) -> Mapping[str, Any]:
+        """Get dictionary of calculated measures from source."""
+        return self.source.get_calculated_measures()
+
+
+class SemanticFilterOp(_SourcePassThroughOp, Relation):
     source: Relation
     predicate: Callable
 
@@ -1670,14 +1700,6 @@ class SemanticFilterOp(Relation):
 
     def __repr__(self) -> str:
         return _semantic_repr(self)
-
-    @property
-    def values(self) -> FrozenOrderedDict[str, Any]:
-        return self.source.values
-
-    @property
-    def schema(self) -> Schema:
-        return self.source.schema
 
     def to_untagged(self):
         from .convert import _Resolver
@@ -1714,18 +1736,6 @@ class SemanticFilterOp(Relation):
         resolver = _Resolver(enriched, dim_map)
         pred = _resolve_expr(pred_fn, resolver)
         return enriched.filter(pred)
-
-    def get_dimensions(self) -> Mapping[str, Dimension]:
-        """Get dictionary of dimensions from source."""
-        return self.source.get_dimensions()
-
-    def get_measures(self) -> Mapping[str, Measure]:
-        """Get dictionary of measures from source."""
-        return self.source.get_measures()
-
-    def get_calculated_measures(self) -> Mapping[str, Any]:
-        """Get dictionary of calculated measures from source."""
-        return self.source.get_calculated_measures()
 
 
 def _classify_fields(
@@ -5544,7 +5554,7 @@ class SemanticAggregateOp(Relation):
         )
 
 
-class SemanticUnnestOp(Relation):
+class SemanticUnnestOp(_SourcePassThroughOp, Relation):
     """Unnest an array column, expanding rows (like Malloy's nested data pattern)."""
 
     source: Relation
@@ -5600,18 +5610,6 @@ class SemanticUnnestOp(Relation):
             raise ValueError(f"Failed to unnest column '{self.column}': {e}") from e
 
         return unpack_struct_if_needed(unnested, self.column)
-
-    def get_dimensions(self) -> Mapping[str, Dimension]:
-        """Get dictionary of dimensions from source."""
-        return self.source.get_dimensions()
-
-    def get_measures(self) -> Mapping[str, Measure]:
-        """Get dictionary of measures from source."""
-        return self.source.get_measures()
-
-    def get_calculated_measures(self) -> Mapping[str, Any]:
-        """Get dictionary of calculated measures from source."""
-        return self.source.get_calculated_measures()
 
 
 class SemanticJoinOp(Relation):
@@ -6528,7 +6526,7 @@ class SemanticJoinOp(Relation):
         )
 
 
-class SemanticOrderByOp(Relation):
+class SemanticOrderByOp(_SourcePassThroughOp, Relation):
     source: Relation
     keys: tuple[
         str | ir.Value | Callable,
@@ -6547,14 +6545,6 @@ class SemanticOrderByOp(Relation):
     def __repr__(self) -> str:
         return _semantic_repr(self)
 
-    @property
-    def values(self) -> FrozenOrderedDict[str, Any]:
-        return self.source.values
-
-    @property
-    def schema(self) -> Schema:
-        return self.source.schema
-
     def to_untagged(self):
         tbl = _to_untagged(self.source)
 
@@ -6568,20 +6558,8 @@ class SemanticOrderByOp(Relation):
 
         return tbl.order_by([resolve_order_key(key) for key in self.keys])
 
-    def get_dimensions(self) -> Mapping[str, Dimension]:
-        """Get dictionary of dimensions from source."""
-        return self.source.get_dimensions()
 
-    def get_measures(self) -> Mapping[str, Measure]:
-        """Get dictionary of measures from source."""
-        return self.source.get_measures()
-
-    def get_calculated_measures(self) -> Mapping[str, Any]:
-        """Get dictionary of calculated measures from source."""
-        return self.source.get_calculated_measures()
-
-
-class SemanticLimitOp(Relation):
+class SemanticLimitOp(_SourcePassThroughOp, Relation):
     source: Relation
     n: int
     offset: int
@@ -6596,29 +6574,9 @@ class SemanticLimitOp(Relation):
     def __repr__(self) -> str:
         return _semantic_repr(self)
 
-    @property
-    def values(self) -> FrozenOrderedDict[str, Any]:
-        return self.source.values
-
-    @property
-    def schema(self) -> Schema:
-        return self.source.schema
-
     def to_untagged(self):
         tbl = _to_untagged(self.source)
         return tbl.limit(self.n) if self.offset == 0 else tbl.limit(self.n, offset=self.offset)
-
-    def get_dimensions(self) -> Mapping[str, Dimension]:
-        """Get dictionary of dimensions from source."""
-        return self.source.get_dimensions()
-
-    def get_measures(self) -> Mapping[str, Measure]:
-        """Get dictionary of measures from source."""
-        return self.source.get_measures()
-
-    def get_calculated_measures(self) -> Mapping[str, Any]:
-        """Get dictionary of calculated measures from source."""
-        return self.source.get_calculated_measures()
 
 
 def _get_field_type_str(field_type: Any) -> str:
