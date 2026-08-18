@@ -8,6 +8,11 @@ so the split never breaks an importer.
 """
 
 from . import _core
+from ._compat import (
+    _ensure_xorq_table,
+    _rebind_to_backend,
+    _rebind_to_canonical_backend,
+)
 from ._core import (
     CalcMeasure,
     Dimension,
@@ -27,7 +32,6 @@ from ._core import (
     _classify_measure,
     _collect_struct,
     _detect_bare_name_lambda,
-    _ensure_xorq_table,
     _exact_filter_fields,
     _extract_columns_from_callable,
     _extract_join_key_columns,
@@ -39,8 +43,6 @@ from ._core import (
     _non_additive_result_columns,
     _normalize_join_predicate,
     _normalize_to_name,
-    _rebind_to_backend,
-    _rebind_to_canonical_backend,
     _resolve_expr,
     _unwrap,
     make_bare_ref_lambda,
