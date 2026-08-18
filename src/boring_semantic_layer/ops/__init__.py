@@ -33,8 +33,6 @@ from ._core import (
     _collect_struct,
     _detect_bare_name_lambda,
     _exact_filter_fields,
-    _extract_columns_from_callable,
-    _extract_join_key_columns,
     _find_all_root_models,
     _get_merged_fields,
     _has_prior_aggregate,
@@ -46,6 +44,10 @@ from ._core import (
     _resolve_expr,
     _unwrap,
     make_bare_ref_lambda,
+)
+from ._tracking import (
+    _extract_columns_from_callable,
+    _extract_join_key_columns,
 )
 
 __all__ = [
