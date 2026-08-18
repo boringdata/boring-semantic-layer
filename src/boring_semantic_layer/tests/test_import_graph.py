@@ -29,16 +29,13 @@ KNOWN_SCC_MEMBERS = frozenset(
         "boring_semantic_layer.api",
         "boring_semantic_layer.expr",
         "boring_semantic_layer.format",
-        "boring_semantic_layer.graph_utils",
         "boring_semantic_layer.ops",
-        "boring_semantic_layer.projection_utils",
         "boring_semantic_layer.query",
         "boring_semantic_layer.serialization",
         "boring_semantic_layer.serialization.context",
         "boring_semantic_layer.serialization.extract",
         "boring_semantic_layer.serialization.helpers",
         "boring_semantic_layer.serialization.reconstruct",
-        "boring_semantic_layer.utils",
     }
 )
 
