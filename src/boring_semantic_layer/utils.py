@@ -599,7 +599,8 @@ def ibis_string_to_expr(expr_str: str) -> Result[Callable, Exception]:
             eval_context = {"ibis": flavor_ibis, "_": flavor_ibis._}
             allowed_names = {"ibis", "_", "t"}
             try:
-                from ._xorq import api as xo, ibis as xorq_ibis
+                from ._xorq import api as xo
+                from ._xorq import ibis as xorq_ibis
 
                 eval_context.update({"xorq_ibis": xorq_ibis, "xo": xo})
                 allowed_names |= {"xorq_ibis", "xo"}
@@ -739,10 +740,12 @@ def serialize_resolver(resolver) -> tuple:
         Item,
         Just,
         JustUnhashable,
-        Mapping as MappingResolver,
         Sequence,
         UnaryOperator,
         Variable,
+    )
+    from ._xorq import (
+        Mapping as MappingResolver,
     )
 
     if isinstance(resolver, Variable):
@@ -894,10 +897,12 @@ def deserialize_resolver(data: tuple):
         Call,
         Item,
         Just,
-        Mapping as MappingResolver,
         Sequence,
         UnaryOperator,
         Variable,
+    )
+    from ._xorq import (
+        Mapping as MappingResolver,
     )
 
     match data:

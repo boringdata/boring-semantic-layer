@@ -6,8 +6,8 @@ from pathlib import Path
 
 from ibis import BaseBackend
 
-from ._xorq import HAS_XORQ, Profile as XorqProfile
-
+from ._xorq import HAS_XORQ
+from ._xorq import Profile as XorqProfile
 from .utils import read_yaml_file
 
 

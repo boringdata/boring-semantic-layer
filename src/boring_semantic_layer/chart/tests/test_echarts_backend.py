@@ -1,13 +1,13 @@
 """Comprehensive tests for ECharts backend."""
 
-import pytest
 import pandas as pd
+import pytest
 
 from boring_semantic_layer.chart.echarts import (
+    DEFAULT_COLOR_PALETTE,
     EChartsBackend,
     EChartsChartType,
     EChartsOption,
-    DEFAULT_COLOR_PALETTE,
 )
 
 

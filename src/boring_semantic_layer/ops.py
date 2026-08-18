@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -15,14 +16,57 @@ from ibis.expr import operations as ibis_ops
 from ibis.expr import types as ir
 from ibis.expr.operations.relations import Relation
 from ibis.expr.schema import Schema
+from returns.result import safe
 
+from . import projection_utils
 from ._xorq import (
     FrozenDict,
     FrozenOrderedDict,
+)
+from ._xorq import (
     Schema as XorqSchema,
+)
+from ._xorq import (
     operations as xorq_ops,
+)
+from ._xorq import (
     selectors as s,
 )
+from .calc_analyzer import (
+    _is_reduction,
+    _is_window,
+    _to_node,
+    analyze_calc_expr,
+)
+from .calc_analyzer import (
+    _walk as _walk_calc_expr,
+)
+from .calc_compiler import (
+    TOTALS_PREFIX,
+    TotalsNotAvailableError,
+    UnknownMeasureRefError,
+    WindowedBaseReductionError,
+    _drop_totals_columns,
+    _to_op,
+    apply_calc_measures,
+    attach_calc_totals,
+    attach_windowed_totals,
+    evaluate_calc_lambda,
+    lift_inline_reductions,
+    topological_order_from_deps,
+)
+from .calc_compiler import (
+    compile_calc_measure as _compile_calc_measure_impl,
+)
+from .graph_utils import walk_nodes
+from .join_utils import null_safe_equal
+from .measure_scope import (
+    ColumnScope,
+    MeasureScope,
+)
+from .nested_access import NestedAccessMarker
+
+logger = logging.getLogger(__name__)
 
 _SchemaClass = XorqSchema
 _FrozenOrderedDict = FrozenOrderedDict
@@ -39,41 +83,6 @@ def _reductions_for_expr(expr):
     if type(expr.op()).__module__.startswith("xorq.vendor.ibis"):
         return xorq_ops.reductions
     return ibis_ops.reductions
-
-from returns.result import safe
-
-from . import projection_utils
-from .calc_analyzer import (
-    _is_reduction,
-    _is_window,
-    _to_node,
-    _walk as _walk_calc_expr,
-    analyze_calc_expr,
-)
-from .calc_compiler import (
-    TOTALS_PREFIX,
-    TotalsNotAvailableError,
-    UnknownMeasureRefError,
-    WindowedBaseReductionError,
-    _drop_totals_columns,
-    _to_op,
-    apply_calc_measures,
-    attach_calc_totals,
-    attach_windowed_totals,
-    compile_calc_measure as _compile_calc_measure_impl,
-    evaluate_calc_lambda,
-    lift_inline_reductions,
-    topological_order_from_deps,
-)
-from .graph_utils import walk_nodes
-from .join_utils import null_safe_equal
-from .measure_scope import (
-    ColumnScope,
-    MeasureScope,
-)
-from .nested_access import NestedAccessMarker
-
-logger = logging.getLogger(__name__)
 
 _JOIN_REMOVED_MESSAGE = (
     "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
@@ -299,7 +308,8 @@ def _patch_xorq_sortkey_compat():
     """
     from ibis.expr.operations.sortkeys import SortKey as IbisSortKey
 
-    from ._xorq import SortKey as XorqSortKey, map_ibis
+    from ._xorq import SortKey as XorqSortKey
+    from ._xorq import map_ibis
 
     if IbisSortKey in map_ibis.registry:
         return  # already patched
@@ -307,7 +317,7 @@ def _patch_xorq_sortkey_compat():
     @map_ibis.register(IbisSortKey)
     def _map_sort_key(val, kwargs=None):
         # ibis 12 uses .arg, ibis 11 uses .expr
-        sort_expr = getattr(val, "arg", None) or getattr(val, "expr")
+        sort_expr = getattr(val, "arg", None) or val.expr
         return XorqSortKey(
             expr=map_ibis(sort_expr, None),
             ascending=val.ascending,
@@ -421,7 +431,8 @@ def _rebind_to_canonical_backend(expr):
         return expr
 
     try:
-        from ._xorq import relations as xorq_rel, walk_nodes
+        from ._xorq import relations as xorq_rel
+        from ._xorq import walk_nodes
     except Exception:
         return expr
 
@@ -1716,12 +1727,10 @@ class SemanticFilterOp(Relation):
         # (e.g. join-based dims); those resolve through the Resolver fallback.
         enriched = base_tbl
         for dim_name in dim_map:
-            try:
+            with contextlib.suppress(TypeError, KeyError, AttributeError):
                 enriched = _mutate_dimensions_with_dependencies(
                     enriched, [dim_name], dim_map, overwrite_existing=False
                 )
-            except (TypeError, KeyError, AttributeError):
-                pass
 
         resolver = _Resolver(enriched, dim_map)
         pred = _resolve_expr(pred_fn, resolver)
@@ -2291,7 +2300,7 @@ def _compile_aggregation(
         # Transitive expansion: for AllOf-using calcs, follow calc deps
         # through ``classifications`` until we land on base measures.
         work: list[str] = []
-        for cn, c in classifications.items():
+        for c in classifications.values():
             if c.references_AllOf:
                 for d in c.depends_on:
                     if d in regular_specs:
@@ -2942,9 +2951,9 @@ def _inline_to_base_op(node, leaf_types, target_tbl=None, guard=0):
         return a
 
     new_args = [_tx(a) for a in node.args]
-    if all(n is o for n, o in zip(new_args, node.args)):
+    if all(n is o for n, o in zip(new_args, node.args, strict=False)):
         return node
-    return node.__class__(**dict(zip(node.__argnames__, new_args)))
+    return node.__class__(**dict(zip(node.__argnames__, new_args, strict=False)))
 
 
 def _find_deferrable_joins(
@@ -2952,7 +2961,7 @@ def _find_deferrable_joins(
     group_by_keys: tuple[str, ...],
     agg_names: dict,
     all_roots: list,
-    join_tree_info: "_JoinTreeInfo",
+    join_tree_info: _JoinTreeInfo,
     filters: list | None = None,
 ) -> list[_DeferrableJoin]:
     """Identify join_one ops that can be deferred until after aggregation.
@@ -3701,7 +3710,7 @@ def _infer_join_wrapper_dimension_owners(
     dimensions_for_scope = dict(merged_dimensions)
     for name, dimension in dimensions.items():
 
-        def resolve_on_join(t, dim=dimension):
+        def resolve_on_join(t, dim=dimension, name=name):
             scope = _JoinWrapperDimensionResolver(
                 t, dimensions_for_scope, resolving=(name,)
             )
@@ -4403,7 +4412,7 @@ class SemanticAggregateOp(Relation):
         else:
             # Derive plan directly from metadata (chasm fallback)
             agg_specs = {}
-            for name, fn_wrapped in self.aggs.items():
+            for name in self.aggs:
                 if name in merged_base_measures:
                     agg_specs[name] = _make_agg_callable(merged_base_measures[name])
             plan = _AggregationPlan(
@@ -5258,9 +5267,9 @@ class SemanticAggregateOp(Relation):
     def _to_untagged_with_deferred_joins(
         self,
         all_roots: list,
-        join_op: "SemanticJoinOp",
-        join_tree_info: "_JoinTreeInfo",
-        deferrable: list["_DeferrableJoin"],
+        join_op: SemanticJoinOp,
+        join_tree_info: _JoinTreeInfo,
+        deferrable: list[_DeferrableJoin],
         filters: list | None = None,
     ):
         """Aggregate first, then LEFT JOIN deferred dimension tables.
@@ -6608,7 +6617,8 @@ class SemanticJoinOp(Relation):
             return left_tbl, right_tbl
 
         try:
-            from ._xorq import relations as xorq_rel, walk_nodes
+            from ._xorq import relations as xorq_rel
+            from ._xorq import walk_nodes
         except ImportError:
             return left_tbl, right_tbl
 

@@ -10,7 +10,7 @@ Run with: python examples/projection_pushdown_demo.py
 import ibis
 import pandas as pd
 
-from boring_semantic_layer import to_untagged, to_semantic_table
+from boring_semantic_layer import to_semantic_table, to_untagged
 
 
 def main():

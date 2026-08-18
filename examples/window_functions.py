@@ -4,11 +4,11 @@
 import ibis
 from ibis import _
 
+from boring_semantic_layer import to_semantic_table
+
 # CI runs this example with and without xorq. xibis matches BSL's active ibis
 # flavor in both modes; users who are not using xorq can simply use `import ibis`.
 from boring_semantic_layer._xorq import ibis as xibis
-
-from boring_semantic_layer import to_semantic_table
 
 BASE_URL = "https://pub-a45a6a332b4646f2a6f44775695c64df.r2.dev"
 

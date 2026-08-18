@@ -18,10 +18,9 @@ signal worth pinning.
 
 from __future__ import annotations
 
+import ibis as plain_ibis
 import pandas as pd
 import pytest
-
-import ibis as plain_ibis
 
 pytest.importorskip("xorq", reason="xorq not installed")
 from xorq.common.utils.ibis_utils import from_ibis  # noqa: E402

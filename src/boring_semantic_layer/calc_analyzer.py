@@ -34,9 +34,11 @@ from ._xorq import (
     Deferred,
     Field,
     Node,
-    operations as ibis_ops,
 )
 from ._xorq import ibis as ibis_mod
+from ._xorq import (
+    operations as ibis_ops,
+)
 
 
 @frozen(kw_only=True)

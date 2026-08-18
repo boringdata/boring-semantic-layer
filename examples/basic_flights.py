@@ -8,7 +8,6 @@ database connections.
 
 from pathlib import Path
 
-
 from boring_semantic_layer import from_yaml
 
 

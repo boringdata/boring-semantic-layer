@@ -5,8 +5,8 @@ Provides an adapter that wraps EChartsBackend to implement the ChartBackend
 interface, allowing ECharts to be used as a chart backend in the semantic layer.
 """
 
-from collections.abc import Sequence
 import json
+from collections.abc import Sequence
 from typing import Any
 
 from .base import ChartBackend
@@ -139,15 +139,9 @@ class EChartsAdapter(ChartBackend):
         time_dimension = params.get("time_dimension")
         
         # Determine x and y fields
-        if dimensions:
-            x_field = dimensions[0]
-        else:
-            x_field = None
+        x_field = dimensions[0] if dimensions else None
             
-        if measures:
-            y_field = measures[0]
-        else:
-            y_field = None
+        y_field = measures[0] if measures else None
         
         # Handle color field for multi-series
         color_field = None

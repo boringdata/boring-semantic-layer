@@ -257,8 +257,8 @@ class TestJoinCardinalitySerialization:
 
     def test_cardinality_in_join_metadata(self, lookup_tables):
         """Cardinality is serialized so join_one and join_many get different hashes."""
-        from boring_semantic_layer.serialization.extract import extract_op_tree
         from boring_semantic_layer.serialization.context import BSLSerializationContext
+        from boring_semantic_layer.serialization.extract import extract_op_tree
 
         users = _make_users_model(lookup_tables["users"])
         cc = _make_cost_centers_model(lookup_tables["cost_centers"])
@@ -287,8 +287,8 @@ class TestJoinCardinalitySerialization:
 
     def test_join_many_cardinality_serialized(self, lookup_tables):
         """join_many cardinality is serialized as 'many'."""
-        from boring_semantic_layer.serialization.extract import extract_op_tree
         from boring_semantic_layer.serialization.context import BSLSerializationContext
+        from boring_semantic_layer.serialization.extract import extract_op_tree
 
         users = _make_users_model(lookup_tables["users"])
         cc_with_measures = (

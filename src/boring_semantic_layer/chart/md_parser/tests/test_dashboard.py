@@ -3,14 +3,14 @@
 from pathlib import Path
 
 from boring_semantic_layer.chart.md_parser.dashboard import (
+    BASE_CSS,
+    DEFAULT_THEME_CSS,
     _clean_label,
     _format_value,
     _generate_dashboard_html,
     _result_to_component,
     load_css_file,
     parse_frontmatter,
-    BASE_CSS,
-    DEFAULT_THEME_CSS,
 )
 from boring_semantic_layer.chart.md_parser.parser import DashboardBlock, MarkdownParser
 

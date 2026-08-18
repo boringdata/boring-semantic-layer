@@ -5,8 +5,8 @@ Tests the .dimensions and .measures properties that allow inspecting
 what dimensions and measures are available on a semantic table.
 """
 
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 import duckdb
 import ibis

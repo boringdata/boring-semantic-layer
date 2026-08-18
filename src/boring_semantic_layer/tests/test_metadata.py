@@ -1,7 +1,7 @@
 """Tests for the ``metadata`` field on Dimension and Measure."""
 
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 import ibis
 

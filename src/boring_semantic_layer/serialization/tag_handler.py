@@ -17,7 +17,6 @@ from __future__ import annotations
 from typing import Any
 
 from .._xorq import HAS_XORQ, TagHandler
-
 from . import (
     BSLSerializationContext,
     extract_xorq_metadata,

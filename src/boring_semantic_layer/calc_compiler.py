@@ -805,7 +805,7 @@ def attach_calc_totals(
     # plus any transitive calc dependencies of those.
     needed: set[str] = set()
     work: list[str] = []
-    for cn, c in classifications.items():
+    for c in classifications.values():
         if c.references_AllOf:
             for d in c.depends_on:
                 if d in calc_specs:
@@ -1096,10 +1096,7 @@ def lift_inline_reductions(
             for a in getattr(node, "__args__", ())
         ):
             return True
-        for c in _walk(node):
-            if isinstance(c, Field) and id(c.rel) == id(base_op):
-                return True
-        return False
+        return any(isinstance(c, Field) and id(c.rel) == id(base_op) for c in _walk(node))
 
     base_reductions = [n for n in _walk(op) if is_base_reduction(n)]
     if not base_reductions:
@@ -1277,7 +1274,7 @@ def rename_measure_refs(expr, virtual_agg_tbl, name_map: dict[str, str]):
     new_vt_op = new_vt.op()
 
     field_substitutions = {}
-    for old_name, dtype in old_schema.items():
+    for old_name in old_schema:
         new_name = name_map.get(old_name, old_name)
         old_field = Field(vt_op, old_name)
         new_field = Field(new_vt_op, new_name)

@@ -109,20 +109,17 @@ select = [
 ]
 ignore = [
     "E501",  # line-too-long (handled by formatter)
-    "S101",  # assert-used (needed for tests)
-    "COM812",  # trailing-comma (conflicts with formatter)
+    "E731",  # lambda-assignment: named lambdas are idiomatic in this
+             # deferred-expression codebase (dimension/measure defs)
+    "E741",  # ambiguous-variable-name: `l`/`r` are the join-predicate
+             # convention throughout (lambda l, r: ...)
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = [
-    "S101",      # assert-used
-    "PLR2004",   # magic-value-comparison
-    "ANN",       # type annotations not required in tests
-]
 "**/tests/**/*.py" = [
-    "S101",      # assert-used
-    "PLR2004",   # magic-value-comparison
-    "ANN",       # type annotations not required in tests
+    "E402",  # importorskip/path setup precedes imports by design
+    "B017",  # blind Exception asserts: revisit with the typed exception
+             # hierarchy (refactor phase 2)
 ]
 
 [tool.ruff.lint.isort]

@@ -1,7 +1,8 @@
 """Tests for ECharts chart backend functionality with SemanticAggregate."""
 
-import ibis
 import json
+
+import ibis
 import pandas as pd
 import pytest
 

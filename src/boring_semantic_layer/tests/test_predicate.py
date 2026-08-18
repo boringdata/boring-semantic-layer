@@ -9,7 +9,6 @@ import pytest
 from boring_semantic_layer import predicate as pred_mod
 from boring_semantic_layer.predicate import And, Compare, In, IsNull, Not, Or
 
-
 # ---------------------------------------------------------------------------
 # from_dict: parsing the JSON filter spec
 # ---------------------------------------------------------------------------

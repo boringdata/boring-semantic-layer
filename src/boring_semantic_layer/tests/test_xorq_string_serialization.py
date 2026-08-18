@@ -432,10 +432,10 @@ def test_ifelse_tagged_roundtrip(flights_data):
 
 def test_serialize_resolver_simple_attr():
     """_.distance round-trips through structured serialization."""
-    from boring_semantic_layer.utils import deserialize_resolver, serialize_resolver
-
     from xorq.vendor.ibis import _
     from xorq.vendor.ibis.common.deferred import Deferred
+
+    from boring_semantic_layer.utils import deserialize_resolver, serialize_resolver
 
     d = _.distance
     data = serialize_resolver(d._resolver)
@@ -449,10 +449,10 @@ def test_serialize_resolver_simple_attr():
 
 def test_serialize_resolver_method_call():
     """_.distance.mean() round-trips through structured serialization."""
-    from boring_semantic_layer.utils import deserialize_resolver, serialize_resolver
-
     from xorq.vendor.ibis import _
     from xorq.vendor.ibis.common.deferred import Deferred
+
+    from boring_semantic_layer.utils import deserialize_resolver, serialize_resolver
 
     d = _.distance.mean()
     data = serialize_resolver(d._resolver)
@@ -468,9 +468,9 @@ def test_serialize_resolver_method_call():
 def test_serialize_resolver_case_expr():
     """case().when(_.distance < 200, 1).else_(0).end().sum() round-trips."""
     import xorq.api as xo
+    from xorq.common.utils.ibis_utils import from_ibis
 
     from boring_semantic_layer.utils import expr_to_structured, structured_to_expr
-    from xorq.common.utils.ibis_utils import from_ibis
 
     fn = lambda t: xo.case().when(t.distance < 200, 1).else_(0).end().sum()
     result = expr_to_structured(fn)
@@ -498,10 +498,10 @@ def test_serialize_resolver_item_subscript_roundtrips_and_hashes():
     dict key inside ibis op replacement). Calc measures that look up
     prefixed names via subscript depend on this round-trip.
     """
-    from boring_semantic_layer.utils import deserialize_resolver, serialize_resolver
-
     from xorq.vendor.ibis import _
     from xorq.vendor.ibis.common.deferred import Deferred
+
+    from boring_semantic_layer.utils import deserialize_resolver, serialize_resolver
 
     d = _["flights.flight_count"]
     data = serialize_resolver(d._resolver)
@@ -523,9 +523,9 @@ def test_serialize_resolver_item_subscript_roundtrips_and_hashes():
 def test_serialize_resolver_ifelse():
     """xo.ifelse(_.distance < 200, 1, 0).sum() round-trips."""
     import xorq.api as xo
+    from xorq.common.utils.ibis_utils import from_ibis
 
     from boring_semantic_layer.utils import expr_to_structured, structured_to_expr
-    from xorq.common.utils.ibis_utils import from_ibis
 
     fn = lambda t: xo.ifelse(t.distance < 200, 1, 0).sum()
     result = expr_to_structured(fn)
@@ -1986,7 +1986,6 @@ def test_tagged_roundtrip_join_chain_shared_column_names(n_joins):
     - intersection-only join-key detection in ``_extract_join_key_column_names``
     """
     import pandas as pd
-
     from xorq.common.utils.ibis_utils import from_ibis
 
     from boring_semantic_layer import Dimension, Measure

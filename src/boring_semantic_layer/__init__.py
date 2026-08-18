@@ -23,7 +23,6 @@ from .expr import (
     to_tagged,
     to_untagged,
 )
-from .serialization import from_tagged
 from .graph_utils import (
     graph_bfs,
     graph_invert,
@@ -39,6 +38,7 @@ from .profile import (
     ProfileError,
     get_connection,
 )
+from .serialization import from_tagged
 from .yaml import (
     from_config,
     from_yaml,

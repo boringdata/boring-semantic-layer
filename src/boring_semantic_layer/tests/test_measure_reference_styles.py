@@ -668,9 +668,10 @@ def test_substring_measure_name_does_not_trigger_typo():
     detector. Asking for a known measure name returns its column on the
     virtual aggregated table without firing the typo path.
     """
-    from boring_semantic_layer.calc_compiler import IbisCalcScope
-    from boring_semantic_layer.calc_analyzer import virtual_agg_table
     import ibis as i
+
+    from boring_semantic_layer.calc_analyzer import virtual_agg_table
+    from boring_semantic_layer.calc_compiler import IbisCalcScope
 
     tbl = i.table({"col": "int64"}, name="t")
     vt = virtual_agg_table({"net_revenue": "float64", "total_net_revenue": "float64"})
