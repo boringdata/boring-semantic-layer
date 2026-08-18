@@ -26,15 +26,7 @@ from .errors import (
 from .expr import (
     SemanticModel,
     SemanticTable,
-    to_tagged,
     to_untagged,
-)
-from .graph_utils import (
-    graph_bfs,
-    graph_invert,
-    graph_predecessors,
-    graph_successors,
-    graph_to_dict,
 )
 from .ops import (
     Dimension,
@@ -44,7 +36,6 @@ from .profile import (
     ProfileError,
     get_connection,
 )
-from .serialization import from_tagged
 from .yaml import (
     from_config,
     from_yaml,
@@ -59,9 +50,7 @@ __all__ = [
     "SerializationError",
     "UnknownFieldError",
     "to_semantic_table",
-    "to_tagged",
     "to_untagged",
-    "from_tagged",
     "entity_dimension",
     "time_dimension",
     "SemanticModel",
@@ -73,11 +62,6 @@ __all__ = [
     "MCPSemanticModel",
     "LangGraphBackend",
     "options",
-    "graph_bfs",
-    "graph_invert",
-    "graph_predecessors",
-    "graph_successors",
-    "graph_to_dict",
     "ProfileError",
     "get_connection",
 ]

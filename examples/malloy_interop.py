@@ -14,7 +14,7 @@ from pathlib import Path
 import pandas as pd
 from xorq.catalog.catalog import Catalog, CatalogAlias
 
-from boring_semantic_layer import from_tagged, to_tagged
+from boring_semantic_layer.serialization import from_tagged, to_tagged
 from boring_semantic_layer.malloy import (
     from_malloy,
     to_malloy,

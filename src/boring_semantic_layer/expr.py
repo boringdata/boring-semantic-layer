@@ -165,6 +165,21 @@ def to_tagged(expr, aggregate_cache_storage=None):
 
 
 class SemanticTable(ir.Table):
+    @property
+    def name(self) -> str | None:
+        """The semantic model's name, or None where no single model applies.
+
+        Defined on the base so every semantic expression answers `.name`
+        (aggregates, limits, and other derived shapes return None instead
+        of raising an AttributeError that blames ibis's Table).
+        """
+        return getattr(self.op(), "name", None)
+
+    @property
+    def description(self) -> str | None:
+        """The semantic model's description, or None."""
+        return getattr(self.op(), "description", None)
+
     def get_graph(self):
         """Get the dependency graph for this semantic table.
 

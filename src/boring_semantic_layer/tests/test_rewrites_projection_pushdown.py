@@ -417,9 +417,9 @@ def test_projection_pushdown_three_way_join_all_notations(duckdb_con):
     )
 
     # Three-way join using raw column access in predicates
-    joined = orders.join_many(
-        customers, lambda o, c: o.customer_id == c.customer_id
-    ).join_many(items, lambda oc, i: oc.order_id == i.order_id)
+    joined = orders.join_many(customers, lambda o, c: o.customer_id == c.customer_id).join_many(
+        items, lambda oc, i: oc.order_id == i.order_id
+    )
 
     # Test 1: Use bracket notation with prefixes in calculated measures
     result1 = (
