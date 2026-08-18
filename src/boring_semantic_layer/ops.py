@@ -20,6 +20,9 @@ from returns.result import safe
 
 from . import projection_utils
 from ._xorq import (
+    Column as XorqColumn,
+)
+from ._xorq import (
     FrozenDict,
     FrozenOrderedDict,
     null_safe_equal,
@@ -455,10 +458,27 @@ def _to_untagged(source: Any) -> ir.Table:
     return source.to_untagged() if hasattr(source, "to_untagged") else source.to_expr()
 
 
-def _semantic_table(*args, **kwargs) -> SemanticTable:
-    from .expr import SemanticModel
+def _expr_module():
+    """Call-time accessor for the expression layer (the layer above ops).
 
-    return SemanticModel(*args, **kwargs)
+    Fluent convenience methods on op classes construct user-facing wrappers;
+    resolving the module at call time keeps ops free of any import-time
+    dependency on expr. Follow-up: move those methods onto the wrappers.
+    """
+    import importlib
+
+    return importlib.import_module("boring_semantic_layer.expr")
+
+
+def _query_module():
+    """Call-time accessor for the query layer (see ``_expr_module``)."""
+    import importlib
+
+    return importlib.import_module("boring_semantic_layer.query")
+
+
+def _semantic_table(*args, **kwargs) -> SemanticTable:
+    return _expr_module().SemanticModel(*args, **kwargs)
 
 
 def _unwrap(wrapped: Any) -> Any:
@@ -576,8 +596,16 @@ def _format_op_summary(op: Relation) -> str:
 
 
 def _format_root(root_op: SemanticTableOp) -> str:
-    """Format a SemanticTableOp root using the fmt registry from format.py."""
-    from boring_semantic_layer.format import fmt
+    """Format a SemanticTableOp root using the ``fmt`` singledispatch registry.
+
+    ``format.py`` (imported by the package ``__init__``) registers the
+    semantic-op handlers on ibis's ``fmt``; import it from the same place
+    so we hit the same registry without depending on the format module.
+    """
+    try:
+        from ibis.expr.format import fmt
+    except ImportError:
+        from ._xorq import fmt
 
     try:
         return fmt(root_op)
@@ -1003,6 +1031,20 @@ def _classify_dependencies(
     }
 
 
+def _collect_struct(struct_dict: dict[str, Any], **collect_kwargs):
+    """Build ``struct(...).collect()`` from columns of a single ibis flavor.
+
+    ``ibis.struct`` and ``xorq.vendor.ibis.struct`` are not interchangeable:
+    each can only infer types from columns of its own module.
+    """
+    first_col = next(iter(struct_dict.values()))
+    if isinstance(first_col, XorqColumn):
+        from ._xorq import ibis as xibis
+
+        return xibis.struct(struct_dict).collect(**collect_kwargs)
+    return ibis.struct(struct_dict).collect(**collect_kwargs)
+
+
 @frozen
 class _CallableWrapper:
     """Hashable wrapper for Callable and Deferred.
@@ -1092,10 +1134,8 @@ def _infer_unnest(fn: Callable, table: Any) -> tuple[str, ...]:
         to_semantic_table(tbl).unnest("hits").with_measures(...) -> ("hits",)
         unnested.unnest("product").with_measures(...) -> ("product",)
     """
-    from .expr import SemanticUnnest
-
-    if isinstance(table, SemanticUnnest):
-        op = table.op()
+    op = table.op() if hasattr(table, "op") else None
+    if isinstance(op, SemanticUnnestOp):
         # SemanticUnnestOp always has column attribute
         return (op.column,)
 
@@ -4058,7 +4098,6 @@ class SemanticAggregateOp(Relation):
         before collection; ``order_by``/``limit`` order and truncate each
         group's array.
         """
-        from .expr import _collect_struct
 
         plain_aggs = {name: fn for name, fn in self.aggs.items() if name not in nest_specs}
         outer_keys = list(self.keys)
@@ -5791,9 +5830,7 @@ class SemanticJoinOp(Relation):
         time_range: dict[str, str] | None = None,
         having: list | None = None,
     ):
-        from .query import query as build_query
-
-        return build_query(
+        return _query_module().query(
             semantic_table=self,
             dimensions=dimensions,
             measures=measures,
@@ -5842,14 +5879,10 @@ class SemanticJoinOp(Relation):
         )
 
     def group_by(self, *keys: str) -> SemanticGroupBy:
-        from .expr import SemanticGroupBy
-
-        return SemanticGroupBy(source=self, keys=keys)
+        return _expr_module().SemanticGroupBy(source=self, keys=keys)
 
     def filter(self, predicate: Callable) -> SemanticFilter:
-        from .expr import SemanticFilter
-
-        return SemanticFilter(source=self, predicate=predicate)
+        return _expr_module().SemanticFilter(source=self, predicate=predicate)
 
     def join_one(
         self,
@@ -5858,9 +5891,7 @@ class SemanticJoinOp(Relation):
         how: str = "left",
     ):
         """Join with one-to-one relationship semantics (left outer join)."""
-        from .expr import _join_one_with_detected_grain
-
-        return _join_one_with_detected_grain(self, other, on, how)
+        return _expr_module()._join_one_with_detected_grain(self, other, on, how)
 
     def join_many(
         self,
@@ -5869,9 +5900,7 @@ class SemanticJoinOp(Relation):
         how: str = "left",
     ):
         """Join with one-to-many relationship semantics."""
-        from .expr import SemanticJoin
-
-        return SemanticJoin(
+        return _expr_module().SemanticJoin(
             left=self,
             right=other.op(),
             on=on,
@@ -5881,9 +5910,7 @@ class SemanticJoinOp(Relation):
 
     def join_cross(self, other: SemanticTable):
         """Cross join (Cartesian product) with another semantic model."""
-        from .expr import SemanticJoin
-
-        return SemanticJoin(
+        return _expr_module().SemanticJoin(
             left=self,
             right=other.op(),
             on=None,
@@ -6858,19 +6885,13 @@ class SemanticIndexOp(Relation):
         return reduce(lambda acc, frag: acc.union(frag), fragments[1:], fragments[0])
 
     def filter(self, predicate: Callable) -> SemanticFilter:
-        from .expr import SemanticFilter
-
-        return SemanticFilter(source=self, predicate=predicate)
+        return _expr_module().SemanticFilter(source=self, predicate=predicate)
 
     def order_by(self, *keys: str | ir.Value | Callable) -> SemanticOrderBy:
-        from .expr import SemanticOrderBy
-
-        return SemanticOrderBy(source=self, keys=keys)
+        return _expr_module().SemanticOrderBy(source=self, keys=keys)
 
     def limit(self, n: int, offset: int = 0) -> SemanticLimit:
-        from .expr import SemanticLimit
-
-        return SemanticLimit(source=self, n=n, offset=offset)
+        return _expr_module().SemanticLimit(source=self, n=n, offset=offset)
 
     def execute(self):
         return _rebind_to_canonical_backend(self.to_untagged()).execute()

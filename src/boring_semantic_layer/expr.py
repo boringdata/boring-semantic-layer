@@ -13,9 +13,6 @@ from ibis.expr.types.relations import Table as IbisTable
 from returns.result import Success, safe
 
 from ._xorq import (
-    Column as XorqColumn,
-)
-from ._xorq import (
     GroupedTable,
     Table,
 )
@@ -35,6 +32,7 @@ from .ops import (
     SemanticTableOp,
     SemanticUnnestOp,
     _classify_measure,
+    _collect_struct,
     _exact_filter_fields,
     _extract_columns_from_callable,
     _extract_join_key_columns,
@@ -46,8 +44,6 @@ from .ops import (
     _unwrap,
     make_bare_ref_lambda,
 )
-from .query import compare_periods as build_compare_periods
-from .query import query as build_query
 
 logger = logging.getLogger(__name__)
 
@@ -147,10 +143,25 @@ def _flatten_group_keys(keys: tuple) -> tuple:
     return tuple(flat)
 
 
-def to_tagged(expr, aggregate_cache_storage=None):
-    from .serialization import to_tagged as _to_tagged
+def _query_module():
+    """Call-time accessor for the query layer (which sits above expr).
 
-    return _to_tagged(expr, aggregate_cache_storage=aggregate_cache_storage)
+    The .query()/.compare_periods() convenience methods dispatch upward the
+    same way .chart() does — resolved at call time so the expression layer
+    holds no import-time dependency on the layers built on top of it.
+    """
+    import importlib
+
+    return importlib.import_module("boring_semantic_layer.query")
+
+
+def to_tagged(expr, aggregate_cache_storage=None):
+    # Serialization sits above the expression layer; resolve at call time
+    # (see _query_module).
+    import importlib
+
+    ser = importlib.import_module("boring_semantic_layer.serialization")
+    return ser.to_tagged(expr, aggregate_cache_storage=aggregate_cache_storage)
 
 
 class SemanticTable(ir.Table):
@@ -355,8 +366,6 @@ class SemanticTable(ir.Table):
         return self.op().to_untagged()
 
     def to_tagged(self, aggregate_cache_storage=None):
-        from .serialization import to_tagged
-
         return to_tagged(self, aggregate_cache_storage=aggregate_cache_storage)
 
     def execute(self, **kwargs):
@@ -1221,7 +1230,7 @@ class SemanticModel(SemanticTable):
         time_range: dict[str, str] | None = None,
         having: list | None = None,
     ):
-        return build_query(
+        return _query_module().query(
             semantic_table=self,
             dimensions=dimensions,
             measures=measures,
@@ -1247,7 +1256,7 @@ class SemanticModel(SemanticTable):
         order_by: Sequence[tuple[str, str]] | None = None,
         limit: int | None = None,
     ):
-        return build_compare_periods(
+        return _query_module().compare_periods(
             semantic_table=self,
             dimensions=dimensions,
             measures=measures,
@@ -1412,7 +1421,7 @@ class SemanticJoin(SemanticTable):
         time_range: dict[str, str] | None = None,
         having: list | None = None,
     ):
-        return build_query(
+        return _query_module().query(
             semantic_table=self,
             dimensions=dimensions,
             measures=measures,
@@ -1507,10 +1516,10 @@ class SemanticJoin(SemanticTable):
 
     def group_by(self, *keys: str | Deferred):
         normalized = tuple(_normalize_to_name(k) for k in _flatten_group_keys(keys))
-        return self.op().group_by(*normalized)
+        return SemanticGroupBy(source=self.op(), keys=normalized)
 
     def filter(self, predicate: Callable):
-        return self.op().filter(predicate)
+        return SemanticFilter(source=self.op(), predicate=predicate)
 
 
 class SemanticFilter(SemanticTable):
@@ -1591,7 +1600,7 @@ class SemanticFilter(SemanticTable):
         time_range: dict[str, str] | None = None,
         having: list | None = None,
     ):
-        return build_query(
+        return _query_module().query(
             semantic_table=self,
             dimensions=dimensions,
             measures=measures,
@@ -1617,7 +1626,7 @@ class SemanticFilter(SemanticTable):
         order_by: Sequence[tuple[str, str]] | None = None,
         limit: int | None = None,
     ):
-        return build_compare_periods(
+        return _query_module().compare_periods(
             semantic_table=self,
             dimensions=dimensions,
             measures=measures,
@@ -1712,20 +1721,6 @@ class SemanticFilter(SemanticTable):
     def join(self, *args, **kwargs):
         """Deprecated: Use join_one(), join_many(), or join_cross() instead."""
         raise TypeError(_JOIN_REMOVED_MESSAGE)
-
-
-def _collect_struct(struct_dict: dict[str, Any], **collect_kwargs):
-    """Build ``struct(...).collect()`` from columns of a single ibis flavor.
-
-    ``ibis.struct`` and ``xorq.vendor.ibis.struct`` are not interchangeable:
-    each can only infer types from columns of its own module.
-    """
-    first_col = next(iter(struct_dict.values()))
-    if isinstance(first_col, XorqColumn):
-        from ._xorq import ibis as xibis
-
-        return xibis.struct(struct_dict).collect(**collect_kwargs)
-    return ibis.struct(struct_dict).collect(**collect_kwargs)
 
 
 def _make_row_struct_collector(columns: tuple[str, ...]) -> Callable:
