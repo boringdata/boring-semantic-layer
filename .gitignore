@@ -150,3 +150,7 @@ examples/*.local.yml
 
 # Eval transcripts
 .eval/
+
+# Local working files (not part of the repo)
+git-catalogs/
+/flights.csv

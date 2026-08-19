@@ -194,3 +194,114 @@ def test_scc_allowlist_is_ratcheted_down():
         "Module(s) no longer in the import SCC — lock in the progress by "
         f"removing them from KNOWN_SCC_MEMBERS: {sorted(stale)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Layer contract
+# ---------------------------------------------------------------------------
+
+#: Module-prefix -> layer. Edges must point to an equal or lower layer.
+#: Within-layer edges are unrestricted (global acyclicity is enforced above).
+_LAYERS: dict[str, int] = {
+    # 0: primitives — import nothing from the package but each other
+    "_xorq": 0,
+    "errors": 0,
+    "fieldref": 0,
+    "io": 0,
+    "safe_eval": 0,
+    "nested_access": 0,
+    "predicate": 0,
+    "config": 0,
+    # 1: analysis/util modules over primitives
+    "graph_utils": 1,
+    "measure_scope": 1,
+    "calc_analyzer": 1,
+    "nested_compile": 1,
+    "projection_utils": 1,
+    "profile": 1,
+    # 2: compilers-of-expressions
+    "calc_compiler": 2,
+    "convert": 2,
+    # 3: the semantic ops + their compiler
+    "ops": 3,
+    # 4: user-facing expressions and repr
+    "expr": 4,
+    "format": 4,
+    # 5: sugar and orchestration over expressions
+    "api": 5,
+    "query": 5,
+    "yaml": 5,
+    # 6: serialization of everything below
+    "serialization": 6,
+    # 7: optional extras and the root facade
+    "chart": 7,
+    "agents": 7,
+    "server": 7,
+    "<root>": 7,
+}
+
+_EXTRAS_PREFIXES = ("chart", "agents", "server")
+
+#: Underscore-prefixed core modules extras may import: the ibis-flavor shim
+#: is the designated package-wide import point for xorq symbols.
+_EXTRAS_PRIVATE_MODULE_ALLOWLIST = frozenset({"_xorq"})
+
+
+def _layer_of(module: str) -> int:
+    short = module.removeprefix(PKG_NAME + ".") if module != PKG_NAME else "<root>"
+    head = short.split(".", 1)[0]
+    if head not in _LAYERS:
+        raise AssertionError(
+            f"Module {short!r} is not assigned to a layer — add it to _LAYERS "
+            "in test_import_graph.py when introducing a new top-level module."
+        )
+    return _LAYERS[head]
+
+
+def test_layer_contract():
+    """Every import edge points downward (or stays within its layer)."""
+    modules = _discover_modules()
+    edges = _build_edges(modules)
+    violations = sorted(
+        f"{a.removeprefix(PKG_NAME + '.')} (L{_layer_of(a)}) -> "
+        f"{b.removeprefix(PKG_NAME + '.')} (L{_layer_of(b)})"
+        for a, b in edges
+        if _layer_of(b) > _layer_of(a)
+    )
+    assert not violations, "Upward imports break the layer contract:\n" + "\n".join(violations)
+
+
+def test_extras_do_not_import_core_privates():
+    """chart/agents/server must use only the core public surface."""
+    modules = _discover_modules()
+    violations: list[str] = []
+    for mod, path in modules.items():
+        short = mod.removeprefix(PKG_NAME + ".")
+        if not short.startswith(_EXTRAS_PREFIXES):
+            continue
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            target = node.module or ""
+            if node.level == 0 and not (target == PKG_NAME or target.startswith(PKG_NAME + ".")):
+                continue  # stdlib / third-party import
+            absolute = target.removeprefix(PKG_NAME + ".") if target else ""
+            # Imports within the extra's own subpackage are unrestricted.
+            if node.level and node.level == 1:
+                continue
+            if absolute.startswith(_EXTRAS_PREFIXES):
+                continue
+            parts = [p for p in absolute.split(".") if p]
+            private_module = any(
+                p.startswith("_") and p not in _EXTRAS_PRIVATE_MODULE_ALLOWLIST for p in parts
+            )
+            private_names = [a.name for a in node.names if a.name.startswith("_") and a.name != "_"]
+            if private_module or private_names:
+                violations.append(
+                    f"{short}: from {target or '.' * node.level} import "
+                    f"{', '.join(a.name for a in node.names)}"
+                )
+    assert not violations, "Extras must import only the core public surface:\n" + "\n".join(
+        sorted(violations)
+    )

@@ -168,8 +168,6 @@ def detect_time_dimension(
     Returns:
         Name of time dimension if found, None otherwise
     """
-    from ..ops import _find_all_root_models, _get_merged_fields
-
     # Get root models and dimension dictionary
     aggregate_op = semantic_aggregate.op()
 
@@ -196,11 +194,12 @@ def detect_time_dimension(
             return detect_time_dimension_from_dtype(df, dimensions)
         return None
 
-    all_roots = _find_all_root_models(aggregate_op.source)
-    if not all_roots:
+    # The op metadata protocol already merges (and prefixes) dimensions
+    # across joins — extras stay on the public surface.
+    try:
+        dims_dict = aggregate_op.source.get_dimensions()
+    except AttributeError:
         return None
-
-    dims_dict = _get_merged_fields(all_roots, "dimensions")
 
     # Strategy 1: Check metadata
     for dim_name in dimensions:

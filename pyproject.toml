@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "attrs>=25.3.0",
-    "ibis-framework>=11.0.0",
+    "ibis-framework>=11.0.0,<12",  # deep Relation/Deferred internals coupling; expand after matrix-testing a new major
     "packaging",
     "pyyaml>=6.0",
     "returns>=0.26.0",
@@ -55,7 +55,7 @@ server = [
 # `uv sync --all-extras` so the suite has a duckdb backend (and pyarrow)
 # without depending on xorq or the examples extra.
 test-core = [
-    "ibis-framework[duckdb]>=11.0.0",
+    "ibis-framework[duckdb]>=11.0.0,<12",
     "pytest",
     "pytest-xdist",
     "pandas>=2.3.0",
