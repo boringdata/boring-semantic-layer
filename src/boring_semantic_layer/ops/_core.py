@@ -3652,29 +3652,6 @@ class SemanticJoinOp(Relation):
     def table(self):
         return self.to_untagged()
 
-    def query(
-        self,
-        dimensions: Sequence[str] | None = None,
-        measures: Sequence[str] | None = None,
-        filters: list | None = None,
-        order_by: Sequence[tuple[str, str]] | None = None,
-        limit: int | None = None,
-        time_grain: str | None = None,
-        time_range: dict[str, str] | None = None,
-        having: list | None = None,
-    ):
-        return _query_module().query(
-            semantic_table=self,
-            dimensions=dimensions,
-            measures=measures,
-            filters=filters,
-            order_by=order_by,
-            limit=limit,
-            time_grain=time_grain,
-            time_range=time_range,
-            having=having,
-        )
-
     def with_dimensions(self, **dims) -> SemanticTable:
         return _semantic_table(
             table=self.to_untagged(),
@@ -3721,23 +3698,21 @@ class SemanticJoinOp(Relation):
         self,
         other: SemanticTable,
         on: Callable[[Any, Any], ir.BooleanValue],
-        how: str = "left",
     ):
         """Join with one-to-one relationship semantics (left outer join)."""
-        return _expr_module()._join_one_with_detected_grain(self, other, on, how)
+        return _expr_module()._join_one_with_detected_grain(self, other, on)
 
     def join_many(
         self,
         other: SemanticTable,
         on: Callable[[Any, Any], ir.BooleanValue],
-        how: str = "left",
     ):
         """Join with one-to-many relationship semantics."""
         return _expr_module().SemanticJoin(
             left=self,
             right=other.op(),
             on=on,
-            how=how,
+            how="left",
             cardinality="many",
         )
 

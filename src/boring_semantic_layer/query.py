@@ -14,7 +14,8 @@ from attrs import frozen
 from ibis.common.collections import FrozenDict
 from toolz import curry
 
-from .errors import QueryError, unwrap_or_raise
+from .errors import QueryError, UnknownFieldError, suggest_kinded, unwrap_or_raise
+from .fieldref import resolve_suffix
 from .safe_eval import safe_eval
 
 
@@ -800,6 +801,30 @@ def query(
     )
     order_by = _normalize_order_by(order_by, known_order_fields, expected_prefix=model_name)
     filters = list(filters or [])  # Copy to avoid mutating input
+
+    # Fail fast on unknown names, with suggestions — before any compilation,
+    # so the user never sees a backend error listing physical columns.
+    raw_columns = set(getattr(result, "columns", ()) or ())
+    for dim in dimensions:
+        if (
+            dim not in known_dimensions
+            and dim not in raw_columns
+            and resolve_suffix(dim, known_dimensions, raw_columns) is None
+        ):
+            hint = suggest_kinded(dim, [("dimension", known_dimensions), ("column", raw_columns)])
+            raise UnknownFieldError(
+                f"Unknown dimension {dim!r}. Declared dimensions: "
+                f"{sorted(known_dimensions)}.{' ' + hint if hint else ''}"
+            )
+    for meas in measures or ():
+        if meas not in known_measures and resolve_suffix(meas, known_measures) is None:
+            hint = suggest_kinded(
+                meas, [("measure", known_measures), ("dimension", known_dimensions)]
+            )
+            raise UnknownFieldError(
+                f"Unknown measure {meas!r}. Declared measures: "
+                f"{sorted(known_measures)}.{' ' + hint if hint else ''}"
+            )
 
     selected_fields = set(dimensions) | set(measures or [])
     produces_aggregate = bool(dimensions or measures)

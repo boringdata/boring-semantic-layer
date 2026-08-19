@@ -170,7 +170,7 @@ flights_with_deps.get_graph()['avg_distance_per_flight']['deps']
 Use `graph_predecessors()` and `graph_successors()` to navigate dependencies:
 
 ```graph_traversal
-from boring_semantic_layer import graph_predecessors, graph_successors
+from boring_semantic_layer.graph_utils import graph_predecessors, graph_successors
 
 graph = flights_with_deps.get_graph()
 
@@ -347,7 +347,8 @@ all_combinations = flights_st.join_cross(carriers)
 
 ### Requiring a Match
 
-`join_one()` and `join_many()` only support `how="left"`. When a query should
+`join_one()` and `join_many()` are always LEFT joins (there is no `how=`
+parameter). When a query should
 require a match, make the row removal explicit with a filter on a non-nullable
 field from the right table:
 
