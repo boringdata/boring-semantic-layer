@@ -15,7 +15,7 @@ from ibis.common.collections import FrozenDict
 from toolz import curry
 
 from .errors import QueryError, unwrap_or_raise
-from .utils import safe_eval
+from .safe_eval import safe_eval
 
 
 def _get_ibis_api():

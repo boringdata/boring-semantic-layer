@@ -10,7 +10,7 @@ from returns.result import Success
 
 from boring_semantic_layer import to_semantic_table
 from boring_semantic_layer._xorq import api as xo
-from boring_semantic_layer.utils import safe_eval
+from boring_semantic_layer.safe_eval import safe_eval
 
 
 class QueryExecutor:

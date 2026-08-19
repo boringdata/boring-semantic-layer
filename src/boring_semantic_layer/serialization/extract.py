@@ -14,8 +14,8 @@ from typing import Any
 
 from returns.result import Result, Success, safe
 
+from .codec import extract_simple_column_name
 from .context import BSLSerializationContext
-from .helpers import extract_simple_column_name
 
 # ---------------------------------------------------------------------------
 # singledispatch extractors
@@ -114,7 +114,7 @@ def _extract_semantic_table(op, context: BSLSerializationContext) -> dict[str, A
 @_register_lazy("SemanticFilterOp")
 def _extract_filter(op, context: BSLSerializationContext) -> dict[str, Any]:
     from ..ops import _exact_filter_fields, _unwrap
-    from ..utils import expr_to_structured
+    from .codec import expr_to_structured
 
     predicate = _unwrap(op.predicate)
     try:
@@ -147,7 +147,7 @@ def _extract_group_by(op, context: BSLSerializationContext) -> dict[str, Any]:
 @_register_lazy("SemanticAggregateOp")
 def _extract_aggregate(op, context: BSLSerializationContext) -> dict[str, Any]:
     from ..ops import _detect_bare_name_lambda, _unwrap
-    from ..utils import expr_to_structured
+    from .codec import expr_to_structured
 
     metadata: dict[str, Any] = {}
     if op.keys:
@@ -181,7 +181,7 @@ def _extract_project(op, context: BSLSerializationContext) -> dict[str, Any]:
 
 @_register_lazy("SemanticOrderByOp")
 def _extract_order_by(op, context: BSLSerializationContext) -> dict[str, Any]:
-    from ..utils import expr_to_structured
+    from .codec import expr_to_structured
 
     order_keys = [
         {"type": "string", "value": key}
@@ -199,7 +199,7 @@ def _extract_limit(op, context: BSLSerializationContext) -> dict[str, Any]:
 
 @_register_lazy("SemanticJoinOp")
 def _extract_join(op, context: BSLSerializationContext) -> dict[str, Any]:
-    from ..utils import join_predicate_to_structured
+    from .codec import join_predicate_to_structured
 
     metadata: dict[str, Any] = {"how": op.how, "cardinality": op.cardinality}
     if op.on is not None:
@@ -264,7 +264,7 @@ def extract_op_tree(op, context: BSLSerializationContext) -> dict[str, Any]:
 
 
 def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exception]:
-    from ..utils import expr_to_structured
+    from .codec import expr_to_structured
 
     @safe
     def do_serialize():
@@ -297,7 +297,7 @@ def serialize_dimensions(dimensions: Mapping[str, Any]) -> Result[dict, Exceptio
 
 
 def serialize_measures(measures: Mapping[str, Any]) -> Result[dict, Exception]:
-    from ..utils import expr_to_structured
+    from .codec import expr_to_structured
 
     @safe
     def do_serialize():
@@ -332,7 +332,7 @@ def serialize_calc_measures(calc_measures: Mapping[str, Any]) -> Result[dict, Ex
     (calls to ``.all(...)``, attribute access, arithmetic ...) and
     serialize the resulting resolver tree.
     """
-    from ..utils import expr_to_structured
+    from .codec import expr_to_structured
 
     @safe
     def do_serialize():
@@ -370,7 +370,7 @@ def deserialize_calc_measures(calc_data: Mapping[str, Any]) -> dict[str, Any]:
     ``IbisCalcScope`` exactly like a user-supplied lambda.
     """
     from ..ops import CalcMeasure
-    from ..utils import structured_to_expr
+    from .codec import structured_to_expr
     from .freeze import list_to_tuple
 
     out: dict[str, Any] = {}

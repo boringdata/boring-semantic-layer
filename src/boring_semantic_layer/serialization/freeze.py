@@ -61,7 +61,7 @@ def freeze(obj: Any, *, path: str = "metadata") -> Any:
         f"Cannot serialize {path}: {type(obj).__name__} has no lossless "
         f"representation in xorq tag metadata (value: {obj!r}). Expression "
         "constants of this type must be encoded by "
-        "boring_semantic_layer.utils._encode_scalar before reaching freeze()."
+        "boring_semantic_layer.serialization.codec._encode_scalar before reaching freeze()."
     )
 
 

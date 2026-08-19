@@ -23,13 +23,13 @@ from returns.result import Failure
 
 from boring_semantic_layer import to_semantic_table
 from boring_semantic_layer.serialization import from_tagged, to_tagged
-from boring_semantic_layer.serialization.context import BSLSerializationContext
-from boring_semantic_layer.serialization.reconstruct import reconstruct_bsl_operation
-from boring_semantic_layer.utils import (
-    UntrustedCallableError,
+from boring_semantic_layer.serialization._trust import UntrustedCallableError
+from boring_semantic_layer.serialization.codec import (
     serialize_resolver,
     structured_to_expr,
 )
+from boring_semantic_layer.serialization.context import BSLSerializationContext
+from boring_semantic_layer.serialization.reconstruct import reconstruct_bsl_operation
 
 xorq = pytest.importorskip("xorq", reason="xorq not installed")
 
@@ -162,7 +162,7 @@ def test_decimal_literal_round_trips():
     from boring_semantic_layer._xorq import Just
 
     struct = serialize_resolver(Just(decimal.Decimal("1.5")))
-    from boring_semantic_layer.utils import deserialize_resolver
+    from boring_semantic_layer.serialization.codec import deserialize_resolver
 
     assert deserialize_resolver(struct).value == decimal.Decimal("1.5")
 

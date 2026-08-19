@@ -201,7 +201,7 @@ class TestAgentContextFlavor:
         # End-to-end shape of tools._query_model: literal comparison built
         # from the flavor-matched module returns correct (non-empty) results.
         from boring_semantic_layer.agents.tools import _models_ibis_module
-        from boring_semantic_layer.utils import safe_eval
+        from boring_semantic_layer.safe_eval import safe_eval
 
         sm = _flights_model(flights_table)
         models = {"flights": sm}
