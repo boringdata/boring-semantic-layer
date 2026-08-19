@@ -8,6 +8,7 @@ markers is the follow-up.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from .._xorq import FrozenDict, null_safe_equal
@@ -66,17 +67,52 @@ from ._reductions import (
 )
 
 
-def to_untagged_with_preagg(
+@dataclass
+class _PreaggScope:
+    """Read-only inputs shared by every pre-aggregation phase.
+
+    Built by :func:`_build_scope` (prologue + phase 1) and not mutated
+    afterwards; phase functions unpack the fields they use.
+    """
+
+    op: Any
+    join_op: Any
+    join_tree_info: Any
+    all_roots: list
+    filter_fns: list
+    exact_filter_fields: frozenset
+    merged_dimensions: dict
+    merged_base_measures: dict
+    merged_calc_measures: dict
+    group_by_cols: list
+    join_column_lineage: dict
+    wrapper_local_dimensions: dict
+    wrapper_dimension_owners: dict
+    tbl: Any
+    filters_on_tbl: set
+    tbl_filter_exprs: dict
+
+
+@dataclass
+class _PreaggAccumulators:
+    """What phase 4 (per-source pre-aggregation) produces."""
+
+    preagg_results: list
+    decomposed_means: dict
+    reagg_ops: dict
+    empty_count_measures: set
+    deferred_count_distincts: dict
+    totals_sources: dict
+
+
+def _build_scope(
     op,
     all_roots: list,
-    join_op: SemanticJoinOp,
-    join_tree_info: _JoinTreeInfo,
-    filters: list | None = None,
-):
-    """Pre-aggregate each source table's measures at its own grain, then join.
-
-    This prevents fan-out inflation when ``join_many`` is used.
-    """
+    join_op,
+    join_tree_info,
+    filters: list | None,
+) -> _PreaggScope:
+    """Prologue + phase 1: metadata merge, joined-table build, filter application."""
     root_names = {
         name
         for name, cardinality in join_tree_info.table_cardinalities.items()
@@ -201,6 +237,31 @@ def to_untagged_with_preagg(
             filters_on_tbl.add(i)
             tbl_filter_exprs[i] = pred_expr
 
+    return _PreaggScope(
+        op=op,
+        join_op=join_op,
+        join_tree_info=join_tree_info,
+        all_roots=all_roots,
+        filter_fns=filter_fns,
+        exact_filter_fields=exact_filter_fields,
+        merged_dimensions=merged_dimensions,
+        merged_base_measures=merged_base_measures,
+        merged_calc_measures=merged_calc_measures,
+        group_by_cols=group_by_cols,
+        join_column_lineage=join_column_lineage,
+        wrapper_local_dimensions=wrapper_local_dimensions,
+        wrapper_dimension_owners=wrapper_dimension_owners,
+        tbl=tbl,
+        filters_on_tbl=filters_on_tbl,
+        tbl_filter_exprs=tbl_filter_exprs,
+    )
+
+
+def _resolve_filter_ownership(scope: _PreaggScope) -> tuple[dict, list]:
+    """Phase 1b: attribute each filter to the source table(s) it resolves on."""
+    filter_fns = scope.filter_fns
+    join_tree_info = scope.join_tree_info
+    filters_on_tbl = scope.filters_on_tbl
     # --- 1b. Determine which source table(s) each filter belongs to ---
     # Ownership resolution uses each table's own dimensions (bare and
     # table-prefixed) so ``t["orders.status"]`` resolves only against
@@ -251,7 +312,12 @@ def to_untagged_with_preagg(
                 "Check the dimension/column name, or qualify it with a "
                 'table prefix (e.g. t["orders.status"]).'
             )
+    return raw_tables, filter_owners
 
+
+def _split_cross_table_legs(scope: _PreaggScope, raw_tables: dict, filter_owners: list) -> dict:
+    """Phase 1c: split cross-table AND conjunctions into per-table legs."""
+    tbl_filter_exprs = scope.tbl_filter_exprs
     # --- 1c. Split cross-table conjunctions into per-table legs ---
     # A compound like (t["orders.status"]=="open") & (t.qty >= 2) has no
     # single owner, so it used to reach the many side only through a
@@ -279,7 +345,15 @@ def to_untagged_with_preagg(
                 (leg, _leg_source_tables(leg, base_rel_to_table, leaf_types))
                 for leg in _flatten_and_legs(expr)
             ]
+    return filter_legs
 
+
+def _build_plan(scope: _PreaggScope):
+    """Phase 2: build the aggregation plan (or its chasm-fallback shape)."""
+    op = scope.op
+    tbl = scope.tbl
+    merged_base_measures = scope.merged_base_measures
+    merged_calc_measures = scope.merged_calc_measures
     # --- 2. Build aggregation plan ---
     if tbl is not None:
         scope = MeasureScope(
@@ -307,7 +381,14 @@ def to_untagged_with_preagg(
             requested_measures=tuple(op.aggs.keys()),
             group_by_cols=tuple(op.keys),
         )
+    return plan
 
+
+def _partition_by_source(scope: _PreaggScope, plan) -> dict:
+    """Phase 3: partition agg specs by owning source table."""
+    join_op = scope.join_op
+    join_tree_info = scope.join_tree_info
+    merged_base_measures = scope.merged_base_measures
     # --- 3. Partition agg_specs by source table ---
     # Partition by the join's per-table roots, not ``all_roots``. When a
     # wrapper SemanticTableOp from ``SemanticJoin.with_measures()`` /
@@ -316,7 +397,6 @@ def to_untagged_with_preagg(
     # unprefixed bucket and bypass per-grain pre-aggregation.
     partition_roots = _find_all_root_models(join_op)
     partitioned = _partition_agg_specs_by_source(dict(plan.agg_specs), partition_roots)
-
     # Measures declared on a joined wrapper have unprefixed result names.
     # Route field-bearing reductions back to their unique owning leaf so
     # they do not aggregate the fanned-out join. Relation-only reductions
@@ -333,7 +413,31 @@ def to_untagged_with_preagg(
         del wrapper_specs[measure_name]
     if not wrapper_specs:
         partitioned.pop(None, None)
+    return partitioned
 
+
+def _preaggregate_sources(
+    scope: _PreaggScope,
+    plan,
+    partitioned: dict,
+    raw_tables: dict,
+    filter_owners: list,
+    filter_legs: dict,
+) -> _PreaggAccumulators:
+    """Phase 4: pre-aggregate each source table at its own grain.
+
+    The body is verbatim from the original pipeline; scope fields are
+    unpacked into their historical local names.
+    """
+    join_tree_info = scope.join_tree_info
+    filter_fns = scope.filter_fns
+    merged_dimensions = scope.merged_dimensions
+    merged_base_measures = scope.merged_base_measures
+    group_by_cols = scope.group_by_cols
+    join_column_lineage = scope.join_column_lineage
+    wrapper_local_dimensions = scope.wrapper_local_dimensions
+    wrapper_dimension_owners = scope.wrapper_dimension_owners
+    tbl = scope.tbl
     # --- 4. Pre-aggregate each source table on its raw table ---
     _preagg_results: list = []
     # Track MEAN measures decomposed into SUM + COUNT for correct re-agg
@@ -890,47 +994,68 @@ def to_untagged_with_preagg(
             else:
                 _preagg_results.append(raw_tbl.aggregate(**agg_exprs))
 
-    # Freeze mutable accumulators
-    preagg_results = tuple(_preagg_results)
-    decomposed_means = tuple(_decomposed_means.items())
-    reagg_ops = tuple(_reagg_ops.items())
-    empty_count_measures = tuple(_empty_count_measures)
+    return _PreaggAccumulators(
+        preagg_results=_preagg_results,
+        decomposed_means=_decomposed_means,
+        reagg_ops=_reagg_ops,
+        empty_count_measures=_empty_count_measures,
+        deferred_count_distincts=_deferred_count_distincts,
+        totals_sources=_totals_sources,
+    )
 
-    if not preagg_results and not _deferred_count_distincts:
-        if tbl is None:
-            raise ValueError("No aggregation results and full join unavailable")
-        # Nothing could be pre-aggregated at a source grain. This fallback
-        # used to aggregate the flattened join while ignoring both the
-        # group keys and every calc spec: with only calc measures
-        # requested it returned ``tbl.aggregate({})`` — an Aggregate with
-        # no columns at all, which surfaces much later as an unrelated
-        # arrow/schema error instead of naming the problem.
-        if plan.calc_specs:
-            raise ValueError(
-                "Pre-aggregation cannot compute calculated measure(s) "
-                f"{sorted(plan.calc_specs)} on this joined model: none of "
-                "the requested measures aggregate at a single source's "
-                "grain, so there is no fan-out-safe base to calculate "
-                "from. This happens when a calc measure builds its "
-                "reduction inline — e.g. "
-                "t.distance.sum() / t.all(t.distance.sum()) — rather than "
-                "referencing a declared measure. Declare the reduction as "
-                "a measure and reference it by name:\n"
-                "    .with_measures(total=lambda t: t.distance.sum())\n"
-                "    .with_measures(share=lambda t: t.total / t.all(t.total))"
-            )
-        if not plan.agg_specs:
-            raise ValueError(
-                f"Pre-aggregation produced no measures for {sorted(op.aggs)} "
-                f"with group keys {list(plan.group_by_cols)}; aggregating the "
-                "joined table here would ignore the request entirely."
-            )
-        specs = {n: f(tbl) for n, f in plan.agg_specs.items()}
-        group_cols = [c for c in plan.group_by_cols if c in tbl.columns]
-        if group_cols:
-            return tbl.group_by(group_cols).aggregate(**specs)
-        return tbl.aggregate(specs)
 
+def _aggregate_joined_fallback(scope: _PreaggScope, plan):
+    """Fallback when nothing pre-aggregated at any source grain."""
+    op = scope.op
+    tbl = scope.tbl
+    if tbl is None:
+        raise ValueError("No aggregation results and full join unavailable")
+    # Nothing could be pre-aggregated at a source grain. This fallback
+    # used to aggregate the flattened join while ignoring both the
+    # group keys and every calc spec: with only calc measures
+    # requested it returned ``tbl.aggregate({})`` — an Aggregate with
+    # no columns at all, which surfaces much later as an unrelated
+    # arrow/schema error instead of naming the problem.
+    if plan.calc_specs:
+        raise ValueError(
+            "Pre-aggregation cannot compute calculated measure(s) "
+            f"{sorted(plan.calc_specs)} on this joined model: none of "
+            "the requested measures aggregate at a single source's "
+            "grain, so there is no fan-out-safe base to calculate "
+            "from. This happens when a calc measure builds its "
+            "reduction inline — e.g. "
+            "t.distance.sum() / t.all(t.distance.sum()) — rather than "
+            "referencing a declared measure. Declare the reduction as "
+            "a measure and reference it by name:\n"
+            "    .with_measures(total=lambda t: t.distance.sum())\n"
+            "    .with_measures(share=lambda t: t.total / t.all(t.total))"
+        )
+    if not plan.agg_specs:
+        raise ValueError(
+            f"Pre-aggregation produced no measures for {sorted(op.aggs)} "
+            f"with group keys {list(plan.group_by_cols)}; aggregating the "
+            "joined table here would ignore the request entirely."
+        )
+    specs = {n: f(tbl) for n, f in plan.agg_specs.items()}
+    group_cols = [c for c in plan.group_by_cols if c in tbl.columns]
+    if group_cols:
+        return tbl.group_by(group_cols).aggregate(**specs)
+    return tbl.aggregate(specs)
+
+
+def _combine_preaggregates(
+    scope: _PreaggScope,
+    plan,
+    preagg_results: tuple,
+    decomposed_means: tuple,
+    reagg_ops: tuple,
+    empty_count_measures: tuple,
+):
+    """Phase 5: join per-source pre-aggregates back together."""
+    group_by_cols = scope.group_by_cols
+    tbl = scope.tbl
+    join_tree_info = scope.join_tree_info
+    merged_dimensions = scope.merged_dimensions
     # --- 5. Combine pre-agg results ---
     result = None
     if preagg_results:
@@ -962,6 +1087,16 @@ def to_untagged_with_preagg(
                 empty_count_measures=empty_count_measures,
             )
 
+    return result
+
+
+def _attach_deferred_count_distincts(scope: _PreaggScope, acc: _PreaggAccumulators, result):
+    """Phase 5b: evaluate deferred COUNT DISTINCT at exact grain and attach."""
+    _deferred_count_distincts = acc.deferred_count_distincts
+    group_by_cols = scope.group_by_cols
+    tbl = scope.tbl
+    join_op = scope.join_op
+    join_tree_info = scope.join_tree_info
     # --- 5b. Compute deferred COUNT DISTINCT measures ---
     # COUNT DISTINCT cannot be re-aggregated from per-key partial counts.
     # For grouped queries, bridge the requested group domain to the
@@ -1042,6 +1177,13 @@ def to_untagged_with_preagg(
 
         result = _fill_missing_count_identities(result, _deferred_count_distincts)
 
+    return result
+
+
+def _apply_calc_phase(scope: _PreaggScope, plan, acc: _PreaggAccumulators, result):
+    """Phase 6: apply calc specs with fan-out-safe totals from raw sources."""
+    tbl = scope.tbl
+    _totals_sources = acc.totals_sources
     # --- 6. Apply calc_specs ---
     if plan.calc_specs:
 
@@ -1066,6 +1208,11 @@ def to_untagged_with_preagg(
 
         result = _apply_calc_specs(result, plan, tbl, totals_builder=_fanout_safe_totals)
 
+    return result
+
+
+def _project_requested(plan, result):
+    """Phase 7: select exactly the requested columns, loudly if impossible."""
     # --- 7. Select requested columns ---
     available = frozenset(result.columns)
     requested = tuple(
@@ -1286,3 +1433,40 @@ def _apply_calc_specs(result, plan, tbl, totals_builder=None):
         agg_specs=dict(plan.agg_specs),
         totals_base_builder=totals_builder,
     )
+    return result
+
+
+def to_untagged_with_preagg(
+    op,
+    all_roots: list,
+    join_op: SemanticJoinOp,
+    join_tree_info: _JoinTreeInfo,
+    filters: list | None = None,
+):
+    """Pre-aggregate each source table's measures at its own grain, then join.
+
+    This prevents fan-out inflation when ``join_many`` is used.
+    """
+    scope = _build_scope(op, all_roots, join_op, join_tree_info, filters)
+    raw_tables, filter_owners = _resolve_filter_ownership(scope)
+    filter_legs = _split_cross_table_legs(scope, raw_tables, filter_owners)
+    plan = _build_plan(scope)
+    partitioned = _partition_by_source(scope, plan)
+
+    acc = _preaggregate_sources(scope, plan, partitioned, raw_tables, filter_owners, filter_legs)
+
+    # Freeze mutable accumulators
+    preagg_results = tuple(acc.preagg_results)
+    decomposed_means = tuple(acc.decomposed_means.items())
+    reagg_ops = tuple(acc.reagg_ops.items())
+    empty_count_measures = tuple(acc.empty_count_measures)
+
+    if not preagg_results and not acc.deferred_count_distincts:
+        return _aggregate_joined_fallback(scope, plan)
+
+    result = _combine_preaggregates(
+        scope, plan, preagg_results, decomposed_means, reagg_ops, empty_count_measures
+    )
+    result = _attach_deferred_count_distincts(scope, acc, result)
+    result = _apply_calc_phase(scope, plan, acc, result)
+    return _project_requested(plan, result)
