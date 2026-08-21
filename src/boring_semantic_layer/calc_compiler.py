@@ -32,7 +32,6 @@ was registered as a measure.
 
 from __future__ import annotations
 
-import difflib
 import logging
 from collections.abc import Iterable
 from typing import Any
@@ -47,6 +46,8 @@ from .calc_analyzer import (
     analyze_calc_expr,
     virtual_agg_table,
 )
+from .errors import suggest_kinded
+from .fieldref import resolve_suffix
 from .measure_scope import UnknownMeasureRefError
 
 logger = logging.getLogger(__name__)
@@ -202,22 +203,12 @@ class IbisCalcScope:
         return hasattr(self._base_tbl, "columns") and name in self._base_tbl.columns
 
     def _typo_suggestion(self, name: str) -> str | None:
-        cutoff = 0.80
-        candidates: list[tuple[str, str]] = []
+        kinded = []
         if self._known_measures:
-            for match in difflib.get_close_matches(
-                name, list(self._known_measures), n=3, cutoff=cutoff
-            ):
-                candidates.append(("measure", match))
+            kinded.append(("measure", list(self._known_measures)))
         if hasattr(self._base_tbl, "columns"):
-            for match in difflib.get_close_matches(
-                name, list(self._base_tbl.columns), n=3, cutoff=cutoff
-            ):
-                candidates.append(("column", match))
-        if not candidates:
-            return None
-        formatted = ", ".join(f"{kind} {match!r}" for kind, match in candidates)
-        return f"Did you mean: {formatted}?"
+            kinded.append(("column", list(self._base_tbl.columns)))
+        return suggest_kinded(name, kinded)
 
     def _resolve_measure_name(self, name: str) -> str | None:
         """Resolve ``name`` to a known measure, including suffix matching.
@@ -227,26 +218,11 @@ class IbisCalcScope:
         them by short name (``t.flight_count``); we transparently bridge by
         suffix-matching when a unique match exists.
         """
-        if name in self._known_measures:
-            return name
-        suffix = f".{name}"
-        matches = tuple(k for k in self._known_measures if k.endswith(suffix))
-        if len(matches) == 1:
-            return matches[0]
-        return None
+        return resolve_suffix(name, self._known_measures)
 
     def _resolve_priority_measure_name(self, name: str) -> str | None:
-        if name in self._priority_measures and name in self._known_measures:
-            return name
-        suffix = f".{name}"
-        matches = tuple(
-            k
-            for k in self._priority_measures
-            if k in self._known_measures and k.endswith(suffix)
-        )
-        if len(matches) == 1:
-            return matches[0]
-        return None
+        eligible = [k for k in self._priority_measures if k in self._known_measures]
+        return resolve_suffix(name, eligible)
 
     def __getattr__(self, name: str):
         if name.startswith("_"):
@@ -436,9 +412,7 @@ def classify_calc_lambda(
     caller can then route to base-measure or calc-measure compilation
     based on ``analysis.pushable``.
     """
-    expr, vt, totals_vt = evaluate_calc_lambda(
-        fn, base_tbl, known_measures, virtual_agg_schema
-    )
+    expr, vt, totals_vt = evaluate_calc_lambda(fn, base_tbl, known_measures, virtual_agg_schema)
     analysis = analyze_calc_expr(
         expr,
         known_measures=known_measures,
@@ -478,12 +452,8 @@ def compile_calc_measure(
     if totals_virtual_agg_tbl is not None and real_with_totals is not None:
         totals_vt_op = _to_op(totals_virtual_agg_tbl)
         rwt_op = _to_op(real_with_totals)
-        totals_schema = (
-            dict(totals_vt_op.schema.items()) if hasattr(totals_vt_op, "schema") else {}
-        )
-        rwt_columns = (
-            real_with_totals.columns if hasattr(real_with_totals, "columns") else ()
-        )
+        totals_schema = dict(totals_vt_op.schema.items()) if hasattr(totals_vt_op, "schema") else {}
+        rwt_columns = real_with_totals.columns if hasattr(real_with_totals, "columns") else ()
         for col_name in totals_schema:
             prefixed = f"{totals_prefix}{col_name}"
             # Only substitute the real TOTALS column. Falling back to the
@@ -592,7 +562,9 @@ def apply_calc_measures(
     }
 
     if all(hasattr(spec, "depends_on") for spec in calc_specs.values()):
-        deps = {name: set(getattr(spec, "depends_on", ()) or ()) for name, spec in calc_specs.items()}
+        deps = {
+            name: set(getattr(spec, "depends_on", ()) or ()) for name, spec in calc_specs.items()
+        }
         ordered = topological_order_from_deps(calc_exprs, deps)
     else:
         ordered = _topological_order(calc_exprs, base_tbl, known_measures)
@@ -607,9 +579,7 @@ def apply_calc_measures(
         fn = calc_exprs[name]
         cur_known = known_measures | frozenset(real_agg_tbl.columns)
         virtual_schema = {
-            col: real_agg_tbl[col].type()
-            for col in real_agg_tbl.columns
-            if col in cur_known
+            col: real_agg_tbl[col].type() for col in real_agg_tbl.columns if col in cur_known
         }
         expr, vt, totals_vt = evaluate_calc_lambda(
             fn,
@@ -636,9 +606,7 @@ def apply_calc_measures(
                         base_totals_builder=totals_base_builder,
                     )
                 if real_totals_tbl is not None:
-                    real_with_totals = _join_totals(
-                        real_agg_tbl, real_totals_tbl, totals_prefix
-                    )
+                    real_with_totals = _join_totals(real_agg_tbl, real_totals_tbl, totals_prefix)
 
             if real_with_totals is None:
                 raise TotalsNotAvailableError(
@@ -725,7 +693,7 @@ def attach_windowed_totals(
             ) from exc
         col = f"{totals_prefix}{name}"
         new_base = new_base.mutate(**{col: windowed})
-        arbitrary_specs[col] = (lambda t, _c=col: t[_c].arbitrary())
+        arbitrary_specs[col] = lambda t, _c=col: t[_c].arbitrary()
     return new_base, arbitrary_specs
 
 
@@ -754,9 +722,7 @@ class _TotalsResolvingScope:
         # has totals column ``__bsl_totals__flights.flight_count``.
         suffix = f".{name}"
         for c in getattr(self._tbl, "columns", ()):
-            if c.startswith(self._totals_prefix) and c[len(self._totals_prefix):].endswith(
-                suffix
-            ):
+            if c.startswith(self._totals_prefix) and c[len(self._totals_prefix) :].endswith(suffix):
                 return self._tbl[c]
         raise AttributeError(f"No totals column found for measure {name!r}")
 
@@ -805,7 +771,7 @@ def attach_calc_totals(
     # plus any transitive calc dependencies of those.
     needed: set[str] = set()
     work: list[str] = []
-    for cn, c in classifications.items():
+    for c in classifications.values():
         if c.references_AllOf:
             for d in c.depends_on:
                 if d in calc_specs:
@@ -825,9 +791,7 @@ def attach_calc_totals(
 
     # Topo-order so a calc's deps are computed before the calc itself.
     deps_map = {
-        n: set(classifications[n].depends_on) & needed
-        for n in needed
-        if n in classifications
+        n: set(classifications[n].depends_on) & needed for n in needed if n in classifications
     }
     ordered = topological_order_from_deps(needed, deps_map)
 
@@ -1019,8 +983,7 @@ def _topological_order(
     if classifications is None:
         classifications = classify_calc_lambdas(calc_lambdas, base_tbl, known_measures)
     deps = {
-        name: set(classifications.get(name, _EMPTY_ANALYSIS).depends_on)
-        for name in calc_lambdas
+        name: set(classifications.get(name, _EMPTY_ANALYSIS).depends_on) for name in calc_lambdas
     }
     return topological_order_from_deps(calc_lambdas, deps)
 
@@ -1092,14 +1055,10 @@ def lift_inline_reductions(
         # Fields alone misses them, leaving the reduction unlifted and the
         # ``t.all(t.count())`` totals shape without a totals column.
         if Relation is not None and any(
-            isinstance(a, Relation) and id(a) == id(base_op)
-            for a in getattr(node, "__args__", ())
+            isinstance(a, Relation) and id(a) == id(base_op) for a in getattr(node, "__args__", ())
         ):
             return True
-        for c in _walk(node):
-            if isinstance(c, Field) and id(c.rel) == id(base_op):
-                return True
-        return False
+        return any(isinstance(c, Field) and id(c.rel) == id(base_op) for c in _walk(node))
 
     base_reductions = [n for n in _walk(op) if is_base_reduction(n)]
     if not base_reductions:
@@ -1122,9 +1081,9 @@ def lift_inline_reductions(
     new_vt = ibis_mod.table(extended_schema, name=getattr(vt_op, "name", "__bsl_virtual_agg__"))
     new_vt_op = new_vt.op()
 
-    totals_extended_schema = dict(totals_vt_op.schema.items()) if hasattr(
-        totals_vt_op, "schema"
-    ) else {}
+    totals_extended_schema = (
+        dict(totals_vt_op.schema.items()) if hasattr(totals_vt_op, "schema") else {}
+    )
     for anon, r in name_to_reduction.items():
         totals_extended_schema[anon] = r.dtype
     new_totals_vt = ibis_mod.table(
@@ -1163,11 +1122,7 @@ def lift_inline_reductions(
                     for c in _walk(inner)
                     if isinstance(c, Field) and id(c.rel) == id(base_op)
                 }
-                if (
-                    id(n) == id(op)
-                    and reduction_cols
-                    and reduction_cols <= group_key_set
-                ):
+                if id(n) == id(op) and reduction_cols and reduction_cols <= group_key_set:
                     cols = ", ".join(sorted(reduction_cols))
                     raise WindowedBaseReductionError(
                         f"An empty window over a reduction of group-key "
@@ -1277,7 +1232,7 @@ def rename_measure_refs(expr, virtual_agg_tbl, name_map: dict[str, str]):
     new_vt_op = new_vt.op()
 
     field_substitutions = {}
-    for old_name, dtype in old_schema.items():
+    for old_name in old_schema:
         new_name = name_map.get(old_name, old_name)
         old_field = Field(vt_op, old_name)
         new_field = Field(new_vt_op, new_name)

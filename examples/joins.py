@@ -9,7 +9,6 @@ This example demonstrates:
 
 from pathlib import Path
 
-
 from boring_semantic_layer import from_yaml
 
 
@@ -30,12 +29,17 @@ def main():
     print("Example 1: Multi-level joins (flights -> aircraft -> models)")
     print("=" * 70)
 
-    flights_by_origin = flights.group_by("flights.origin").aggregate("flights.flight_count").limit(10).execute()
+    flights_by_origin = (
+        flights.group_by("flights.origin").aggregate("flights.flight_count").limit(10).execute()
+    )
     print("\nFlights by origin:")
     print(flights_by_origin)
 
     aircraft_by_type = (
-        aircraft.group_by("aircraft.aircraft_type_id").aggregate("aircraft.aircraft_count").limit(10).execute()
+        aircraft.group_by("aircraft.aircraft_type_id")
+        .aggregate("aircraft.aircraft_count")
+        .limit(10)
+        .execute()
     )
     print("\nAircraft by type:")
     print(aircraft_by_type)

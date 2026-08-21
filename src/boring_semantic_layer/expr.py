@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -12,13 +13,9 @@ from ibis.expr.types.relations import Table as IbisTable
 from returns.result import Success, safe
 
 from ._xorq import (
-    Column as XorqColumn,
-)
-from ._xorq import (
     GroupedTable,
     Table,
 )
-from .chart import chart as create_chart
 from .measure_scope import MeasureScope
 from .ops import (
     Dimension,
@@ -35,6 +32,7 @@ from .ops import (
     SemanticTableOp,
     SemanticUnnestOp,
     _classify_measure,
+    _collect_struct,
     _exact_filter_fields,
     _extract_columns_from_callable,
     _extract_join_key_columns,
@@ -46,8 +44,8 @@ from .ops import (
     _unwrap,
     make_bare_ref_lambda,
 )
-from .query import compare_periods as build_compare_periods
-from .query import query as build_query
+
+logger = logging.getLogger(__name__)
 
 _JOIN_REMOVED_MESSAGE = (
     "The join() method has been removed. Use join_one(), join_many(), or join_cross() instead.\n\n"
@@ -145,13 +143,43 @@ def _flatten_group_keys(keys: tuple) -> tuple:
     return tuple(flat)
 
 
-def to_tagged(expr, aggregate_cache_storage=None):
-    from .serialization import to_tagged as _to_tagged
+def _query_module():
+    """Call-time accessor for the query layer (which sits above expr).
 
-    return _to_tagged(expr, aggregate_cache_storage=aggregate_cache_storage)
+    The .query()/.compare_periods() convenience methods dispatch upward the
+    same way .chart() does — resolved at call time so the expression layer
+    holds no import-time dependency on the layers built on top of it.
+    """
+    import importlib
+
+    return importlib.import_module("boring_semantic_layer.query")
+
+
+def to_tagged(expr, aggregate_cache_storage=None):
+    # Serialization sits above the expression layer; resolve at call time
+    # (see _query_module).
+    import importlib
+
+    ser = importlib.import_module("boring_semantic_layer.serialization")
+    return ser.to_tagged(expr, aggregate_cache_storage=aggregate_cache_storage)
 
 
 class SemanticTable(ir.Table):
+    @property
+    def name(self) -> str | None:
+        """The semantic model's name, or None where no single model applies.
+
+        Defined on the base so every semantic expression answers `.name`
+        (aggregates, limits, and other derived shapes return None instead
+        of raising an AttributeError that blames ibis's Table).
+        """
+        return getattr(self.op(), "name", None)
+
+    @property
+    def description(self) -> str | None:
+        """The semantic model's description, or None."""
+        return getattr(self.op(), "description", None)
+
     def get_graph(self):
         """Get the dependency graph for this semantic table.
 
@@ -226,7 +254,72 @@ class SemanticTable(ir.Table):
         format: str = "static",
     ):
         """Create a chart from this semantic result."""
+        # The chart package is a presentation extra layered ABOVE the core
+        # expression API; resolve it at call time so core never depends on
+        # it at import time (mirrors pandas-style optional .plot accessors).
+        import importlib
+
+        create_chart = importlib.import_module("boring_semantic_layer.chart").chart
         return create_chart(self, spec=spec, backend=backend, format=format)
+
+    def query(
+        self,
+        dimensions: Sequence[str] | None = None,
+        measures: Sequence[str] | None = None,
+        filters: Sequence[dict | str | Callable] | None = None,
+        order_by: Sequence[tuple[str, str] | str] | None = None,
+        limit: int | None = None,
+        time_grain: str | None = None,
+        time_grains: dict[str, str] | None = None,
+        time_range: dict[str, str] | None = None,
+        having: Sequence[dict] | None = None,
+    ):
+        """Run a declarative (JSON-style) query against this semantic table.
+
+        Available on every semantic expression (models, joins, filters,
+        grouped/aggregated results). See ``boring_semantic_layer.query.query``
+        for parameter semantics and worked examples.
+        """
+        return _query_module().query(
+            semantic_table=self,
+            dimensions=dimensions,
+            measures=measures,
+            filters=filters,
+            order_by=order_by,
+            limit=limit,
+            time_grain=time_grain,
+            time_grains=time_grains,
+            time_range=time_range,
+            having=having,
+        )
+
+    def compare_periods(
+        self,
+        dimensions: Sequence[str] | None = None,
+        measures: Sequence[str] | None = None,
+        current_time_range: dict[str, str] | None = None,
+        previous_time_range: dict[str, str] | None = None,
+        filters: Sequence[dict | str | Callable] | None = None,
+        time_dimension: str | None = None,
+        time_grain: str | None = None,
+        time_grains: dict[str, str] | None = None,
+        order_by: Sequence[tuple[str, str] | str] | None = None,
+        limit: int | None = None,
+    ):
+        """Compare measures across two time ranges (current/previous/delta)."""
+        return _query_module().compare_periods(
+            semantic_table=self,
+            dimensions=dimensions,
+            measures=measures,
+            current_time_range=current_time_range,
+            previous_time_range=previous_time_range,
+            filters=filters,
+            time_dimension=time_dimension,
+            time_grain=time_grain,
+            time_grains=time_grains,
+            order_by=order_by,
+            limit=limit,
+        )
 
     def filter(self, predicate: Callable) -> SemanticFilter:
         return SemanticFilter(source=self.op(), predicate=predicate)
@@ -347,8 +440,6 @@ class SemanticTable(ir.Table):
         return self.op().to_untagged()
 
     def to_tagged(self, aggregate_cache_storage=None):
-        from .serialization import to_tagged
-
         return to_tagged(self, aggregate_cache_storage=aggregate_cache_storage)
 
     def execute(self, **kwargs):
@@ -454,8 +545,7 @@ def _expand_derived_dimensions(
     dimensions: Mapping[str, Dimension | Callable | dict] | None,
 ) -> FrozenDict[str, Dimension]:
     base_dimensions = {
-        dim_name: _create_dimension(dim)
-        for dim_name, dim in (dimensions or {}).items()
+        dim_name: _create_dimension(dim) for dim_name, dim in (dimensions or {}).items()
     }
     expanded_dimensions = dict(base_dimensions)
 
@@ -684,9 +774,7 @@ def _detect_grain_cardinality(left_op, right_op, on=None) -> str:
             normalized_on = _normalize_join_predicate(on)
             left_table = left_op.to_untagged()
             right_table = right_op.to_untagged()
-            join_columns = _extract_join_key_columns(
-                normalized_on, left_table, right_table
-            )
+            join_columns = _extract_join_key_columns(normalized_on, left_table, right_table)
             if join_columns.is_success():
                 left_entity_columns = _get_entity_source_columns(left_op)
                 right_entity_columns = _get_entity_source_columns(right_op)
@@ -694,10 +782,11 @@ def _detect_grain_cardinality(left_op, right_op, on=None) -> str:
                     left_entity_columns <= join_columns.left_columns
                     and right_entity_columns <= join_columns.right_columns
                 )
-        except Exception:
+        except Exception as exc:
             # Inconclusive predicate analysis keeps the explicit join_one
             # contract; aggregation-time validation still fails closed where
             # source-aware preaggregation depends on predicate shape.
+            logger.debug("Grain-cardinality predicate analysis inconclusive: %s", exc)
             join_misses_entity_grain = False
 
     if (
@@ -724,7 +813,6 @@ def _join_one_with_detected_grain(
     left_op,
     other,
     on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-    how: str,
 ) -> SemanticJoin:
     """Construct ``join_one`` consistently for every semantic wrapper."""
     other_op = other.op() if isinstance(other, SemanticTable) else other
@@ -733,7 +821,7 @@ def _join_one_with_detected_grain(
         left=left_op,
         right=other_op,
         on=on,
-        how=how,
+        how="left",
         cardinality=cardinality,
     )
 
@@ -781,9 +869,7 @@ def _replace_metadata_preserving_filters(
         predicate = _unwrap(source.predicate)
         try:
             deferred_resolution = bool(
-                object.__getattribute__(
-                    predicate, "__bsl_deferred_resolution__"
-                )
+                object.__getattribute__(predicate, "__bsl_deferred_resolution__")
             )
         except (AttributeError, TypeError):
             deferred_resolution = False
@@ -898,9 +984,7 @@ def _replace_metadata_preserving_filters(
             serialization_dims = {
                 name: (
                     lambda _table, _dim=dimension, _physical=symbolic_physical: (
-                        _dim.resolve(_physical)
-                        if _is_deferred(_dim)
-                        else _dim(_physical)
+                        _dim.resolve(_physical) if _is_deferred(_dim) else _dim(_physical)
                     )
                 )
                 for name, dimension in dims.items()
@@ -910,9 +994,9 @@ def _replace_metadata_preserving_filters(
                     # Keep undeclared exact fields in semantic resolver scope;
                     # their sidecar metadata synthesizes the appropriate
                     # joined/raw mapping after reconstruction.
-                    serialization_dims[field] = (
-                        lambda _table, _field=field, _scope=t: _scope[_field]
-                    )
+                    serialization_dims[field] = lambda _table, _field=field, _scope=t: _scope[
+                        _field
+                    ]
             scope = _Resolver(physical_scope, serialization_dims)
             return pred.resolve(scope) if _is_deferred(pred) else pred(scope)
 
@@ -1076,7 +1160,6 @@ class SemanticModel(SemanticTable):
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics.
 
@@ -1090,8 +1173,6 @@ class SemanticModel(SemanticTable):
             on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
                 name string, a Deferred ``_.col``, or a list of strings/Deferred for
                 compound equi-joins.
-            how: Join type. Only ``"left"`` is supported.
-
         Returns:
             SemanticJoin: The joined semantic model
 
@@ -1100,13 +1181,12 @@ class SemanticModel(SemanticTable):
             >>> orders.join_one(customers, on=_.customer_id)
             >>> orders.join_one(customers, on=lambda o, c: o.customer_id == c.customer_id)
         """
-        return _join_one_with_detected_grain(self.op(), other, on, how)
+        return _join_one_with_detected_grain(self.op(), other, on)
 
     def join_many(
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-many relationship semantics.
 
@@ -1115,8 +1195,6 @@ class SemanticModel(SemanticTable):
             on: Join predicate. Accepts a lambda ``(left, right) -> bool``, a column
                 name string, a Deferred ``_.col``, or a list of strings/Deferred for
                 compound equi-joins.
-            how: Join type. Only ``"left"`` is supported.
-
         Returns:
             SemanticJoin: The joined semantic model
 
@@ -1126,7 +1204,7 @@ class SemanticModel(SemanticTable):
             >>> customer.join_many(orders, on=lambda c, o: c.customer_id == o.customer_id)
         """
         other_op = other.op() if isinstance(other, SemanticModel) else other
-        return SemanticJoin(left=self.op(), right=other_op, on=on, how=how, cardinality="many")
+        return SemanticJoin(left=self.op(), right=other_op, on=on, how="left", cardinality="many")
 
     def join_cross(self, other: SemanticModel) -> SemanticJoin:
         """Cross join (Cartesian product) with another semantic model.
@@ -1150,7 +1228,7 @@ class SemanticModel(SemanticTable):
 
         The generic join() method has been removed. Please use:
         - join_one(other, lambda l, r: condition) for one-to-one relationships
-        - join_many(other, lambda l, r: condition, how="left") for one-to-many relationships
+        - join_many(other, lambda l, r: condition) for one-to-many relationships
         - join_cross(other) for Cartesian product
 
         Examples:
@@ -1205,58 +1283,6 @@ class SemanticModel(SemanticTable):
 
         raise KeyError(
             f"'{key}' not found in dimensions, measures, or calculated measures",
-        )
-
-    def query(
-        self,
-        dimensions: Sequence[str] | None = None,
-        measures: Sequence[str] | None = None,
-        filters: list | None = None,
-        order_by: Sequence[tuple[str, str]] | None = None,
-        limit: int | None = None,
-        time_grain: str | None = None,
-        time_grains: dict[str, str] | None = None,
-        time_range: dict[str, str] | None = None,
-        having: list | None = None,
-    ):
-        return build_query(
-            semantic_table=self,
-            dimensions=dimensions,
-            measures=measures,
-            filters=filters,
-            order_by=order_by,
-            limit=limit,
-            time_grain=time_grain,
-            time_grains=time_grains,
-            time_range=time_range,
-            having=having,
-        )
-
-    def compare_periods(
-        self,
-        dimensions: Sequence[str] | None = None,
-        measures: Sequence[str] | None = None,
-        current_time_range: dict[str, str] | None = None,
-        previous_time_range: dict[str, str] | None = None,
-        filters: list | None = None,
-        time_dimension: str | None = None,
-        time_grain: str | None = None,
-        time_grains: dict[str, str] | None = None,
-        order_by: Sequence[tuple[str, str]] | None = None,
-        limit: int | None = None,
-    ):
-        return build_compare_periods(
-            semantic_table=self,
-            dimensions=dimensions,
-            measures=measures,
-            current_time_range=current_time_range,
-            previous_time_range=previous_time_range,
-            filters=filters,
-            time_dimension=time_dimension,
-            time_grain=time_grain,
-            time_grains=time_grains,
-            order_by=order_by,
-            limit=limit,
         )
 
 
@@ -1398,31 +1424,6 @@ class SemanticJoin(SemanticTable):
     def json_definition(self):
         return self.op().json_definition
 
-    def query(
-        self,
-        dimensions: list[str] | None = None,
-        measures: list[str] | None = None,
-        filters: dict[str, Any] | None = None,
-        order_by: list[str] | None = None,
-        limit: int | None = None,
-        time_grain: str | None = None,
-        time_grains: dict[str, str] | None = None,
-        time_range: dict[str, str] | None = None,
-        having: list | None = None,
-    ):
-        return build_query(
-            semantic_table=self,
-            dimensions=dimensions,
-            measures=measures,
-            filters=filters,
-            order_by=order_by,
-            limit=limit,
-            time_grain=time_grain,
-            time_grains=time_grains,
-            time_range=time_range,
-            having=having,
-        )
-
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.op())
         return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
@@ -1469,23 +1470,21 @@ class SemanticJoin(SemanticTable):
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
-        return _join_one_with_detected_grain(self.op(), other, on, how)
+        return _join_one_with_detected_grain(self.op(), other, on)
 
     def join_many(
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-many relationship semantics."""
         return SemanticJoin(
             left=self.op(),
             right=other.op() if isinstance(other, SemanticModel) else other,
             on=on,
-            how=how,
+            how="left",
             cardinality="many",
         )
 
@@ -1505,10 +1504,10 @@ class SemanticJoin(SemanticTable):
 
     def group_by(self, *keys: str | Deferred):
         normalized = tuple(_normalize_to_name(k) for k in _flatten_group_keys(keys))
-        return self.op().group_by(*normalized)
+        return SemanticGroupBy(source=self.op(), keys=normalized)
 
     def filter(self, predicate: Callable):
-        return self.op().filter(predicate)
+        return SemanticFilter(source=self.op(), predicate=predicate)
 
 
 class SemanticFilter(SemanticTable):
@@ -1577,58 +1576,6 @@ class SemanticFilter(SemanticTable):
     def calc_measures(self):
         return dict(self.get_calculated_measures())
 
-    def query(
-        self,
-        dimensions: Sequence[str] | None = None,
-        measures: Sequence[str] | None = None,
-        filters: list | None = None,
-        order_by: Sequence[tuple[str, str]] | None = None,
-        limit: int | None = None,
-        time_grain: str | None = None,
-        time_grains: dict[str, str] | None = None,
-        time_range: dict[str, str] | None = None,
-        having: list | None = None,
-    ):
-        return build_query(
-            semantic_table=self,
-            dimensions=dimensions,
-            measures=measures,
-            filters=filters,
-            order_by=order_by,
-            limit=limit,
-            time_grain=time_grain,
-            time_grains=time_grains,
-            time_range=time_range,
-            having=having,
-        )
-
-    def compare_periods(
-        self,
-        dimensions: Sequence[str] | None = None,
-        measures: Sequence[str] | None = None,
-        current_time_range: dict[str, str] | None = None,
-        previous_time_range: dict[str, str] | None = None,
-        filters: list | None = None,
-        time_dimension: str | None = None,
-        time_grain: str | None = None,
-        time_grains: dict[str, str] | None = None,
-        order_by: Sequence[tuple[str, str]] | None = None,
-        limit: int | None = None,
-    ):
-        return build_compare_periods(
-            semantic_table=self,
-            dimensions=dimensions,
-            measures=measures,
-            current_time_range=current_time_range,
-            previous_time_range=previous_time_range,
-            filters=filters,
-            time_dimension=time_dimension,
-            time_grain=time_grain,
-            time_grains=time_grains,
-            order_by=order_by,
-            limit=limit,
-        )
-
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.op().source)
         return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
@@ -1677,23 +1624,21 @@ class SemanticFilter(SemanticTable):
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
-        return _join_one_with_detected_grain(self.op(), other, on, how)
+        return _join_one_with_detected_grain(self.op(), other, on)
 
     def join_many(
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-many relationship semantics."""
         return SemanticJoin(
             left=self.op(),
             right=other.op() if isinstance(other, SemanticModel) else other,
             on=on,
-            how=how,
+            how="left",
             cardinality="many",
         )
 
@@ -1710,20 +1655,6 @@ class SemanticFilter(SemanticTable):
     def join(self, *args, **kwargs):
         """Deprecated: Use join_one(), join_many(), or join_cross() instead."""
         raise TypeError(_JOIN_REMOVED_MESSAGE)
-
-
-def _collect_struct(struct_dict: dict[str, Any], **collect_kwargs):
-    """Build ``struct(...).collect()`` from columns of a single ibis flavor.
-
-    ``ibis.struct`` and ``xorq.vendor.ibis.struct`` are not interchangeable:
-    each can only infer types from columns of its own module.
-    """
-    first_col = next(iter(struct_dict.values()))
-    if isinstance(first_col, XorqColumn):
-        from ._xorq import ibis as xibis
-
-        return xibis.struct(struct_dict).collect(**collect_kwargs)
-    return ibis.struct(struct_dict).collect(**collect_kwargs)
 
 
 def _make_row_struct_collector(columns: tuple[str, ...]) -> Callable:
@@ -1792,9 +1723,7 @@ def _regrain_nested_specs(aggs: dict, new_outer_keys: tuple[str, ...]) -> dict:
             out[agg_name] = agg_fn
             continue
         inner = spec.inner_op
-        widened = tuple(new_outer_keys) + tuple(
-            k for k in inner.keys if k not in new_outer_keys
-        )
+        widened = tuple(new_outer_keys) + tuple(k for k in inner.keys if k not in new_outer_keys)
         if widened == tuple(inner.keys):
             out[agg_name] = agg_fn
             continue
@@ -1958,8 +1887,7 @@ class SemanticGroupBy(SemanticTable):
         if nest:
             source_op = self.op().source
             nest_aggs = {
-                name: _build_nest_agg(name, fn, source_op, self.keys)
-                for name, fn in nest.items()
+                name: _build_nest_agg(name, fn, source_op, self.keys) for name, fn in nest.items()
             }
             aggs = {**aggs, **nest_aggs}
             nested_columns = tuple(nest.keys())
@@ -2055,23 +1983,21 @@ class SemanticAggregate(SemanticTable):
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-one relationship semantics."""
-        return _join_one_with_detected_grain(self.op(), other, on, how)
+        return _join_one_with_detected_grain(self.op(), other, on)
 
     def join_many(
         self,
         other: SemanticModel,
         on: Callable[[Any, Any], ir.BooleanValue] | str | Deferred | Sequence[str | Deferred],
-        how: str = "left",
     ) -> SemanticJoin:
         """Join with one-to-many relationship semantics."""
         return SemanticJoin(
             left=self.op(),
             right=other.op(),
             on=on,
-            how=how,
+            how="left",
             cardinality="many",
         )
 

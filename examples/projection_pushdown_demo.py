@@ -10,7 +10,7 @@ Run with: python examples/projection_pushdown_demo.py
 import ibis
 import pandas as pd
 
-from boring_semantic_layer import to_untagged, to_semantic_table
+from boring_semantic_layer import to_semantic_table, to_untagged
 
 
 def main():
@@ -63,7 +63,9 @@ def main():
     )
 
     joined = customers.join_one(orders, on="customer_id")
-    query = joined.group_by("customers.customer_id", "customers.name").aggregate("orders.total_amount")
+    query = joined.group_by("customers.customer_id", "customers.name").aggregate(
+        "orders.total_amount"
+    )
 
     print("=" * 80)
     print("PROJECTION PUSHDOWN OPTIMIZATION (ALWAYS ENABLED)")

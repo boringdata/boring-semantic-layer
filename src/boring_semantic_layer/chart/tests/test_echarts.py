@@ -1,7 +1,8 @@
 """Tests for ECharts chart backend functionality with SemanticAggregate."""
 
-import ibis
 import json
+
+import ibis
 import pandas as pd
 import pytest
 
@@ -61,7 +62,6 @@ class TestEChartsBackendRegistration:
 
         backends = list_backends()
         assert "echarts" in backends
-
 
 
 class TestEChartsBasicCharts:
@@ -231,9 +231,7 @@ class TestEChartsFieldSanitization:
         )
         carriers_tbl = con.create_table("carriers_echarts", carriers_df, overwrite=True)
 
-        flights_df = pd.DataFrame(
-            {"carrier": ["AA", "UA", "DL"], "distance": [2475, 337, 382]}
-        )
+        flights_df = pd.DataFrame({"carrier": ["AA", "UA", "DL"], "distance": [2475, 337, 382]})
         flights_tbl = con.create_table("flights_join_echarts", flights_df, overwrite=True)
 
         # Create semantic tables

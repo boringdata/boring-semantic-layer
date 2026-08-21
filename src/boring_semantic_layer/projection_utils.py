@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -9,6 +10,7 @@ from attrs import frozen
 from returns.result import Failure, Success, safe
 
 from ._xorq import types as ir
+from .fieldref import split_prefixed
 from .graph_utils import walk_nodes
 
 
@@ -56,6 +58,9 @@ class TableRequirements:
     def __repr__(self) -> str:
         items = [f"{t}:{len(c)}" for t, c in self.requirements.items()]
         return f"TableRequirements({', '.join(items)})"
+
+
+logger = logging.getLogger(__name__)
 
 
 @safe
@@ -135,16 +140,7 @@ def apply_requirements_to_tables(
     return result
 
 
-def _parse_prefixed_field(key: str) -> tuple[str | None, str]:
-    """Parse prefixed field like 'customers.name' into (table_name, col_name).
-
-    Returns:
-        (table_name, col_name) if prefixed, (None, key) otherwise
-    """
-    if "." in key:
-        parts = key.split(".", 1)
-        return (parts[0], parts[1])
-    return (None, key)
+_parse_prefixed_field = split_prefixed
 
 
 def extract_requirements_from_measures(
@@ -166,19 +162,28 @@ def extract_requirements_from_measures(
         Requirements for all measures
     """
 
-    def process_measure(reqs: TableRequirements, measure_fn: Callable) -> TableRequirements:
+    def process_measure(reqs: TableRequirements, item: tuple[str, Callable]) -> TableRequirements:
         """Process a single measure, accumulating requirements."""
-        return (
-            extract_columns_from_callable(measure_fn, table)
-            .map(
-                lambda cols: apply_requirements_to_tables(reqs, table_names, cols) if cols else reqs
+        name, measure_fn = item
+        result = extract_columns_from_callable(measure_fn, table)
+        if isinstance(result, Failure):
+            # Fail closed: an unanalyzable measure must disable join pruning,
+            # not silently contribute nothing (which would let pruning drop
+            # the very table the measure reads).
+            logger.warning(
+                "Could not analyze measure %r for join pruning (%s); "
+                "requiring all columns so no table is pruned.",
+                name,
+                result.failure(),
             )
-            .value_or(reqs)
-        )
+            all_cols = frozenset(table.columns) if hasattr(table, "columns") else frozenset()
+            return apply_requirements_to_tables(reqs, table_names, all_cols)
+        cols = result.unwrap()
+        return apply_requirements_to_tables(reqs, table_names, cols) if cols else reqs
 
     from functools import reduce
 
-    return reduce(process_measure, measures.values(), TableRequirements.empty())
+    return reduce(process_measure, measures.items(), TableRequirements.empty())
 
 
 def _extract_requirement_for_key(
@@ -227,6 +232,16 @@ def _extract_requirement_for_key(
                         break
                 if not is_prefix:
                     raise exc
+            else:
+                # Fail closed: an unanalyzable group key must disable join
+                # pruning rather than silently contribute nothing.
+                logger.warning(
+                    "Could not analyze group key %r for join pruning (%s); "
+                    "requiring all columns so no table is pruned.",
+                    key,
+                    exc,
+                )
+                return apply_requirements_to_tables(current_reqs, table_names, available_cols)
         return current_reqs
 
     # If not a dimension and we have a table prefix, assume col_name is a direct column reference

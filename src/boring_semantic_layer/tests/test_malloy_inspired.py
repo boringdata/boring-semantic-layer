@@ -765,21 +765,17 @@ class TestNestedAggregation:
             flights.group_by("origin")
             .aggregate(
                 "flight_count",
-                nest={
-                    "by_carrier": lambda t: t.group_by("carrier").aggregate(
-                        "flight_count"
-                    )
-                },
+                nest={"by_carrier": lambda t: t.group_by("carrier").aggregate("flight_count")},
             )
             .execute()
             .set_index("origin")
         )
 
         assert result.loc["NYC", "flight_count"] == 3
-        assert {
-            row["carrier"]: row["flight_count"]
-            for row in result.loc["NYC", "by_carrier"]
-        } == {"AA": 2, "DL": 1}
+        assert {row["carrier"]: row["flight_count"] for row in result.loc["NYC", "by_carrier"]} == {
+            "AA": 2,
+            "DL": 1,
+        }
         assert result.loc["LAX", "by_carrier"] == [{"carrier": "UA", "flight_count": 1}]
 
     def test_semantic_nest_preserves_inner_order_and_limit(self):

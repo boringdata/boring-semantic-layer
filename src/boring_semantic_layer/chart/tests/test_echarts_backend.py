@@ -1,13 +1,13 @@
 """Comprehensive tests for ECharts backend."""
 
-import pytest
 import pandas as pd
+import pytest
 
 from boring_semantic_layer.chart.echarts import (
+    DEFAULT_COLOR_PALETTE,
     EChartsBackend,
     EChartsChartType,
     EChartsOption,
-    DEFAULT_COLOR_PALETTE,
 )
 
 
@@ -476,9 +476,7 @@ class TestEChartsBackend:
         """Test chart type that exists in enum but isn't implemented yet."""
         # heatmap is in EChartsChartType but not implemented
         with pytest.raises(ValueError, match="recognized but not yet implemented"):
-            backend.generate_spec(
-                sample_data, EChartsChartType.HEATMAP, x="category", y="value"
-            )
+            backend.generate_spec(sample_data, EChartsChartType.HEATMAP, x="category", y="value")
 
     # =========================================================================
     # 8. Edge cases
@@ -660,12 +658,14 @@ class TestEChartsBackendIntegration:
     @pytest.fixture
     def sales_data(self):
         """Realistic sales data."""
-        return pd.DataFrame({
-            "month": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
-            "revenue": [10000, 12000, 15000, 14000, 18000, 20000],
-            "expenses": [8000, 9000, 11000, 10000, 12000, 13000],
-            "region": ["East", "East", "West", "West", "East", "West"],
-        })
+        return pd.DataFrame(
+            {
+                "month": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
+                "revenue": [10000, 12000, 15000, 14000, 18000, 20000],
+                "expenses": [8000, 9000, 11000, 10000, 12000, 13000],
+                "region": ["East", "East", "West", "West", "East", "West"],
+            }
+        )
 
     def test_sales_bar_chart(self, sales_data):
         """Test creating a sales bar chart."""

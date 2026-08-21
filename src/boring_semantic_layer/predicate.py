@@ -147,9 +147,7 @@ def from_dict(spec: dict[str, Any]) -> Predicate:
 
     op = spec.get("operator")
     if op is None:
-        raise KeyError(
-            "Missing required keys in filter: 'field' and 'operator' are required"
-        )
+        raise KeyError("Missing required keys in filter: 'field' and 'operator' are required")
 
     if op == "AND":
         return And(children=tuple(from_dict(c) for c in _require_conditions(spec, op)))
@@ -158,9 +156,7 @@ def from_dict(spec: dict[str, Any]) -> Predicate:
 
     field_name = spec.get("field")
     if field_name is None:
-        raise KeyError(
-            "Missing required keys in filter: 'field' and 'operator' are required"
-        )
+        raise KeyError("Missing required keys in filter: 'field' and 'operator' are required")
 
     if op == "is null":
         _reject_value_keys(spec, op)
@@ -274,9 +270,7 @@ def _field_accessor(
             return table[name]
         except (AttributeError, KeyError, TypeError) as exc:
             if strict_qualified:
-                raise KeyError(
-                    f"Qualified filter field {name!r} did not resolve exactly"
-                ) from exc
+                raise KeyError(f"Qualified filter field {name!r} did not resolve exactly") from exc
             _prefix, unprefixed = name.split(".", 1)
             return getattr(table, unprefixed)
     return getattr(table, name)

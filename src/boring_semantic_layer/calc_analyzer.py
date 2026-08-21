@@ -34,9 +34,11 @@ from ._xorq import (
     Deferred,
     Field,
     Node,
-    operations as ibis_ops,
 )
 from ._xorq import ibis as ibis_mod
+from ._xorq import (
+    operations as ibis_ops,
+)
 
 
 @frozen(kw_only=True)
@@ -328,10 +330,7 @@ def analyze_calc_expr(
     # cross-aggregation patterns, no measure refs (since measures are
     # already aggregated and can't push pre-agg).
     pushable = (
-        not has_window
-        and not references_AllOf
-        and not depends_on
-        and len(source_tables) <= 1
+        not has_window and not references_AllOf and not depends_on and len(source_tables) <= 1
     )
 
     post_agg_only = has_window or references_AllOf or bool(depends_on)

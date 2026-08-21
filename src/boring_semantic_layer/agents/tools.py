@@ -12,10 +12,10 @@ from typing import Any
 import ibis
 from langchain_core.tools import ToolException
 
-from boring_semantic_layer import from_yaml
 from boring_semantic_layer.agents.utils.chart_handler import generate_chart_with_data
 from boring_semantic_layer.agents.utils.prompts import load_prompt
-from boring_semantic_layer.utils import safe_eval
+from boring_semantic_layer.safe_eval import safe_eval
+from boring_semantic_layer.yaml import from_yaml
 
 
 def _models_ibis_module(models: dict) -> Any:

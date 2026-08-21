@@ -61,7 +61,7 @@ def freeze(obj: Any, *, path: str = "metadata") -> Any:
         f"Cannot serialize {path}: {type(obj).__name__} has no lossless "
         f"representation in xorq tag metadata (value: {obj!r}). Expression "
         "constants of this type must be encoded by "
-        "boring_semantic_layer.utils._encode_scalar before reaching freeze()."
+        "boring_semantic_layer.serialization.codec._encode_scalar before reaching freeze()."
     )
 
 
@@ -81,8 +81,7 @@ def thaw(obj: Any, *, key: str | None = None) -> Any:
         if len(obj) == 0:
             return {}
         if all(
-            isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str)
-            for item in obj
+            isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str) for item in obj
         ):
             return {k: thaw(v, key=k) for k, v in obj}
         return [thaw(item) for item in obj]
@@ -101,8 +100,7 @@ def thaw_shallow(obj: Any) -> dict:
         isinstance(obj, tuple)
         and obj
         and all(
-            isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str)
-            for item in obj
+            isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str) for item in obj
         )
     ):
         return dict(obj)

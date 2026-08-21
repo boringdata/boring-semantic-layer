@@ -128,7 +128,7 @@ def test_projection_pushdown_after_join(wide_tables):
     )
 
     # Join flights with aircraft
-    joined = flights.join_many(aircraft, lambda f, a: f.tail_num == a.tail_num, how="left")
+    joined = flights.join_many(aircraft, lambda f, a: f.tail_num == a.tail_num)
 
     # Query: group by origin, count flights
     # Should ONLY need:
@@ -181,7 +181,7 @@ def test_projection_pushdown_with_dimension_from_right_table(wide_tables):
     )
 
     # Join flights with aircraft
-    joined = flights.join_many(aircraft, lambda f, a: f.tail_num == a.tail_num, how="left")
+    joined = flights.join_many(aircraft, lambda f, a: f.tail_num == a.tail_num)
 
     # Query: group by manufacturer (from aircraft table), count flights
     # Should need:
@@ -255,7 +255,7 @@ def test_projection_pushdown_counts_columns(wide_tables):
     )
 
     # Join and query
-    joined = flights.join_many(aircraft, lambda f, a: f.tail_num == a.tail_num, how="left")
+    joined = flights.join_many(aircraft, lambda f, a: f.tail_num == a.tail_num)
     query = joined.group_by("flights.origin").aggregate("flight_count")
 
     sql = str(ibis.to_sql(to_untagged(query)))
@@ -305,7 +305,7 @@ def test_projection_pushdown_multiple_dimensions(wide_tables):
     )
 
     # Join tables
-    joined = flights.join_many(aircraft, lambda f, a: f.tail_num == a.tail_num, how="left")
+    joined = flights.join_many(aircraft, lambda f, a: f.tail_num == a.tail_num)
 
     # Query using dimensions from both tables
     query = joined.group_by("flights.origin", "aircraft.manufacturer").aggregate("flight_count")
@@ -417,9 +417,9 @@ def test_projection_pushdown_three_way_join_all_notations(duckdb_con):
     )
 
     # Three-way join using raw column access in predicates
-    joined = orders.join_many(
-        customers, lambda o, c: o.customer_id == c.customer_id, how="left"
-    ).join_many(items, lambda oc, i: oc.order_id == i.order_id, how="left")
+    joined = orders.join_many(customers, lambda o, c: o.customer_id == c.customer_id).join_many(
+        items, lambda oc, i: oc.order_id == i.order_id
+    )
 
     # Test 1: Use bracket notation with prefixes in calculated measures
     result1 = (

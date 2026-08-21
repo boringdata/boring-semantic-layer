@@ -13,7 +13,7 @@ from typing import Any
 
 from returns.result import safe
 
-from .context import BSLSerializationContext
+from .context import SUPPORTED_PAYLOAD_MAJORS, BSLSerializationContext
 from .extract import deserialize_calc_measures
 from .freeze import thaw
 
@@ -178,9 +178,7 @@ def _reconstruct_semantic_table(
 
 
 @register_reconstructor("SemanticFilterOp")
-def _reconstruct_filter(
-    metadata: dict, xorq_expr, source, context: BSLSerializationContext
-):
+def _reconstruct_filter(metadata: dict, xorq_expr, source, context: BSLSerializationContext):
     if source is None:
         raise ValueError("SemanticFilterOp requires source")
     predicate = context.deserialize_expr(
@@ -210,9 +208,7 @@ def _reconstruct_filter(
 
 
 @register_reconstructor("SemanticGroupByOp")
-def _reconstruct_group_by(
-    metadata: dict, xorq_expr, source, context: BSLSerializationContext
-):
+def _reconstruct_group_by(metadata: dict, xorq_expr, source, context: BSLSerializationContext):
     if source is None:
         raise ValueError("SemanticGroupByOp requires source")
     keys = tuple(context.parse_field(metadata, "keys")) or ()
@@ -220,9 +216,7 @@ def _reconstruct_group_by(
 
 
 @register_reconstructor("SemanticAggregateOp")
-def _reconstruct_aggregate(
-    metadata: dict, xorq_expr, source, context: BSLSerializationContext
-):
+def _reconstruct_aggregate(metadata: dict, xorq_expr, source, context: BSLSerializationContext):
     if source is None:
         raise ValueError("SemanticAggregateOp requires source")
     aggs_struct = context.parse_structured_dict(metadata.get("aggs_struct", ()))
@@ -262,8 +256,7 @@ def _bare_ref_names(metadata: dict, aggs_struct: dict, source) -> set[str]:
         return {n for n in declared if isinstance(n, str)}
 
     from ..ops import make_bare_ref_lambda
-    from ..utils import expr_to_structured
-
+    from .codec import expr_to_structured
     from .freeze import list_to_tuple
 
     known: set[str] = set()
@@ -293,10 +286,9 @@ def _bare_ref_names(metadata: dict, aggs_struct: dict, source) -> set[str]:
             recovered.add(name)
     return recovered
 
+
 @register_reconstructor("SemanticProjectOp")
-def _reconstruct_project(
-    metadata: dict, xorq_expr, source, context: BSLSerializationContext
-):
+def _reconstruct_project(metadata: dict, xorq_expr, source, context: BSLSerializationContext):
     if source is None:
         raise ValueError("SemanticProjectOp requires source")
     fields = tuple(context.parse_field(metadata, "fields")) or ()
@@ -304,9 +296,7 @@ def _reconstruct_project(
 
 
 @register_reconstructor("SemanticOrderByOp")
-def _reconstruct_order_by(
-    metadata: dict, xorq_expr, source, context: BSLSerializationContext
-):
+def _reconstruct_order_by(metadata: dict, xorq_expr, source, context: BSLSerializationContext):
     if source is None:
         raise ValueError("SemanticOrderByOp requires source")
 
@@ -330,9 +320,7 @@ def _reconstruct_order_by(
 
 
 @register_reconstructor("SemanticLimitOp")
-def _reconstruct_limit(
-    metadata: dict, xorq_expr, source, context: BSLSerializationContext
-):
+def _reconstruct_limit(metadata: dict, xorq_expr, source, context: BSLSerializationContext):
     if source is None:
         raise ValueError("SemanticLimitOp requires source")
     return source.limit(n=int(metadata.get("n", 0)), offset=int(metadata.get("offset", 0)))
@@ -373,9 +361,7 @@ def _validate_join_leaf(model, metadata, side: str) -> None:
 
 
 @register_reconstructor("SemanticJoinOp")
-def _reconstruct_join(
-    metadata: dict, xorq_expr, source, context: BSLSerializationContext
-):
+def _reconstruct_join(metadata: dict, xorq_expr, source, context: BSLSerializationContext):
     from .. import expr as bsl_expr
     from .._xorq import relations as xorq_rel
     from .._xorq import walk_nodes
@@ -406,9 +392,8 @@ def _reconstruct_join(
     _validate_join_leaf(left_model, left_metadata, "left")
     _validate_join_leaf(right_model, right_metadata, "right")
 
-    # Payloads written before ``how`` was serialized must preserve left-side
-    # rows rather than silently treating the relationship as an inner join.
-    how = metadata.get("how", "left")
+    # ``how`` in stored payloads is informational: semantic joins are always
+    # LEFT joins (join_cross carries how="cross" on the op directly).
     # Default to "many" for payloads serialized before cardinality was
     # emitted — join_many is a safe superset of join_one behaviour, while
     # the reverse silently skips pre-aggregation.  (Fixes #223.)
@@ -420,7 +405,7 @@ def _reconstruct_join(
             left=left_model.op() if hasattr(left_model, "op") else left_model,
             right=right_model.op() if hasattr(right_model, "op") else right_model,
             on=None,
-            how=how,
+            how="cross" if cardinality == "cross" else "left",
             cardinality=cardinality,
         )
 
@@ -432,7 +417,7 @@ def _reconstruct_join(
     }.get(cardinality, "join_many")
     if join_method == "join_cross":
         return left_model.join_cross(right_model)
-    return getattr(left_model, join_method)(right_model, on=predicate, how=how)
+    return getattr(left_model, join_method)(right_model, on=predicate)
 
 
 # ---------------------------------------------------------------------------
@@ -546,9 +531,6 @@ def extract_xorq_metadata(xorq_expr) -> dict[str, Any] | None:
 #: written from the start but never checked, so a v1.0 tag (whose expressions
 #: were pickled — a format no longer read at all) used to load as a model with
 #: silently degraded fields instead of failing.
-SUPPORTED_PAYLOAD_MAJORS = frozenset({2})
-
-
 def _check_payload_version(metadata: dict[str, Any]) -> None:
     """Refuse a payload written by an incompatible serializer version."""
     version = metadata.get("bsl_version")

@@ -18,14 +18,14 @@ import pytest
 
 xorq = pytest.importorskip("xorq", reason="xorq not installed")
 
+from xorq.expr.builders import TagHandler as _TagHandler
+
 from boring_semantic_layer import SemanticModel  # noqa: E402
 from boring_semantic_layer.serialization import to_tagged  # noqa: E402
 from boring_semantic_layer.serialization.tag_handler import (  # noqa: E402
     bsl_tag_handler,
     reemit,
 )
-
-from xorq.expr.builders import TagHandler as _TagHandler
 
 _has_reemit = "reemit" in {a.name for a in _TagHandler.__attrs_attrs__}
 requires_reemit = pytest.mark.skipif(
@@ -226,9 +226,7 @@ def catalog_with_bsl_query(tmpdir):
         measures={"avg_delay": lambda t: t.delay.mean()},
         name="flights_model",
     )
-    tagged = to_tagged(
-        model.query(dimensions=("origin",), measures=("avg_delay",))
-    )
+    tagged = to_tagged(model.query(dimensions=("origin",), measures=("avg_delay",)))
     bsl_entry = catalog.add(tagged, aliases=("origin-delays",))
 
     return catalog, source_entry, bsl_entry

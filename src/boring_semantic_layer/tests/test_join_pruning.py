@@ -83,47 +83,37 @@ def _build_star_model(star_schema):
             total_qty=lambda t: t.quantity.sum(),
         )
     )
-    dates = (
-        to_semantic_table(star_schema["dates"], name="dates")
-        .with_dimensions(
-            date_id=lambda t: t.date_id,
-            date_name=lambda t: t.date_name,
-            quarter=lambda t: t.quarter,
-        )
+    dates = to_semantic_table(star_schema["dates"], name="dates").with_dimensions(
+        date_id=lambda t: t.date_id,
+        date_name=lambda t: t.date_name,
+        quarter=lambda t: t.quarter,
     )
-    stores = (
-        to_semantic_table(star_schema["stores"], name="stores")
-        .with_dimensions(
-            store_id=lambda t: t.store_id,
-            store_name=lambda t: t.store_name,
-            city=lambda t: t.city,
-        )
+    stores = to_semantic_table(star_schema["stores"], name="stores").with_dimensions(
+        store_id=lambda t: t.store_id,
+        store_name=lambda t: t.store_name,
+        city=lambda t: t.city,
     )
-    items = (
-        to_semantic_table(star_schema["items"], name="items")
-        .with_dimensions(
-            item_id=lambda t: t.item_id,
-            item_name=lambda t: t.item_name,
-            category=lambda t: t.category,
-        )
+    items = to_semantic_table(star_schema["items"], name="items").with_dimensions(
+        item_id=lambda t: t.item_id,
+        item_name=lambda t: t.item_name,
+        category=lambda t: t.category,
     )
 
     return (
         facts.join_one(dates, on=lambda f, d: f.date_id == d.date_id)
-        .join_one(stores, on=lambda f, s: f.store_id == s.store_id, how="left")
-        .join_one(items, on=lambda f, i: f.item_id == i.item_id, how="left")
+        .join_one(stores, on=lambda f, s: f.store_id == s.store_id)
+        .join_one(items, on=lambda f, i: f.item_id == i.item_id)
     )
 
 
 @pytest.mark.parametrize("join_method", ["join_one", "join_many"])
-@pytest.mark.parametrize("how", ["inner", "right", "outer", "cross"])
-def test_semantic_joins_reject_non_left_join_types(star_schema, join_method, how):
-    """Semantic relationships preserve left rows; cross joins use join_cross()."""
+def test_semantic_joins_have_no_how_parameter(star_schema, join_method):
+    """Semantic joins are always LEFT joins: the parameter no longer exists."""
     facts = to_semantic_table(star_schema["facts"], name="reject_facts")
     dates = to_semantic_table(star_schema["dates"], name="reject_dates")
 
-    with pytest.raises(ValueError, match="only support how='left'"):
-        getattr(facts, join_method)(dates, on="date_id", how=how)
+    with pytest.raises(TypeError, match="how"):
+        getattr(facts, join_method)(dates, on="date_id", how="inner")
 
 
 def test_join_cross_remains_supported(star_schema):
@@ -243,9 +233,11 @@ class TestJoinPruningCorrectness:
         pruned = model.aggregate("facts.total_sales").execute()
 
         # Manual: query directly on fact table
-        manual = star_schema["facts"].aggregate(
-            total_sales=star_schema["facts"].sale_amount.sum()
-        ).execute()
+        manual = (
+            star_schema["facts"]
+            .aggregate(total_sales=star_schema["facts"].sale_amount.sum())
+            .execute()
+        )
 
         assert pruned["facts.total_sales"].iloc[0] == manual["total_sales"].iloc[0]
 
@@ -329,10 +321,7 @@ class TestJoinPruningEdgeCases:
         """When grouping by one dim, other dim tables should be absent from SQL."""
         model = _build_star_model(star_schema)
         ibis_expr = (
-            model.group_by("stores.store_name")
-            .aggregate("facts.total_sales")
-            .op()
-            .to_untagged()
+            model.group_by("stores.store_name").aggregate("facts.total_sales").op().to_untagged()
         )
         sql = str(ibis.to_sql(ibis_expr)).lower()
 

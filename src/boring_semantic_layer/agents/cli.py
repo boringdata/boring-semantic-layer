@@ -6,7 +6,23 @@ import shutil
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:  # python-dotenv ships with the `agent` extra
+
+    def load_dotenv(dotenv_path=None):
+        """Fallback when python-dotenv is not installed.
+
+        Loading an explicit env file without the dependency is an error;
+        the implicit best-effort load is a no-op.
+        """
+        if dotenv_path is not None:
+            raise ImportError(
+                "Loading an env file requires python-dotenv. "
+                "Install with: pip install 'boring-semantic-layer[agent]'"
+            )
+        return False
+
 
 # Tool configurations - how each tool stores skills
 TOOL_CONFIGS = {

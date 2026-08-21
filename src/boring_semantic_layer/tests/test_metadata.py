@@ -1,7 +1,7 @@
 """Tests for the ``metadata`` field on Dimension and Measure."""
 
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 import ibis
 
@@ -133,9 +133,7 @@ orders:
         is_additive: true
 """
     con = ibis.duckdb.connect(":memory:")
-    data = ibis.memtable(
-        {"country": ["SE", "DE"], "sales": [1.0, 2.0]}
-    )
+    data = ibis.memtable({"country": ["SE", "DE"], "sales": [1.0, 2.0]})
     tbl = con.create_table("orders_tbl", data)
 
     with tempfile.TemporaryDirectory() as tmp:

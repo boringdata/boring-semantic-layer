@@ -432,10 +432,10 @@ def test_ifelse_tagged_roundtrip(flights_data):
 
 def test_serialize_resolver_simple_attr():
     """_.distance round-trips through structured serialization."""
-    from boring_semantic_layer.utils import deserialize_resolver, serialize_resolver
-
     from xorq.vendor.ibis import _
     from xorq.vendor.ibis.common.deferred import Deferred
+
+    from boring_semantic_layer.serialization.codec import deserialize_resolver, serialize_resolver
 
     d = _.distance
     data = serialize_resolver(d._resolver)
@@ -449,10 +449,10 @@ def test_serialize_resolver_simple_attr():
 
 def test_serialize_resolver_method_call():
     """_.distance.mean() round-trips through structured serialization."""
-    from boring_semantic_layer.utils import deserialize_resolver, serialize_resolver
-
     from xorq.vendor.ibis import _
     from xorq.vendor.ibis.common.deferred import Deferred
+
+    from boring_semantic_layer.serialization.codec import deserialize_resolver, serialize_resolver
 
     d = _.distance.mean()
     data = serialize_resolver(d._resolver)
@@ -468,9 +468,9 @@ def test_serialize_resolver_method_call():
 def test_serialize_resolver_case_expr():
     """case().when(_.distance < 200, 1).else_(0).end().sum() round-trips."""
     import xorq.api as xo
-
-    from boring_semantic_layer.utils import expr_to_structured, structured_to_expr
     from xorq.common.utils.ibis_utils import from_ibis
+
+    from boring_semantic_layer.serialization.codec import expr_to_structured, structured_to_expr
 
     fn = lambda t: xo.case().when(t.distance < 200, 1).else_(0).end().sum()
     result = expr_to_structured(fn)
@@ -498,10 +498,10 @@ def test_serialize_resolver_item_subscript_roundtrips_and_hashes():
     dict key inside ibis op replacement). Calc measures that look up
     prefixed names via subscript depend on this round-trip.
     """
-    from boring_semantic_layer.utils import deserialize_resolver, serialize_resolver
-
     from xorq.vendor.ibis import _
     from xorq.vendor.ibis.common.deferred import Deferred
+
+    from boring_semantic_layer.serialization.codec import deserialize_resolver, serialize_resolver
 
     d = _["flights.flight_count"]
     data = serialize_resolver(d._resolver)
@@ -523,9 +523,9 @@ def test_serialize_resolver_item_subscript_roundtrips_and_hashes():
 def test_serialize_resolver_ifelse():
     """xo.ifelse(_.distance < 200, 1, 0).sum() round-trips."""
     import xorq.api as xo
-
-    from boring_semantic_layer.utils import expr_to_structured, structured_to_expr
     from xorq.common.utils.ibis_utils import from_ibis
+
+    from boring_semantic_layer.serialization.codec import expr_to_structured, structured_to_expr
 
     fn = lambda t: xo.ifelse(t.distance < 200, 1, 0).sum()
     result = expr_to_structured(fn)
@@ -624,7 +624,7 @@ def test_structured_tagged_roundtrip_ifelse(flights_data):
 
 def _make_resolver_roundtrip(fn):
     """Helper: serialize a lambda -> structured tuple -> Deferred, return Deferred."""
-    from boring_semantic_layer.utils import expr_to_structured, structured_to_expr
+    from boring_semantic_layer.serialization.codec import expr_to_structured, structured_to_expr
 
     data = expr_to_structured(fn).unwrap()
     return structured_to_expr(data).unwrap()
@@ -726,7 +726,7 @@ def test_resolver_roundtrip_boolean_cast_sum(xorq_flights):
 
 def test_resolver_roundtrip_desc(xorq_flights):
     """The .desc() method call on a column round-trips."""
-    from boring_semantic_layer.utils import expr_to_structured, structured_to_expr
+    from boring_semantic_layer.serialization.codec import expr_to_structured, structured_to_expr
 
     fn = lambda t: t.distance.desc()
     data = expr_to_structured(fn).unwrap()
@@ -846,13 +846,9 @@ def _joined_qualified_raw_json_filter(table_suffix):
             }
         ),
     )
-    orders = to_semantic_table(orders_tbl, "orders").with_dimensions(
-        status=lambda t: t.status
-    )
+    orders = to_semantic_table(orders_tbl, "orders").with_dimensions(status=lambda t: t.status)
     # ``status`` intentionally remains an undeclared raw column on the right.
-    items = to_semantic_table(items_tbl, "items").with_measures(
-        total=lambda t: t.amount.sum()
-    )
+    items = to_semantic_table(items_tbl, "items").with_measures(total=lambda t: t.amount.sum())
     joined = orders.join_many(items, on="order_id")
     predicate = Filter(
         filter={"field": "items.status", "operator": "=", "value": "bad"}
@@ -869,9 +865,9 @@ def test_tagged_roundtrip_preserves_json_exact_fields_for_joined_raw_column():
 
     reconstructed = from_tagged(to_tagged(filtered))
     restored_predicate = reconstructed.op().predicate.unwrap
-    assert object.__getattribute__(
-        restored_predicate, "__bsl_filter_fields__"
-    ) == frozenset({"items.status"})
+    assert object.__getattribute__(restored_predicate, "__bsl_filter_fields__") == frozenset(
+        {"items.status"}
+    )
 
     after = reconstructed.aggregate("items.total").execute()
     reconstructed_twice = from_tagged(to_tagged(reconstructed))
@@ -890,9 +886,7 @@ def test_tagged_json_filter_survives_metadata_overlay(overlay):
     if overlay == "dimensions":
         rebound = filtered.with_dimensions(bucket=lambda t: t.status)
     else:
-        rebound = filtered.with_measures(
-            joined_total=lambda t: t.amount.sum()
-        )
+        rebound = filtered.with_measures(joined_total=lambda t: t.amount.sum())
 
     reconstructed = from_tagged(to_tagged(rebound))
     result = reconstructed.aggregate("items.total").execute()
@@ -911,9 +905,7 @@ def test_tagged_filter_keeps_author_time_dimension_before_same_name_overlay():
         "filter_same_name_dimension_roundtrip",
         pd.DataFrame(
             {
-                "ts": pd.to_datetime(
-                    ["2025-01-05", "2025-01-31", "2025-02-10"]
-                ),
+                "ts": pd.to_datetime(["2025-01-05", "2025-01-31", "2025-02-10"]),
                 "value": [1, 2, 3],
             }
         ),
@@ -1702,7 +1694,7 @@ def test_tagged_roundtrip_join_one_left_join():
         name=Dimension(expr=lambda t: t.name, description="Name"),
     )
 
-    joined = orders_st.join_one(products_st, on=lambda o, p: o.product_id == p.pid, how="left")
+    joined = orders_st.join_one(products_st, on=lambda o, p: o.product_id == p.pid)
 
     tagged = to_tagged(joined)
     reconstructed = from_tagged(tagged)
@@ -1913,9 +1905,7 @@ def test_tagged_roundtrip_join_one_preserves_cardinality():
         to_semantic_table(f_tbl, name="flights_card")
         .with_dimensions(
             origin=Dimension(expr=lambda t: t.origin, description="Origin"),
-            dep_month=Dimension(
-                expr=lambda t: t.dep_time.truncate("M"), description="Dep month"
-            ),
+            dep_month=Dimension(expr=lambda t: t.dep_time.truncate("M"), description="Dep month"),
         )
         .with_measures(
             flight_count=Measure(expr=lambda t: t.count(), description="Count"),
@@ -1958,9 +1948,7 @@ def test_tagged_roundtrip_join_one_preserves_cardinality():
 
     assert len(result) == len(baseline)
     assert list(result["flights_card.dep_month"]) == list(baseline["flights_card.dep_month"])
-    assert list(result["flights_card.flight_count"]) == list(
-        baseline["flights_card.flight_count"]
-    )
+    assert list(result["flights_card.flight_count"]) == list(baseline["flights_card.flight_count"])
     # Verify total is correct (should sum to 5)
     assert result["flights_card.flight_count"].sum() == 5
 
@@ -1986,7 +1974,6 @@ def test_tagged_roundtrip_join_chain_shared_column_names(n_joins):
     - intersection-only join-key detection in ``_extract_join_key_column_names``
     """
     import pandas as pd
-
     from xorq.common.utils.ibis_utils import from_ibis
 
     from boring_semantic_layer import Dimension, Measure

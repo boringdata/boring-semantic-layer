@@ -1,4 +1,10 @@
-"""BSL serialization context — carries version and configuration."""
+"""BSL serialization context — carries version and configuration.
+
+``SCHEMA_VERSION`` is the single source of truth for the payload format:
+the writer stamps it, and the reader accepts payloads whose major version
+is in ``SUPPORTED_PAYLOAD_MAJORS``. Bumping the format means changing both
+here, in one place.
+"""
 
 from __future__ import annotations
 
@@ -8,12 +14,15 @@ from attrs import frozen
 
 from .freeze import list_to_tuple, thaw, thaw_shallow
 
+SCHEMA_VERSION = "2.0"
+SUPPORTED_PAYLOAD_MAJORS = frozenset({2})
+
 
 @frozen
 class BSLSerializationContext:
     """Configuration context threaded through serialization/deserialization."""
 
-    version: str = "2.0"
+    version: str = SCHEMA_VERSION
 
     def deserialize_expr(self, struct_data: Any, label: str) -> Any:
         """Deserialize a structured expression.
@@ -28,7 +37,7 @@ class BSLSerializationContext:
         Raises:
             ValueError: If deserialization fails.
         """
-        from .helpers import deserialize_structured
+        from .codec import deserialize_structured
 
         return deserialize_structured(struct_data, label)
 
@@ -38,7 +47,7 @@ class BSLSerializationContext:
         Raises:
             ValueError: If deserialization fails.
         """
-        from ..utils import structured_to_join_predicate
+        from .codec import structured_to_join_predicate
 
         if isinstance(struct_data, tuple | list):
             data = list_to_tuple(struct_data) if isinstance(struct_data, list) else struct_data

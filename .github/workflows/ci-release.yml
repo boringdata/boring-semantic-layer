@@ -8,6 +8,9 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+  schedule:
+    # Weekly ibis version matrix (see the ibis-matrix job).
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
@@ -38,27 +41,38 @@ jobs:
         run: uv sync --all-extras
 
       - name: Run Ruff lint
-        run: uv run ruff check --select F,E9 .
+        run: uv run ruff check .
+
+      - name: Check formatting
+        run: uv run ruff format --check .
 
   # Run the test suite with and without the xorq extra. The no-xorq leg
   # verifies xorq is truly optional (its tests skip, not error).
   test:
-    name: Test (${{ matrix.name }})
+    name: Test (${{ matrix.name }}, py${{ matrix.python }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: full
+            python: "3.11"
+            sync: uv sync --all-extras
+          - name: full
+            python: "3.12"
+            sync: uv sync --all-extras
+          - name: full
+            python: "3.13"
             sync: uv sync --all-extras
           - name: no-xorq
+            python: "3.12"
             sync: uv sync --all-extras --no-extra xorq --no-extra examples
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
@@ -72,11 +86,35 @@ jobs:
         run: uv run python -c "import boring_semantic_layer; print('import OK')"
 
       - name: Run tests
-        run: uv run pytest
+        run: uv run pytest -n auto
 
       - name: Run no-xorq-compatible examples
         if: matrix.name == 'no-xorq'
         run: make examples-core
+
+  # Weekly: run the suite against every supported ibis version so an
+  # upstream release can't silently break us between our own pushes.
+  ibis-matrix:
+    name: Test (ibis version matrix)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run tests across ibis versions
+        run: make test IBIS_VERSION=all
 
   # Build examples, docs, and skills (require the full env incl. Node).
   build:

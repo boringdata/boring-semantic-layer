@@ -30,11 +30,7 @@ def main():
             flight_count=lambda t: t.count(),
             total_distance=lambda t: t.distance.sum(),
             avg_distance=lambda t: t.distance.mean(),
-            short_flight_count=lambda t: xo.case()
-            .when(t.distance < 500, 1)
-            .else_(0)
-            .end()
-            .sum(),
+            short_flight_count=lambda t: xo.case().when(t.distance < 500, 1).else_(0).end().sum(),
         )
     )
 

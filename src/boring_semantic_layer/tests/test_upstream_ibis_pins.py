@@ -18,10 +18,9 @@ signal worth pinning.
 
 from __future__ import annotations
 
+import ibis as plain_ibis
 import pandas as pd
 import pytest
-
-import ibis as plain_ibis
 
 pytest.importorskip("xorq", reason="xorq not installed")
 from xorq.common.utils.ibis_utils import from_ibis  # noqa: E402
@@ -56,9 +55,7 @@ def test_pin_three_way_join_default_rname_collides(flavor):
     flights = _make_table(
         flavor,
         f"fl_pin_{flavor}",
-        pd.DataFrame(
-            {"carrier": ["AA"], "origin": ["JFK"], "destination": ["LAX"]}
-        ),
+        pd.DataFrame({"carrier": ["AA"], "origin": ["JFK"], "destination": ["LAX"]}),
     )
     carriers = _make_table(
         flavor,

@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 from returns.result import Failure, Success
 
-from boring_semantic_layer.utils import expr_to_ibis_string, ibis_string_to_expr
 from boring_semantic_layer.serialization import (
     from_tagged,
     serialize_dimensions,
@@ -23,53 +22,6 @@ def test_try_import_xorq():
         xorq_mod = result.unwrap()
         assert xorq_mod.api is not None
         assert hasattr(xorq_mod.api, "memtable")
-
-
-def test_serialize_ibis_lambda():
-    fn = lambda t: t.col1  # noqa: E731
-
-    result = expr_to_ibis_string(fn)
-    assert isinstance(result, Success | Failure)
-
-    if isinstance(result, Success):
-        serialized = result.unwrap()
-        assert isinstance(serialized, str)
-        assert "_.col1" in serialized or "col1" in serialized
-
-
-def test_serialize_ibis_method():
-    fn = lambda t: t.amount.sum()  # noqa: E731
-
-    result = expr_to_ibis_string(fn)
-    assert isinstance(result, Success | Failure)
-
-    if isinstance(result, Success):
-        serialized = result.unwrap()
-        assert isinstance(serialized, str)
-        assert "sum()" in serialized
-
-
-def test_deserialize_expr_string():
-    expr_str = "_.amount * 2"
-
-    deserialize_result = ibis_string_to_expr(expr_str)
-    assert isinstance(deserialize_result, Success | Failure)
-
-    if isinstance(deserialize_result, Success):
-        restored_fn = deserialize_result.unwrap()
-        assert callable(restored_fn)
-
-
-def test_round_trip_expression():
-    fn = lambda t: t.price.mean()  # noqa: E731
-
-    serialize_result = expr_to_ibis_string(fn)
-    if not isinstance(serialize_result, Success):
-        pytest.skip("Serialization failed")
-
-    serialized = serialize_result.unwrap()
-    assert isinstance(serialized, str)
-    assert "mean()" in serialized
 
 
 def test_serialize_empty_dimensions():
@@ -241,10 +193,10 @@ def test_from_xorq_with_tagged_table():
 def test_different_measures_produce_different_hashes():
     """Two SemanticModels on the same table with different measures should hash differently."""
     import ibis
-
-    from boring_semantic_layer import SemanticModel
     from xorq.caching.strategy import SnapshotStrategy
     from xorq.common.utils.node_utils import compute_expr_hash
+
+    from boring_semantic_layer import SemanticModel
 
     table = ibis.table({"a": "int64", "b": "float64"}, name="test_table")
 
@@ -266,17 +218,19 @@ def test_different_measures_produce_different_hashes():
     hash_sum = compute_expr_hash(tagged_sum, strategy=strategy)
     hash_mean = compute_expr_hash(tagged_mean, strategy=strategy)
 
-    assert hash_sum != hash_mean, "Same table with different measures should produce different hashes"
+    assert hash_sum != hash_mean, (
+        "Same table with different measures should produce different hashes"
+    )
 
 
 @pytest.mark.skipif(not xorq, reason="xorq not available")
 def test_same_model_produces_same_hash():
     """Two identical SemanticModels should produce the same hash."""
     import ibis
-
-    from boring_semantic_layer import SemanticModel
     from xorq.caching.strategy import SnapshotStrategy
     from xorq.common.utils.node_utils import compute_expr_hash
+
+    from boring_semantic_layer import SemanticModel
 
     table = ibis.table({"a": "int64", "b": "float64"}, name="test_table")
 

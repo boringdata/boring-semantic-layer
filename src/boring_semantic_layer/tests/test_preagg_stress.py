@@ -51,11 +51,7 @@ class TestEcommerceDeepChainAndChasm:
                     "city": (["New York", "Chicago", "LA", "Houston", "Phoenix"] * 5),
                     "state": (["NY", "IL", "CA", "TX", "AZ"] * 5),
                     "zip_code": (["10001", "60601", "90001", "77001", "85001"] * 5),
-                    "tier": (
-                        ["gold"] * 5
-                        + ["silver"] * 10
-                        + ["bronze"] * 10
-                    ),
+                    "tier": (["gold"] * 5 + ["silver"] * 10 + ["bronze"] * 10),
                     "signup_year": ([2020, 2021, 2022, 2023, 2024] * 5),
                     "is_active": ([True] * 20 + [False] * 5),
                 }
@@ -79,10 +75,18 @@ class TestEcommerceDeepChainAndChasm:
                     "customer_id": [1, 1, 2, 2, 2, 3, 3, 4, 5, 5, 6, 7],
                     "order_date": pd.to_datetime(
                         [
-                            "2024-01-15", "2024-02-20", "2024-01-10",
-                            "2024-03-05", "2024-04-12", "2024-02-28",
-                            "2024-03-15", "2024-01-22", "2024-04-01",
-                            "2024-05-10", "2024-06-01", "2024-06-15",
+                            "2024-01-15",
+                            "2024-02-20",
+                            "2024-01-10",
+                            "2024-03-05",
+                            "2024-04-12",
+                            "2024-02-28",
+                            "2024-03-15",
+                            "2024-01-22",
+                            "2024-04-01",
+                            "2024-05-10",
+                            "2024-06-01",
+                            "2024-06-15",
                         ]
                     ),
                     "amount": [200, 300, 150, 250, 100, 400, 200, 350, 100, 150, 300, 300],
@@ -90,22 +94,62 @@ class TestEcommerceDeepChainAndChasm:
                     "shipping_fee": [10, 10, 15, 15, 15, 20, 20, 10, 5, 5, 10, 10],
                     "discount": [0, 50, 0, 25, 0, 0, 0, 50, 0, 0, 30, 0],
                     "status": [
-                        "shipped", "delivered", "delivered", "shipped",
-                        "pending", "delivered", "shipped", "delivered",
-                        "pending", "shipped", "delivered", "pending",
+                        "shipped",
+                        "delivered",
+                        "delivered",
+                        "shipped",
+                        "pending",
+                        "delivered",
+                        "shipped",
+                        "delivered",
+                        "pending",
+                        "shipped",
+                        "delivered",
+                        "pending",
                     ],
                     "channel": [
-                        "web", "app", "web", "web", "app",
-                        "web", "app", "web", "app", "web",
-                        "web", "app",
+                        "web",
+                        "app",
+                        "web",
+                        "web",
+                        "app",
+                        "web",
+                        "app",
+                        "web",
+                        "app",
+                        "web",
+                        "web",
+                        "app",
                     ],
                     "payment_method": [
-                        "credit", "debit", "credit", "paypal", "credit",
-                        "debit", "credit", "paypal", "credit", "debit",
-                        "credit", "paypal",
+                        "credit",
+                        "debit",
+                        "credit",
+                        "paypal",
+                        "credit",
+                        "debit",
+                        "credit",
+                        "paypal",
+                        "credit",
+                        "debit",
+                        "credit",
+                        "paypal",
                     ],
                     "warehouse_id": [1, 1, 2, 2, 2, 1, 1, 3, 3, 3, 2, 1],
-                    "is_gift": [False, True, False, False, True, False, False, True, False, False, False, False],
+                    "is_gift": [
+                        False,
+                        True,
+                        False,
+                        False,
+                        True,
+                        False,
+                        False,
+                        True,
+                        False,
+                        False,
+                        False,
+                        False,
+                    ],
                 }
             ),
         )
@@ -124,7 +168,20 @@ class TestEcommerceDeepChainAndChasm:
         # order 11: 3 items (unit_price 80,70,50  qty 1,1,2  → 80,70,100)
         # order 12: 2 items (unit_price 100,100  qty 1,1  → 100,100)
         # Total items = 2+3+2+3+1+4+2+3+1+2+3+2 = 28
-        orders_for_items = [1]*2 + [2]*3 + [3]*2 + [4]*3 + [5]*1 + [6]*4 + [7]*2 + [8]*3 + [9]*1 + [10]*2 + [11]*3 + [12]*2
+        orders_for_items = (
+            [1] * 2
+            + [2] * 3
+            + [3] * 2
+            + [4] * 3
+            + [5] * 1
+            + [6] * 4
+            + [7] * 2
+            + [8] * 3
+            + [9] * 1
+            + [10] * 2
+            + [11] * 3
+            + [12] * 2
+        )
         order_items_tbl = con.create_table(
             "order_items",
             pd.DataFrame(
@@ -132,60 +189,124 @@ class TestEcommerceDeepChainAndChasm:
                     "item_id": list(range(1, 29)),
                     "order_id": orders_for_items,
                     "product_id": [
-                        1, 2,         # order 1
-                        3, 4, 5,      # order 2
-                        1, 2,         # order 3
-                        3, 4, 5,      # order 4
-                        1,            # order 5
-                        2, 3, 4, 5,   # order 6
-                        1, 2,         # order 7
-                        3, 4, 5,      # order 8
-                        1,            # order 9
-                        2, 3,         # order 10
-                        4, 5, 1,      # order 11
-                        2, 3,         # order 12
+                        1,
+                        2,  # order 1
+                        3,
+                        4,
+                        5,  # order 2
+                        1,
+                        2,  # order 3
+                        3,
+                        4,
+                        5,  # order 4
+                        1,  # order 5
+                        2,
+                        3,
+                        4,
+                        5,  # order 6
+                        1,
+                        2,  # order 7
+                        3,
+                        4,
+                        5,  # order 8
+                        1,  # order 9
+                        2,
+                        3,  # order 10
+                        4,
+                        5,
+                        1,  # order 11
+                        2,
+                        3,  # order 12
                     ],
                     "quantity": [
-                        1, 2,
-                        1, 1, 2,
-                        1, 1,
-                        1, 2, 1,
                         1,
-                        1, 1, 1, 1,
-                        1, 1,
-                        2, 1, 2,
+                        2,
                         1,
-                        1, 1,
-                        1, 1, 2,
-                        1, 1,
+                        1,
+                        2,
+                        1,
+                        1,
+                        1,
+                        2,
+                        1,
+                        1,
+                        1,
+                        1,
+                        1,
+                        1,
+                        1,
+                        1,
+                        2,
+                        1,
+                        2,
+                        1,
+                        1,
+                        1,
+                        1,
+                        1,
+                        2,
+                        1,
+                        1,
                     ],
                     "unit_price": [
-                        50, 60,
-                        40, 30, 80,
-                        70, 80,
-                        60, 50, 40,
+                        50,
+                        60,
+                        40,
+                        30,
+                        80,
+                        70,
+                        80,
+                        60,
+                        50,
+                        40,
                         100,
-                        90, 80, 70, 60,
-                        100, 100,
-                        50, 100, 50,
+                        90,
+                        80,
+                        70,
+                        60,
                         100,
-                        60, 40,
-                        80, 70, 50,
-                        100, 100,
+                        100,
+                        50,
+                        100,
+                        50,
+                        100,
+                        60,
+                        40,
+                        80,
+                        70,
+                        50,
+                        100,
+                        100,
                     ],
                     "line_total": [
-                        50, 120,
-                        40, 30, 160,
-                        70, 80,
-                        60, 100, 40,
+                        50,
+                        120,
+                        40,
+                        30,
+                        160,
+                        70,
+                        80,
+                        60,
                         100,
-                        90, 80, 70, 60,
-                        100, 100,
-                        100, 100, 100,
+                        40,
                         100,
-                        60, 40,
-                        80, 70, 100,
-                        100, 100,
+                        90,
+                        80,
+                        70,
+                        60,
+                        100,
+                        100,
+                        100,
+                        100,
+                        100,
+                        100,
+                        60,
+                        40,
+                        80,
+                        70,
+                        100,
+                        100,
+                        100,
                     ],
                     "sku": [f"SKU-{i:04d}" for i in range(1, 29)],
                     "is_returned": [False] * 24 + [True] * 4,
@@ -221,7 +342,20 @@ class TestEcommerceDeepChainAndChasm:
         # order 7: 2 reviews   order 8: 2 reviews   order 9: 1 review
         # order 10: 2 reviews  order 11: 2 reviews  order 12: 1 review
         # Total reviews = 2+3+2+3+1+3+2+2+1+2+2+1 = 24
-        reviews_order_ids = [1]*2 + [2]*3 + [3]*2 + [4]*3 + [5]*1 + [6]*3 + [7]*2 + [8]*2 + [9]*1 + [10]*2 + [11]*2 + [12]*1
+        reviews_order_ids = (
+            [1] * 2
+            + [2] * 3
+            + [3] * 2
+            + [4] * 3
+            + [5] * 1
+            + [6] * 3
+            + [7] * 2
+            + [8] * 2
+            + [9] * 1
+            + [10] * 2
+            + [11] * 2
+            + [12] * 1
+        )
         reviews_tbl = con.create_table(
             "reviews",
             pd.DataFrame(
@@ -358,11 +492,7 @@ class TestEcommerceDeepChainAndChasm:
             .join_many(models["orders"], on="customer_id")
             .join_many(models["order_items"], on="order_id")
         )
-        df = (
-            joined.group_by("customers.customer_id")
-            .aggregate("orders.order_count")
-            .execute()
-        )
+        df = joined.group_by("customers.customer_id").aggregate("orders.order_count").execute()
 
         c1 = df[df["customers.customer_id"] == 1]
         assert c1["orders.order_count"].iloc[0] == 2  # orders 1, 2
@@ -391,15 +521,8 @@ class TestEcommerceDeepChainAndChasm:
         silver (customers 6-15): c6=300 + c7=300 = 600  (others have no orders)
         bronze (customers 16-25): 0 (no orders)
         """
-        joined = (
-            models["customers"]
-            .join_many(models["orders"], on="customer_id")
-        )
-        df = (
-            joined.group_by("customers.tier")
-            .aggregate("orders.total_revenue")
-            .execute()
-        )
+        joined = models["customers"].join_many(models["orders"], on="customer_id")
+        df = joined.group_by("customers.tier").aggregate("orders.total_revenue").execute()
 
         gold = df[df["customers.tier"] == "gold"]
         assert gold["orders.total_revenue"].iloc[0] == 2200
@@ -485,16 +608,31 @@ class TestHRTripleChasmTrap:
             pd.DataFrame(
                 {
                     "emp_id": list(range(1, 21)),
-                    "dept_id": [1]*6 + [2]*4 + [3]*4 + [4]*4 + [5]*2,
+                    "dept_id": [1] * 6 + [2] * 4 + [3] * 4 + [4] * 4 + [5] * 2,
                     "first_name": [f"Emp{i}" for i in range(1, 21)],
                     "last_name": [f"Smith{i}" for i in range(1, 21)],
                     "email": [f"emp{i}@company.com" for i in range(1, 21)],
                     "salary": [
-                        80_000, 85_000, 90_000, 75_000, 95_000, 70_000,  # ENG
-                        60_000, 65_000, 55_000, 70_000,                  # SAL
-                        58_000, 62_000, 55_000, 65_000,                  # MKT
-                        72_000, 78_000, 68_000, 82_000,                  # FIN
-                        52_000, 58_000,                                  # HR
+                        80_000,
+                        85_000,
+                        90_000,
+                        75_000,
+                        95_000,
+                        70_000,  # ENG
+                        60_000,
+                        65_000,
+                        55_000,
+                        70_000,  # SAL
+                        58_000,
+                        62_000,
+                        55_000,
+                        65_000,  # MKT
+                        72_000,
+                        78_000,
+                        68_000,
+                        82_000,  # FIN
+                        52_000,
+                        58_000,  # HR
                     ],
                     "hire_date": pd.to_datetime(
                         [f"20{20 + i % 5}-0{1 + i % 9}-15" for i in range(20)]
@@ -537,19 +675,59 @@ class TestHRTripleChasmTrap:
                 {
                     "project_id": list(range(1, 26)),
                     "emp_id": [
-                        1, 1, 2, 2, 3, 4,                 # ENG (6 projects)
-                        7, 7, 8, 9, 9, 10,                # SAL (6 projects)
-                        11, 11, 12, 13, 14,                # MKT (5 projects)
-                        15, 15, 16, 17, 18,                # FIN (5 projects)
-                        19, 20, 20,                        # HR  (3 projects)
+                        1,
+                        1,
+                        2,
+                        2,
+                        3,
+                        4,  # ENG (6 projects)
+                        7,
+                        7,
+                        8,
+                        9,
+                        9,
+                        10,  # SAL (6 projects)
+                        11,
+                        11,
+                        12,
+                        13,
+                        14,  # MKT (5 projects)
+                        15,
+                        15,
+                        16,
+                        17,
+                        18,  # FIN (5 projects)
+                        19,
+                        20,
+                        20,  # HR  (3 projects)
                     ],
                     "project_name": [f"Project-{i}" for i in range(1, 26)],
                     "budget": [
-                        50_000, 30_000, 20_000, 15_000, 40_000, 0,
-                        10_000, 25_000, 15_000, 5_000, 10_000, 20_000,
-                        30_000, 10_000, 25_000, 15_000, 20_000,
-                        35_000, 15_000, 40_000, 20_000, 30_000,
-                        10_000, 15_000, 15_000,
+                        50_000,
+                        30_000,
+                        20_000,
+                        15_000,
+                        40_000,
+                        0,
+                        10_000,
+                        25_000,
+                        15_000,
+                        5_000,
+                        10_000,
+                        20_000,
+                        30_000,
+                        10_000,
+                        25_000,
+                        15_000,
+                        20_000,
+                        35_000,
+                        15_000,
+                        40_000,
+                        20_000,
+                        30_000,
+                        10_000,
+                        15_000,
+                        15_000,
                     ],
                     "start_date": pd.to_datetime(["2024-01-01"] * 25),
                     "end_date": pd.to_datetime(["2024-12-31"] * 25),
@@ -596,23 +774,91 @@ class TestHRTripleChasmTrap:
                 {
                     "timesheet_id": list(range(1, 41)),
                     "emp_id": [
-                        1, 1, 1, 2, 2, 3, 3, 3, 4, 4,             # ENG: 10 ts
-                        5, 5, 6, 6, 6,                             # ENG: 5 ts
-                        7, 7, 8, 8, 9, 10, 10,                     # SAL: 7 ts
-                        11, 11, 12, 12, 13, 14, 14,                # MKT: 7 ts
-                        15, 15, 16, 16, 17, 18, 18,                # FIN: 7 ts
-                        19, 19, 20, 20,                            # HR:  4 ts
+                        1,
+                        1,
+                        1,
+                        2,
+                        2,
+                        3,
+                        3,
+                        3,
+                        4,
+                        4,  # ENG: 10 ts
+                        5,
+                        5,
+                        6,
+                        6,
+                        6,  # ENG: 5 ts
+                        7,
+                        7,
+                        8,
+                        8,
+                        9,
+                        10,
+                        10,  # SAL: 7 ts
+                        11,
+                        11,
+                        12,
+                        12,
+                        13,
+                        14,
+                        14,  # MKT: 7 ts
+                        15,
+                        15,
+                        16,
+                        16,
+                        17,
+                        18,
+                        18,  # FIN: 7 ts
+                        19,
+                        19,
+                        20,
+                        20,  # HR:  4 ts
                     ],
                     "work_date": pd.to_datetime(
                         [f"2024-0{1 + i % 9}-{10 + i % 20}" for i in range(40)]
                     ),
                     "hours": [
-                        8, 8, 4, 7, 5, 8, 8, 6, 4, 4,            # ENG emp 1-4
-                        8, 8, 8, 8, 6,                             # ENG emp 5-6
-                        8, 4, 6, 6, 8, 7, 5,                      # SAL
-                        4, 6, 8, 4, 6, 5, 7,                      # MKT
-                        8, 8, 6, 4, 8, 7, 5,                      # FIN
-                        4, 6, 4, 4,                                # HR
+                        8,
+                        8,
+                        4,
+                        7,
+                        5,
+                        8,
+                        8,
+                        6,
+                        4,
+                        4,  # ENG emp 1-4
+                        8,
+                        8,
+                        8,
+                        8,
+                        6,  # ENG emp 5-6
+                        8,
+                        4,
+                        6,
+                        6,
+                        8,
+                        7,
+                        5,  # SAL
+                        4,
+                        6,
+                        8,
+                        4,
+                        6,
+                        5,
+                        7,  # MKT
+                        8,
+                        8,
+                        6,
+                        4,
+                        8,
+                        7,
+                        5,  # FIN
+                        4,
+                        6,
+                        4,
+                        4,  # HR
                     ],
                     "task_type": (["coding", "meeting", "review", "planning"] * 10),
                     "billable": [True, False] * 20,
@@ -638,20 +884,138 @@ class TestHRTripleChasmTrap:
                 {
                     "training_id": list(range(1, 31)),
                     "emp_id": [
-                        1, 1, 2, 2, 3, 3, 4, 5, 6,               # ENG: 9
-                        7, 7, 8, 9, 10,                            # SAL: 5
-                        11, 11, 12, 13, 14,                        # MKT: 5
-                        15, 15, 16, 17, 18,                        # FIN: 5
-                        19, 19, 19, 20, 20, 20,                    # HR:  6
+                        1,
+                        1,
+                        2,
+                        2,
+                        3,
+                        3,
+                        4,
+                        5,
+                        6,  # ENG: 9
+                        7,
+                        7,
+                        8,
+                        9,
+                        10,  # SAL: 5
+                        11,
+                        11,
+                        12,
+                        13,
+                        14,  # MKT: 5
+                        15,
+                        15,
+                        16,
+                        17,
+                        18,  # FIN: 5
+                        19,
+                        19,
+                        19,
+                        20,
+                        20,
+                        20,  # HR:  6
                     ],
                     "course_name": [f"Course-{i}" for i in range(1, 31)],
                     "course_category": (["technical", "soft_skills", "compliance"] * 10),
-                    "hours": [8, 4, 8, 4, 8, 4, 8, 4, 8, 4, 8, 4, 8, 4, 8, 4, 8, 4, 8, 4, 8, 4, 8, 4, 8, 4, 8, 4, 8, 4],
+                    "hours": [
+                        8,
+                        4,
+                        8,
+                        4,
+                        8,
+                        4,
+                        8,
+                        4,
+                        8,
+                        4,
+                        8,
+                        4,
+                        8,
+                        4,
+                        8,
+                        4,
+                        8,
+                        4,
+                        8,
+                        4,
+                        8,
+                        4,
+                        8,
+                        4,
+                        8,
+                        4,
+                        8,
+                        4,
+                        8,
+                        4,
+                    ],
                     "completion_date": pd.to_datetime(["2024-03-01"] * 15 + ["2024-06-01"] * 15),
-                    "score": [85, 90, 78, 92, 88, 95, 80, 87, 91, 76, 83, 89, 94, 77, 86, 82, 93, 79, 84, 90, 88, 75, 91, 85, 80, 87, 92, 78, 83, 96],
+                    "score": [
+                        85,
+                        90,
+                        78,
+                        92,
+                        88,
+                        95,
+                        80,
+                        87,
+                        91,
+                        76,
+                        83,
+                        89,
+                        94,
+                        77,
+                        86,
+                        82,
+                        93,
+                        79,
+                        84,
+                        90,
+                        88,
+                        75,
+                        91,
+                        85,
+                        80,
+                        87,
+                        92,
+                        78,
+                        83,
+                        96,
+                    ],
                     "passed": [True] * 25 + [False] * 5,
                     "instructor": [f"Instructor-{i % 5}" for i in range(1, 31)],
-                    "cost": [500, 300, 500, 300, 500, 300, 500, 300, 500, 300, 500, 300, 500, 300, 500, 300, 500, 300, 500, 300, 500, 300, 500, 300, 500, 300, 500, 300, 500, 300],
+                    "cost": [
+                        500,
+                        300,
+                        500,
+                        300,
+                        500,
+                        300,
+                        500,
+                        300,
+                        500,
+                        300,
+                        500,
+                        300,
+                        500,
+                        300,
+                        500,
+                        300,
+                        500,
+                        300,
+                        500,
+                        300,
+                        500,
+                        300,
+                        500,
+                        300,
+                        500,
+                        300,
+                        500,
+                        300,
+                        500,
+                        300,
+                    ],
                 }
             ),
         )
@@ -751,11 +1115,7 @@ class TestHRTripleChasmTrap:
     def test_engineering_headcount(self, models):
         """ENG has 6 employees, not inflated by projects×timesheets×training."""
         joined = self._triple_chasm(models)
-        df = (
-            joined.group_by("departments.dept_name")
-            .aggregate("employees.headcount")
-            .execute()
-        )
+        df = joined.group_by("departments.dept_name").aggregate("employees.headcount").execute()
 
         eng = df[df["departments.dept_name"] == "Engineering"]
         assert eng["employees.headcount"].iloc[0] == 6
@@ -763,11 +1123,7 @@ class TestHRTripleChasmTrap:
     def test_engineering_total_salary(self, models):
         """ENG total_salary = 495,000 (not inflated by child arms)."""
         joined = self._triple_chasm(models)
-        df = (
-            joined.group_by("departments.dept_name")
-            .aggregate("employees.total_salary")
-            .execute()
-        )
+        df = joined.group_by("departments.dept_name").aggregate("employees.total_salary").execute()
 
         eng = df[df["departments.dept_name"] == "Engineering"]
         assert eng["employees.total_salary"].iloc[0] == 495_000
@@ -851,7 +1207,13 @@ class TestSupplyChainMixedCardinalities:
             pd.DataFrame(
                 {
                     "warehouse_id": [1, 2, 3, 4, 5],
-                    "warehouse_name": ["West Hub", "East Hub", "Central Hub", "North Hub", "South Hub"],
+                    "warehouse_name": [
+                        "West Hub",
+                        "East Hub",
+                        "Central Hub",
+                        "North Hub",
+                        "South Hub",
+                    ],
                     "city": ["Los Angeles", "New York", "Chicago", "Seattle", "Miami"],
                     "state": ["CA", "NY", "IL", "WA", "FL"],
                     "capacity": [10_000, 8_000, 12_000, 6_000, 9_000],
@@ -890,7 +1252,7 @@ class TestSupplyChainMixedCardinalities:
         # value = 4000+3000+1500+2250+2000+1500+3000+3750 = 21000 ... close
         # WH1 unit_cost = [25,20,15,15,20,15,20,15]
         # value = 5000+3000+1500+2250+2000+1500+3000+3750 = 22000 ✓ !
-        warehouses_for_inv = [1]*8 + [2]*7 + [3]*6 + [4]*5 + [5]*4
+        warehouses_for_inv = [1] * 8 + [2] * 7 + [3] * 6 + [4] * 5 + [5] * 4
         inventory_tbl = con.create_table(
             "inventory",
             pd.DataFrame(
@@ -898,26 +1260,101 @@ class TestSupplyChainMixedCardinalities:
                     "inventory_id": list(range(1, 31)),
                     "warehouse_id": warehouses_for_inv,
                     "supplier_id": [
-                        1, 2, 3, 4, 5, 1, 2, 3,                   # WH1
-                        4, 5, 6, 7, 8, 9, 10,                     # WH2
-                        1, 3, 5, 7, 9, 2,                          # WH3
-                        4, 6, 8, 10, 1,                            # WH4
-                        3, 5, 7, 9,                                # WH5
+                        1,
+                        2,
+                        3,
+                        4,
+                        5,
+                        1,
+                        2,
+                        3,  # WH1
+                        4,
+                        5,
+                        6,
+                        7,
+                        8,
+                        9,
+                        10,  # WH2
+                        1,
+                        3,
+                        5,
+                        7,
+                        9,
+                        2,  # WH3
+                        4,
+                        6,
+                        8,
+                        10,
+                        1,  # WH4
+                        3,
+                        5,
+                        7,
+                        9,  # WH5
                     ],
                     "product_sku": [f"INV-{i:04d}" for i in range(1, 31)],
                     "qty_on_hand": [
-                        200, 150, 100, 150, 100, 100, 150, 250,   # WH1 = 1200
-                        100, 200, 80, 150, 120, 100, 150,         # WH2 = 900
-                        180, 120, 200, 100, 150, 150,              # WH3 = 900
-                        100, 150, 80, 120, 150,                    # WH4 = 600
-                        200, 200, 200, 200,                        # WH5 = 800
+                        200,
+                        150,
+                        100,
+                        150,
+                        100,
+                        100,
+                        150,
+                        250,  # WH1 = 1200
+                        100,
+                        200,
+                        80,
+                        150,
+                        120,
+                        100,
+                        150,  # WH2 = 900
+                        180,
+                        120,
+                        200,
+                        100,
+                        150,
+                        150,  # WH3 = 900
+                        100,
+                        150,
+                        80,
+                        120,
+                        150,  # WH4 = 600
+                        200,
+                        200,
+                        200,
+                        200,  # WH5 = 800
                     ],
                     "unit_cost": [
-                        25, 20, 15, 15, 20, 15, 20, 15,           # WH1 → value = 22000
-                        20, 15, 25, 10, 20, 15, 10,               # WH2
-                        15, 20, 10, 25, 15, 20,                   # WH3
-                        10, 15, 25, 20, 15,                       # WH4
-                        20, 15, 10, 25,                            # WH5
+                        25,
+                        20,
+                        15,
+                        15,
+                        20,
+                        15,
+                        20,
+                        15,  # WH1 → value = 22000
+                        20,
+                        15,
+                        25,
+                        10,
+                        20,
+                        15,
+                        10,  # WH2
+                        15,
+                        20,
+                        10,
+                        25,
+                        15,
+                        20,  # WH3
+                        10,
+                        15,
+                        25,
+                        20,
+                        15,  # WH4
+                        20,
+                        15,
+                        10,
+                        25,  # WH5
                     ],
                     "reorder_point": [50] * 30,
                     "last_restock": pd.to_datetime(["2024-01-15"] * 15 + ["2024-02-15"] * 15),
@@ -935,7 +1372,7 @@ class TestSupplyChainMixedCardinalities:
         # WH4: 5 shipments  (cost: 500 each = 2500)
         # WH5: 5 shipments  (cost: 840 each = 4200)
         # Total: 35 shipments, total cost = 8000+6000+4550+2500+4200 = 25250
-        warehouses_for_ship = [1]*10 + [2]*8 + [3]*7 + [4]*5 + [5]*5
+        warehouses_for_ship = [1] * 10 + [2] * 8 + [3] * 7 + [4] * 5 + [5] * 5
         shipments_tbl = con.create_table(
             "shipments",
             pd.DataFrame(
@@ -950,15 +1387,17 @@ class TestSupplyChainMixedCardinalities:
                         [f"2024-0{1 + i % 9}-{15 + i % 10}" for i in range(35)]
                     ),
                     "shipping_cost": (
-                        [800] * 10                                 # WH1 = 8000
-                        + [750] * 8                                # WH2 = 6000
-                        + [650] * 7                                # WH3 = 4550
-                        + [500] * 5                                # WH4 = 2500
-                        + [840] * 5                                # WH5 = 4200
+                        [800] * 10  # WH1 = 8000
+                        + [750] * 8  # WH2 = 6000
+                        + [650] * 7  # WH3 = 4550
+                        + [500] * 5  # WH4 = 2500
+                        + [840] * 5  # WH5 = 4200
                     ),
                     "carrier": (["FedEx", "UPS", "USPS", "DHL", "Amazon"] * 7),
                     "weight_kg": [10 + i for i in range(35)],
-                    "status": (["delivered", "in_transit", "pending"] * 11 + ["delivered", "delivered"]),
+                    "status": (
+                        ["delivered", "in_transit", "pending"] * 11 + ["delivered", "delivered"]
+                    ),
                     "tracking_number": [f"TRK-{i:06d}" for i in range(1, 36)],
                     "is_expedited": [True, False, False] * 11 + [True, False],
                     "insurance_value": [100] * 35,
@@ -980,7 +1419,18 @@ class TestSupplyChainMixedCardinalities:
                     "min_order_qty": [100, 200, 50, 150, 100, 200, 50, 150, 100, 200],
                     "payment_terms": (["Net30", "Net60"] * 5),
                     "rating": [4.5, 4.0, 3.8, 4.2, 3.5, 4.7, 4.1, 3.9, 4.3, 3.6],
-                    "is_preferred": [True, False, True, False, True, True, False, True, False, True],
+                    "is_preferred": [
+                        True,
+                        False,
+                        True,
+                        False,
+                        True,
+                        True,
+                        False,
+                        True,
+                        False,
+                        True,
+                    ],
                 }
             ),
         )
@@ -996,11 +1446,51 @@ class TestSupplyChainMixedCardinalities:
         # WH1 defect_count: we need to track for defect_rate calc
         # defect_found: let's say 3 out of 15 for WH1 → rate = 3/15 = 0.2
         qc_shipment_ids = [
-            1, 1, 2, 3, 3, 4, 5, 5, 6, 7, 7, 8, 9, 9, 10,       # WH1: 15
-            11, 11, 12, 13, 14, 14, 15, 16, 17, 18,               # WH2: 10
-            19, 19, 20, 21, 22, 23, 24, 25,                       # WH3: 8
-            26, 26, 27, 28, 29, 30,                                # WH4: 6
-            31, 31, 32, 33, 34, 35,                                # WH5: 6
+            1,
+            1,
+            2,
+            3,
+            3,
+            4,
+            5,
+            5,
+            6,
+            7,
+            7,
+            8,
+            9,
+            9,
+            10,  # WH1: 15
+            11,
+            11,
+            12,
+            13,
+            14,
+            14,
+            15,
+            16,
+            17,
+            18,  # WH2: 10
+            19,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,  # WH3: 8
+            26,
+            26,
+            27,
+            28,
+            29,
+            30,  # WH4: 6
+            31,
+            31,
+            32,
+            33,
+            34,
+            35,  # WH5: 6
         ]
         quality_checks_tbl = con.create_table(
             "quality_checks",
@@ -1014,9 +1504,7 @@ class TestSupplyChainMixedCardinalities:
                     ),
                     "check_type": (["visual", "weight", "dimension"] * 15),
                     "result": (["pass", "pass", "fail"] * 15),
-                    "defect_found": (
-                        [True, False, False] * 15
-                    ),
+                    "defect_found": ([True, False, False] * 15),
                     "severity": (["low", "medium", "high"] * 15),
                     "notes": [f"QC note {i}" for i in range(1, 46)],
                     "duration_min": [15, 20, 10, 25, 30] * 9,
@@ -1156,10 +1644,7 @@ class TestSupplyChainMixedCardinalities:
 
     def test_computed_inventory_value(self, models):
         """Expression measure: WH1 inventory_value = 22,000."""
-        joined = (
-            models["warehouses"]
-            .join_many(models["inventory"], on="warehouse_id")
-        )
+        joined = models["warehouses"].join_many(models["inventory"], on="warehouse_id")
         df = (
             joined.group_by("warehouses.warehouse_name")
             .aggregate("inventory.inventory_value")
@@ -1171,10 +1656,7 @@ class TestSupplyChainMixedCardinalities:
 
     def test_mutate_calculated_measure(self, models):
         """Post-agg calculated: WH1 cost_per_shipment=800."""
-        joined = (
-            models["warehouses"]
-            .join_many(models["shipments"], on="warehouse_id")
-        )
+        joined = models["warehouses"].join_many(models["shipments"], on="warehouse_id")
         df = (
             joined.group_by("warehouses.warehouse_name")
             .aggregate(

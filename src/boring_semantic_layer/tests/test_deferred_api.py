@@ -431,7 +431,11 @@ class TestDeferredGroupBy:
     def test_group_by_multiple_deferred(self):
         con = ibis.duckdb.connect(":memory:")
         flights = pd.DataFrame(
-            {"carrier": ["AA", "AA", "UA"], "origin": ["JFK", "LAX", "JFK"], "distance": [100, 200, 300]}
+            {
+                "carrier": ["AA", "AA", "UA"],
+                "origin": ["JFK", "LAX", "JFK"],
+                "distance": [100, 200, 300],
+            }
         )
         f_tbl = con.create_table("flights", flights)
 
@@ -684,9 +688,7 @@ class TestJoinStringShorthand:
 
     def test_join_one_lambda_still_works(self, models):
         orders_st, customers_st = models
-        joined = orders_st.join_one(
-            customers_st, on=lambda o, c: o.customer_id == c.customer_id
-        )
+        joined = orders_st.join_one(customers_st, on=lambda o, c: o.customer_id == c.customer_id)
         df = joined.group_by("customers.name").aggregate("orders.total_amount").execute()
         assert len(df) == 2
         assert df["orders.total_amount"].sum() == 600
@@ -711,9 +713,7 @@ class TestJoinStringShorthand:
         left = pd.DataFrame(
             {"customer_id": [1, 2, 1], "region": ["US", "EU", "US"], "amount": [10, 20, 30]}
         )
-        right = pd.DataFrame(
-            {"customer_id": [1, 2], "region": ["US", "EU"], "label": ["a", "b"]}
-        )
+        right = pd.DataFrame({"customer_id": [1, 2], "region": ["US", "EU"], "label": ["a", "b"]})
         left_tbl = con.create_table("left_t", left)
         right_tbl = con.create_table("right_t", right)
 
@@ -725,13 +725,10 @@ class TestJoinStringShorthand:
             )
             .with_measures(total=_.amount.sum())
         )
-        right_st = (
-            to_semantic_table(right_tbl, "right")
-            .with_dimensions(
-                customer_id=lambda t: t.customer_id,
-                region=lambda t: t.region,
-                label=lambda t: t.label,
-            )
+        right_st = to_semantic_table(right_tbl, "right").with_dimensions(
+            customer_id=lambda t: t.customer_id,
+            region=lambda t: t.region,
+            label=lambda t: t.label,
         )
 
         joined = left_st.join_one(right_st, on=["customer_id", "region"])
@@ -745,9 +742,7 @@ class TestJoinStringShorthand:
         left = pd.DataFrame(
             {"customer_id": [1, 2, 1], "region": ["US", "EU", "US"], "amount": [10, 20, 30]}
         )
-        right = pd.DataFrame(
-            {"customer_id": [1, 2], "region": ["US", "EU"], "label": ["a", "b"]}
-        )
+        right = pd.DataFrame({"customer_id": [1, 2], "region": ["US", "EU"], "label": ["a", "b"]})
         left_tbl = con.create_table("left_t", left)
         right_tbl = con.create_table("right_t", right)
 
@@ -759,13 +754,10 @@ class TestJoinStringShorthand:
             )
             .with_measures(total=_.amount.sum())
         )
-        right_st = (
-            to_semantic_table(right_tbl, "right")
-            .with_dimensions(
-                customer_id=lambda t: t.customer_id,
-                region=lambda t: t.region,
-                label=lambda t: t.label,
-            )
+        right_st = to_semantic_table(right_tbl, "right").with_dimensions(
+            customer_id=lambda t: t.customer_id,
+            region=lambda t: t.region,
+            label=lambda t: t.label,
         )
 
         joined = left_st.join_one(right_st, on=[_.customer_id, _.region])
@@ -779,9 +771,7 @@ class TestJoinStringShorthand:
         left = pd.DataFrame(
             {"customer_id": [1, 2, 1], "region": ["US", "EU", "US"], "amount": [10, 20, 30]}
         )
-        right = pd.DataFrame(
-            {"customer_id": [1, 2], "region": ["US", "EU"], "label": ["a", "b"]}
-        )
+        right = pd.DataFrame({"customer_id": [1, 2], "region": ["US", "EU"], "label": ["a", "b"]})
         left_tbl = con.create_table("left_t", left)
         right_tbl = con.create_table("right_t", right)
 
@@ -793,13 +783,10 @@ class TestJoinStringShorthand:
             )
             .with_measures(total=_.amount.sum())
         )
-        right_st = (
-            to_semantic_table(right_tbl, "right")
-            .with_dimensions(
-                customer_id=lambda t: t.customer_id,
-                region=lambda t: t.region,
-                label=lambda t: t.label,
-            )
+        right_st = to_semantic_table(right_tbl, "right").with_dimensions(
+            customer_id=lambda t: t.customer_id,
+            region=lambda t: t.region,
+            label=lambda t: t.label,
         )
 
         joined = left_st.join_one(right_st, on=[_.customer_id, "region"])
@@ -951,12 +938,7 @@ class TestSnowflakeSchema:
             .join_one(snowflake["stores"], on="store_id")
         )
 
-        df = (
-            joined
-            .group_by("customers.customer_name")
-            .aggregate("sales.total_sales")
-            .execute()
-        )
+        df = joined.group_by("customers.customer_name").aggregate("sales.total_sales").execute()
         assert set(df["customers.customer_name"]) == {"Alice", "Bob", "Carol"}
         assert df["sales.total_sales"].sum() == 510  # 50+80+120+90+60+110
 
@@ -970,8 +952,7 @@ class TestSnowflakeSchema:
         )
 
         df = (
-            joined
-            .group_by("stores.store_name")
+            joined.group_by("stores.store_name")
             .aggregate("sales.total_sales", "sales.sale_count")
             .execute()
         )
@@ -987,15 +968,13 @@ class TestSnowflakeSchema:
         )
 
         df = (
-            joined
-            .group_by("customers.customer_name", "products.product_name")
+            joined.group_by("customers.customer_name", "products.product_name")
             .aggregate("sales.total_sales")
             .execute()
         )
         # Alice bought Widget(50) and Gadget(120)
         alice_widget = df[
-            (df["customers.customer_name"] == "Alice")
-            & (df["products.product_name"] == "Widget")
+            (df["customers.customer_name"] == "Alice") & (df["products.product_name"] == "Widget")
         ]
         assert alice_widget["sales.total_sales"].iloc[0] == 50
 
@@ -1009,12 +988,7 @@ class TestSnowflakeSchema:
             .join_one(snowflake["regions"], on="region_id")
         )
 
-        df = (
-            joined
-            .group_by("regions.region_name")
-            .aggregate("sales.total_sales")
-            .execute()
-        )
+        df = joined.group_by("regions.region_name").aggregate("sales.total_sales").execute()
         # North: Alice(1,2) + Bob(1,2) = customers 1,2 → sales 50+80+120+60 = 310
         # South: Carol(3) → sales 90+110 = 200
         assert set(df["regions.region_name"]) == {"North", "South"}
@@ -1031,17 +1005,16 @@ class TestSnowflakeSchema:
             .join_one(snowflake["categories"], on=_.category_id)
         )
 
-        df = (
-            joined
-            .group_by("categories.category_name")
-            .aggregate("sales.total_sales")
-            .execute()
-        )
+        df = joined.group_by("categories.category_name").aggregate("sales.total_sales").execute()
         # Electronics (Widget 10, Gadget 20): sales 50+80+120+90 = 340
         # Accessories (Gizmo 30): sales 60+110 = 170
         assert set(df["categories.category_name"]) == {"Electronics", "Accessories"}
-        electronics = df[df["categories.category_name"] == "Electronics"]["sales.total_sales"].iloc[0]
-        accessories = df[df["categories.category_name"] == "Accessories"]["sales.total_sales"].iloc[0]
+        electronics = df[df["categories.category_name"] == "Electronics"]["sales.total_sales"].iloc[
+            0
+        ]
+        accessories = df[df["categories.category_name"] == "Accessories"]["sales.total_sales"].iloc[
+            0
+        ]
         assert electronics == 340
         assert accessories == 170
 
@@ -1060,8 +1033,7 @@ class TestSnowflakeSchema:
         )
 
         df = (
-            joined
-            .group_by("regions.region_name", "categories.category_name")
+            joined.group_by("regions.region_name", "categories.category_name")
             .aggregate("sales.total_sales", "sales.sale_count")
             .execute()
         )
@@ -1082,8 +1054,7 @@ class TestSnowflakeSchema:
         )
 
         df = (
-            joined
-            .group_by("stores.store_name", "regions.region_name")
+            joined.group_by("stores.store_name", "regions.region_name")
             .aggregate("sales.total_sales")
             .execute()
         )
@@ -1109,15 +1080,16 @@ class TestSnowflakeSchema:
         """Mix string, Deferred, and lambda across a single chain."""
         joined = (
             snowflake["sales"]
-            .join_one(snowflake["customers"], on="customer_id")            # string
-            .join_one(snowflake["regions"], on=_.region_id)                # Deferred
-            .join_one(snowflake["products"],                               # lambda
-                      on=lambda l, r: l.product_id == r.product_id)
+            .join_one(snowflake["customers"], on="customer_id")  # string
+            .join_one(snowflake["regions"], on=_.region_id)  # Deferred
+            .join_one(
+                snowflake["products"],  # lambda
+                on=lambda l, r: l.product_id == r.product_id,
+            )
         )
 
         df = (
-            joined
-            .group_by("regions.region_name", "products.product_name")
+            joined.group_by("regions.region_name", "products.product_name")
             .aggregate("sales.sale_count")
             .execute()
         )
@@ -1374,7 +1346,8 @@ class TestDeeplyNestedJoins:
                 "cities.total_population",
             )
             .mutate(
-                revenue_per_capita=lambda t: t["shops.total_revenue"] / t["cities.total_population"],
+                revenue_per_capita=lambda t: t["shops.total_revenue"]
+                / t["cities.total_population"],
             )
             .execute()
         )
@@ -1528,6 +1501,7 @@ class TestDeeplyNestedJoins:
         # Tokyo: 1200+800 = 2000
         assert df["cities.city_name"].iloc[0] == "Tokyo"
         assert df["shops.total_revenue"].iloc[0] == 2000
+
 
 def test_all_with_aggregation_expr_post_ops():
     """``t.all()`` over an inline aggregation with post-ops works end-to-end.

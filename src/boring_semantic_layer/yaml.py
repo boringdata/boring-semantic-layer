@@ -8,10 +8,12 @@ from typing import Any
 from ibis import _
 
 from .api import to_semantic_table
+from .errors import DefinitionError, format_suggestions, unwrap_or_raise
 from .expr import SemanticModel, SemanticTable
+from .io import read_yaml_file
 from .ops import Dimension, Measure
 from .profile import get_connection
-from .utils import read_yaml_file, safe_eval
+from .safe_eval import safe_eval
 
 
 def _parse_expression_config(name: str, config: str | dict, metric_type: str):
@@ -56,7 +58,10 @@ def _parse_dimension_or_measure(
           metadata: {format: currency_eur, unit: EUR, ...} (free-form)
     """
     expr_str, description, extra_kwargs = _parse_expression_config(name, config, metric_type)
-    deferred = safe_eval(expr_str, context={"_": _}).unwrap()
+    deferred = unwrap_or_raise(
+        safe_eval(expr_str, context={"_": _}),
+        context=f"Invalid expression for {metric_type} {name!r} ({expr_str!r})",
+    )
     base_kwargs = {"expr": deferred, "description": description}
     if metric_type == "dimension":
         return Dimension(**base_kwargs, **extra_kwargs)
@@ -83,7 +88,10 @@ def _parse_calc_measure(name: str, config: str | dict) -> Measure:
 
     def _make_calc_fn(source: str):
         def calc_fn(scope):
-            return safe_eval(source, context={"_": scope}).unwrap()
+            return unwrap_or_raise(
+                safe_eval(source, context={"_": scope}),
+                context=f"Invalid expression for calculated measure {name!r} ({source!r})",
+            )
 
         # YAML ``calculated_measures`` are documented as expressions over
         # measures, not raw columns. Prefer known measure names during calc
@@ -106,7 +114,10 @@ def _parse_filter(filter_expr: str) -> callable:
     """
     from ibis import _
 
-    deferred = safe_eval(filter_expr, context={"_": _}, allowed_names={"_"}).unwrap()
+    deferred = unwrap_or_raise(
+        safe_eval(filter_expr, context={"_": _}, allowed_names={"_"}),
+        context=f"Invalid filter expression ({filter_expr!r})",
+    )
     return lambda t, d=deferred: d.resolve(t)
 
 
@@ -200,9 +211,7 @@ def _parse_joins(
         # rather than the underlying model name (e.g., "airports.city").
         join_count = joined_model_names.get(join_model_name, 0)
         needs_alias = (
-            alias != join_model_name
-            or join_count > 0
-            or join_model_name == current_model_name
+            alias != join_model_name or join_count > 0 or join_model_name == current_model_name
         )
         if needs_alias:
             join_model = _create_aliased_model(join_model, alias)
@@ -211,6 +220,12 @@ def _parse_joins(
         # Apply the join based on type
         join_type = join_config.get("type", "one")  # Default to one-to-one
         how = join_config.get("how") or "left"
+        if how != "left":
+            raise DefinitionError(
+                f"Join {alias!r}: how={how!r} is not supported. Semantic joins "
+                "are always LEFT joins for soundness; filter afterwards for "
+                "inner-join semantics (e.g. filter: _.key.notnull())."
+            )
 
         if join_type == "cross":
             # Cross join - no keys needed
@@ -231,7 +246,6 @@ def _parse_joins(
             result_model = result_model.join_one(
                 join_model,
                 on=on_condition,
-                how=how,
             )
         elif join_type == "many":
             left_on = join_config.get("left_on")
@@ -249,7 +263,6 @@ def _parse_joins(
             result_model = result_model.join_many(
                 join_model,
                 on=on_condition,
-                how=how,
             )
         else:
             raise ValueError(f"Invalid join type '{join_type}'. Must be 'one', 'many', or 'cross'")
@@ -329,6 +342,74 @@ def _load_table_for_yaml_model(
     return tables, tables[table_name]
 
 
+_MODEL_KEYS = frozenset(
+    {
+        "table",
+        "description",
+        "database",
+        "dimensions",
+        "measures",
+        "calculated_measures",
+        "joins",
+        "filter",
+        "profile",
+    }
+)
+
+_VALID_TIME_GRAINS = frozenset(
+    {
+        "TIME_GRAIN_YEAR",
+        "TIME_GRAIN_QUARTER",
+        "TIME_GRAIN_MONTH",
+        "TIME_GRAIN_WEEK",
+        "TIME_GRAIN_DAY",
+        "TIME_GRAIN_HOUR",
+        "TIME_GRAIN_MINUTE",
+        "TIME_GRAIN_SECOND",
+        "year",
+        "quarter",
+        "month",
+        "week",
+        "day",
+        "hour",
+        "minute",
+        "second",
+    }
+)
+
+
+def _validate_model_config(name: str, model_config: Mapping[str, Any]) -> None:
+    """Reject unknown keys and invalid grains loudly, at load time.
+
+    A typo like ``dimension:`` used to load silently as a model with zero
+    dimensions; every mistake now names the model, the key, and the
+    accepted spellings.
+    """
+    unknown = sorted(set(model_config) - _MODEL_KEYS)
+    if unknown:
+        hints = "".join(format_suggestions(k, _MODEL_KEYS) for k in unknown)
+        raise DefinitionError(
+            f"Model {name!r} has unknown key(s) {unknown}. "
+            f"Accepted keys: {sorted(_MODEL_KEYS)}.{hints}"
+        )
+    for section in ("dimensions", "measures", "calculated_measures"):
+        entries = model_config.get(section) or {}
+        if not isinstance(entries, Mapping):
+            raise DefinitionError(
+                f"Model {name!r}: {section!r} must be a mapping of name -> "
+                f"expression/config, got {type(entries).__name__}"
+            )
+        for field_name, cfg in entries.items():
+            if isinstance(cfg, Mapping):
+                grain = cfg.get("smallest_time_grain")
+                if grain is not None and grain not in _VALID_TIME_GRAINS:
+                    raise DefinitionError(
+                        f"Model {name!r}, {section[:-1]} {field_name!r}: invalid "
+                        f"smallest_time_grain {grain!r}. Accepted values: "
+                        f"{sorted(_VALID_TIME_GRAINS)}."
+                    )
+
+
 def from_config(
     config: Mapping[str, Any],
     tables: Mapping[str, Any] | None = None,
@@ -401,9 +482,10 @@ def from_config(
 
     # First pass: create models
     for name, model_config in model_configs.items():
+        _validate_model_config(name, model_config)
         table_name = model_config.get("table")
         if not table_name:
-            raise ValueError(f"Model '{name}' must specify 'table' field")
+            raise DefinitionError(f"Model '{name}' must specify 'table' field")
 
         # Load table if needed and verify it exists
         tables, table = _load_table_for_yaml_model(model_config, tables, table_name)

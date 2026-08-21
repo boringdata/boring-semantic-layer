@@ -6,18 +6,11 @@ from typing import Any
 
 from ibis.expr.operations.core import Node as IbisNode
 from ibis.expr.types import Expr as IbisExpr
-from returns.maybe import Maybe, Nothing, Some
 from returns.result import Result, Success, safe
 
 from ._xorq import (
-    Expr as XorqExpr,
-)
-from ._xorq import (
     Graph,
     Node,
-)
-from ._xorq import (
-    replace_nodes as _xorq_replace_nodes,
 )
 from ._xorq import (
     to_node as _xorq_to_node,
@@ -43,6 +36,22 @@ def _collect_field_types() -> tuple[type, ...]:
 FIELD_TYPES = _collect_field_types()
 
 
+__all__ = [
+    "gen_children_of",
+    "to_node",
+    "walk_nodes",
+    "Graph",
+    "Node",
+    "graph_predecessors",
+    "graph_successors",
+    "graph_bfs",
+    "graph_invert",
+    "graph_to_dict",
+    "build_dependency_graph",
+    "build_column_index_from_roots",
+]
+
+
 def is_field(node: Any) -> bool:
     """Check if node is a Field from either ibis or xorq."""
     return isinstance(node, FIELD_TYPES)
@@ -62,31 +71,6 @@ def is_table_field(table_op: Node) -> Callable[[Any], bool]:
     return check
 
 
-__all__ = [
-    "bfs",
-    "gen_children_of",
-    "replace_nodes",
-    "to_node",
-    "walk_nodes",
-    "to_node_safe",
-    "try_to_node",
-    "find_dimensions_and_measures",
-    "find_entity_dimensions",
-    "find_event_timestamp_dimensions",
-    "Graph",
-    "Node",
-    "graph_predecessors",
-    "graph_successors",
-    "graph_bfs",
-    "graph_invert",
-    "graph_to_dict",
-    "build_dependency_graph",
-    "extract_column_from_dimension",
-    "build_column_index_from_roots",
-    "traverse_roots_with",
-]
-
-
 def to_node(maybe_expr: Any) -> Node:
     """Convert expression to node, handling various types."""
     if isinstance(maybe_expr, IbisNode):
@@ -100,33 +84,6 @@ def gen_children_of(node: Node) -> tuple[Node, ...]:
     """Generate child nodes from a node."""
     children = getattr(node, "__children__", ())
     return tuple(to_node(child) for child in children)
-
-
-def bfs(expr) -> Graph:
-    """
-    Build a graph using breadth-first search.
-
-    This is fundamentally imperative - keep it simple and clear.
-    """
-    from collections import deque
-
-    start = to_node(expr)
-    queue = deque([start])
-    graph_dict = {}
-
-    while queue:
-        node = queue.popleft()
-        if node in graph_dict:
-            continue
-
-        children = gen_children_of(node)
-        graph_dict[node] = children
-
-        for child in children:
-            if child not in graph_dict:
-                queue.append(child)
-
-    return Graph(graph_dict)
 
 
 def walk_nodes(node_types, expr):
@@ -153,79 +110,6 @@ def walk_nodes(node_types, expr):
         for child in gen_children_of(node):
             if child not in visited:
                 stack.append(child)
-
-
-def replace_nodes(replacer, expr):
-    """Replace nodes in an expression tree.
-
-    xorq's ``replace_nodes`` only understands xorq's vendored-ibis nodes and
-    raises on plain-ibis ones. Since BSL coexists with both flavors, dispatch
-    plain-ibis nodes to ibis's native ``Node.replace`` (normalising the
-    ``None`` kwargs ibis passes for unchanged children to ``{}`` to match the
-    xorq replacer contract) and xorq nodes to xorq's ``replace_nodes``.
-    """
-    node = to_node(expr)
-    if isinstance(node, IbisNode):
-        new_node = node.replace(
-            lambda n, kwargs: replacer(n, kwargs if kwargs is not None else {})
-        )
-        return new_node.to_expr()
-    return _xorq_replace_nodes(replacer, node).to_expr()
-
-
-@safe(exceptions=(ValueError,))
-def to_node_safe(maybe_expr: Any) -> Node:
-    """
-    Safely convert to node, returning Result.
-
-    Public API that only catches ValueError since that's the expected
-    error type for invalid expression inputs from user code.
-    """
-    return to_node(maybe_expr)
-
-
-def try_to_node(child: Any) -> Maybe[Node]:
-    """Try to convert to node, returning Maybe."""
-    return to_node_safe(child).map(Some).value_or(Nothing)
-
-
-def find_dimensions_and_measures(
-    expr: IbisExpr | XorqExpr,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """
-    Find dimensions and measures in expression.
-
-    Uses functional composition for field extraction.
-    """
-    from .ops import (
-        _find_all_root_models,
-        _get_field_dict,
-        _merge_fields_with_prefixing,
-    )
-
-    roots = _find_all_root_models(to_node(expr))
-
-    dimensions = _merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, "dimensions"))
-    measures = _merge_fields_with_prefixing(roots, lambda r: _get_field_dict(r, "measures"))
-
-    return (dimensions, measures)
-
-
-def _filter_by_attribute(items: dict[str, Any], attr: str) -> dict[str, Any]:
-    """Filter dictionary items by attribute value."""
-    return {name: item for name, item in items.items() if getattr(item, attr, False)}
-
-
-def find_entity_dimensions(expr: IbisExpr | XorqExpr) -> dict[str, Any]:
-    """Find all entity dimensions in the expression tree."""
-    dimensions, _ = find_dimensions_and_measures(expr)
-    return _filter_by_attribute(dimensions, "is_entity")
-
-
-def find_event_timestamp_dimensions(expr: IbisExpr | XorqExpr) -> dict[str, Any]:
-    """Find all event timestamp dimensions in the expression tree."""
-    dimensions, _ = find_dimensions_and_measures(expr)
-    return _filter_by_attribute(dimensions, "is_event_timestamp")
 
 
 def graph_predecessors(graph: dict[str, dict], node: str) -> set[str]:
@@ -346,8 +230,6 @@ def build_dependency_graph(
     Returns:
         Dictionary mapping field names to metadata with "deps" and "type" keys
     """
-    from .ops import CalcMeasure
-
     graph = {}
     extended_table = _build_extended_table(base_table, dimensions)
 
@@ -374,10 +256,9 @@ def build_dependency_graph(
             graph[name] = {"deps": {}, "type": "dimension" if name in dimensions else "measure"}
 
     for name, calc in calc_measures.items():
-        if isinstance(calc, CalcMeasure):
-            refs = set(calc.depends_on)
-        else:
-            refs = set()
+        # CalcMeasure carries declared dependencies; duck-type on the
+        # attribute so this bottom-layer module doesn't import ops.
+        refs = set(getattr(calc, "depends_on", None) or ())
         graph[name] = {"deps": {ref: "measure" for ref in refs}, "type": "calc_measure"}
 
     return graph
@@ -460,78 +341,7 @@ def _classify_dependencies(
     return {f.name: classify_field(f) for f in fields}
 
 
-def traverse_roots_with(
-    roots: Sequence[Any], transform: Callable[[Any], Result[Any, Exception]]
-) -> Result[list[Any], Exception]:
-    """
-    Traverse semantic table roots and apply a transformation function to each.
-
-    This is a generic traversal utility that handles errors safely using the
-    returns library. Short-circuits on first error.
-
-    Args:
-        roots: Sequence of semantic table roots
-        transform: Function to apply to each root (root -> Result[T, Exception])
-
-    Returns:
-        Result containing list of successful transformations or first error
-    """
-
-    # Use railway-oriented programming with .bind for proper error propagation
-    def accumulate_result(
-        acc_result: Result[list[Any], Exception], root: Any
-    ) -> Result[list[Any], Exception]:
-        # Short-circuit if already failed
-        return acc_result.bind(
-            lambda acc_list: transform(root).map(lambda value: acc_list + [value])
-        )
-
-    return functools_reduce(accumulate_result, roots, Success([]))
-
-
-def extract_column_from_dimension(dimension: Any, table: Any) -> Maybe[str]:
-    """
-    Extract the column name accessed by a dimension expression.
-
-    Handles both Deferred expressions (_.column) and regular callables (lambda t: t.column).
-    Uses the returns library for safe extraction without exceptions.
-
-    Args:
-        dimension: The dimension object or callable
-        table: The table to resolve against
-
-    Returns:
-        Maybe[str] containing the column name if successful, Nothing otherwise
-    """
-    from .ops import _extract_columns_from_callable, _is_deferred
-
-    expr = dimension.expr if hasattr(dimension, "expr") else dimension
-
-    if _is_deferred(expr):
-        return _safe_extract_from_deferred(expr, table)
-
-    if callable(expr):
-        extraction_result = _extract_columns_from_callable(expr, table)
-        if extraction_result.is_success() and extraction_result.columns:
-            return Some(next(iter(extraction_result.columns)))
-
-    return Nothing
-
-
 @safe
-def _extract_from_deferred(deferred_expr: Any, table: Any) -> str:
-    resolved = deferred_expr.resolve(table)
-    if hasattr(resolved, "get_name"):
-        return resolved.get_name()
-    raise ValueError("No get_name method")
-
-
-def _safe_extract_from_deferred(deferred_expr: Any, table: Any) -> Maybe[str]:
-    """Safely extract column name from deferred expression."""
-    result = _extract_from_deferred(deferred_expr, table)
-    return result.map(Some).value_or(Nothing)
-
-
 def build_column_index_from_roots(
     roots: Sequence[Any],
 ) -> Result[dict[str, list[int]], Exception]:

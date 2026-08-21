@@ -24,9 +24,7 @@ from boring_semantic_layer.calc_analyzer import (  # noqa: E402
 
 
 def _vt():
-    return virtual_agg_table(
-        {"flight_count": "int64", "total_distance": "float64", "date": "date"}
-    )
+    return virtual_agg_table({"flight_count": "int64", "total_distance": "float64", "date": "date"})
 
 
 def _base():
@@ -53,9 +51,7 @@ def test_plain_reduction_on_base_is_pushable():
 
 def test_arith_of_aggs_on_same_base_is_pushable():
     base = _base()
-    r = analyze_calc_expr(
-        base.distance.sum() / base.passengers.sum(), base_table_op=base.op()
-    )
+    r = analyze_calc_expr(base.distance.sum() / base.passengers.sum(), base_table_op=base.op())
     assert r.pushable is True
     assert r.inline_aggs == frozenset({"distance", "passengers"})
 

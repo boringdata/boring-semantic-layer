@@ -12,10 +12,12 @@ limit) which construct a scope to evaluate ad-hoc lambdas.
 
 from __future__ import annotations
 
-import difflib
 from typing import Any
 
 from attrs import field, frozen
+
+from .errors import suggest_kinded
+from .fieldref import suffix_matches
 
 
 class UnknownMeasureRefError(AttributeError):
@@ -65,9 +67,7 @@ class _ColumnPrefixProxy:
         full_name = f"{self._prefix}.{name}"
         if hasattr(self._tbl, "columns") and full_name in self._tbl.columns:
             return self._tbl[full_name]
-        raise KeyError(
-            f"No column '{full_name}' found on the table."
-        )
+        raise KeyError(f"No column '{full_name}' found on the table.")
 
 
 def _resolve_column_short_name(tbl, name):
@@ -82,12 +82,11 @@ def _resolve_column_short_name(tbl, name):
         return tbl[name]
 
     if hasattr(tbl, "columns"):
-        suffix = f".{name}"
-        matches = [c for c in tbl.columns if c.endswith(suffix)]
+        matches = suffix_matches(name, tbl.columns)
         if matches:
             raise AttributeError(
                 f"Column '{name}' not found. Did you mean one of the fully qualified names: "
-                f"{matches}? Use bracket notation, e.g. t[\"{matches[0]}\"]."
+                f'{matches}? Use bracket notation, e.g. t["{matches[0]}"].'
             )
 
     return getattr(tbl, name)
@@ -131,20 +130,12 @@ class MeasureScope:
         object.__setattr__(self, "known_set", frozenset(self.known))
 
     def _typo_suggestion(self, name: str) -> str | None:
-        cutoff = 0.80
-        candidates: list[tuple[str, str]] = []
+        kinded = []
         if self.known:
-            for match in difflib.get_close_matches(name, self.known, n=3, cutoff=cutoff):
-                candidates.append(("measure", match))
+            kinded.append(("measure", list(self.known)))
         if hasattr(self.tbl, "columns"):
-            for match in difflib.get_close_matches(
-                name, list(self.tbl.columns), n=3, cutoff=cutoff
-            ):
-                candidates.append(("column", match))
-        if not candidates:
-            return None
-        formatted = ", ".join(f"{kind} {match!r}" for kind, match in candidates)
-        return f"Did you mean: {formatted}?"
+            kinded.append(("column", list(self.tbl.columns)))
+        return suggest_kinded(name, kinded)
 
     def __getattr__(self, name: str):
         if name.startswith("_"):

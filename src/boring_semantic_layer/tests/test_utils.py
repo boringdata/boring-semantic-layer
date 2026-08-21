@@ -4,12 +4,8 @@ import ibis
 from ibis import _
 from returns.result import Failure, Success
 
-from boring_semantic_layer.utils import (
-    _is_url,
-    expr_to_ibis_string,
-    ibis_string_to_expr,
-    safe_eval,
-)
+from boring_semantic_layer.io import _is_url
+from boring_semantic_layer.safe_eval import safe_eval
 
 
 def test_safe_eval_simple_expression():
@@ -128,36 +124,6 @@ def test_safe_eval_ibis_method_call():
 def test_safe_eval_ibis_complex_expression():
     result = safe_eval("_.col1 + _.col2", context={"_": _}, allowed_names={"_"})
     assert isinstance(result, Success)
-
-
-def test_expr_to_ibis_string():
-    fn = lambda t: t.distance.mean()  # noqa: E731
-    result = expr_to_ibis_string(fn)
-    assert isinstance(result, Success)
-    ibis_str = result.unwrap()
-    assert ibis_str == "_.distance.mean()"
-
-
-def test_expr_to_ibis_string_simple():
-    fn = lambda t: t.origin  # noqa: E731
-    result = expr_to_ibis_string(fn)
-    assert isinstance(result, Success)
-    ibis_str = result.unwrap()
-    assert ibis_str == "_.origin"
-
-
-def test_ibis_string_to_expr():
-    result = ibis_string_to_expr("_.distance.mean()")
-    assert isinstance(result, Success)
-    fn = result.unwrap()
-    assert callable(fn)
-
-
-def test_ibis_string_to_expr_simple():
-    result = ibis_string_to_expr("_.origin")
-    assert isinstance(result, Success)
-    fn = result.unwrap()
-    assert callable(fn)
 
 
 def test_no_file_access():

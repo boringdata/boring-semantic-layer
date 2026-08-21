@@ -13,11 +13,11 @@ This script showcases:
 import ibis
 import pandas as pd
 
+from boring_semantic_layer import to_semantic_table
+
 # CI runs this example with and without xorq. xibis matches BSL's active ibis
 # flavor in both modes; users who are not using xorq can simply use `import ibis`.
 from boring_semantic_layer._xorq import ibis as xibis
-
-from boring_semantic_layer import to_semantic_table
 
 
 def main():

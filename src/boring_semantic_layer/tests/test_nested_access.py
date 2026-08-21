@@ -367,12 +367,9 @@ def test_nest_then_regroup_unnests_struct_field_access():
     tbl = con.create_table("flights", data)
     flights_st = to_semantic_table(tbl)
 
-    nested = (
-        flights_st.group_by("origin")
-        .aggregate(
-            flight_count=lambda t: t.count(),
-            nest={"flights": lambda t: t.group_by(["carrier", "distance"])},
-        )
+    nested = flights_st.group_by("origin").aggregate(
+        flight_count=lambda t: t.count(),
+        nest={"flights": lambda t: t.group_by(["carrier", "distance"])},
     )
 
     result = (

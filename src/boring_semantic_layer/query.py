@@ -14,7 +14,9 @@ from attrs import frozen
 from ibis.common.collections import FrozenDict
 from toolz import curry
 
-from .utils import safe_eval
+from .errors import QueryError, UnknownFieldError, suggest_kinded, unwrap_or_raise
+from .fieldref import resolve_suffix
+from .safe_eval import safe_eval
 
 
 def _get_ibis_api():
@@ -35,6 +37,7 @@ def _get_ibis_api():
         return xo
     except Exception:
         return ibis
+
 
 # Time grain type alias
 TimeGrain = Literal[
@@ -82,7 +85,7 @@ def _is_time_dimension(dims_dict: dict[str, Any], dim_name: str) -> bool:
     return dim_name in dims_dict and dims_dict[dim_name].is_time_dimension
 
 
-def _find_time_dimension(semantic_table: Any, dimensions: list[str]) -> str | None:
+def find_time_dimension(semantic_table: Any, dimensions: list[str]) -> str | None:
     """
     Find the first time dimension in the query dimensions list.
 
@@ -258,7 +261,11 @@ class Filter:
             # fail at build time; the flavor-matched expression is built per
             # table at resolve time and memoized per ibis module.
             _default = _get_ibis_api()
-            safe_eval(filter_str, context={"_": _default._, "ibis": _default}).unwrap()
+            unwrap_or_raise(
+                safe_eval(filter_str, context={"_": _default._, "ibis": _default}),
+                context=f"Invalid filter expression ({filter_str!r})",
+                error=QueryError,
+            )
             _expr_cache: dict[int, Any] = {}
 
             def _str_filter(t):
@@ -266,10 +273,11 @@ class Filter:
                 _ibis = get_ibis_module(tbl)
                 key = id(_ibis)
                 if key not in _expr_cache:
-                    _expr_cache[key] = safe_eval(
-                        filter_str,
-                        context={"_": _ibis._, "ibis": _ibis},
-                    ).unwrap()
+                    _expr_cache[key] = unwrap_or_raise(
+                        safe_eval(filter_str, context={"_": _ibis._, "ibis": _ibis}),
+                        context=f"Invalid filter expression ({filter_str!r})",
+                        error=QueryError,
+                    )
                 return _expr_cache[key].resolve(tbl)
 
             _str_filter.__bsl_deferred_resolution__ = True
@@ -506,7 +514,9 @@ def _validate_post_agg_filter_fields(
             )
 
 
-def _build_time_range_filters(semantic_table: Any, time_dimension: str, time_range: Mapping[str, str]) -> list[Callable]:
+def _build_time_range_filters(
+    semantic_table: Any, time_dimension: str, time_range: Mapping[str, str]
+) -> list[Callable]:
     """Build reusable filters for a specific time dimension and range."""
     if not isinstance(time_range, dict) or "start" not in time_range or "end" not in time_range:
         raise ValueError("time_range must be a dict with 'start' and 'end' keys")
@@ -571,8 +581,8 @@ def compare_periods(
     limit: int | None = None,
 ) -> Any:
     """Compare two time ranges and return current/previous/delta columns."""
+    from ._xorq import null_safe_equal
     from .api import to_semantic_table
-    from .join_utils import null_safe_equal
 
     dimensions = list(dimensions or [])
     measures = list(measures or [])
@@ -587,7 +597,9 @@ def compare_periods(
 
     dims_dict = semantic_table.get_dimensions()
     known_dimensions = set(dims_dict)
-    known_measures = set(semantic_table.get_measures()) | set(semantic_table.get_calculated_measures())
+    known_measures = set(semantic_table.get_measures()) | set(
+        semantic_table.get_calculated_measures()
+    )
     model_name = getattr(semantic_table, "name", None)
 
     dimensions = _normalize_fields(dimensions, known_dimensions, expected_prefix=model_name)
@@ -599,9 +611,9 @@ def compare_periods(
             [resolved_time_dimension], known_dimensions, expected_prefix=model_name
         )[0]
     else:
-        resolved_time_dimension = _find_time_dimension(semantic_table, dimensions) or _find_any_time_dimension(
-            semantic_table
-        )
+        resolved_time_dimension = find_time_dimension(
+            semantic_table, dimensions
+        ) or _find_any_time_dimension(semantic_table)
 
     if resolved_time_dimension is None:
         raise ValueError(
@@ -614,7 +626,10 @@ def compare_periods(
         semantic_table=semantic_table,
         dimensions=dimensions,
         measures=measures,
-        filters=[*filters, *_build_time_range_filters(semantic_table, resolved_time_dimension, current_time_range)],
+        filters=[
+            *filters,
+            *_build_time_range_filters(semantic_table, resolved_time_dimension, current_time_range),
+        ],
         time_grain=time_grain,
         time_grains=time_grains,
     )
@@ -622,7 +637,12 @@ def compare_periods(
         semantic_table=semantic_table,
         dimensions=dimensions,
         measures=measures,
-        filters=[*filters, *_build_time_range_filters(semantic_table, resolved_time_dimension, previous_time_range)],
+        filters=[
+            *filters,
+            *_build_time_range_filters(
+                semantic_table, resolved_time_dimension, previous_time_range
+            ),
+        ],
         time_grain=time_grain,
         time_grains=time_grains,
     )
@@ -647,10 +667,7 @@ def compare_periods(
         ]
         joined = current_tbl.join(previous_tbl, join_predicates, how="outer")
         result_tbl = joined.select(
-            *[
-                joined[dim].coalesce(joined[f"__previous_{dim}"]).name(dim)
-                for dim in dimensions
-            ],
+            *[joined[dim].coalesce(joined[f"__previous_{dim}"]).name(dim) for dim in dimensions],
             *[joined[f"{measure}_current"] for measure in measures],
             *[joined[f"{measure}_previous"] for measure in measures],
         )
@@ -673,7 +690,9 @@ def compare_periods(
     result_tbl = result_tbl.mutate(**delta_mutations, **pct_mutations)
 
     if order_by:
-        order_by = _normalize_order_by(order_by, set(result_tbl.columns), expected_prefix=model_name)
+        order_by = _normalize_order_by(
+            order_by, set(result_tbl.columns), expected_prefix=model_name
+        )
         result_tbl = result_tbl.order_by(
             [
                 result_tbl[field].desc() if direction.lower() == "desc" else result_tbl[field]
@@ -783,6 +802,30 @@ def query(
     order_by = _normalize_order_by(order_by, known_order_fields, expected_prefix=model_name)
     filters = list(filters or [])  # Copy to avoid mutating input
 
+    # Fail fast on unknown names, with suggestions — before any compilation,
+    # so the user never sees a backend error listing physical columns.
+    raw_columns = set(getattr(result, "columns", ()) or ())
+    for dim in dimensions:
+        if (
+            dim not in known_dimensions
+            and dim not in raw_columns
+            and resolve_suffix(dim, known_dimensions, raw_columns) is None
+        ):
+            hint = suggest_kinded(dim, [("dimension", known_dimensions), ("column", raw_columns)])
+            raise UnknownFieldError(
+                f"Unknown dimension {dim!r}. Declared dimensions: "
+                f"{sorted(known_dimensions)}.{' ' + hint if hint else ''}"
+            )
+    for meas in measures or ():
+        if meas not in known_measures and resolve_suffix(meas, known_measures) is None:
+            hint = suggest_kinded(
+                meas, [("measure", known_measures), ("dimension", known_dimensions)]
+            )
+            raise UnknownFieldError(
+                f"Unknown measure {meas!r}. Declared measures: "
+                f"{sorted(known_measures)}.{' ' + hint if hint else ''}"
+            )
+
     selected_fields = set(dimensions) | set(measures or [])
     produces_aggregate = bool(dimensions or measures)
     if produces_aggregate and order_by:
@@ -798,7 +841,7 @@ def query(
 
     # Step 0: Add time_range as a filter if specified
     if time_range:
-        time_dim_name = _find_time_dimension(result, dimensions)
+        time_dim_name = find_time_dimension(result, dimensions)
         if not time_dim_name:
             raise ValueError(
                 "time_range filter requires a time dimension in the query dimensions. "
@@ -896,9 +939,7 @@ def query(
 
     # Step 3.5: Apply measure filters after aggregation (HAVING semantics)
     for filter_spec in post_agg_filters:
-        filter_fn = _normalize_post_agg_filter(
-            filter_spec, known_post_agg_fields, model_name
-        )
+        filter_fn = _normalize_post_agg_filter(filter_spec, known_post_agg_fields, model_name)
         result = result.filter(filter_fn)
 
     # Step 4: Apply ordering using functional composition

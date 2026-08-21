@@ -271,11 +271,13 @@ class TestMultiLevelDimensionFilters:
 
     @pytest.fixture()
     def flights_st(self):
-        tbl = ibis.memtable({
-            "origin": ["NYC", "LAX", "NYC", "SFO", "LAX"],
-            "distance": [2789, 2789, 2902, 347, 347],
-            "duration": [330, 330, 360, 65, 65],
-        })
+        tbl = ibis.memtable(
+            {
+                "origin": ["NYC", "LAX", "NYC", "SFO", "LAX"],
+                "distance": [2789, 2789, 2902, 347, 347],
+                "duration": [330, 330, 360, 65, 65],
+            }
+        )
         return (
             to_semantic_table(tbl, name="flights")
             .with_dimensions(
@@ -317,28 +319,22 @@ class TestMultiLevelDimensionFilters:
 
     def test_chained_filters_on_derived_dims(self, flights_st):
         """Stacked filter().filter() both referencing derived dimensions."""
-        result = (
-            flights_st
-            .filter(ibis._.d_one > 500)
-            .filter(ibis._.d_two > 1000)
-            .execute()
-        )
+        result = flights_st.filter(ibis._.d_one > 500).filter(ibis._.d_two > 1000).execute()
         assert len(result) > 0
         assert all(result["d_one"] > 500)
         assert all(result["d_two"] > 1000)
 
     def test_three_level_derived_dimension_filter(self):
         """Arbitrary-depth chain: d_three -> d_two -> d_one -> distance."""
-        tbl = ibis.memtable({
-            "distance": [2789, 347, 2902],
-        })
-        st = (
-            to_semantic_table(tbl, name="test")
-            .with_dimensions(
-                d_one=lambda t: t.distance.add(1),
-                d_two=lambda t: t.d_one.add(1),
-                d_three=lambda t: t.d_two.add(1),
-            )
+        tbl = ibis.memtable(
+            {
+                "distance": [2789, 347, 2902],
+            }
+        )
+        st = to_semantic_table(tbl, name="test").with_dimensions(
+            d_one=lambda t: t.distance.add(1),
+            d_two=lambda t: t.d_one.add(1),
+            d_three=lambda t: t.d_two.add(1),
         )
         result = st.filter(ibis._.d_three > 1000).execute()
         assert len(result) > 0
@@ -1650,13 +1646,15 @@ class TestMeasureFilters:
         result = st.query(
             dimensions=["carrier"],
             measures=["total_distance"],
-            filters=[{
-                "operator": "AND",
-                "conditions": [
-                    {"field": "total_distance", "operator": ">", "value": 1000},
-                    {"field": "total_distance", "operator": "<", "value": 5000},
-                ],
-            }],
+            filters=[
+                {
+                    "operator": "AND",
+                    "conditions": [
+                        {"field": "total_distance", "operator": ">", "value": 1000},
+                        {"field": "total_distance", "operator": "<", "value": 5000},
+                    ],
+                }
+            ],
         ).execute()
         assert all(result["total_distance"] > 1000)
         assert all(result["total_distance"] < 5000)
@@ -1701,13 +1699,15 @@ class TestMeasureFilters:
         result = st.query(
             dimensions=["carrier"],
             measures=["total_distance"],
-            filters=[{
-                "operator": "AND",
-                "conditions": [
-                    {"field": "carrier", "operator": "!=", "value": "DL"},
-                    {"field": "total_distance", "operator": ">", "value": 0},
-                ],
-            }],
+            filters=[
+                {
+                    "operator": "AND",
+                    "conditions": [
+                        {"field": "carrier", "operator": "!=", "value": "DL"},
+                        {"field": "total_distance", "operator": ">", "value": 0},
+                    ],
+                }
+            ],
         ).execute()
         assert "DL" not in result["carrier"].values
         assert all(result["total_distance"] > 0)
@@ -1719,16 +1719,12 @@ class TestMutateGroupByAggregateOnJoinMany:
 
     @pytest.fixture(scope="class")
     def joined_model(self, con):
-        customers_df = pd.DataFrame(
-            {"cid": [1, 2], "name": ["Alice", "Bob"]}
-        )
+        customers_df = pd.DataFrame({"cid": [1, 2], "name": ["Alice", "Bob"]})
         accounts_df = pd.DataFrame(
             {
                 "aid": [10, 11, 12, 13],
                 "cid": [1, 1, 2, 2],
-                "date": pd.to_datetime(
-                    ["2024-01-05", "2024-02-10", "2024-01-15", "2024-02-20"]
-                ),
+                "date": pd.to_datetime(["2024-01-05", "2024-02-10", "2024-01-15", "2024-02-20"]),
                 "balance": [100, 200, 300, 400],
             }
         )
@@ -1739,37 +1735,35 @@ class TestMutateGroupByAggregateOnJoinMany:
             cid=lambda t: t.cid,
             name=lambda t: t.name,
         )
-        acct_model = to_semantic_table(accounts, "accounts").with_dimensions(
-            aid=lambda t: t.aid,
-            cid=lambda t: t.cid,
-            date=lambda t: t.date,
-        ).with_measures(
-            total_balance=lambda t: t.balance.sum(),
+        acct_model = (
+            to_semantic_table(accounts, "accounts")
+            .with_dimensions(
+                aid=lambda t: t.aid,
+                cid=lambda t: t.cid,
+                date=lambda t: t.date,
+            )
+            .with_measures(
+                total_balance=lambda t: t.balance.sum(),
+            )
         )
 
-        return cust_model.join_many(
-            acct_model, on=lambda l, r: l.cid == r.cid
-        )
+        return cust_model.join_many(acct_model, on=lambda l, r: l.cid == r.cid)
 
     def test_mutate_groupby_aggregate_preserves_column(self, joined_model):
         """Mutated column used as group-by key must appear in the result."""
         result = (
-            joined_model
-            .mutate(period=ibis._["date"].truncate("M"))
+            joined_model.mutate(period=ibis._["date"].truncate("M"))
             .group_by("period")
             .aggregate("accounts.total_balance")
         )
         df = result.execute()
-        assert "period" in df.columns, (
-            f"'period' missing from result columns: {list(df.columns)}"
-        )
+        assert "period" in df.columns, f"'period' missing from result columns: {list(df.columns)}"
         assert len(df) == 2  # Jan and Feb
 
     def test_mutate_groupby_aggregate_values_correct(self, joined_model):
         """Values should be correctly aggregated per mutated group."""
         result = (
-            joined_model
-            .mutate(period=ibis._["date"].truncate("M"))
+            joined_model.mutate(period=ibis._["date"].truncate("M"))
             .group_by("period")
             .aggregate("accounts.total_balance")
         )
@@ -1780,8 +1774,7 @@ class TestMutateGroupByAggregateOnJoinMany:
     def test_mutate_with_semantic_dim_groupby(self, joined_model):
         """Mutated key + semantic dimension in group-by together."""
         result = (
-            joined_model
-            .mutate(period=ibis._["date"].truncate("M"))
+            joined_model.mutate(period=ibis._["date"].truncate("M"))
             .group_by("period", "customers.name")
             .aggregate("accounts.total_balance")
         )
@@ -1793,8 +1786,7 @@ class TestMutateGroupByAggregateOnJoinMany:
     def test_mutate_groupby_order_by(self, joined_model):
         """order_by on a mutated group-by column should not raise."""
         result = (
-            joined_model
-            .mutate(period=ibis._["date"].truncate("M"))
+            joined_model.mutate(period=ibis._["date"].truncate("M"))
             .group_by("period")
             .aggregate("accounts.total_balance")
             .order_by("period")
@@ -1806,8 +1798,7 @@ class TestMutateGroupByAggregateOnJoinMany:
     def test_multiple_mutated_groupby_keys(self, joined_model):
         """Multiple mutated columns in group-by should all survive."""
         result = (
-            joined_model
-            .mutate(
+            joined_model.mutate(
                 period=ibis._["date"].truncate("M"),
                 bal_bucket=ibis._["balance"] > 150,
             )

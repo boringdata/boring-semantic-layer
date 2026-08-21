@@ -29,9 +29,7 @@ def con():
 
 @pytest.fixture(scope="module")
 def flights_table(con):
-    df = pd.DataFrame(
-        {"carrier": ["AA", "UA", "AA", "DL"], "dep_delay": [5.0, 10.0, 15.0, 2.0]}
-    )
+    df = pd.DataFrame({"carrier": ["AA", "UA", "AA", "DL"], "dep_delay": [5.0, 10.0, 15.0, 2.0]})
     return con.create_table("flavor_flights", df)
 
 
@@ -113,12 +111,7 @@ class TestCrossFlavorBoolTrap:
 
     def test_plain_value_comparison_still_works(self, flights_table):
         sm = _flights_model(flights_table)
-        out = (
-            sm.filter(lambda t: t.carrier == "AA")
-            .group_by("carrier")
-            .aggregate("cnt")
-            .execute()
-        )
+        out = sm.filter(lambda t: t.carrier == "AA").group_by("carrier").aggregate("cnt").execute()
         assert len(out) == 1
         assert out["cnt"].iloc[0] == 2
 
@@ -137,9 +130,7 @@ class TestFilterFlavorByTable:
         assert len(out) == 2
 
     @pytest.mark.skipif(not HAS_XORQ, reason="fallback only differs with xorq installed")
-    def test_dict_date_ordering_filter_fallback_backend(
-        self, events_table, unsupported_backend
-    ):
+    def test_dict_date_ordering_filter_fallback_backend(self, events_table, unsupported_backend):
         # Previously: xorq-flavored timestamp literal vs plain column -> TypeError.
         sm = _events_model(events_table)
         assert "xorq" not in type(sm.op().table).__module__
@@ -151,9 +142,7 @@ class TestFilterFlavorByTable:
         assert len(out) == 2
 
     @pytest.mark.skipif(not HAS_XORQ, reason="fallback only differs with xorq installed")
-    def test_dict_date_equality_filter_fallback_backend(
-        self, events_table, unsupported_backend
-    ):
+    def test_dict_date_equality_filter_fallback_backend(self, events_table, unsupported_backend):
         # Previously: silent constant-false predicate -> empty result.
         sm = _events_model(events_table)
         out = sm.query(
@@ -165,9 +154,7 @@ class TestFilterFlavorByTable:
         assert out["total"].iloc[0] == 1.0
 
     @pytest.mark.skipif(not HAS_XORQ, reason="fallback only differs with xorq installed")
-    def test_string_filter_with_literal_fallback_backend(
-        self, events_table, unsupported_backend
-    ):
+    def test_string_filter_with_literal_fallback_backend(self, events_table, unsupported_backend):
         # ibis.literal inside a string filter must use the table's flavor.
         sm = _events_model(events_table)
         out = sm.query(
@@ -187,11 +174,10 @@ class TestFilterFlavorByTable:
         assert len(out) == 2
 
     def test_invalid_string_filter_fails_at_build_time(self):
-        from returns.primitives.exceptions import UnwrapFailedError
-
+        from boring_semantic_layer.errors import QueryError
         from boring_semantic_layer.query import Filter
 
-        with pytest.raises(UnwrapFailedError):
+        with pytest.raises(QueryError, match="Invalid filter expression"):
             Filter(filter="__import__('os').system('true')").to_callable()
 
 
@@ -215,39 +201,15 @@ class TestAgentContextFlavor:
         # End-to-end shape of tools._query_model: literal comparison built
         # from the flavor-matched module returns correct (non-empty) results.
         from boring_semantic_layer.agents.tools import _models_ibis_module
-        from boring_semantic_layer.utils import safe_eval
+        from boring_semantic_layer.safe_eval import safe_eval
 
         sm = _flights_model(flights_table)
         models = {"flights": sm}
         module = _models_ibis_module(models)
-        query = "flights.filter(_.carrier == ibis.literal('AA')).group_by('carrier').aggregate('cnt')"
-        result = safe_eval(
-            query, context={**models, "ibis": module, "_": module._}
-        ).unwrap()
+        query = (
+            "flights.filter(_.carrier == ibis.literal('AA')).group_by('carrier').aggregate('cnt')"
+        )
+        result = safe_eval(query, context={**models, "ibis": module, "_": module._}).unwrap()
         out = result.execute()
         assert len(out) == 1
         assert out["cnt"].iloc[0] == 2
-
-
-class TestIbisStringToExprFlavor:
-    """ibis_string_to_expr lambdas re-bind ``ibis`` to the flavor of the
-    table they are called with."""
-
-    def test_literal_expression_against_converted_table(self, flights_table):
-        from boring_semantic_layer.utils import ibis_string_to_expr
-
-        sm = _flights_model(flights_table)
-        fn = ibis_string_to_expr("_.dep_delay >= ibis.literal(8.0)").unwrap()
-        resolved = fn(sm.table)
-        # Must be a real boolean expression of the table's own flavor,
-        # not a Python bool from identity comparison.
-        assert not isinstance(resolved, bool)
-        assert type(resolved).__module__.split(".")[0] == type(sm.table).__module__.split(".")[0]
-
-    def test_literal_expression_against_plain_table(self, flights_table):
-        from boring_semantic_layer.utils import ibis_string_to_expr
-
-        fn = ibis_string_to_expr("_.dep_delay >= ibis.literal(8.0)").unwrap()
-        resolved = fn(flights_table)
-        assert not isinstance(resolved, bool)
-        assert type(resolved).__module__.startswith("ibis.")
