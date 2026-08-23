@@ -239,3 +239,97 @@ def test_guard_message_names_the_underlying_error():
     model = accounts.join_many(transactions, on=lambda a, t: a.account_id == t.account_id)
     with pytest.raises(ValueError, match="AttributeError.*filter"):
         from_tagged(to_tagged(model))
+
+
+# ---------------------------------------------------------------------------
+# Tagging an already-aggregated join query (not just the bare model)
+# ---------------------------------------------------------------------------
+#
+# ``to_tagged()`` explicitly supports tagging a ``SemanticAggregateOp``
+# directly (see its ``aggregate_cache_storage`` parameter, for smart-cube
+# caching), which tags the FULLY pre-agg-compiled query rather than a bare
+# model. Leaf recovery then has to isolate each join leg from that compiled
+# tree instead of the original (unaggregated) join chain.
+
+
+@pytest.fixture
+def plain_tables():
+    return {
+        "accounts": pd.DataFrame(
+            {
+                "account_id": [1, 2, 3],
+                "customer_id": [10, 10, 20],
+            }
+        ),
+        "customers": pd.DataFrame({"customer_id": [10, 20], "state": ["CA", "NY"]}),
+        "transactions": pd.DataFrame(
+            {
+                "transaction_id": [1, 2, 3, 4],
+                "account_id": [1, 1, 2, 3],
+                "amount": [5.0, 6.0, 7.0, 8.0],
+            }
+        ),
+    }
+
+
+def _build_plain_model(tables):
+    accounts = (
+        to_semantic_table(xo.memtable(tables["accounts"], name="accounts"), name="accounts")
+        .with_dimensions(
+            account_id=lambda t: t.account_id,
+            customer_id=lambda t: t.customer_id,
+        )
+        .with_measures(account_count=lambda t: t.count())
+    )
+    customers = to_semantic_table(
+        xo.memtable(tables["customers"], name="customers"), name="customers"
+    ).with_dimensions(
+        customer_id=lambda t: t.customer_id,
+        state=lambda t: t.state,
+    )
+    transactions = to_semantic_table(
+        xo.memtable(tables["transactions"], name="transactions"), name="transactions"
+    ).with_measures(total_amount=lambda t: t.amount.sum())
+    return accounts, customers, transactions
+
+
+def test_join_one_aggregate_query_round_trips(plain_tables):
+    """A plain two-table join_one (no fan-out) survives tagging the query itself."""
+    accounts, customers, _ = _build_plain_model(plain_tables)
+    joined = accounts.join_one(customers, on=lambda a, c: a.customer_id == c.customer_id)
+    query = joined.group_by("customers.state").aggregate("accounts.account_count")
+
+    direct = query.to_untagged().execute().sort_values("customers.state").reset_index(drop=True)
+    recovered = (
+        from_tagged(to_tagged(query))
+        .to_untagged()
+        .execute()
+        .sort_values("customers.state")
+        .reset_index(drop=True)
+    )
+    pd.testing.assert_frame_equal(direct, recovered)
+
+
+def test_join_many_aggregate_query_fails_loud_not_silently_wrong(plain_tables):
+    """A fan-out leg under an aggregated, tagged query cannot be recovered today.
+
+    Pre-agg compilation for ``join_many`` rewrites the join into a decomposed
+    tree of partial-aggregate/key-bridge joins with no single ``JoinChain``
+    corresponding to the original leaves, so ``_split_join_expr`` cannot
+    isolate each leg from the fully-compiled, tagged expression.
+    ``_validate_join_leaf`` catches the resulting mismatch and raises —
+    this pins that the failure stays LOUD (a clear, actionable error) rather
+    than regressing into silently wrong numbers. Tagging the un-aggregated
+    join, or the bare model, is unaffected (see the other tests in this
+    file) and is the supported workaround.
+    """
+    accounts, customers, transactions = _build_plain_model(plain_tables)
+    joined = accounts.join_one(customers, on=lambda a, c: a.customer_id == c.customer_id).join_many(
+        transactions, on=lambda a, t: a.account_id == t.account_id
+    )
+    query = joined.group_by("customers.state").aggregate("transactions.total_amount")
+
+    assert query.to_untagged().execute() is not None  # the direct query itself is fine
+
+    with pytest.raises(ValueError, match="Round-trip could not recover"):
+        from_tagged(to_tagged(query))
