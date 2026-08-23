@@ -200,8 +200,13 @@ def _reconstruct_semantic_table(
             _source_join=join_op,
         )
 
+    marked_leaf = _find_marked_leaf(xorq_expr, metadata.get("name"))
     return bsl_expr.SemanticModel(
-        table=_strip_internal_join_temps(_reconstruct_table()),
+        table=(
+            marked_leaf
+            if marked_leaf is not None
+            else _strip_internal_join_temps(_reconstruct_table())
+        ),
         dimensions=dimensions,
         measures=measures,
         calc_measures=calc_measures,
@@ -357,6 +362,30 @@ def _reconstruct_limit(metadata: dict, xorq_expr, source, context: BSLSerializat
     if source is None:
         raise ValueError("SemanticLimitOp requires source")
     return source.limit(n=int(metadata.get("n", 0)), offset=int(metadata.get("offset", 0)))
+
+
+def _find_marked_leaf(xorq_expr, name):
+    """Return the AUTHORED table expression for leaf *name*, if the payload
+    carries a leaf marker (BSL_LEAF_TAG, written by to_tagged since the
+    leaf-payload change). This is the lossless recovery path: the marked
+    subtree is exactly what the author passed to to_semantic_table —
+    shaped views, renames, even aggregate-grain rollups — so no heuristic
+    re-derivation from the lowered plan is needed. Returns None when the
+    payload predates markers or the leaf was not markable (unnamed model,
+    or its table op was rewritten by lowering)."""
+    if not name:
+        return None
+    from .._xorq import Tag, walk_nodes
+
+    try:
+        for tag_op in walk_nodes((Tag,), xorq_expr):
+            metadata = getattr(tag_op, "metadata", None) or {}
+            if metadata.get("tag") == "__bsl_leaf__" and metadata.get("leaf") == name:
+                parent = tag_op.parent
+                return parent.to_expr() if hasattr(parent, "to_expr") else parent
+    except Exception:
+        return None
+    return None
 
 
 def _strip_internal_join_temps(expr):

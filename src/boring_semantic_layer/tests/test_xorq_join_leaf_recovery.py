@@ -199,17 +199,11 @@ def test_shaped_join_leaves_round_trip():
     assert list(result["transactions.gross_purchases"]) == [0.0, 11.0]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Known gap: a lowered QUERY entry over a shaped view still base-walks "
-    "— BSL's query-time injected mutates and authored shaping are "
-    "indistinguishable in the lowered tree. Needs a lowering-time base-boundary "
-    "marker. MODEL entries (what the star-schema doctrine catalogs) are covered "
-    "by the tests above.",
-)
-def test_query_entry_still_digs_under_the_aggregate():
-    """Recovery of a tagged aggregate over a SHAPED view should replay the
-    query against the shaped base — today the base walk discards the shaping."""
+def test_query_entry_recovers_the_shaped_base():
+    """Recovery of a tagged aggregate over a SHAPED view replays the query
+    against the shaped base: the leaf marker survives under the Aggregate,
+    so recovery no longer needs to guess where lowering ends and authored
+    shaping begins (this was a strict xfail before leaf markers)."""
     accounts_view, _ = _seam_free_tables()
     model = (
         to_semantic_table(accounts_view, name="accounts")
@@ -333,3 +327,169 @@ def test_join_many_aggregate_query_fails_loud_not_silently_wrong(plain_tables):
 
     with pytest.raises(ValueError, match="Round-trip could not recover"):
         from_tagged(to_tagged(query))
+
+
+# ---------------------------------------------------------------------------
+# Leaf markers: shaped and aggregate-grain leaves round-trip losslessly
+# ---------------------------------------------------------------------------
+
+
+def test_grouped_grain_fact_round_trips():
+    """A fact view PRE-AGGREGATED to a coarser grain is a legal model leaf.
+
+    Dimensional-modeling aggregate fact tables: roll transactions to account
+    grain as a deferred xorq view, then a thin semantic layer of simple sums
+    on top. Before leaf markers this failed round-trip — the base walk dug
+    under the Aggregate and the rollup columns vanished.
+    """
+    con = xo.connect()
+    raw_txn = con.register(
+        pd.DataFrame(
+            {
+                "transaction_id": [1, 2, 3, 4],
+                "account_id": [1, 1, 2, 3],
+                "amount": [5.0, 6.0, 7.0, 8.0],
+            }
+        ),
+        "grain_transactions",
+    )
+    raw_accounts = con.register(
+        pd.DataFrame({"account_id": [1, 2, 3], "customer_id": [10, 10, 20]}),
+        "grain_accounts",
+    )
+    txn_by_account = raw_txn.group_by("account_id").aggregate(
+        txn_count=xo._.count(), txn_amount=xo._.amount.sum()
+    )
+
+    accounts = to_semantic_table(raw_accounts, name="accounts").with_dimensions(
+        account_id=lambda t: t.account_id,
+        customer_id=lambda t: t.customer_id,
+    )
+    fact = to_semantic_table(txn_by_account, name="txn_rollup").with_measures(
+        total_amount=lambda t: t.txn_amount.sum(),
+        total_txns=lambda t: t.txn_count.sum(),
+    )
+    model = accounts.join_one(fact, on=lambda a, f: a.account_id == f.account_id)
+
+    recovered = from_tagged(to_tagged(model))
+    result = (
+        recovered.group_by("accounts.customer_id")
+        .aggregate("txn_rollup.total_amount", "txn_rollup.total_txns")
+        .to_untagged()
+        .execute()
+        .sort_values("accounts.customer_id")
+        .reset_index(drop=True)
+    )
+    assert list(result["txn_rollup.total_amount"]) == [18.0, 8.0]
+    assert list(result["txn_rollup.total_txns"]) == [3, 1]
+
+
+def test_single_table_model_over_ibis_aggregate_round_trips():
+    """to_semantic_table(table.group_by(...).aggregate(...)) — a semantic
+    model DIRECTLY over an ibis/xorq aggregate query — is a legal model.
+
+    The aggregate view fixes the grain (account level here); the semantic
+    layer names simple reductions over the rollup columns. Everything stays
+    deferred; the marker carries the authored aggregate through round-trip.
+    """
+    con = xo.connect()
+    raw_txn = con.register(
+        pd.DataFrame(
+            {
+                "transaction_id": [1, 2, 3, 4],
+                "account_id": [1, 1, 2, 3],
+                "amount": [5.0, 6.0, 7.0, 8.0],
+            }
+        ),
+        "st_transactions",
+    )
+    rollup = raw_txn.group_by("account_id").aggregate(
+        txn_count=xo._.count(), txn_amount=xo._.amount.sum()
+    )
+    model = (
+        to_semantic_table(rollup, name="account_rollup")
+        .with_dimensions(account_id=lambda t: t.account_id)
+        .with_measures(
+            accounts_with_txns=lambda t: t.count(),
+            total_amount=lambda t: t.txn_amount.sum(),
+            max_account_amount=lambda t: t.txn_amount.max(),
+        )
+    )
+
+    recovered = from_tagged(to_tagged(model))
+    result = (
+        recovered.aggregate("accounts_with_txns", "total_amount", "max_account_amount")
+        .to_untagged()
+        .execute()
+    )
+    assert list(result["accounts_with_txns"]) == [3]
+    assert list(result["total_amount"]) == [26.0]
+    assert list(result["max_account_amount"]) == [11.0]
+
+
+def test_grouped_grain_model_survives_disk_round_trip(tmp_path):
+    """The aggregate-grain model survives xorq build -> load_expr ->
+    ls.builder — the full catalog path."""
+    pytest.importorskip("duckdb")
+    db = str(tmp_path / "wh.ddb")
+    seed = xo.duckdb.connect(db)
+    seed.create_table(
+        "transactions",
+        pd.DataFrame(
+            {
+                "transaction_id": [1, 2, 3, 4],
+                "account_id": [1, 1, 2, 3],
+                "amount": [5.0, 6.0, 7.0, 8.0],
+            }
+        ),
+    )
+    del seed
+    con = xo.duckdb.connect(db)
+    rollup = (
+        con.table("transactions")
+        .group_by("account_id")
+        .aggregate(txn_amount=xo._.amount.sum())
+    )
+    model = to_semantic_table(rollup, name="account_rollup").with_measures(
+        total_amount=lambda t: t.txn_amount.sum(),
+    )
+    tagged = to_tagged(model)
+
+    path = xo.build_expr(tagged, builds_dir=str(tmp_path / "builds"))
+    loaded = xo.load_expr(path)
+    recovered = loaded.ls.builder
+    result = recovered.aggregate("total_amount").to_untagged().execute()
+    assert list(result["total_amount"]) == [26.0]
+
+
+def test_unmarked_payload_falls_back_to_heuristics():
+    """Payloads written before leaf markers (no __bsl_leaf__ tags) must keep
+    recovering via the heuristic paths — strip the marker tags off a fresh
+    payload to simulate one."""
+    from boring_semantic_layer._xorq import Tag, walk_nodes
+    from boring_semantic_layer.serialization import BSL_LEAF_TAG
+
+    accounts_view, _txn_view = _seam_free_tables()
+    accounts = to_semantic_table(accounts_view, name="accounts").with_measures(
+        open_account_count=lambda t: t.is_open.sum(),
+    )
+    tagged = to_tagged(accounts)
+
+    from xorq.common.utils.graph_utils import replace_nodes
+
+    def strip(node, _kwargs):
+        rebuilt = node.__recreate__(_kwargs) if _kwargs else node
+        if isinstance(rebuilt, Tag) and (rebuilt.metadata or {}).get("tag") == BSL_LEAF_TAG:
+            return rebuilt.parent
+        return rebuilt
+
+    stripped = replace_nodes(strip, tagged).to_expr()
+    assert not [
+        t
+        for t in walk_nodes((Tag,), stripped)
+        if (getattr(t, "metadata", {}) or {}).get("tag") == BSL_LEAF_TAG
+    ]
+    recovered = from_tagged(stripped)
+    result = recovered.aggregate("open_account_count").to_untagged().execute()
+    # heuristic per-row-chain preservation still recovers the shaped leaf
+    assert list(result["open_account_count"]) == [2]
