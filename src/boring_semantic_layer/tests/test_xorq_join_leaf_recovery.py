@@ -235,6 +235,105 @@ def test_guard_message_names_the_underlying_error():
         from_tagged(to_tagged(model))
 
 
+# ---------------------------------------------------------------------------
+# Tagging an already-aggregated join query (not just the bare model)
+# ---------------------------------------------------------------------------
+#
+# ``to_tagged()`` explicitly supports tagging a ``SemanticAggregateOp``
+# directly (see its ``aggregate_cache_storage`` parameter, for smart-cube
+# caching), which tags the FULLY pre-agg-compiled query rather than a bare
+# model. Leaf recovery then has to isolate each join leg from that compiled
+# tree instead of the original (unaggregated) join chain.
+
+
+@pytest.fixture
+def plain_tables():
+    return {
+        "accounts": pd.DataFrame(
+            {
+                "account_id": [1, 2, 3],
+                "customer_id": [10, 10, 20],
+            }
+        ),
+        "customers": pd.DataFrame({"customer_id": [10, 20], "state": ["CA", "NY"]}),
+        "transactions": pd.DataFrame(
+            {
+                "transaction_id": [1, 2, 3, 4],
+                "account_id": [1, 1, 2, 3],
+                "amount": [5.0, 6.0, 7.0, 8.0],
+            }
+        ),
+    }
+
+
+def _build_plain_model(tables):
+    accounts = (
+        to_semantic_table(xo.memtable(tables["accounts"], name="accounts"), name="accounts")
+        .with_dimensions(
+            account_id=lambda t: t.account_id,
+            customer_id=lambda t: t.customer_id,
+        )
+        .with_measures(account_count=lambda t: t.count())
+    )
+    customers = to_semantic_table(
+        xo.memtable(tables["customers"], name="customers"), name="customers"
+    ).with_dimensions(
+        customer_id=lambda t: t.customer_id,
+        state=lambda t: t.state,
+    )
+    transactions = to_semantic_table(
+        xo.memtable(tables["transactions"], name="transactions"), name="transactions"
+    ).with_measures(total_amount=lambda t: t.amount.sum())
+    return accounts, customers, transactions
+
+
+def test_join_one_aggregate_query_round_trips(plain_tables):
+    """A plain two-table join_one (no fan-out) survives tagging the query itself."""
+    accounts, customers, _ = _build_plain_model(plain_tables)
+    joined = accounts.join_one(customers, on=lambda a, c: a.customer_id == c.customer_id)
+    query = joined.group_by("customers.state").aggregate("accounts.account_count")
+
+    direct = query.to_untagged().execute().sort_values("customers.state").reset_index(drop=True)
+    recovered = (
+        from_tagged(to_tagged(query))
+        .to_untagged()
+        .execute()
+        .sort_values("customers.state")
+        .reset_index(drop=True)
+    )
+    pd.testing.assert_frame_equal(direct, recovered)
+
+
+def test_join_many_aggregate_query_fails_loud_not_silently_wrong(plain_tables):
+    """A fan-out leg under an aggregated, tagged query cannot be recovered today.
+
+    Pre-agg compilation for ``join_many`` rewrites the join into a decomposed
+    tree of partial-aggregate/key-bridge joins with no single ``JoinChain``
+    corresponding to the original leaves, so ``_split_join_expr`` cannot
+    isolate each leg from the fully-compiled, tagged expression.
+    ``_validate_join_leaf`` catches the resulting mismatch and raises —
+    this pins that the failure stays LOUD (a clear, actionable error) rather
+    than regressing into silently wrong numbers. Tagging the un-aggregated
+    join, or the bare model, is unaffected (see the other tests in this
+    file) and is the supported workaround.
+    """
+    accounts, customers, transactions = _build_plain_model(plain_tables)
+    joined = accounts.join_one(customers, on=lambda a, c: a.customer_id == c.customer_id).join_many(
+        transactions, on=lambda a, t: a.account_id == t.account_id
+    )
+    query = joined.group_by("customers.state").aggregate("transactions.total_amount")
+
+    assert query.to_untagged().execute() is not None  # the direct query itself is fine
+
+    with pytest.raises(ValueError, match="Round-trip could not recover"):
+        from_tagged(to_tagged(query))
+
+
+# ---------------------------------------------------------------------------
+# Leaf markers: shaped and aggregate-grain leaves round-trip losslessly
+# ---------------------------------------------------------------------------
+
+
 def test_grouped_grain_fact_round_trips():
     """A fact view PRE-AGGREGATED to a coarser grain is a legal model leaf.
 
@@ -285,39 +384,6 @@ def test_grouped_grain_fact_round_trips():
     assert list(result["txn_rollup.total_txns"]) == [3, 1]
 
 
-def test_unmarked_payload_falls_back_to_heuristics():
-    """Payloads written before leaf markers (no __bsl_leaf__ tags) must keep
-    recovering via the heuristic paths — strip the marker tags off a fresh
-    payload to simulate one."""
-    from boring_semantic_layer._xorq import Tag, walk_nodes
-    from boring_semantic_layer.serialization import BSL_LEAF_TAG
-
-    accounts_view, txn_view = _seam_free_tables()
-    accounts = to_semantic_table(accounts_view, name="accounts").with_measures(
-        open_account_count=lambda t: t.is_open.sum(),
-    )
-    tagged = to_tagged(accounts)
-
-    from xorq.common.utils.graph_utils import replace_nodes
-
-    def strip(node, _kwargs):
-        rebuilt = node.__recreate__(_kwargs) if _kwargs else node
-        if isinstance(rebuilt, Tag) and (rebuilt.metadata or {}).get("tag") == BSL_LEAF_TAG:
-            return rebuilt.parent
-        return rebuilt
-
-    stripped = replace_nodes(strip, tagged).to_expr()
-    assert not [
-        t
-        for t in walk_nodes((Tag,), stripped)
-        if (getattr(t, "metadata", {}) or {}).get("tag") == BSL_LEAF_TAG
-    ]
-    recovered = from_tagged(stripped)
-    result = recovered.aggregate("open_account_count").to_untagged().execute()
-    # heuristic per-row-chain preservation still recovers the shaped leaf
-    assert list(result["open_account_count"]) == [2]
-
-
 def test_single_table_model_over_ibis_aggregate_round_trips():
     """to_semantic_table(table.group_by(...).aggregate(...)) — a semantic
     model DIRECTLY over an ibis/xorq aggregate query — is a legal model.
@@ -342,9 +408,7 @@ def test_single_table_model_over_ibis_aggregate_round_trips():
     )
     model = (
         to_semantic_table(rollup, name="account_rollup")
-        .with_dimensions(
-            account_id=lambda t: t.account_id,
-        )
+        .with_dimensions(account_id=lambda t: t.account_id)
         .with_measures(
             accounts_with_txns=lambda t: t.count(),
             total_amount=lambda t: t.txn_amount.sum(),
@@ -366,8 +430,6 @@ def test_single_table_model_over_ibis_aggregate_round_trips():
 def test_grouped_grain_model_survives_disk_round_trip(tmp_path):
     """The aggregate-grain model survives xorq build -> load_expr ->
     ls.builder — the full catalog path."""
-    import duckdb as _duckdb  # noqa: F401 — backend for the file-backed table
-
     pytest.importorskip("duckdb")
     db = str(tmp_path / "wh.ddb")
     seed = xo.duckdb.connect(db)
@@ -384,7 +446,9 @@ def test_grouped_grain_model_survives_disk_round_trip(tmp_path):
     del seed
     con = xo.duckdb.connect(db)
     rollup = (
-        con.table("transactions").group_by("account_id").aggregate(txn_amount=xo._.amount.sum())
+        con.table("transactions")
+        .group_by("account_id")
+        .aggregate(txn_amount=xo._.amount.sum())
     )
     model = to_semantic_table(rollup, name="account_rollup").with_measures(
         total_amount=lambda t: t.txn_amount.sum(),
@@ -396,3 +460,36 @@ def test_grouped_grain_model_survives_disk_round_trip(tmp_path):
     recovered = loaded.ls.builder
     result = recovered.aggregate("total_amount").to_untagged().execute()
     assert list(result["total_amount"]) == [26.0]
+
+
+def test_unmarked_payload_falls_back_to_heuristics():
+    """Payloads written before leaf markers (no __bsl_leaf__ tags) must keep
+    recovering via the heuristic paths — strip the marker tags off a fresh
+    payload to simulate one."""
+    from boring_semantic_layer._xorq import Tag, walk_nodes
+    from boring_semantic_layer.serialization import BSL_LEAF_TAG
+
+    accounts_view, _txn_view = _seam_free_tables()
+    accounts = to_semantic_table(accounts_view, name="accounts").with_measures(
+        open_account_count=lambda t: t.is_open.sum(),
+    )
+    tagged = to_tagged(accounts)
+
+    from xorq.common.utils.graph_utils import replace_nodes
+
+    def strip(node, _kwargs):
+        rebuilt = node.__recreate__(_kwargs) if _kwargs else node
+        if isinstance(rebuilt, Tag) and (rebuilt.metadata or {}).get("tag") == BSL_LEAF_TAG:
+            return rebuilt.parent
+        return rebuilt
+
+    stripped = replace_nodes(strip, tagged).to_expr()
+    assert not [
+        t
+        for t in walk_nodes((Tag,), stripped)
+        if (getattr(t, "metadata", {}) or {}).get("tag") == BSL_LEAF_TAG
+    ]
+    recovered = from_tagged(stripped)
+    result = recovered.aggregate("open_account_count").to_untagged().execute()
+    # heuristic per-row-chain preservation still recovers the shaped leaf
+    assert list(result["open_account_count"]) == [2]

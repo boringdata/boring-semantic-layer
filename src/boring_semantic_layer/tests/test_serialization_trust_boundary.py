@@ -176,6 +176,50 @@ def test_unrepresentable_constant_fails_at_write_time():
 
 
 # ---------------------------------------------------------------------------
+# Field-collection isolation
+# ---------------------------------------------------------------------------
+#
+# ``serialize_dimensions``/``serialize_measures`` each wrap their whole
+# per-name loop in a single ``@safe``. The call site used to default a
+# ``Failure`` away with ``.value_or({})``, so one poisoned dimension or
+# measure silently deleted every sibling on the same table too:
+# ``to_tagged()`` returned successfully with an empty field set and no error
+# anywhere, surfacing later (if at all) as a confusing "unknown dimension"
+# error on a query that happened to reference a dropped field.
+
+
+def test_unserializable_dimension_does_not_wipe_its_siblings(table):
+    from boring_semantic_layer._xorq import Deferred, Just
+
+    poisoned = Deferred(Just(object()))
+    model = (
+        to_semantic_table(table, "m")
+        .with_dimensions(good=lambda t: t.a, poison=lambda t: poisoned)
+        .with_measures(n=lambda t: t.count())
+    )
+    with pytest.raises(ValueError, match="poison"):
+        to_tagged(model)
+
+
+def test_unserializable_measure_does_not_wipe_its_siblings():
+    from boring_semantic_layer.ops import Measure, SemanticTableOp
+    from boring_semantic_layer.serialization.extract import extract_op_tree
+
+    op = SemanticTableOp(
+        table=ibis.memtable({"a": [1, 2, 3]}),
+        dimensions={},
+        measures={
+            "good": Measure(expr=lambda t: t.a.sum()),
+            "poison": Measure(expr=lambda t: object()),
+        },
+        calc_measures={},
+        name="m",
+    )
+    with pytest.raises(ValueError, match="poison"):
+        extract_op_tree(op, BSLSerializationContext())
+
+
+# ---------------------------------------------------------------------------
 # Aggregate replay
 # ---------------------------------------------------------------------------
 
