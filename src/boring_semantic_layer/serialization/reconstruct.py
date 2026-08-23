@@ -122,6 +122,39 @@ def _reconstruct_semantic_table(
             )
             return from_ibis(expr) if not hasattr(expr.op(), "source") else expr
 
+        # Preserve authored deferred shaping: when the leaf is a pure per-row
+        # chain (mutate/select/filter — no aggregation, no join) over exactly
+        # one relation, the chain IS the model's table. Walking to the bare
+        # base relation here discarded the shaping, so a model built on a
+        # deferred star-schema view (e.g. columns like `is_open` derived via
+        # .mutate) recovered against the RAW source and every field
+        # referencing a derived column failed to resolve. Query entries
+        # (lowered aggregations) still fall through to the base walk below —
+        # digging under the aggregate is what recovery is FOR there. Reserved
+        # __bsl_jk_ join-key temporaries a preserved chain may carry are
+        # inverted by _strip_internal_join_temps at the call site.
+        from .._xorq import JoinChain
+
+        leaf_op = unwrapped_expr.op()
+        is_bare_leaf = isinstance(
+            leaf_op,
+            (
+                Read,
+                xorq_rel.InMemoryTable,
+                xorq_rel.DatabaseTable,
+                xorq_rel.UnboundTable,
+                xorq_rel.SelfReference,
+            ),
+        )
+        if (
+            total_leaf_tables == 1
+            and not is_bare_leaf
+            # memtable leaves keep the from_ibis conversion below
+            and not in_memory_tables
+            and not walk_nodes((xorq_rel.Aggregate, JoinChain), unwrapped_expr)
+        ):
+            return unwrapped_expr
+
         if read_ops:
             base = read_ops[0].to_expr()
             return base.view() if is_self_ref else base
@@ -390,10 +423,14 @@ def _validate_join_leaf(model, metadata, side: str) -> None:
                 raise ValueError(
                     f"Round-trip could not recover the {side} join table "
                     f"{name!r}: its {kind} {fname!r} does not resolve against "
-                    "the recovered table. Queries lowered through the "
-                    "pre-aggregation path cannot be reconstructed from the "
-                    "lowered expression — serialize the model (or the "
-                    "un-aggregated join) instead."
+                    f"the recovered table ({type(exc).__name__}: {exc}). "
+                    "If the underlying error names a missing METHOD, the "
+                    "field's expression uses an API this ibis runtime does "
+                    "not have (e.g. Column.filter — use .sum(where=...) "
+                    "forms instead). If it names a missing COLUMN, the "
+                    "expression was lowered through the pre-aggregation "
+                    "path and cannot be reconstructed — serialize the model "
+                    "(or the un-aggregated join) instead."
                 ) from exc
             except Exception:
                 continue

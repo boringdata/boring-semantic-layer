@@ -124,3 +124,118 @@ def test_recovered_leaf_keeps_user_temp_lookalike_column():
     )
     recovered = from_tagged(to_tagged(model))
     assert set(recovered.get_dimensions()) == {"jk", "x"}
+
+
+def _seam_free_tables():
+    """Shaped deferred views over ONE backend (no seams): the star-schema-
+    first doctrine — derivations authored in bare xorq, thin BSL on top."""
+    con = xo.connect()
+    raw_accounts = con.register(
+        pd.DataFrame(
+            {
+                "account_id": [1, 2, 3],
+                "customer_id": [10, 10, 20],
+                "close_date": [None, "2025-01-01", None],
+            }
+        ),
+        "raw_accounts",
+    )
+    raw_txn = con.register(
+        pd.DataFrame(
+            {
+                "transaction_id": [1, 2, 3, 4],
+                "account_id": [1, 1, 2, 3],
+                "amount": [-5.0, -6.0, 3.0, -8.0],
+                "transaction_type": ["Purchase", "Purchase", "Purchase Return", "ACH Payment"],
+            }
+        ),
+        "raw_transactions",
+    )
+    accounts_view = raw_accounts.mutate(is_open=xo._.close_date.isnull())
+    txn_view = raw_txn.mutate(
+        purchase_amount=(xo._.transaction_type == "Purchase").ifelse(-xo._.amount, 0.0),
+    )
+    return accounts_view, txn_view
+
+
+def test_shaped_single_table_round_trips():
+    """A model over a deferred shaped view must recover WITH its shaping.
+
+    Regression: _reconstruct_table walked to the bare base relation,
+    discarding authored mutates — `t.is_open.sum()` then failed with
+    "'Table' object has no attribute 'is_open'" wrapped in the round-trip
+    error, breaking the star-schema-view doctrine at the first step.
+    """
+    accounts_view, _ = _seam_free_tables()
+    model = to_semantic_table(accounts_view, name="accounts").with_measures(
+        open_account_count=lambda t: t.is_open.sum(),
+    )
+    recovered = from_tagged(to_tagged(model))
+    result = recovered.aggregate("open_account_count").to_untagged().execute()
+    assert list(result["open_account_count"]) == [2]
+
+
+def test_shaped_join_leaves_round_trip():
+    accounts_view, txn_view = _seam_free_tables()
+    accounts = to_semantic_table(accounts_view, name="accounts").with_dimensions(
+        account_id=lambda t: t.account_id,
+        is_open=lambda t: t.is_open,
+    )
+    transactions = to_semantic_table(txn_view, name="transactions").with_measures(
+        gross_purchases=lambda t: t.purchase_amount.sum(),
+    )
+    model = accounts.join_many(transactions, on=lambda a, t: a.account_id == t.account_id)
+
+    recovered = from_tagged(to_tagged(model))
+    result = (
+        recovered.group_by("accounts.is_open")
+        .aggregate("transactions.gross_purchases")
+        .to_untagged()
+        .execute()
+        .sort_values("accounts.is_open")
+        .reset_index(drop=True)
+    )
+    # closed account 2: purchase-return row only → 0.0; open accounts 1+3: 5+6+0=11.0
+    assert list(result["transactions.gross_purchases"]) == [0.0, 11.0]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="Known gap: a lowered QUERY entry over a shaped view still base-walks "
+    "— BSL's query-time injected mutates and authored shaping are "
+    "indistinguishable in the lowered tree. Needs a lowering-time base-boundary "
+    "marker. MODEL entries (what the star-schema doctrine catalogs) are covered "
+    "by the tests above.",
+)
+def test_query_entry_still_digs_under_the_aggregate():
+    """Recovery of a tagged aggregate over a SHAPED view should replay the
+    query against the shaped base — today the base walk discards the shaping."""
+    accounts_view, _ = _seam_free_tables()
+    model = (
+        to_semantic_table(accounts_view, name="accounts")
+        .with_dimensions(
+            customer_id=lambda t: t.customer_id,
+        )
+        .with_measures(open_account_count=lambda t: t.is_open.sum())
+    )
+    tagged_query = to_tagged(model.group_by("customer_id").aggregate("open_account_count"))
+    recovered = from_tagged(tagged_query)
+    # reconstructed chain replays the query over the recovered base
+    result = recovered.to_untagged().execute().sort_values("customer_id").reset_index(drop=True)
+    assert list(result["open_account_count"]) == [1, 1]
+
+
+def test_guard_message_names_the_underlying_error():
+    """A field using a nonexistent API must surface the REAL exception, not
+    only the canned pre-aggregation explanation (the pennybank Column.filter
+    misdiagnosis)."""
+    accounts_view, txn_view = _seam_free_tables()
+    accounts = to_semantic_table(accounts_view, name="accounts").with_measures(
+        bad=lambda t: t.account_id.filter(t.is_open).nunique(),
+    )
+    transactions = to_semantic_table(txn_view, name="transactions").with_measures(
+        gross_purchases=lambda t: t.purchase_amount.sum(),
+    )
+    model = accounts.join_many(transactions, on=lambda a, t: a.account_id == t.account_id)
+    with pytest.raises(ValueError, match="AttributeError.*filter"):
+        from_tagged(to_tagged(model))
