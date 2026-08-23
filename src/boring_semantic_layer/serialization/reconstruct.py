@@ -168,7 +168,7 @@ def _reconstruct_semantic_table(
         )
 
     return bsl_expr.SemanticModel(
-        table=_reconstruct_table(),
+        table=_strip_internal_join_temps(_reconstruct_table()),
         dimensions=dimensions,
         measures=measures,
         calc_measures=calc_measures,
@@ -324,6 +324,45 @@ def _reconstruct_limit(metadata: dict, xorq_expr, source, context: BSLSerializat
     if source is None:
         raise ValueError("SemanticLimitOp requires source")
     return source.limit(n=int(metadata.get("n", 0)), offset=int(metadata.get("offset", 0)))
+
+
+def _strip_internal_join_temps(expr):
+    """Invert BSL's temporary join-key renames on a recovered leaf table.
+
+    ``SemanticJoinOp.to_untagged`` renames left-side predicate columns that
+    collide across the join to ``__bsl_jk_<name>`` (see ``_RenamedResolver``)
+    to sidestep ibis ambiguous-deref errors. Those temporaries live in the
+    lowered leaf projections. When leaf recovery cannot walk to the base
+    relation and keeps a lowered projection as the model's table — e.g. an
+    ``into_backend`` seam makes the leaf multi-relation — the declared
+    dimensions/measures reference the ORIGINAL names and no longer resolve.
+    Rename the reserved temporaries back so the recovered leaf carries the
+    schema the model was authored against.
+
+    Only exact-prefix temporaries whose original name is free are inverted;
+    the ``__bsl_jk_<name>_N`` overflow spelling (a user column literally
+    named ``__bsl_jk_<name>`` existed) is left alone — inverting it could
+    corrupt that user column.
+    """
+    from ..ops._normalize import _BSL_JOIN_KEY_TMP_PREFIX
+
+    try:
+        columns = list(expr.columns)
+    except Exception:
+        return expr
+    renames = {}
+    for col in columns:
+        if not col.startswith(_BSL_JOIN_KEY_TMP_PREFIX):
+            continue
+        original = col[len(_BSL_JOIN_KEY_TMP_PREFIX) :]
+        if original and original not in columns and original not in renames:
+            renames[original] = col
+    if not renames:
+        return expr
+    try:
+        return expr.rename(**renames)
+    except Exception:
+        return expr
 
 
 def _validate_join_leaf(model, metadata, side: str) -> None:
