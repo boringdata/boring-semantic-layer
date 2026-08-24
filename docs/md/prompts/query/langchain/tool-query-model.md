@@ -89,11 +89,11 @@ model.group_by("category").aggregate("revenue").order_by(ibis.desc("revenue")).l
 **CRITICAL**: `.limit()` in query limits data **before** calculations. Use `limit` parameter for display-only limiting.
 
 ## Window Functions
-`.mutate()` for post-aggregation transforms - **MUST** come after `.order_by()`:
+Windows run over the query result — drop to ibis first with `.to_untagged()`; the window carries its own ordering. (`.mutate()` after `.order_by()`/`.limit()`/`.filter()` on a result raises.)
 ```python
-model.group_by("week").aggregate("count").order_by("week").mutate(
-    rolling_avg=lambda t: t.count.mean().over(ibis.window(rows=(-9, 0), order_by="week"))
-)
+model.group_by("week").aggregate("count").to_untagged().mutate(
+    rolling_avg=lambda t: t["count"].mean().over(rows=(-9, 0), order_by="week")
+).order_by("week")
 ```
 **More**: `get_documentation(topic="windowing")`
 

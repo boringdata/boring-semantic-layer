@@ -68,7 +68,7 @@ def test_bracket_filter_after_join_and_aggregate():
     )
     final = step2.join_one(model_c, lambda s, c: s["orders.customer_id"] == c.customer_id)
 
-    df = final.filter(lambda t: t["orders.region"] == "North").execute()
+    df = final.filter(lambda t: t["orders.region"] == "North").to_untagged().execute()
     assert df.shape[0] == 2
 
 

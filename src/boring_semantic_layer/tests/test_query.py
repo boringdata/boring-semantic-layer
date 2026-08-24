@@ -292,7 +292,7 @@ class TestMultiLevelDimensionFilters:
         )
 
     def test_filter_lambda_on_second_level_derived(self, flights_st):
-        result = flights_st.filter(ibis._.d_two > 1000).execute()
+        result = flights_st.filter(ibis._.d_two > 1000).to_untagged().execute()
         assert len(result) > 0
         assert all(result["d_two"] > 1000)
 
@@ -313,13 +313,15 @@ class TestMultiLevelDimensionFilters:
         assert len(result) > 0
 
     def test_filter_on_first_level_derived_still_works(self, flights_st):
-        result = flights_st.filter(ibis._.d_one > 1000).execute()
+        result = flights_st.filter(ibis._.d_one > 1000).to_untagged().execute()
         assert len(result) > 0
         assert all(result["d_one"] > 1000)
 
     def test_chained_filters_on_derived_dims(self, flights_st):
         """Stacked filter().filter() both referencing derived dimensions."""
-        result = flights_st.filter(ibis._.d_one > 500).filter(ibis._.d_two > 1000).execute()
+        result = (
+            flights_st.filter(ibis._.d_one > 500).filter(ibis._.d_two > 1000).to_untagged().execute()
+        )
         assert len(result) > 0
         assert all(result["d_one"] > 500)
         assert all(result["d_two"] > 1000)
@@ -336,7 +338,7 @@ class TestMultiLevelDimensionFilters:
             d_two=lambda t: t.d_one.add(1),
             d_three=lambda t: t.d_two.add(1),
         )
-        result = st.filter(ibis._.d_three > 1000).execute()
+        result = st.filter(ibis._.d_three > 1000).to_untagged().execute()
         assert len(result) > 0
         assert all(result["d_three"] > 1000)
 

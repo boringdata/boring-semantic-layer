@@ -740,7 +740,7 @@ def test_preexisting_right_suffix_is_preserved_and_right_fields_stay_bound(con):
         "id_right",
         "value_right2",
     )
-    raw = joined.execute().sort_values("id").reset_index(drop=True)
+    raw = joined.to_untagged().execute().sort_values("id").reset_index(drop=True)
     assert raw["value_right"].tolist() == [900, 901]
     assert raw["value_right2"].tolist() == [10, 20]
     assert str(joined.schema["value_right"]) == "int64"
@@ -812,7 +812,7 @@ def test_user_column_with_internal_join_prefix_does_not_change_predicate(con):
     )
     joined = to_semantic_table(left, "left").join_one(to_semantic_table(right, "right"), on="id")
 
-    result = joined.execute()
+    result = joined.to_untagged().execute()
     assert result.iloc[0].to_dict() == {
         "id": 1,
         "__bsl_jk_id": 99,
@@ -833,7 +833,7 @@ def test_cross_join_uses_the_same_collision_safe_aliases(con):
     joined = to_semantic_table(left, "left").join_cross(to_semantic_table(right, "right"))
 
     assert tuple(joined.columns) == ("value", "value_right", "value_right2")
-    assert joined.execute().iloc[0].to_dict() == {
+    assert joined.to_untagged().execute().iloc[0].to_dict() == {
         "value": 1,
         "value_right": 9,
         "value_right2": 2,

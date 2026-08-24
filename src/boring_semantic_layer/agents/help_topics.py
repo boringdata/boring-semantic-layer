@@ -312,34 +312,39 @@ Mutate — add computed columns AFTER aggregation
 
 KEY DIFFERENCE:
   .aggregate() computes from raw data
-  .mutate() transforms already-aggregated results""",
+  .mutate() folds into the same aggregation (measure path)
+
+RULES:
+  - .mutate() goes directly on the aggregate, BEFORE .order_by()/.limit()
+  - .mutate() after .filter()/.order_by()/.limit() raises — the result of a
+    query is a plain table; use .to_untagged().mutate(...) for row math there""",
             },
             "window": {
                 "summary": "Window functions (rolling, cumulative, rank)",
                 "content": """\
 Window Functions — calculations across ordered rows
 
-Must come AFTER .order_by(), applied via .mutate():
+Windows run over the QUERY RESULT, so drop to ibis first with
+.to_untagged(), then use .mutate() with the window carrying its own
+ordering:
 
 ROLLING AVERAGE:
-  model.group_by("week").aggregate("count").order_by("week").mutate(
-      rolling_avg=lambda t: t.count.mean().over(
-          ibis.window(rows=(-9, 0), order_by="week")
+  model.group_by("week").aggregate("count").to_untagged().mutate(
+      rolling_avg=lambda t: t["count"].mean().over(
+          rows=(-9, 0), order_by="week"
       )
-  )
+  ).order_by("week")
 
 CUMULATIVE SUM:
-  .mutate(running_total=lambda t: t.revenue.cumsum())
+  .to_untagged().mutate(running_total=lambda t: t.revenue.cumsum())
 
 RANK:
-  .mutate(rank=lambda t: ibis.rank().over(
-      ibis.window(order_by=ibis.desc(t.revenue))
-  ))
+  .to_untagged().mutate(rank=lambda t: t.revenue.rank())
 
 LAG / LEAD:
-  .mutate(
-      prev_count=lambda t: t.count.lag(1),
-      next_count=lambda t: t.count.lead(1),
+  .to_untagged().mutate(
+      prev_count=lambda t: t["count"].lag(1),
+      next_count=lambda t: t["count"].lead(1),
   )
 
 See: bsl docs query mutate""",
@@ -690,9 +695,15 @@ Common Pitfalls
    model.limit(10).group_by("x").aggregate("y")          # WRONG — limits raw data
    model.group_by("x").aggregate("y").limit(10)          # CORRECT — limits results
 
-10. WINDOW WITHOUT ORDER_BY:
-    .mutate(avg=lambda t: t.x.mean().over(window))       # WRONG — no ordering
-    .order_by("date").mutate(avg=...)                     # CORRECT — ordered first""",
+10. EXECUTING A MODEL WITHOUT A QUERY:
+    model.execute()                                      # WRONG — a model is a definition, raises
+    model.group_by("x").aggregate("y").execute()         # CORRECT — execute a query
+    model.to_untagged().execute()                        # CORRECT — explicit raw rows
+
+11. MUTATE AFTER ORDER_BY/LIMIT/FILTER ON A RESULT:
+    .order_by("date").mutate(avg=...)                    # WRONG — result is a plain table, raises
+    .mutate(avg=...).order_by("date")                    # CORRECT — mutate the aggregate first
+    .order_by("date").to_untagged().mutate(avg=...)      # CORRECT — row math via ibis""",
     },
     "examples": {
         "summary": "Quick recipes for common patterns",

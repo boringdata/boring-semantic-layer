@@ -16,6 +16,7 @@ from ._xorq import (
     GroupedTable,
     Table,
 )
+from .errors import QueryError
 from .measure_scope import MeasureScope
 from .ops import (
     Dimension,
@@ -38,6 +39,7 @@ from .ops import (
     _extract_join_key_columns,
     _find_all_root_models,
     _get_merged_fields,
+    _has_prior_aggregate,
     _is_deferred,
     _normalize_join_predicate,
     _normalize_to_name,
@@ -130,6 +132,60 @@ def to_untagged(expr):
         return _rebind_to_canonical_backend(result.unwrap())
 
     raise TypeError(f"Cannot convert {type(expr)} to Ibis expression")
+
+
+def _ensure_executable(expr: SemanticTable) -> None:
+    """Refuse to sink a definition-side semantic expression to output.
+
+    A semantic model — and any pre-aggregation chain over it (filters,
+    joins, order_by/limit) — is a definition, not a query. Sinking it to
+    output would return the raw underlying table: every physical column at
+    row grain, with computed dimensions missing, bypassing the semantic
+    layer entirely. Output requires either an aggregation stage in the
+    chain or a model explicitly materialized from a query result
+    (``_materialized_result``); everything else raises ``QueryError``
+    pointing at the intended spellings.
+    """
+    node = expr.op()
+    while node is not None:
+        if isinstance(node, SemanticAggregateOp | SemanticIndexOp):
+            # An aggregate completes a query; an index IS a query result
+            # (fieldName/fieldValue/weight summary rows).
+            return
+        if isinstance(node, SemanticGroupByOp):
+            keys = ", ".join(repr(k) for k in node.keys)
+            raise QueryError(
+                f".group_by({keys}) has no aggregation yet — complete the query "
+                "with .aggregate(...) (an empty .aggregate() returns the "
+                "distinct grouped values)."
+            )
+        if isinstance(node, SemanticTableOp):
+            if node._materialized_result:
+                return
+            break
+        if isinstance(node, SemanticJoinOp):
+            break
+        node = getattr(node, "source", None)
+
+    name = getattr(expr, "name", None)
+    label = f"Semantic model {name!r}" if name else "This semantic expression"
+    dims = sorted(expr.get_dimensions()) if hasattr(expr, "get_dimensions") else []
+    meas = (
+        sorted({*expr.get_measures(), *expr.get_calculated_measures()})
+        if hasattr(expr, "get_measures")
+        else []
+    )
+    dim_hint = repr(dims[0]) if dims else "..."
+    meas_hint = repr(meas[0]) if meas else "..."
+    raise QueryError(
+        f"{label} is a definition, not a query — executing it would return the "
+        "raw underlying table (every physical column at row grain), bypassing "
+        "its dimensions and measures. Build a query first, e.g. "
+        f".group_by({dim_hint}).aggregate({meas_hint}) or "
+        ".query(dimensions=[...], measures=[...]), or call .to_untagged() to "
+        "work with the raw ibis table explicitly."
+        + (f" Declared dimensions: {dims}; measures: {meas}." if dims or meas else "")
+    )
 
 
 def _flatten_group_keys(keys: tuple) -> tuple:
@@ -346,36 +402,30 @@ class SemanticTable(ir.Table):
     agg = aggregate
 
     def mutate(self, **post):
-        """Add derived columns (ADR 0001: desugars to the unified measure path).
+        """Add derived row-grain columns (ADR 0001: desugars to dimensions).
 
-        Pre-aggregation, the derivations are row-grain expressions —
-        they register as dimensions on the model (usable as group-by
-        keys and in downstream queries). Post-aggregation (chained after
-        ``filter``/``order_by``/``limit`` on an aggregate), the
-        derivations are resolved against the current result table in
-        chain order and materialized, preserving the historical
-        ``.mutate()`` semantics without a dedicated operator node.
+        The derivations are row-grain expressions — they register as
+        dimensions on the model (usable as group-by keys and in downstream
+        queries). Post-aggregation derivations are not part of the semantic
+        layer: declare a calculated measure for cross-measure math, or drop
+        to ibis with ``.to_untagged().mutate(...)`` for row math over a
+        query result.
         """
         from .ops import (
             SemanticJoinOp,
             SemanticTableOp,
-            _has_prior_aggregate,
-            _non_additive_result_columns,
             _resolve_expr,
         )
 
         if _has_prior_aggregate(self.op()):
-            tbl = self.op().to_untagged()
-            # Only the aggregated rows are available here, so t.all() can only
-            # window-sum them; pass which columns that would misrepresent.
-            non_additive = _non_additive_result_columns(self.op())
-            for name, fn in post.items():
-                proxy = MeasureScope(
-                    _tbl=tbl, _known=[], _post_agg=True, _non_additive=non_additive
-                )
-                resolved = _resolve_expr(fn, proxy)
-                tbl = tbl.mutate(resolved.name(name))
-            return _build_post_aggregate_model(self.op(), tbl)
+            raise QueryError(
+                ".mutate() on a filtered/ordered/limited query result is not "
+                "supported: the result is a plain table, not a semantic model. "
+                "Call .mutate() on the aggregate itself (before "
+                "filter/order_by/limit — it desugars to the measure path), "
+                "declare a calculated measure on the model, or drop to ibis "
+                "with .to_untagged().mutate(...)."
+            )
 
         def contains_join(node) -> bool:
             if isinstance(node, SemanticJoinOp):
@@ -399,7 +449,7 @@ class SemanticTable(ir.Table):
             return with_dims(**post)
 
         # Flat model: materialize the columns in chain order (so they are
-        # visible on direct execute) and register them as dimensions.
+        # visible on the untagged table) and register them as dimensions.
         tbl = self.op().to_untagged()
         for name, fn in post.items():
             resolved = _resolve_expr(fn, tbl)
@@ -446,49 +496,63 @@ class SemanticTable(ir.Table):
         # Accept kwargs for ibis compatibility (params, limit, etc)
         from .ops import _rebind_to_canonical_backend
 
+        _ensure_executable(self)
         return _rebind_to_canonical_backend(to_untagged(self)).execute(**kwargs)
 
     def compile(self, **kwargs):
         from .ops import _rebind_to_canonical_backend
 
+        _ensure_executable(self)
         return _rebind_to_canonical_backend(to_untagged(self)).compile(**kwargs)
 
     def sql(self, **kwargs):
         from .ops import _rebind_to_canonical_backend
 
+        _ensure_executable(self)
         return ibis.to_sql(_rebind_to_canonical_backend(to_untagged(self)), **kwargs)
 
     def to_pandas(self, **kwargs):
+        _ensure_executable(self)
         return self.to_untagged().to_pandas(**kwargs)
 
     def to_pyarrow(self, **kwargs):
+        _ensure_executable(self)
         return self.to_untagged().to_pyarrow(**kwargs)
 
     def to_pyarrow_batches(self, **kwargs):
+        _ensure_executable(self)
         return self.to_untagged().to_pyarrow_batches(**kwargs)
 
     def to_polars(self, **kwargs):
+        _ensure_executable(self)
         return self.to_untagged().to_polars(**kwargs)
 
     def to_csv(self, path, **kwargs):
+        _ensure_executable(self)
         return self.to_untagged().to_csv(path, **kwargs)
 
     def to_parquet(self, path, **kwargs):
+        _ensure_executable(self)
         return self.to_untagged().to_parquet(path, **kwargs)
 
     def to_parquet_dir(self, path, **kwargs):
+        _ensure_executable(self)
         return self.to_untagged().to_parquet_dir(path, **kwargs)
 
     def to_json(self, path, **kwargs):
+        _ensure_executable(self)
         return self.to_untagged().to_json(path, **kwargs)
 
     def to_xlsx(self, path, **kwargs):
+        _ensure_executable(self)
         return self.to_untagged().to_xlsx(path, **kwargs)
 
     def to_pandas_batches(self, **kwargs):
+        _ensure_executable(self)
         return self.to_untagged().to_pandas_batches(**kwargs)
 
     def to_sql(self, **kwargs):
+        _ensure_executable(self)
         return self.to_untagged().to_sql(**kwargs)
 
 
@@ -587,13 +651,20 @@ def _build_semantic_model_from_roots(
     ibis_table: ir.Table,
     all_roots: tuple,
     field_filter: set | None = None,
+    materialized_result: bool = False,
 ) -> SemanticModel:
+    # A model derived from a materialized query result stays a result model
+    # (executable); a model derived from raw sources stays a definition.
+    materialized = materialized_result or any(
+        getattr(root, "_materialized_result", False) for root in all_roots
+    )
     if not all_roots:
         return SemanticModel(
             table=ibis_table,
             dimensions={},
             measures={},
             calc_measures={},
+            _materialized_result=materialized,
         )
 
     all_dims = _get_merged_fields(all_roots, "dimensions")
@@ -610,46 +681,8 @@ def _build_semantic_model_from_roots(
         dimensions=all_dims,
         measures=all_measures,
         calc_measures=all_calc,
+        _materialized_result=materialized,
     )
-
-
-def _build_post_aggregate_model(source_op, ibis_table: ir.Table) -> SemanticModel:
-    """Wrap a materialized post-aggregate table as a flat semantic model.
-
-    A ``.mutate()`` chained after ``order_by``/``limit``/``filter`` on an
-    aggregate materializes the result (the new column is computed against
-    the post-wrapper table, preserving window/rank semantics). The base
-    model's dimensions reference *source* columns that no longer exist on
-    the aggregated table, so reattaching them (via roots) makes
-    ``schema``/``values`` raise when something — e.g. chart introspection —
-    forces field resolution. Instead expose the materialized columns
-    directly: group-by keys become identity dimensions (preserving time
-    metadata), every other column an identity measure.
-    """
-    from .ops import Dimension, SemanticAggregateOp
-
-    agg = source_op
-    while agg is not None and not isinstance(agg, SemanticAggregateOp):
-        agg = getattr(agg, "source", None)
-    key_names = set(agg.keys) if agg is not None else set()
-
-    root_dims = _get_merged_fields(_find_all_root_models(source_op), "dimensions")
-
-    dimensions: dict[str, Dimension] = {}
-    measures: dict[str, Callable] = {}
-    for col in ibis_table.columns:
-        if col in key_names:
-            rd = root_dims.get(col)
-            dimensions[col] = Dimension(
-                expr=(lambda t, c=col: t[c]),
-                is_time_dimension=getattr(rd, "is_time_dimension", False) if rd else False,
-                is_event_timestamp=getattr(rd, "is_event_timestamp", False) if rd else False,
-                smallest_time_grain=getattr(rd, "smallest_time_grain", None) if rd else None,
-            )
-        else:
-            measures[col] = lambda t, c=col: t[c]
-
-    return SemanticModel(table=ibis_table, dimensions=dimensions, measures=measures)
 
 
 def _get_entity_dims(op) -> frozenset[str]:
@@ -908,6 +941,7 @@ def _replace_metadata_preserving_filters(
         name=name,
         description=description,
         _source_join=source_join,
+        _materialized_result=getattr(source, "_materialized_result", False),
     )
     for (
         predicate,
@@ -1033,6 +1067,7 @@ class SemanticModel(SemanticTable):
         name: str | None = None,
         description: str | None = None,
         _source_join: Any | None = None,
+        _materialized_result: bool = False,
     ) -> None:
         # Convert ibis → xorq once at the boundary; internal code paths can
         # then assume xorq-vendored tables when the backend is supported.
@@ -1064,6 +1099,7 @@ class SemanticModel(SemanticTable):
             name=derived_name,
             description=description,
             _source_join=_source_join,
+            _materialized_result=_materialized_result,
         )
 
         super().__init__(op)
@@ -1130,6 +1166,7 @@ class SemanticModel(SemanticTable):
             name=self.name,
             description=self.description,
             _source_join=self.op()._source_join,
+            _materialized_result=self.op()._materialized_result,
         )
 
     def with_measures(self, **meas) -> SemanticModel:
@@ -1154,6 +1191,7 @@ class SemanticModel(SemanticTable):
             name=self.name,
             description=self.description,
             _source_join=self.op()._source_join,
+            _materialized_result=self.op()._materialized_result,
         )
 
     def join_one(
@@ -1426,7 +1464,11 @@ class SemanticJoin(SemanticTable):
 
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.op())
-        return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
+        return _build_semantic_model_from_roots(
+            self.op().to_untagged(),
+            all_roots,
+            materialized_result=_has_prior_aggregate(self.op()),
+        )
 
     def with_dimensions(self, **dims) -> SemanticModel:
         """Add or update dimensions."""
@@ -1578,7 +1620,11 @@ class SemanticFilter(SemanticTable):
 
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.op().source)
-        return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
+        return _build_semantic_model_from_roots(
+            self.op().to_untagged(),
+            all_roots,
+            materialized_result=_has_prior_aggregate(self.op()),
+        )
 
     def with_dimensions(self, **dims) -> SemanticTable:
         """Add or update dimensions while retaining filter/join lineage."""
@@ -2021,6 +2067,7 @@ class SemanticAggregate(SemanticTable):
             dimensions={},
             measures={},
             calc_measures={},
+            _materialized_result=True,
         )
 
 
@@ -2068,7 +2115,11 @@ class SemanticOrderBy(SemanticTable):
 
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.source)
-        return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
+        return _build_semantic_model_from_roots(
+            self.op().to_untagged(),
+            all_roots,
+            materialized_result=_has_prior_aggregate(self.op()),
+        )
 
 
 class SemanticLimit(SemanticTable):
@@ -2117,7 +2168,11 @@ class SemanticLimit(SemanticTable):
 
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.source)
-        return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
+        return _build_semantic_model_from_roots(
+            self.op().to_untagged(),
+            all_roots,
+            materialized_result=_has_prior_aggregate(self.op()),
+        )
 
 
 class SemanticUnnest(SemanticTable):
@@ -2162,7 +2217,11 @@ class SemanticUnnest(SemanticTable):
 
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.source)
-        return _build_semantic_model_from_roots(self.op().to_untagged(), all_roots)
+        return _build_semantic_model_from_roots(
+            self.op().to_untagged(),
+            all_roots,
+            materialized_result=_has_prior_aggregate(self.op()),
+        )
 
     def with_dimensions(self, **dims) -> SemanticModel:
         all_roots = _find_all_root_models(self.source)
@@ -2245,5 +2304,8 @@ class SemanticProject(SemanticTable):
     def as_table(self) -> SemanticModel:
         all_roots = _find_all_root_models(self.source)
         return _build_semantic_model_from_roots(
-            self.op().to_untagged(), all_roots, field_filter=set(self.fields)
+            self.op().to_untagged(),
+            all_roots,
+            field_filter=set(self.fields),
+            materialized_result=_has_prior_aggregate(self.op()),
         )

@@ -16,7 +16,7 @@ import ibis
 import pytest
 
 from boring_semantic_layer import to_semantic_table
-from boring_semantic_layer.measure_scope import NonAdditiveTotalError
+from boring_semantic_layer.errors import QueryError
 
 
 @pytest.fixture
@@ -124,39 +124,72 @@ def test_percent_of_total_is_order_independent():
 # ---------------------------------------------------------------------------
 
 
-def test_chain_mutate_total_of_an_additive_measure(model):
+def test_chain_mutate_after_order_by_is_refused(model):
     """``aggregate().order_by().mutate()`` sees only grouped rows.
 
-    A window sum over them is the true total for SUM/COUNT, so this must
-    agree with the same formula written as a calc measure.
+    A window sum over them equals the true total only for SUM/COUNT
+    measures, so the spelling is refused outright: post-aggregation row
+    math belongs on ``.to_untagged()``, and totals belong on the model
+    (calc measure) or directly on the aggregate, where they are computed
+    from the underlying rows.
     """
+    with pytest.raises(QueryError, match="to_untagged"):
+        (
+            model.group_by("carrier")
+            .aggregate("total")
+            .order_by("carrier")
+            .mutate(share=lambda t: t.total / t.all(t.total))
+        )
+    # The surviving spellings agree with each other.
+    assert _shares(model.with_measures(share=lambda t: t.total / t.all(t.total))) == SUM_SHARE
+    # The direct-on-the-aggregate spelling, pinned on duckdb: the memtable →
+    # canonical-backend path truncates this integer ratio to 0.0 (pre-existing
+    # xorq/DataFusion flavor defect, independent of the mutate desugaring —
+    # the compiled SQL carries the float cast and duckdb executes it).
+    con = ibis.duckdb.connect(":memory:")
+    tbl = con.create_table(
+        "flights_chain",
+        {"carrier": ["A", "A", "A", "B"], "distance": [10, 20, 30, 100]},
+    )
+    duck_model = (
+        to_semantic_table(tbl, "flights")
+        .with_dimensions(carrier=lambda t: t.carrier)
+        .with_measures(total=lambda t: t.distance.sum())
+    )
     df = (
-        model.group_by("carrier")
+        duck_model.group_by("carrier")
         .aggregate("total")
-        .order_by("carrier")
         .mutate(share=lambda t: t.total / t.all(t.total))
         .execute()
     )
     got = {k: pytest.approx(float(v)) for k, v in zip(df["carrier"], df["share"], strict=True)}
     assert got == SUM_SHARE
-    assert got == _shares(model.with_measures(share=lambda t: t.total / t.all(t.total)))
 
 
 def test_chain_mutate_total_of_a_mean_measure_is_refused(model):
     """Summing per-group means is not the overall mean — refuse, don't guess.
 
-    Returning the window sum made this spelling disagree with the identical
-    calc-measure formula (0.167 vs 0.5) with nothing to indicate which was
-    right.
+    The old chain spelling returned a window sum that disagreed with the
+    identical calc-measure formula (0.167 vs 0.5). The chain spelling is now
+    refused entirely; the measure path computes the true overall mean from
+    the underlying rows, so both surviving spellings agree.
     """
-    with pytest.raises(NonAdditiveTotalError, match="not additive"):
+    with pytest.raises(QueryError, match="to_untagged"):
         (
             model.group_by("carrier")
             .aggregate("avg")
             .order_by("carrier")
             .mutate(share=lambda t: t.avg / t.all(t.avg))
-            .execute()
         )
+    assert _shares(model.with_measures(share=lambda t: t.avg / t.all(t.avg))) == MEAN_SHARE
+    df = (
+        model.group_by("carrier")
+        .aggregate("avg")
+        .mutate(share=lambda t: t.avg / t.all(t.avg))
+        .execute()
+    )
+    got = {k: pytest.approx(float(v)) for k, v in zip(df["carrier"], df["share"], strict=True)}
+    assert got == MEAN_SHARE
 
 
 # ---------------------------------------------------------------------------

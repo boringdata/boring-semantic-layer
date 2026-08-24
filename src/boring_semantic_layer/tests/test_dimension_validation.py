@@ -330,8 +330,9 @@ def test_join_dimension_matching_column_name():
     # Lambda-based join uses column names directly
     joined = orders.join_one(customers, on=lambda o, c: o.customer_id == c.customer_id)
 
-    # First verify the join executed without error
-    result = joined.execute()
+    # First verify the join executed without error (raw rows via the
+    # explicit escape hatch; a bare join is a definition, not a query)
+    result = joined.to_untagged().execute()
 
     # Verify the join worked correctly
     assert len(result) == 3  # 3 orders
