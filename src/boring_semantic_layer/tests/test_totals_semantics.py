@@ -98,6 +98,40 @@ def test_integer_measure_over_integer_total_is_a_ratio(model):
     assert _shares(model.with_measures(share=lambda t: t.total / t.all(t.total))) == SUM_SHARE
 
 
+def test_integer_ratio_via_aggregate_mutate_is_a_ratio(model):
+    """The inline spelling must match the declared one for integer measures.
+
+    ``agg.mutate(share=t.total / t.all(t.total))`` routes ``t.all`` through
+    ``attach_windowed_totals``, whose ``__bsl_totals__`` column stayed int64
+    — so on engines that integer-divide (xorq's DataFusion) every share came
+    back 0.0 while the identical calc-measure spelling was correct. The
+    totals column is now cast to float64 at creation, same policy as
+    ``MeasureScope.all``.
+    """
+    df = (
+        model.group_by("carrier")
+        .aggregate("total")
+        .mutate(share=lambda t: t.total / t.all(t.total))
+        .execute()
+    )
+    got = {k: pytest.approx(float(v)) for k, v in zip(df["carrier"], df["share"], strict=True)}
+    assert got == SUM_SHARE
+
+    # Count measures ride the same lift.
+    counted = (
+        model.with_measures(n=lambda t: t.count())
+        .group_by("carrier")
+        .aggregate("n")
+        .mutate(share=lambda t: t.n / t.all(t.n))
+        .execute()
+    )
+    got = {
+        k: pytest.approx(float(v))
+        for k, v in zip(counted["carrier"], counted["share"], strict=True)
+    }
+    assert got == {"A": 3 / 4, "B": 1 / 4}
+
+
 def test_percent_of_total_is_order_independent():
     """Declaration order must not change the answer."""
     data = ibis.memtable({"carrier": ["AA", "UA", "DL", "WN", "B6"] * 10})
@@ -140,24 +174,13 @@ def test_chain_mutate_after_order_by_is_refused(model):
             .order_by("carrier")
             .mutate(share=lambda t: t.total / t.all(t.total))
         )
-    # The surviving spellings agree with each other.
+    # The surviving spellings agree with each other — including on the
+    # memtable → canonical-backend path, where the integer totals column
+    # used to integer-divide to 0.0 before attach_windowed_totals gained
+    # the float64 cast.
     assert _shares(model.with_measures(share=lambda t: t.total / t.all(t.total))) == SUM_SHARE
-    # The direct-on-the-aggregate spelling, pinned on duckdb: the memtable →
-    # canonical-backend path truncates this integer ratio to 0.0 (pre-existing
-    # xorq/DataFusion flavor defect, independent of the mutate desugaring —
-    # the compiled SQL carries the float cast and duckdb executes it).
-    con = ibis.duckdb.connect(":memory:")
-    tbl = con.create_table(
-        "flights_chain",
-        {"carrier": ["A", "A", "A", "B"], "distance": [10, 20, 30, 100]},
-    )
-    duck_model = (
-        to_semantic_table(tbl, "flights")
-        .with_dimensions(carrier=lambda t: t.carrier)
-        .with_measures(total=lambda t: t.distance.sum())
-    )
     df = (
-        duck_model.group_by("carrier")
+        model.group_by("carrier")
         .aggregate("total")
         .mutate(share=lambda t: t.total / t.all(t.total))
         .execute()
