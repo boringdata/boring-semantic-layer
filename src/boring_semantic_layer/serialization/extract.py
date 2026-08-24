@@ -85,16 +85,36 @@ def _ensure_registered():
 # ---------------------------------------------------------------------------
 
 
+def _unwrap_or_raise(result: Result[dict, Exception]) -> dict:
+    """Return a successful serialization result, or re-raise its failure.
+
+    ``serialize_dimensions``/``serialize_measures``/``serialize_calc_measures``
+    each wrap a whole dict-comprehension-style loop in ``@safe``, so one
+    unserializable entry (an untrusted callable, an unencodable constant)
+    turns the *entire* collection into a ``Failure``. Defaulting that away
+    with ``.value_or({})`` — the previous behavior — silently dropped every
+    sibling dimension/measure too: ``to_tagged()`` returned successfully
+    with an empty field set and no indication anything was wrong. Raising
+    here surfaces the per-entry error message (naming the offending field)
+    that the loop already constructs, instead of swallowing it.
+    """
+    match result:
+        case Success():
+            return result.unwrap()
+        case _:
+            raise result.failure()
+
+
 @_register_lazy("SemanticTableOp")
 def _extract_semantic_table(op, context: BSLSerializationContext) -> dict[str, Any]:
     dims_result = serialize_dimensions(op.get_dimensions())
     meas_result = serialize_measures(op.get_measures())
     calc_result = serialize_calc_measures(op.get_calculated_measures())
     metadata: dict[str, Any] = {
-        "dimensions": dims_result.value_or({}),
-        "measures": meas_result.value_or({}),
+        "dimensions": _unwrap_or_raise(dims_result),
+        "measures": _unwrap_or_raise(meas_result),
     }
-    calc_data = calc_result.value_or({})
+    calc_data = _unwrap_or_raise(calc_result)
     if calc_data:
         metadata["calc_measures"] = calc_data
     if op.name:

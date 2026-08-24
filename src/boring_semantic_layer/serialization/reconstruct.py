@@ -122,6 +122,39 @@ def _reconstruct_semantic_table(
             )
             return from_ibis(expr) if not hasattr(expr.op(), "source") else expr
 
+        # Preserve authored deferred shaping: when the leaf is a pure per-row
+        # chain (mutate/select/filter — no aggregation, no join) over exactly
+        # one relation, the chain IS the model's table. Walking to the bare
+        # base relation here discarded the shaping, so a model built on a
+        # deferred star-schema view (e.g. columns like `is_open` derived via
+        # .mutate) recovered against the RAW source and every field
+        # referencing a derived column failed to resolve. Query entries
+        # (lowered aggregations) still fall through to the base walk below —
+        # digging under the aggregate is what recovery is FOR there. Reserved
+        # __bsl_jk_ join-key temporaries a preserved chain may carry are
+        # inverted by _strip_internal_join_temps at the call site.
+        from .._xorq import JoinChain
+
+        leaf_op = unwrapped_expr.op()
+        is_bare_leaf = isinstance(
+            leaf_op,
+            (
+                Read,
+                xorq_rel.InMemoryTable,
+                xorq_rel.DatabaseTable,
+                xorq_rel.UnboundTable,
+                xorq_rel.SelfReference,
+            ),
+        )
+        if (
+            total_leaf_tables == 1
+            and not is_bare_leaf
+            # memtable leaves keep the from_ibis conversion below
+            and not in_memory_tables
+            and not walk_nodes((xorq_rel.Aggregate, JoinChain), unwrapped_expr)
+        ):
+            return unwrapped_expr
+
         if read_ops:
             base = read_ops[0].to_expr()
             return base.view() if is_self_ref else base
@@ -167,8 +200,13 @@ def _reconstruct_semantic_table(
             _source_join=join_op,
         )
 
+    marked_leaf = _find_marked_leaf(xorq_expr, metadata.get("name"))
     return bsl_expr.SemanticModel(
-        table=_reconstruct_table(),
+        table=(
+            marked_leaf
+            if marked_leaf is not None
+            else _strip_internal_join_temps(_reconstruct_table())
+        ),
         dimensions=dimensions,
         measures=measures,
         calc_measures=calc_measures,
@@ -326,6 +364,69 @@ def _reconstruct_limit(metadata: dict, xorq_expr, source, context: BSLSerializat
     return source.limit(n=int(metadata.get("n", 0)), offset=int(metadata.get("offset", 0)))
 
 
+def _find_marked_leaf(xorq_expr, name):
+    """Return the AUTHORED table expression for leaf *name*, if the payload
+    carries a leaf marker (BSL_LEAF_TAG, written by to_tagged since the
+    leaf-payload change). This is the lossless recovery path: the marked
+    subtree is exactly what the author passed to to_semantic_table —
+    shaped views, renames, even aggregate-grain rollups — so no heuristic
+    re-derivation from the lowered plan is needed. Returns None when the
+    payload predates markers or the leaf was not markable (unnamed model,
+    or its table op was rewritten by lowering)."""
+    if not name:
+        return None
+    from .._xorq import Tag, walk_nodes
+
+    try:
+        for tag_op in walk_nodes((Tag,), xorq_expr):
+            metadata = getattr(tag_op, "metadata", None) or {}
+            if metadata.get("tag") == "__bsl_leaf__" and metadata.get("leaf") == name:
+                parent = tag_op.parent
+                return parent.to_expr() if hasattr(parent, "to_expr") else parent
+    except Exception:
+        return None
+    return None
+
+
+def _strip_internal_join_temps(expr):
+    """Invert BSL's temporary join-key renames on a recovered leaf table.
+
+    ``SemanticJoinOp.to_untagged`` renames left-side predicate columns that
+    collide across the join to ``__bsl_jk_<name>`` (see ``_RenamedResolver``)
+    to sidestep ibis ambiguous-deref errors. Those temporaries live in the
+    lowered leaf projections. When leaf recovery cannot walk to the base
+    relation and keeps a lowered projection as the model's table — e.g. an
+    ``into_backend`` seam makes the leaf multi-relation — the declared
+    dimensions/measures reference the ORIGINAL names and no longer resolve.
+    Rename the reserved temporaries back so the recovered leaf carries the
+    schema the model was authored against.
+
+    Only exact-prefix temporaries whose original name is free are inverted;
+    the ``__bsl_jk_<name>_N`` overflow spelling (a user column literally
+    named ``__bsl_jk_<name>`` existed) is left alone — inverting it could
+    corrupt that user column.
+    """
+    from ..ops._normalize import _BSL_JOIN_KEY_TMP_PREFIX
+
+    try:
+        columns = list(expr.columns)
+    except Exception:
+        return expr
+    renames = {}
+    for col in columns:
+        if not col.startswith(_BSL_JOIN_KEY_TMP_PREFIX):
+            continue
+        original = col[len(_BSL_JOIN_KEY_TMP_PREFIX) :]
+        if original and original not in columns and original not in renames:
+            renames[original] = col
+    if not renames:
+        return expr
+    try:
+        return expr.rename(**renames)
+    except Exception:
+        return expr
+
+
 def _validate_join_leaf(model, metadata, side: str) -> None:
     """Check a reconstructed join leaf against its declared fields.
 
@@ -351,10 +452,14 @@ def _validate_join_leaf(model, metadata, side: str) -> None:
                 raise ValueError(
                     f"Round-trip could not recover the {side} join table "
                     f"{name!r}: its {kind} {fname!r} does not resolve against "
-                    "the recovered table. Queries lowered through the "
-                    "pre-aggregation path cannot be reconstructed from the "
-                    "lowered expression — serialize the model (or the "
-                    "un-aggregated join) instead."
+                    f"the recovered table ({type(exc).__name__}: {exc}). "
+                    "If the underlying error names a missing METHOD, the "
+                    "field's expression uses an API this ibis runtime does "
+                    "not have (e.g. Column.filter — use .sum(where=...) "
+                    "forms instead). If it names a missing COLUMN, the "
+                    "expression was lowered through the pre-aggregation "
+                    "path and cannot be reconstructed — serialize the model "
+                    "(or the un-aggregated join) instead."
                 ) from exc
             except Exception:
                 continue
