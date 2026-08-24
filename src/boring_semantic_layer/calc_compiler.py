@@ -48,7 +48,7 @@ from .calc_analyzer import (
 )
 from .errors import suggest_kinded
 from .fieldref import resolve_suffix
-from .measure_scope import UnknownMeasureRefError
+from .measure_scope import UnknownMeasureRefError, _float_total
 
 logger = logging.getLogger(__name__)
 
@@ -692,7 +692,11 @@ def attach_windowed_totals(
                 "substitute the per-group value for the grand total."
             ) from exc
         col = f"{totals_prefix}{name}"
-        new_base = new_base.mutate(**{col: windowed})
+        # Integral totals become float64 so ``measure / t.all(measure)`` is
+        # a true ratio: with two integer operands some engines (xorq's
+        # DataFusion among them) do integer division, and ``60 / 160``
+        # silently came back as 0. Same policy as ``MeasureScope.all``.
+        new_base = new_base.mutate(**{col: _float_total(windowed)})
         arbitrary_specs[col] = lambda t, _c=col: t[_c].arbitrary()
     return new_base, arbitrary_specs
 
@@ -815,7 +819,9 @@ def attach_calc_totals(
                 "per-group value for the grand total."
             ) from exc
         col = f"{totals_prefix}{calc_name}"
-        real_agg_tbl = real_agg_tbl.mutate(**{col: totals_expr})
+        # Same integer→float64 policy as attach_windowed_totals: an
+        # int-valued calc's totals column must not integer-divide later.
+        real_agg_tbl = real_agg_tbl.mutate(**{col: _float_total(totals_expr)})
 
     return real_agg_tbl
 
