@@ -446,9 +446,7 @@ def test_grouped_grain_model_survives_disk_round_trip(tmp_path):
     del seed
     con = xo.duckdb.connect(db)
     rollup = (
-        con.table("transactions")
-        .group_by("account_id")
-        .aggregate(txn_amount=xo._.amount.sum())
+        con.table("transactions").group_by("account_id").aggregate(txn_amount=xo._.amount.sum())
     )
     model = to_semantic_table(rollup, name="account_rollup").with_measures(
         total_amount=lambda t: t.txn_amount.sum(),
