@@ -31,7 +31,7 @@ def test_basic_unnest():
     unnested = semantic.unnest("values")
 
     # Execute and check results
-    result = unnested.execute()
+    result = unnested.to_untagged().execute()
 
     # Should have 6 rows (2 + 1 + 3)
     assert len(result) == 6
@@ -61,7 +61,7 @@ def test_unnest_with_measures():
     unnested = to_semantic_table(tbl, name="ga_sessions").unnest("hit_values")
 
     # Execute to verify unnesting worked
-    result = unnested.execute()
+    result = unnested.to_untagged().execute()
 
     assert len(result) == 6  # 3 + 2 + 1 hits
     assert result["hit_values"].sum() == 210  # 10+20+30+40+50+60
@@ -86,7 +86,7 @@ def test_unnest_with_groupby():
     unnested = to_semantic_table(tbl, name="data").unnest("items")
 
     # Execute and verify grouping works
-    result = unnested.execute()
+    result = unnested.to_untagged().execute()
 
     assert len(result) == 6  # 2 + 3 + 1
 
@@ -113,7 +113,7 @@ def test_unnest_with_filter():
     # Unnest and filter for values > 15
     semantic = to_semantic_table(tbl, name="data").unnest("values")
 
-    result = semantic.filter(lambda t: t.values > 15).execute()
+    result = semantic.filter(lambda t: t.values > 15).to_untagged().execute()
 
     assert len(result) == 2  # 20 and 30
     assert sorted(result["values"].tolist()) == [20, 30]
@@ -133,7 +133,7 @@ def test_unnest_preserves_other_columns():
     tbl = con.create_table("data", data)
 
     unnested = to_semantic_table(tbl, name="data").unnest("codes")
-    result = unnested.execute()
+    result = unnested.to_untagged().execute()
 
     # Should have 3 rows (2 + 1)
     assert len(result) == 3
@@ -154,7 +154,7 @@ def test_unnest_error_on_missing_column():
 
     # Try to unnest a column that doesn't exist
     with pytest.raises(ValueError, match="Column 'nonexistent' not found"):
-        semantic.unnest("nonexistent").execute()
+        semantic.unnest("nonexistent").to_untagged()
 
 
 def test_unnest_chaining():
@@ -175,6 +175,7 @@ def test_unnest_chaining():
         .unnest("items")
         .filter(lambda t: t.items > 2)
         .mutate(doubled=lambda t: t.items * 2)
+        .to_untagged()
         .execute()
     )
 

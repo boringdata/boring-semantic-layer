@@ -84,16 +84,21 @@ daily_revenue = (
     sales_st
     .group_by("sale_date")
     .aggregate("total_revenue")
-    .order_by("sale_date")
 )
 
-# Add window functions for lag/lead
+# Add window functions for lag/lead — applied directly on the aggregate,
+# each window carrying its own ordering
 result = daily_revenue.mutate(
-    prev_day_revenue=_.total_revenue.lag(),
-    next_day_revenue=_.total_revenue.lead(),
-    day_over_day_change=_.total_revenue - _.total_revenue.lag(),
-    pct_change=((_.total_revenue - _.total_revenue.lag()) / _.total_revenue.lag() * 100).round(2)
-).limit(10)
+    prev_day_revenue=lambda t: t.total_revenue.lag().over(order_by="sale_date"),
+    next_day_revenue=lambda t: t.total_revenue.lead().over(order_by="sale_date"),
+    day_over_day_change=lambda t: (
+        t.total_revenue - t.total_revenue.lag().over(order_by="sale_date")
+    ),
+    pct_change=lambda t: (
+        (t.total_revenue - t.total_revenue.lag().over(order_by="sale_date"))
+        / t.total_revenue.lag().over(order_by="sale_date") * 100
+    ).round(2),
+).order_by("sale_date").limit(10)
 ```
 
 <bslquery code-block="query_lag_lead"></bslquery>
@@ -114,17 +119,15 @@ daily_revenue = (
     sales_st
     .group_by("sale_date")
     .aggregate("total_revenue")
-    .order_by("sale_date")
 )
 
 # Calculate cumulative sum and running average
 window_unbounded = xo.window(rows=(None, 0), order_by="sale_date")
 
 result = daily_revenue.mutate(
-    cumulative_revenue=_.total_revenue.cumsum(),
-    days_count=lambda t: t.count().over(window_unbounded),
-    avg_daily_so_far=lambda t: (t.cumulative_revenue / t.days_count).round(2)
-).limit(10)
+    cumulative_revenue=lambda t: t.total_revenue.sum().over(window_unbounded),
+    avg_daily_so_far=lambda t: t.total_revenue.mean().over(window_unbounded).round(2),
+).order_by("sale_date").limit(10)
 ```
 
 <bslquery code-block="query_running_total"></bslquery>
@@ -141,16 +144,15 @@ daily_revenue = (
     sales_st
     .group_by("sale_date")
     .aggregate("total_revenue")
-    .order_by("sale_date")
 )
 
 # 7-day moving average
 window_7d = xo.window(rows=(-6, 0), order_by="sale_date")
 
 result = daily_revenue.mutate(
-    ma_7day=_.total_revenue.mean().over(window_7d).round(2),
-    ma_7day_sum=_.total_revenue.sum().over(window_7d).round(2),
-).limit(10)
+    ma_7day=lambda t: t.total_revenue.mean().over(window_7d).round(2),
+    ma_7day_sum=lambda t: t.total_revenue.sum().over(window_7d).round(2),
+).order_by("sale_date").limit(10)
 ```
 
 <bslquery code-block="query_moving_average"></bslquery>
@@ -171,15 +173,14 @@ category_revenue = (
     sales_st
     .group_by("product_category")
     .aggregate("total_revenue", "sale_count")
-    .order_by(_.total_revenue.desc())
 )
 
-# Add rank columns
+# Add rank columns (each window carries its own ordering)
 result = category_revenue.mutate(
     rank=lambda t: xo.rank().over(xo.window(order_by=xo.desc(t.total_revenue))),
     dense_rank=lambda t: xo.dense_rank().over(xo.window(order_by=xo.desc(t.total_revenue))),
     row_number=lambda t: xo.row_number().over(xo.window(order_by=xo.desc(t.total_revenue))),
-)
+).order_by(_.total_revenue.desc())
 ```
 
 <bslquery code-block="query_ranking"></bslquery>
@@ -201,15 +202,17 @@ weekly_revenue = (
     .mutate(week_start=_.sale_date.truncate("W"))
     .group_by("week_start")
     .aggregate("total_revenue")
-    .order_by("week_start")
 )
 
 # Calculate week-over-week changes
 result = weekly_revenue.mutate(
-    prev_week_revenue=_.total_revenue.lag(),
-    wow_change=_.total_revenue - _.total_revenue.lag(),
-    wow_pct_change=((_.total_revenue - _.total_revenue.lag()) / _.total_revenue.lag() * 100).round(2)
-).limit(10)
+    prev_week_revenue=lambda t: t.total_revenue.lag().over(order_by="week_start"),
+    wow_change=lambda t: t.total_revenue - t.total_revenue.lag().over(order_by="week_start"),
+    wow_pct_change=lambda t: (
+        (t.total_revenue - t.total_revenue.lag().over(order_by="week_start"))
+        / t.total_revenue.lag().over(order_by="week_start") * 100
+    ).round(2),
+).order_by("week_start").limit(10)
 ```
 
 <bslquery code-block="query_week_over_week"></bslquery>
@@ -230,11 +233,12 @@ top_days = (
     .limit(10)
 )
 
-# Calculate cumulative percentage
-result = top_days.mutate(
-    cumulative_revenue=_.total_revenue.cumsum(),
-    total_top10=_.total_revenue.sum(),
-    pct_of_top10=(_.total_revenue.cumsum() / _.total_revenue.sum() * 100).round(2)
+# A limited query result is a plain table — row math over it drops to
+# ibis explicitly via .to_untagged()
+result = top_days.to_untagged().mutate(
+    cumulative_revenue=lambda t: t.total_revenue.cumsum(),
+    total_top10=lambda t: t.total_revenue.sum(),
+    pct_of_top10=lambda t: (t.total_revenue.cumsum() / t.total_revenue.sum() * 100).round(2),
 )
 ```
 
@@ -254,30 +258,29 @@ weekend_revenue = (
     .filter(_.is_weekend)
     .group_by("sale_date")
     .aggregate("total_revenue")
-    .order_by("sale_date")
 )
 
 # 3-weekend moving average
 window_3 = xo.window(rows=(-2, 0), order_by="sale_date")
 
 result = weekend_revenue.mutate(
-    ma_3weekend=_.total_revenue.mean().over(window_3).round(2),
-    prev_weekend=_.total_revenue.lag(),
-    weekend_change=_.total_revenue - _.total_revenue.lag()
-).limit(10)
+    ma_3weekend=lambda t: t.total_revenue.mean().over(window_3).round(2),
+    prev_weekend=lambda t: t.total_revenue.lag().over(order_by="sale_date"),
+    weekend_change=lambda t: t.total_revenue - t.total_revenue.lag().over(order_by="sale_date"),
+).order_by("sale_date").limit(10)
 ```
 
 <bslquery code-block="query_window_filter"></bslquery>
 
 ## Key Takeaways
 
-- **Window functions operate after aggregation**: They work on query results, not raw data
-- **Order matters**: Most window functions require `order_by()` for meaningful results
+- **Window functions go on the aggregate**: apply `.mutate()` directly on the `aggregate()` result, before `.order_by()`/`.limit()` (after those the result is a plain table and `.mutate()` raises — use `.to_untagged().mutate(...)` there)
+- **Each window carries its own ordering**: pass `order_by=` inside the window (e.g. `.over(rows=(-6, 0), order_by="sale_date")` or `.lag().over(order_by="sale_date")`)
 - **Flexible windows**: Define windows by rows (`rows=(n, m)`) or ranges
 - **Common patterns**:
   - `lag()/lead()` for period-over-period comparisons
-  - `cumsum()` for running totals
-  - `.over(window)` for moving averages
+  - `.sum().over(rows=(None, 0), order_by=...)` for running totals
+  - `.mean().over(window)` for moving averages
   - `rank()`, `row_number()` for ranking
 - **Combine with filters**: Focus window calculations on specific subsets
 

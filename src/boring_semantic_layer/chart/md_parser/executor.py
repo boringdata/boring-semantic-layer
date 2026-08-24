@@ -187,22 +187,26 @@ class QueryExecutor:
         if is_chart_only and hasattr(result, "to_dict"):
             return self._extract_chart_spec(result)
 
-        # Semantic table definition
-        if hasattr(result, "group_by") and not hasattr(result, "execute"):
-            return {
-                "semantic_table": True,
-                "name": getattr(result, "name", "unknown"),
-                "info": "Semantic table definition stored in context",
-            }
-
         # BSL query with execute method
         if hasattr(result, "execute"):
+            from boring_semantic_layer.errors import QueryError
+
             from .converter import ResultConverter
 
-            result_data, _ = ResultConverter.convert_bsl_result(
-                result, code, self.context, is_chart_only
-            )
-            return result_data
+            try:
+                result_data, _ = ResultConverter.convert_bsl_result(
+                    result, code, self.context, is_chart_only
+                )
+                return result_data
+            except QueryError:
+                # A definition-side semantic expression refuses to execute:
+                # render it as a definition instead of a query result (the
+                # frontend shows a "semantic table defined" box).
+                return {
+                    "semantic_table": True,
+                    "name": getattr(result, "name", None) or "unknown",
+                    "info": "Semantic table definition stored in context",
+                }
 
         # Pandas-like object
         if hasattr(result, "to_pandas"):

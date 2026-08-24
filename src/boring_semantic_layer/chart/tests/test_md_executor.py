@@ -28,19 +28,48 @@ class TestQueryExecutor:
         assert executor.context["y"] == 84
 
     def test_bsl_query_execution(self):
-        """Test execution of BSL query with .execute()."""
+        """Test execution of BSL query with .execute().
+
+        The block must end with a query — a bare semantic model is a
+        definition and refuses to execute.
+        """
         executor = QueryExecutor()
         code = """
 import ibis
 from boring_semantic_layer import to_semantic_table
 
 t = ibis.memtable({"x": [1, 2, 3], "y": [10, 20, 30]})
-result = to_semantic_table(t)
+result = (
+    to_semantic_table(t)
+    .with_dimensions(x=lambda t: t.x)
+    .with_measures(total=lambda t: t.y.sum())
+    .group_by("x")
+    .aggregate("total")
+)
 """
         result = executor.execute(code)
         assert "table" in result
         assert "sql" in result
-        assert result["table"]["columns"] == ["x", "y"]
+        assert result["table"]["columns"] == ["x", "total"]
+
+    def test_bare_model_renders_as_definition(self):
+        """A block ending with a bare model renders a definition box, not rows."""
+        executor = QueryExecutor()
+        code = """
+import ibis
+from boring_semantic_layer import to_semantic_table
+
+t = ibis.memtable({"x": [1, 2, 3], "y": [10, 20, 30]})
+result = (
+    to_semantic_table(t, name="points")
+    .with_dimensions(x=lambda t: t.x)
+    .with_measures(total=lambda t: t.y.sum())
+)
+"""
+        result = executor.execute(code)
+        assert result.get("semantic_table") is True
+        assert result["name"] == "points"
+        assert "error" not in result
 
     def test_error_handling(self):
         """Test error handling for invalid code."""

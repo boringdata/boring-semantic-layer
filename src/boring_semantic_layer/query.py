@@ -582,7 +582,6 @@ def compare_periods(
 ) -> Any:
     """Compare two time ranges and return current/previous/delta columns."""
     from ._xorq import null_safe_equal
-    from .api import to_semantic_table
 
     dimensions = list(dimensions or [])
     measures = list(measures or [])
@@ -702,7 +701,19 @@ def compare_periods(
     if limit is not None:
         result_tbl = result_tbl.limit(limit)
 
-    return to_semantic_table(result_tbl, name=f"{model_name or 'model'}_period_comparison")
+    # The comparison table IS a query result (dims + current/previous/delta
+    # measures), so the wrapper is a materialized-result model: executable,
+    # unlike a definition-side semantic model.
+    from .expr import SemanticModel
+
+    return SemanticModel(
+        table=result_tbl,
+        dimensions=None,
+        measures=None,
+        calc_measures=None,
+        name=f"{model_name or 'model'}_period_comparison",
+        _materialized_result=True,
+    )
 
 
 def query(
@@ -786,6 +797,12 @@ def query(
         ).execute()
     """
     from .ops import Dimension
+
+    if not dimensions and not measures:
+        raise QueryError(
+            "query() requires at least one dimension or measure — an empty "
+            "query has no semantic result. For raw rows, use .to_untagged()."
+        )
 
     result = semantic_table
     model_name = getattr(result, "name", None)

@@ -3,7 +3,7 @@
   "queries": {
     "query_by_origin": {
       "code": "# Group flights by origin airport\nresult = flights_st.group_by(\"origin\").aggregate(\n    \"flight_count\",\n    \"total_distance\",\n    \"avg_duration\"\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\"\n  FROM (\n    SELECT\n      \"t1\".\"destination\",\n      \"t1\".\"distance\",\n      \"t1\".\"duration\",\n      \"t1\".\"origin\"\n    FROM (\n      SELECT\n        *\n      FROM \"ibis_pandas_memtable_ezhx46n3pnbczjgagwnn24amcu\" AS \"t0\"\n    ) AS \"t1\"\n  ) AS t1\n  GROUP BY\n    \"t1\".\"origin\"\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"origin\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\",\n    AVG(\"t1\".\"duration\") AS \"avg_duration\"\n  FROM (\n    SELECT\n      \"t1\".\"destination\",\n      \"t1\".\"distance\",\n      \"t1\".\"duration\",\n      \"t1\".\"origin\"\n    FROM (\n      SELECT\n        *\n      FROM \"ibis_pandas_memtable_i6d2okpzpffkllrkd54ddcja3y\" AS \"t0\"\n    ) AS \"t1\"\n  ) AS t1\n  GROUP BY\n    \"t1\".\"origin\"\n) AS \"t2\"",
       "plan": "SemanticTable: flights\n  origin [dim]\n  destination [dim]\n  flight_count [measure]\n  total_distance [measure]\n  avg_duration [measure]\n-> GroupBy(origin)\n-> Aggregate(flight_count, total_distance, avg_duration)",
       "table": {
         "columns": [
@@ -20,23 +20,110 @@
             340.0
           ],
           [
-            "SFO",
-            2,
-            3249,
-            212.5
-          ],
-          [
             "LAX",
             3,
             3483,
             153.33333333333334
+          ],
+          [
+            "SFO",
+            2,
+            3249,
+            212.5
           ]
         ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-0137bc47e458ebaf211d83de5a1f535d"
+          },
+          "mark": {
+            "type": "bar"
+          },
+          "encoding": {
+            "color": {
+              "field": "measure",
+              "type": "nominal"
+            },
+            "tooltip": [
+              {
+                "field": "origin",
+                "type": "nominal"
+              },
+              {
+                "field": "measure",
+                "type": "nominal"
+              },
+              {
+                "field": "value",
+                "type": "quantitative"
+              }
+            ],
+            "x": {
+              "field": "origin",
+              "sort": null,
+              "type": "ordinal"
+            },
+            "xOffset": {
+              "field": "measure"
+            },
+            "y": {
+              "field": "value",
+              "type": "quantitative"
+            }
+          },
+          "height": 400,
+          "transform": [
+            {
+              "fold": [
+                "flight_count",
+                "total_distance",
+                "avg_duration"
+              ],
+              "as": [
+                "measure",
+                "value"
+              ]
+            }
+          ],
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-0137bc47e458ebaf211d83de5a1f535d": [
+              {
+                "origin": "NYC",
+                "flight_count": 3,
+                "total_distance": 8480,
+                "avg_duration": 340.0
+              },
+              {
+                "origin": "LAX",
+                "flight_count": 3,
+                "total_distance": 3483,
+                "avg_duration": 153.33333333333334
+              },
+              {
+                "origin": "SFO",
+                "flight_count": 2,
+                "total_distance": 3249,
+                "avg_duration": 212.5
+              }
+            ]
+          }
+        }
       }
     },
     "query_by_destination": {
       "code": "# Group flights by destination airport\nresult = flights_st.group_by(\"destination\").aggregate(\n    \"flight_count\",\n    \"total_distance\"\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"destination\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\"\n  FROM (\n    SELECT\n      \"t1\".\"origin\",\n      \"t1\".\"distance\",\n      \"t1\".\"duration\",\n      \"t1\".\"destination\"\n    FROM (\n      SELECT\n        *\n      FROM \"ibis_pandas_memtable_ezhx46n3pnbczjgagwnn24amcu\" AS \"t0\"\n    ) AS \"t1\"\n  ) AS t1\n  GROUP BY\n    \"t1\".\"destination\"\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"destination\",\n    COUNT(*) AS \"flight_count\",\n    SUM(\"t1\".\"distance\") AS \"total_distance\"\n  FROM (\n    SELECT\n      \"t1\".\"origin\",\n      \"t1\".\"distance\",\n      \"t1\".\"duration\",\n      \"t1\".\"destination\"\n    FROM (\n      SELECT\n        *\n      FROM \"ibis_pandas_memtable_i6d2okpzpffkllrkd54ddcja3y\" AS \"t0\"\n    ) AS \"t1\"\n  ) AS t1\n  GROUP BY\n    \"t1\".\"destination\"\n) AS \"t2\"",
       "plan": "SemanticTable: flights\n  origin [dim]\n  destination [dim]\n  flight_count [measure]\n  total_distance [measure]\n  avg_duration [measure]\n-> GroupBy(destination)\n-> Aggregate(flight_count, total_distance)",
       "table": {
         "columns": [
@@ -51,16 +138,99 @@
             3596
           ],
           [
-            "NYC",
-            2,
-            5691
-          ],
-          [
             "LAX",
             3,
             5925
+          ],
+          [
+            "NYC",
+            2,
+            5691
           ]
         ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-4000cbb95248830b8574b5a3a4390b5b"
+          },
+          "mark": {
+            "type": "bar"
+          },
+          "encoding": {
+            "color": {
+              "field": "measure",
+              "type": "nominal"
+            },
+            "tooltip": [
+              {
+                "field": "destination",
+                "type": "nominal"
+              },
+              {
+                "field": "measure",
+                "type": "nominal"
+              },
+              {
+                "field": "value",
+                "type": "quantitative"
+              }
+            ],
+            "x": {
+              "field": "destination",
+              "sort": null,
+              "type": "ordinal"
+            },
+            "xOffset": {
+              "field": "measure"
+            },
+            "y": {
+              "field": "value",
+              "type": "quantitative"
+            }
+          },
+          "height": 400,
+          "transform": [
+            {
+              "fold": [
+                "flight_count",
+                "total_distance"
+              ],
+              "as": [
+                "measure",
+                "value"
+              ]
+            }
+          ],
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-4000cbb95248830b8574b5a3a4390b5b": [
+              {
+                "destination": "LAX",
+                "flight_count": 3,
+                "total_distance": 5925
+              },
+              {
+                "destination": "NYC",
+                "flight_count": 2,
+                "total_distance": 5691
+              },
+              {
+                "destination": "SFO",
+                "flight_count": 3,
+                "total_distance": 3596
+              }
+            ]
+          }
+        }
       }
     }
   },

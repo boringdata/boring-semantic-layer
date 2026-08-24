@@ -389,12 +389,12 @@ class TestChartWithFilters:
             flights_model.with_dimensions(flight_week=lambda t: t.flight_date.truncate("W"))
             .group_by("flight_week")
             .aggregate("flight_count")
-            .order_by("flight_week")
             .mutate(
                 rolling_avg=lambda t: t.flight_count.mean().over(
                     xibis.window(rows=(-2, 0), order_by="flight_week")
                 )
             )
+            .order_by("flight_week")
         )
 
         # The query should execute successfully
@@ -407,15 +407,19 @@ class TestChartWithFilters:
         # Just verify no exception was raised
 
     def test_chart_time_detection_after_limit_mutate(self, flights_model):
-        """Post-wrapper mutate preserves time metadata for chart detection."""
+        """Mutate-then-wrapper chains preserve time metadata for chart detection.
+
+        (Mutate goes on the aggregate itself — after order_by/limit the
+        result is a plain table and .mutate() raises.)
+        """
         from boring_semantic_layer.chart.utils import get_chart_detection_params
 
         result = (
             flights_model.group_by("flight_date")
             .aggregate("flight_count")
+            .mutate(doubled=lambda t: t.flight_count * 2)
             .order_by("flight_date")
             .limit(3)
-            .mutate(doubled=lambda t: t.flight_count * 2)
         )
         df = result.execute()
 

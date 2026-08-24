@@ -275,13 +275,28 @@ class TestMutateAfterAggregate:
 
 
 class TestMutateFilterMutate:
-    def test_second_mutate_sees_filtered_rows(self, flights_model):
-        """b after a filter is computed over rows surviving the filter."""
-        df = (
+    """Post-aggregation ``.mutate()`` on a filtered/ordered/limited result is
+    refused: the result of a query is a plain table, not a semantic model.
+    Row math over results is spelled ``.to_untagged().mutate(...)``; the
+    direct ``aggregate().mutate()`` (measure path) still works and is pinned
+    by TestMutateAfterAggregate above.
+    """
+
+    def test_second_mutate_after_filter_is_refused(self, flights_model):
+        from boring_semantic_layer.errors import QueryError
+
+        chained = (
             flights_model.group_by("carrier")
             .aggregate("flight_count", "total_distance")
             .mutate(avg_distance=lambda t: t.total_distance / t.flight_count)
             .filter(lambda t: t.avg_distance > 200)
+        )
+        with pytest.raises(QueryError, match="to_untagged"):
+            chained.mutate(rnk=lambda t: t.avg_distance.rank())
+
+        # The sanctioned spelling: drop to ibis for row math over the result.
+        df = (
+            chained.to_untagged()
             .mutate(rnk=lambda t: t.avg_distance.rank())
             .execute()
             .sort_values("avg_distance")
@@ -290,27 +305,27 @@ class TestMutateFilterMutate:
         # Only DL (600) and UA (350) survive; rank computed over the 2 rows.
         assert df["rnk"].tolist() == [0, 1]
 
-    def test_mutate_after_limit(self, flights_model):
-        """Mutate after limit sees the post-limit table."""
-        df = (
-            flights_model.group_by("carrier")
-            .aggregate("flight_count")
-            .order_by("carrier")
-            .limit(2)
-            .mutate(doubled=lambda t: t.flight_count * 2)
-            .execute()
+    def test_mutate_after_limit_is_refused(self, flights_model):
+        from boring_semantic_layer.errors import QueryError
+
+        limited = (
+            flights_model.group_by("carrier").aggregate("flight_count").order_by("carrier").limit(2)
         )
+        with pytest.raises(QueryError, match="to_untagged"):
+            limited.mutate(doubled=lambda t: t.flight_count * 2)
+
+        df = limited.to_untagged().mutate(doubled=lambda t: t.flight_count * 2).execute()
         assert len(df) == 2
         assert df["doubled"].tolist() == (df["flight_count"] * 2).tolist()
 
-    def test_mutate_after_order_by(self, flights_model):
-        df = (
-            flights_model.group_by("carrier")
-            .aggregate("flight_count")
-            .order_by("carrier")
-            .mutate(doubled=lambda t: t.flight_count * 2)
-            .execute()
-        )
+    def test_mutate_after_order_by_is_refused(self, flights_model):
+        from boring_semantic_layer.errors import QueryError
+
+        ordered = flights_model.group_by("carrier").aggregate("flight_count").order_by("carrier")
+        with pytest.raises(QueryError, match="to_untagged"):
+            ordered.mutate(doubled=lambda t: t.flight_count * 2)
+
+        df = ordered.to_untagged().mutate(doubled=lambda t: t.flight_count * 2).execute()
         assert df["doubled"].tolist() == (df["flight_count"] * 2).tolist()
 
 
