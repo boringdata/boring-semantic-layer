@@ -3,7 +3,7 @@
   "queries": {
     "revenue_by_customer": {
       "code": "result = orders_st.group_by(\"customer\").aggregate(\n    \"total_orders\",\n    \"total_revenue\",\n    \"avg_order_value\"\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"customer\",\n    COUNT(*) AS \"total_orders\",\n    SUM(\"t1\".\"amount\") AS \"total_revenue\",\n    AVG(\"t1\".\"amount\") AS \"avg_order_value\"\n  FROM (\n    SELECT\n      \"t1\".\"order_id\",\n      \"t1\".\"product\",\n      \"t1\".\"amount\",\n      \"t1\".\"quantity\",\n      \"t1\".\"customer\"\n    FROM (\n      SELECT\n        *\n      FROM \"ibis_pandas_memtable_kod4h4nvwbbpfag4osr7gtlqpm\" AS \"t0\"\n    ) AS \"t1\"\n  ) AS t1\n  GROUP BY\n    \"t1\".\"customer\"\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"customer\",\n    COUNT(*) AS \"total_orders\",\n    SUM(\"t1\".\"amount\") AS \"total_revenue\",\n    AVG(\"t1\".\"amount\") AS \"avg_order_value\"\n  FROM (\n    SELECT\n      \"t1\".\"order_id\",\n      \"t1\".\"product\",\n      \"t1\".\"amount\",\n      \"t1\".\"quantity\",\n      \"t1\".\"customer\"\n    FROM (\n      SELECT\n        *\n      FROM \"ibis_pandas_memtable_j7tgs6q34bg2xdzzd7srg72ho4\" AS \"t0\"\n    ) AS \"t1\"\n  ) AS t1\n  GROUP BY\n    \"t1\".\"customer\"\n) AS \"t2\"",
       "plan": "SemanticTable: orders\n  customer [dim]\n  product [dim]\n  total_orders [measure]\n  total_revenue [measure]\n  total_quantity [measure]\n  avg_order_value [measure]\n-> GroupBy(customer)\n-> Aggregate(total_orders, total_revenue, avg_order_value)",
       "table": {
         "columns": [
@@ -20,12 +20,6 @@
             116.66666666666667
           ],
           [
-            "Bob",
-            2,
-            250,
-            125.0
-          ],
-          [
             "Charlie",
             2,
             225,
@@ -36,13 +30,112 @@
             1,
             100,
             100.0
+          ],
+          [
+            "Bob",
+            2,
+            250,
+            125.0
           ]
         ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-051431f27a158a793a9e800d4c006ac8"
+          },
+          "mark": {
+            "type": "bar"
+          },
+          "encoding": {
+            "color": {
+              "field": "measure",
+              "type": "nominal"
+            },
+            "tooltip": [
+              {
+                "field": "customer",
+                "type": "nominal"
+              },
+              {
+                "field": "measure",
+                "type": "nominal"
+              },
+              {
+                "field": "value",
+                "type": "quantitative"
+              }
+            ],
+            "x": {
+              "field": "customer",
+              "sort": null,
+              "type": "ordinal"
+            },
+            "xOffset": {
+              "field": "measure"
+            },
+            "y": {
+              "field": "value",
+              "type": "quantitative"
+            }
+          },
+          "height": 400,
+          "transform": [
+            {
+              "fold": [
+                "total_orders",
+                "total_revenue",
+                "avg_order_value"
+              ],
+              "as": [
+                "measure",
+                "value"
+              ]
+            }
+          ],
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-051431f27a158a793a9e800d4c006ac8": [
+              {
+                "customer": "Alice",
+                "total_orders": 3,
+                "total_revenue": 350,
+                "avg_order_value": 116.66666666666667
+              },
+              {
+                "customer": "Charlie",
+                "total_orders": 2,
+                "total_revenue": 225,
+                "avg_order_value": 112.5
+              },
+              {
+                "customer": "David",
+                "total_orders": 1,
+                "total_revenue": 100,
+                "avg_order_value": 100.0
+              },
+              {
+                "customer": "Bob",
+                "total_orders": 2,
+                "total_revenue": 250,
+                "avg_order_value": 125.0
+              }
+            ]
+          }
+        }
       }
     },
     "product_performance": {
       "code": "result = orders_st.group_by(\"product\").aggregate(\n    \"total_orders\",\n    \"total_quantity\",\n    \"total_revenue\"\n)",
-      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"product\",\n    COUNT(*) AS \"total_orders\",\n    SUM(\"t1\".\"quantity\") AS \"total_quantity\",\n    SUM(\"t1\".\"amount\") AS \"total_revenue\"\n  FROM (\n    SELECT\n      \"t1\".\"order_id\",\n      \"t1\".\"customer\",\n      \"t1\".\"amount\",\n      \"t1\".\"quantity\",\n      \"t1\".\"product\"\n    FROM (\n      SELECT\n        *\n      FROM \"ibis_pandas_memtable_kod4h4nvwbbpfag4osr7gtlqpm\" AS \"t0\"\n    ) AS \"t1\"\n  ) AS t1\n  GROUP BY\n    \"t1\".\"product\"\n) AS \"t2\"",
+      "sql": "SELECT\n  *\nFROM (\n  SELECT\n    \"t1\".\"product\",\n    COUNT(*) AS \"total_orders\",\n    SUM(\"t1\".\"quantity\") AS \"total_quantity\",\n    SUM(\"t1\".\"amount\") AS \"total_revenue\"\n  FROM (\n    SELECT\n      \"t1\".\"order_id\",\n      \"t1\".\"customer\",\n      \"t1\".\"amount\",\n      \"t1\".\"quantity\",\n      \"t1\".\"product\"\n    FROM (\n      SELECT\n        *\n      FROM \"ibis_pandas_memtable_j7tgs6q34bg2xdzzd7srg72ho4\" AS \"t0\"\n    ) AS \"t1\"\n  ) AS t1\n  GROUP BY\n    \"t1\".\"product\"\n) AS \"t2\"",
       "plan": "SemanticTable: orders\n  customer [dim]\n  product [dim]\n  total_orders [measure]\n  total_revenue [measure]\n  total_quantity [measure]\n  avg_order_value [measure]\n-> GroupBy(product)\n-> Aggregate(total_orders, total_quantity, total_revenue)",
       "table": {
         "columns": [
@@ -52,12 +145,6 @@
           "total_revenue"
         ],
         "data": [
-          [
-            "Widget",
-            4,
-            4,
-            400
-          ],
           [
             "Doohickey",
             1,
@@ -69,8 +156,101 @@
             3,
             6,
             450
+          ],
+          [
+            "Widget",
+            4,
+            4,
+            400
           ]
         ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-6991e3d3e667615e632b8261337a1da8"
+          },
+          "mark": {
+            "type": "bar"
+          },
+          "encoding": {
+            "color": {
+              "field": "measure",
+              "type": "nominal"
+            },
+            "tooltip": [
+              {
+                "field": "product",
+                "type": "nominal"
+              },
+              {
+                "field": "measure",
+                "type": "nominal"
+              },
+              {
+                "field": "value",
+                "type": "quantitative"
+              }
+            ],
+            "x": {
+              "field": "product",
+              "sort": null,
+              "type": "ordinal"
+            },
+            "xOffset": {
+              "field": "measure"
+            },
+            "y": {
+              "field": "value",
+              "type": "quantitative"
+            }
+          },
+          "height": 400,
+          "transform": [
+            {
+              "fold": [
+                "total_orders",
+                "total_quantity",
+                "total_revenue"
+              ],
+              "as": [
+                "measure",
+                "value"
+              ]
+            }
+          ],
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-6991e3d3e667615e632b8261337a1da8": [
+              {
+                "product": "Gadget",
+                "total_orders": 3,
+                "total_quantity": 6,
+                "total_revenue": 450
+              },
+              {
+                "product": "Widget",
+                "total_orders": 4,
+                "total_quantity": 4,
+                "total_revenue": 400
+              },
+              {
+                "product": "Doohickey",
+                "total_orders": 1,
+                "total_quantity": 3,
+                "total_revenue": 75
+              }
+            ]
+          }
+        }
       }
     }
   },

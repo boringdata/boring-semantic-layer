@@ -320,7 +320,10 @@ class TestMultiLevelDimensionFilters:
     def test_chained_filters_on_derived_dims(self, flights_st):
         """Stacked filter().filter() both referencing derived dimensions."""
         result = (
-            flights_st.filter(ibis._.d_one > 500).filter(ibis._.d_two > 1000).to_untagged().execute()
+            flights_st.filter(ibis._.d_one > 500)
+            .filter(ibis._.d_two > 1000)
+            .to_untagged()
+            .execute()
         )
         assert len(result) > 0
         assert all(result["d_one"] > 500)

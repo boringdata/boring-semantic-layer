@@ -428,29 +428,29 @@ Here's a simple example:
 ```query_window_example
 from ibis import _
 
-# First aggregate to daily level
+# First aggregate to origin level
 daily_flights = (
     flights_st
     .group_by("origin")
     .aggregate("flight_count", "total_distance")
-    .order_by("origin")
 )
 
-# Then apply window function for cumulative distance
-window_spec = xo.window(order_by="origin")
-
+# Then apply window functions directly on the aggregate — the window
+# carries its own ordering, and the result stays a semantic query
 result = daily_flights.mutate(
-    cumulative_distance=_.total_distance.cumsum(),
+    cumulative_distance=lambda t: t.total_distance.sum().over(
+        rows=(None, 0), order_by="origin"
+    ),
     flight_rank=lambda t: xo.rank().over(xo.window(order_by=xo.desc(t.flight_count)))
-).limit(10)
+).order_by("origin").limit(10)
 ```
 
 <bslquery code-block="query_window_example"></bslquery>
 
 **Key points:**
-- Window functions are applied **after** `.aggregate()` using `.mutate()`
-- Use `.order_by()` to establish row order for window operations
-- Combine with `xo.window()` for advanced sliding window calculations
+- Window functions are applied via `.mutate()` **directly on the aggregate** (before `.order_by()`/`.limit()` — after those the result is a plain table and `.mutate()` raises)
+- Give each window its own ordering via the keyword form of `.over()` (e.g. `rows=(None, 0), order_by="origin"`)
+- For row math over a *filtered* result, drop to ibis explicitly with `.to_untagged().mutate(...)`
 
 For comprehensive examples including lag/lead, moving averages, and ranking, see [Window Functions](/advanced/windowing).
 

@@ -32,8 +32,12 @@ def main():
         .filter(lambda t: t.carrier == "WN")
     )
 
+    # A filtered query result is a plain table, so row math over it drops to
+    # ibis explicitly via .to_untagged() (mutate on the *aggregate itself*
+    # stays semantic — see the percent_manual example below).
     result = (
-        daily_stats.mutate(
+        daily_stats.to_untagged()
+        .mutate(
             rolling_avg=lambda t: t.flight_count.mean().over(
                 xibis.window(order_by=t.flight_date, preceding=6, following=0),
             ),

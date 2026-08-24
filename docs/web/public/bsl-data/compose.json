@@ -31,176 +31,28 @@
       }
     },
     "setup_semantic_models": {
-      "code": "# Create semantic tables\nflights_st = (\n    to_semantic_table(flights_tbl, name=\"flights\")\n    .with_dimensions(\n        flight_id=lambda t: t.flight_id,\n        carrier_code=lambda t: t.carrier_code,\n        aircraft_id=lambda t: t.aircraft_id\n    )\n    .with_measures(\n        flight_count=lambda t: t.count(),\n        total_distance=lambda t: t.distance.sum(),\n        total_passengers=lambda t: t.passengers.sum()\n    )\n)\n\ncarriers_st = (\n    to_semantic_table(carriers_tbl, name=\"carriers\")\n    .with_dimensions(\n        code=lambda t: t.code,\n        name=lambda t: t.name,\n        country=lambda t: t.country\n    )\n    .with_measures(\n        carrier_count=lambda t: t.count()\n    )\n)\n\naircraft_st = (\n    to_semantic_table(aircraft_tbl, name=\"aircraft\")\n    .with_dimensions(\n        id=lambda t: t.id,\n        model=lambda t: t.model\n    )\n    .with_measures(\n        aircraft_count=lambda t: t.count(),\n        total_capacity=lambda t: t.capacity.sum()\n    )\n)",
-      "sql": "SELECT\n  *\nFROM \"memory\".\"main\".\"aircraft\"",
-      "plan": "SemanticTable: aircraft\n  id [dim]\n  model [dim]\n  aircraft_count [measure]\n  total_capacity [measure]",
-      "table": {
-        "columns": [
-          "id",
-          "model",
-          "capacity"
-        ],
-        "data": [
-          [
-            101,
-            "Boeing 737",
-            180
-          ],
-          [
-            102,
-            "Airbus A320",
-            200
-          ],
-          [
-            103,
-            "Boeing 777",
-            350
-          ]
-        ]
-      }
+      "semantic_table": true,
+      "name": "aircraft",
+      "info": "Semantic table definition stored in context"
     },
     "level0_dimensions": {
-      "code": "flights_st.dimensions, flights_st.measures",
-      "sql": "SELECT\n  *\nFROM \"memory\".\"main\".\"aircraft\"",
-      "plan": "SemanticTable: aircraft\n  id [dim]\n  model [dim]\n  aircraft_count [measure]\n  total_capacity [measure]",
-      "table": {
-        "columns": [
-          "id",
-          "model",
-          "capacity"
-        ],
-        "data": [
-          [
-            101,
-            "Boeing 737",
-            180
-          ],
-          [
-            102,
-            "Airbus A320",
-            200
-          ],
-          [
-            103,
-            "Boeing 777",
-            350
-          ]
-        ]
-      }
+      "semantic_table": true,
+      "name": "aircraft",
+      "info": "Semantic table definition stored in context"
     },
     "level1_join": {
-      "code": "# Each flight row matches at most one carrier row\nflights_with_carriers = flights_st.join_one(\n    carriers_st,\n    lambda f, c: f.carrier_code == c.code\n)\n\n# Inspect dimensions - now includes both flights and carriers\nflights_with_carriers.dimensions, flights_with_carriers.measures",
-      "sql": "SELECT\n  \"t2\".\"flight_id\",\n  \"t2\".\"carrier_code\",\n  \"t2\".\"aircraft_id\",\n  \"t2\".\"distance\",\n  \"t2\".\"passengers\",\n  \"t3\".\"code\",\n  \"t3\".\"name\",\n  \"t3\".\"country\"\nFROM \"memory\".\"main\".\"flights\" AS \"t2\"\nLEFT OUTER JOIN \"memory\".\"main\".\"carriers\" AS \"t3\"\n  ON \"t2\".\"carrier_code\" = \"t3\".\"code\"",
-      "plan": "SemanticTable: flights\n  flight_id [dim]\n  carrier_code [dim]\n  aircraft_id [dim]\n  flight_count [measure]\n  total_distance [measure]\n  total_passengers [measure]\n-> Join(left, right=carriers)",
-      "table": {
-        "columns": [
-          "flight_id",
-          "carrier_code",
-          "aircraft_id",
-          "distance",
-          "passengers",
-          "code",
-          "name",
-          "country"
-        ],
-        "data": [
-          [
-            1,
-            "AA",
-            101,
-            1000,
-            150,
-            "AA",
-            "American Airlines",
-            "USA"
-          ],
-          [
-            2,
-            "UA",
-            102,
-            1500,
-            180,
-            "UA",
-            "United Airlines",
-            "USA"
-          ],
-          [
-            3,
-            "DL",
-            103,
-            800,
-            120,
-            "DL",
-            "Delta Air Lines",
-            "USA"
-          ]
-        ]
-      }
+      "semantic_table": true,
+      "name": "unknown",
+      "info": "Semantic table definition stored in context"
     },
     "level2_join": {
-      "code": "# Each flight row matches at most one aircraft row\nfull_model = flights_with_carriers.join_one(\n    aircraft_st,\n    lambda f, a: f.aircraft_id == a.id\n)\n\n# Inspect dimensions - now includes flights, carriers, AND aircraft\nfull_model.dimensions, full_model.measures",
-      "sql": "SELECT\n  \"t3\".\"flight_id\",\n  \"t3\".\"carrier_code\",\n  \"t3\".\"aircraft_id\",\n  \"t3\".\"distance\",\n  \"t3\".\"passengers\",\n  \"t4\".\"code\",\n  \"t4\".\"name\",\n  \"t4\".\"country\",\n  \"t5\".\"id\",\n  \"t5\".\"model\",\n  \"t5\".\"capacity\"\nFROM \"memory\".\"main\".\"flights\" AS \"t3\"\nLEFT OUTER JOIN \"memory\".\"main\".\"carriers\" AS \"t4\"\n  ON \"t3\".\"carrier_code\" = \"t4\".\"code\"\nLEFT OUTER JOIN \"memory\".\"main\".\"aircraft\" AS \"t5\"\n  ON \"t3\".\"aircraft_id\" = \"t5\".\"id\"",
-      "plan": "SemanticTable: flights\n  flight_id [dim]\n  carrier_code [dim]\n  aircraft_id [dim]\n  flight_count [measure]\n  total_distance [measure]\n  total_passengers [measure]\n-> Join(left, right=carriers)\n-> Join(left, right=aircraft)",
-      "table": {
-        "columns": [
-          "flight_id",
-          "carrier_code",
-          "aircraft_id",
-          "distance",
-          "passengers",
-          "code",
-          "name",
-          "country",
-          "id",
-          "model",
-          "capacity"
-        ],
-        "data": [
-          [
-            1,
-            "AA",
-            101,
-            1000,
-            150,
-            "AA",
-            "American Airlines",
-            "USA",
-            101,
-            "Boeing 737",
-            180
-          ],
-          [
-            2,
-            "UA",
-            102,
-            1500,
-            180,
-            "UA",
-            "United Airlines",
-            "USA",
-            102,
-            "Airbus A320",
-            200
-          ],
-          [
-            3,
-            "DL",
-            103,
-            800,
-            120,
-            "DL",
-            "Delta Air Lines",
-            "USA",
-            103,
-            "Boeing 777",
-            350
-          ]
-        ]
-      }
+      "semantic_table": true,
+      "name": "unknown",
+      "info": "Semantic table definition stored in context"
     },
     "composed_query": {
       "code": "# Query using dimensions and measures from all three tables\nresult = (\n    full_model\n    .group_by( \"aircraft.model\")\n    .aggregate(\"flights.flight_count\", \"flights.total_passengers\", \"aircraft.total_capacity\")\n)",
-      "sql": "WITH \"t10\" AS (\n  SELECT\n    \"t3\".\"flight_id\",\n    \"t3\".\"carrier_code\",\n    \"t3\".\"aircraft_id\",\n    \"t3\".\"distance\",\n    \"t3\".\"passengers\",\n    \"t5\".\"code\",\n    \"t5\".\"name\",\n    \"t5\".\"country\",\n    \"t4\".\"id\",\n    \"t4\".\"model\",\n    \"t4\".\"capacity\"\n  FROM \"memory\".\"main\".\"flights\" AS \"t3\"\n  LEFT OUTER JOIN \"memory\".\"main\".\"carriers\" AS \"t5\"\n    ON \"t3\".\"carrier_code\" = \"t5\".\"code\"\n  LEFT OUTER JOIN \"memory\".\"main\".\"aircraft\" AS \"t4\"\n    ON \"t3\".\"aircraft_id\" = \"t4\".\"id\"\n)\nSELECT\n  *\nFROM (\n  SELECT\n    \"t21\".\"aircraft.model\",\n    \"t21\".\"flights.flight_count\",\n    \"t21\".\"flights.total_passengers\",\n    \"t20\".\"aircraft.total_capacity\"\n  FROM (\n    SELECT\n      \"t17\".\"aircraft.model\",\n      SUM(\"t17\".\"flights.flight_count\") AS \"flights.flight_count\",\n      SUM(\"t17\".\"flights.total_passengers\") AS \"flights.total_passengers\"\n    FROM (\n      SELECT\n        \"t15\".\"aircraft.model\",\n        \"t15\".\"aircraft_id\",\n        \"t15\".\"carrier_code\",\n        \"t8\".\"flights.flight_count\",\n        \"t8\".\"flights.total_passengers\"\n      FROM (\n        SELECT DISTINCT\n          \"t11\".\"model\" AS \"aircraft.model\",\n          \"t11\".\"aircraft_id\",\n          \"t11\".\"carrier_code\"\n        FROM \"t10\" AS \"t11\"\n      ) AS \"t15\"\n      LEFT OUTER JOIN (\n        SELECT\n          \"t0\".\"aircraft_id\",\n          \"t0\".\"carrier_code\",\n          COUNT(*) AS \"flights.flight_count\",\n          SUM(\"t0\".\"passengers\") AS \"flights.total_passengers\"\n        FROM \"memory\".\"main\".\"flights\" AS \"t0\"\n        GROUP BY\n          1,\n          2\n      ) AS \"t8\"\n        ON \"t15\".\"aircraft_id\" = \"t8\".\"aircraft_id\"\n        AND \"t15\".\"carrier_code\" = \"t8\".\"carrier_code\"\n    ) AS \"t17\"\n    GROUP BY\n      1\n  ) AS \"t21\"\n  LEFT OUTER JOIN (\n    SELECT\n      \"t16\".\"aircraft.model\",\n      SUM(\"t16\".\"aircraft.total_capacity\") AS \"aircraft.total_capacity\"\n    FROM (\n      SELECT\n        \"t14\".\"aircraft.model\",\n        \"t14\".\"model\",\n        \"t9\".\"aircraft.total_capacity\"\n      FROM (\n        SELECT DISTINCT\n          \"t11\".\"model\" AS \"aircraft.model\",\n          \"t11\".\"model\"\n        FROM \"t10\" AS \"t11\"\n      ) AS \"t14\"\n      LEFT OUTER JOIN (\n        SELECT\n          \"t1\".\"model\",\n          SUM(\"t1\".\"capacity\") AS \"aircraft.total_capacity\"\n        FROM \"memory\".\"main\".\"aircraft\" AS \"t1\"\n        GROUP BY\n          1\n      ) AS \"t9\"\n        ON \"t14\".\"model\" = \"t9\".\"model\"\n    ) AS \"t16\"\n    GROUP BY\n      1\n  ) AS \"t20\"\n    ON \"t21\".\"aircraft.model\" = \"t20\".\"aircraft.model\"\n) AS \"t22\"",
+      "sql": "WITH \"t9\" AS (\n  SELECT\n    \"t3\".\"flight_id\",\n    \"t3\".\"carrier_code\",\n    \"t3\".\"aircraft_id\",\n    \"t3\".\"distance\",\n    \"t3\".\"passengers\",\n    \"t4\".\"code\",\n    \"t4\".\"name\",\n    \"t4\".\"country\",\n    \"t5\".\"id\",\n    \"t5\".\"model\",\n    \"t5\".\"capacity\"\n  FROM \"memory\".\"main\".\"flights\" AS \"t3\"\n  LEFT OUTER JOIN \"memory\".\"main\".\"carriers\" AS \"t4\"\n    ON \"t3\".\"carrier_code\" = \"t4\".\"code\"\n  LEFT OUTER JOIN \"memory\".\"main\".\"aircraft\" AS \"t5\"\n    ON \"t3\".\"aircraft_id\" = \"t5\".\"id\"\n)\nSELECT\n  \"t26\".\"aircraft.model\",\n  COALESCE(\"t26\".\"flights.flight_count\", 0) AS \"flights.flight_count\",\n  \"t26\".\"flights.total_passengers\",\n  \"t26\".\"aircraft.total_capacity\"\nFROM (\n  SELECT\n    \"t22\".\"aircraft.model\",\n    \"t22\".\"flights.flight_count\",\n    \"t22\".\"flights.total_passengers\",\n    \"t25\".\"aircraft.total_capacity\"\n  FROM (\n    SELECT\n      \"t18\".\"aircraft.model\",\n      SUM(\"t18\".\"flights.flight_count\") AS \"flights.flight_count\",\n      SUM(\"t18\".\"flights.total_passengers\") AS \"flights.total_passengers\"\n    FROM (\n      SELECT\n        \"t15\".\"aircraft.model\",\n        \"t15\".\"aircraft_id\",\n        \"t15\".\"carrier_code\",\n        \"t8\".\"flights.flight_count\",\n        \"t8\".\"flights.total_passengers\"\n      FROM (\n        SELECT DISTINCT\n          \"t10\".\"model\" AS \"aircraft.model\",\n          \"t10\".\"aircraft_id\",\n          \"t10\".\"carrier_code\"\n        FROM \"t9\" AS \"t10\"\n      ) AS \"t15\"\n      LEFT OUTER JOIN (\n        SELECT\n          \"t0\".\"aircraft_id\",\n          \"t0\".\"carrier_code\",\n          COUNT(*) AS \"flights.flight_count\",\n          SUM(\"t0\".\"passengers\") AS \"flights.total_passengers\"\n        FROM \"memory\".\"main\".\"flights\" AS \"t0\"\n        GROUP BY\n          1,\n          2\n      ) AS \"t8\"\n        ON (\n          (\n            \"t15\".\"aircraft_id\" = \"t8\".\"aircraft_id\"\n          )\n          OR (\n            (\n              \"t15\".\"aircraft_id\" IS NULL\n            ) AND (\n              \"t8\".\"aircraft_id\" IS NULL\n            )\n          )\n        )\n        AND (\n          (\n            \"t15\".\"carrier_code\" = \"t8\".\"carrier_code\"\n          )\n          OR (\n            (\n              \"t15\".\"carrier_code\" IS NULL\n            ) AND (\n              \"t8\".\"carrier_code\" IS NULL\n            )\n          )\n        )\n    ) AS \"t18\"\n    GROUP BY\n      1\n  ) AS \"t22\"\n  LEFT OUTER JOIN (\n    SELECT\n      \"t23\".\"aircraft.model\",\n      SUM(\"t23\".\"aircraft.total_capacity\") AS \"aircraft.total_capacity\"\n    FROM (\n      SELECT\n        \"t14\".\"aircraft.model\",\n        \"t14\".\"model\",\n        \"t20\".\"aircraft.total_capacity\"\n      FROM (\n        SELECT DISTINCT\n          \"t10\".\"model\" AS \"aircraft.model\",\n          \"t10\".\"model\"\n        FROM \"t9\" AS \"t10\"\n      ) AS \"t14\"\n      LEFT OUTER JOIN (\n        SELECT\n          \"t17\".\"model\",\n          SUM(\"t17\".\"capacity\") AS \"aircraft.total_capacity\"\n        FROM (\n          SELECT\n            \"t6\".\"id\",\n            \"t6\".\"model\",\n            \"t6\".\"capacity\"\n          FROM \"memory\".\"main\".\"aircraft\" AS \"t6\"\n          INNER JOIN (\n            SELECT DISTINCT\n              \"t10\".\"id\"\n            FROM \"t9\" AS \"t10\"\n          ) AS \"t16\"\n            ON \"t6\".\"id\" = \"t16\".\"id\"\n        ) AS \"t17\"\n        GROUP BY\n          1\n      ) AS \"t20\"\n        ON (\n          \"t14\".\"model\" = \"t20\".\"model\"\n        )\n        OR (\n          (\n            \"t14\".\"model\" IS NULL\n          ) AND (\n            \"t20\".\"model\" IS NULL\n          )\n        )\n    ) AS \"t23\"\n    GROUP BY\n      1\n  ) AS \"t25\"\n    ON (\n      \"t22\".\"aircraft.model\" = \"t25\".\"aircraft.model\"\n    )\n    OR (\n      (\n        \"t22\".\"aircraft.model\" IS NULL\n      ) AND (\n        \"t25\".\"aircraft.model\" IS NULL\n      )\n    )\n) AS \"t26\"",
       "plan": "SemanticTable: flights\n  flight_id [dim]\n  carrier_code [dim]\n  aircraft_id [dim]\n  flight_count [measure]\n  total_distance [measure]\n  total_passengers [measure]\n-> Join(left, right=carriers)\n-> Join(left, right=aircraft)\n-> GroupBy(aircraft.model)\n-> Aggregate(flights.flight_count, flights.total_passengers, aircraft.total_capacity)",
       "table": {
         "columns": [
@@ -229,6 +81,93 @@
             200
           ]
         ]
+      },
+      "chart": {
+        "type": "vega",
+        "spec": {
+          "config": {
+            "view": {
+              "continuousWidth": 300,
+              "continuousHeight": 300
+            }
+          },
+          "data": {
+            "name": "data-45f971d4ebf6cec4d62aafb35577a7ff"
+          },
+          "mark": {
+            "type": "bar"
+          },
+          "encoding": {
+            "color": {
+              "field": "measure",
+              "type": "nominal"
+            },
+            "tooltip": [
+              {
+                "field": "aircraft_model",
+                "type": "nominal"
+              },
+              {
+                "field": "measure",
+                "type": "nominal"
+              },
+              {
+                "field": "value",
+                "type": "quantitative"
+              }
+            ],
+            "x": {
+              "field": "aircraft_model",
+              "sort": null,
+              "type": "ordinal"
+            },
+            "xOffset": {
+              "field": "measure"
+            },
+            "y": {
+              "field": "value",
+              "type": "quantitative"
+            }
+          },
+          "height": 400,
+          "transform": [
+            {
+              "fold": [
+                "flights_flight_count",
+                "flights_total_passengers",
+                "aircraft_total_capacity"
+              ],
+              "as": [
+                "measure",
+                "value"
+              ]
+            }
+          ],
+          "width": 700,
+          "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json",
+          "datasets": {
+            "data-45f971d4ebf6cec4d62aafb35577a7ff": [
+              {
+                "aircraft_model": "Boeing 777",
+                "flights_flight_count": 1,
+                "flights_total_passengers": 120,
+                "aircraft_total_capacity": 350
+              },
+              {
+                "aircraft_model": "Boeing 737",
+                "flights_flight_count": 1,
+                "flights_total_passengers": 150,
+                "aircraft_total_capacity": 180
+              },
+              {
+                "aircraft_model": "Airbus A320",
+                "flights_flight_count": 1,
+                "flights_total_passengers": 180,
+                "aircraft_total_capacity": 200
+              }
+            ]
+          }
+        }
       }
     }
   },

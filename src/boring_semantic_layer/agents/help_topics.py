@@ -324,28 +324,29 @@ RULES:
                 "content": """\
 Window Functions — calculations across ordered rows
 
-Windows run over the QUERY RESULT, so drop to ibis first with
-.to_untagged(), then use .mutate() with the window carrying its own
-ordering:
+Apply via .mutate() DIRECTLY on the aggregate (before .order_by()/.limit()),
+with the window carrying its own ordering — use the keyword form of .over()
+(no ibis.window() object needed):
 
 ROLLING AVERAGE:
-  model.group_by("week").aggregate("count").to_untagged().mutate(
-      rolling_avg=lambda t: t["count"].mean().over(
-          rows=(-9, 0), order_by="week"
-      )
+  model.group_by("week").aggregate("count").mutate(
+      rolling_avg=lambda t: t["count"].mean().over(rows=(-9, 0), order_by="week")
   ).order_by("week")
 
-CUMULATIVE SUM:
-  .to_untagged().mutate(running_total=lambda t: t.revenue.cumsum())
-
-RANK:
-  .to_untagged().mutate(rank=lambda t: t.revenue.rank())
+CUMULATIVE / RUNNING TOTAL:
+  .mutate(running_total=lambda t: t.revenue.sum().over(
+      rows=(None, 0), order_by="week"
+  ))
 
 LAG / LEAD:
-  .to_untagged().mutate(
-      prev_count=lambda t: t["count"].lag(1),
-      next_count=lambda t: t["count"].lead(1),
+  .mutate(
+      prev_count=lambda t: t["count"].lag(1).over(order_by="week"),
   )
+
+Result stays semantic — .chart() and further order_by/limit keep working.
+
+On a FILTERED result (.aggregate().filter(...)), the result is a plain
+table: drop to ibis first with .to_untagged().mutate(...).
 
 See: bsl docs query mutate""",
             },
