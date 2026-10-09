@@ -270,6 +270,8 @@ class CalcMeasure:
     actual base table. ``depends_on`` is captured at classification time
     so the planner can auto-include base-measure dependencies in
     aggregations even when the user did not request them explicitly.
+    ``unresolved`` marks a calc whose analysis had to wait until query time
+    (it reads a joined model's measure), so ``depends_on`` is not yet known.
     """
 
     expr: Any  # callable | Deferred
@@ -278,6 +280,7 @@ class CalcMeasure:
     depends_on: frozenset[str] = field(factory=frozenset, converter=frozenset)
     prefer_known: frozenset[str] = field(factory=frozenset, converter=frozenset)
     metadata: Mapping[str, Any] = field(factory=dict, eq=False, hash=False)
+    unresolved: bool = False
 
     def to_json(self) -> Mapping[str, Any]:
         base = {"description": self.description}
@@ -288,4 +291,12 @@ class CalcMeasure:
         return base
 
     def __hash__(self) -> int:
-        return hash((self.description, self.requires_unnest, self.depends_on, self.prefer_known))
+        return hash(
+            (
+                self.description,
+                self.requires_unnest,
+                self.depends_on,
+                self.prefer_known,
+                self.unresolved,
+            )
+        )

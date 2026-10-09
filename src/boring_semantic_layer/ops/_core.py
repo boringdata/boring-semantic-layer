@@ -9,7 +9,7 @@ from functools import reduce
 from typing import TYPE_CHECKING, Any
 
 import ibis
-from attrs import field, frozen
+from attrs import evolve, field, frozen
 from ibis.common.deferred import Deferred
 from ibis.expr import datatypes as dt
 from ibis.expr import operations as ibis_ops
@@ -863,6 +863,24 @@ def _classify_measure(
     except UnknownMeasureRefError:
         raise
     except Exception:
+        if expr_prefer_known is True:
+            # YAML ``calculated_measures`` are expressions over measures by
+            # contract, so never demote one to a raw-table aggregation.
+            # Evaluation fails here when it references a joined model's
+            # measure (``_['customers.n']``) that is not known until the
+            # join is added; it re-evaluates against the joined scope at
+            # query time.
+            return (
+                "calc",
+                CalcMeasure(
+                    expr=expr,
+                    description=description,
+                    requires_unnest=requires_unnest,
+                    prefer_known=prefer_known_set,
+                    metadata=metadata,
+                    unresolved=True,
+                ),
+            )
         # Could not evaluate against the analyzer scope (e.g. lambda
         # uses backend-specific methods MeasureScope didn't reflect).
         # Fall back to base classification — the lambda runs verbatim
@@ -1494,6 +1512,28 @@ def _build_aggregation_plan(
     # so the aggregation produces the columns the calc lambdas read.
     # Walk transitively so calc-of-calc chains pull all needed bases.
     if calc_specs:
+        merged_known = tuple(merged_base_measures) + tuple(merged_calc_measures)
+
+        def _bind_deferred(cm: CalcMeasure) -> CalcMeasure:
+            """Recover ``depends_on`` for a calc that could not be analyzed
+            at definition time (see ``_classify_measure``), now that the
+            merged scope knows every joined model's measures.
+            """
+            if not cm.unresolved:
+                return cm
+            kind, rebound = _classify_measure(
+                cm.expr, MeasureScope(_tbl=base_tbl, _known=merged_known)
+            )
+            if kind != "calc" or not rebound.depends_on:
+                return cm
+            return evolve(
+                cm,
+                depends_on=rebound.depends_on,
+                prefer_known=cm.prefer_known | rebound.depends_on,
+                unresolved=False,
+            )
+
+        calc_specs = {name: _bind_deferred(cm) for name, cm in calc_specs.items()}
 
         def _resolve_dep(ref: str) -> str | None:
             """Resolve a dependency name against base/calc measures.
@@ -1975,6 +2015,38 @@ def _resolve_short_name(
 ) -> str | None:
     """Match ``name`` against merged measure dicts, allowing suffix lookup."""
     return resolve_suffix(name, merged_base_measures, merged_calc_measures)
+
+
+def _requested_calc_dependencies(
+    requested: Iterable[str],
+    merged_base_measures: dict,
+    merged_calc_measures: dict,
+) -> set[str] | None:
+    """Collect the measures that requested calc measures transitively read.
+
+    Returns ``None`` when a reached calc is ``unresolved``: it could not be
+    analyzed at definition time (see ``_classify_measure``), so its
+    dependencies are unknown until the plan binds it.
+    """
+    deps: set[str] = set()
+    seen: set[str] = set()
+    worklist = list(requested)
+    while worklist:
+        resolved = _resolve_short_name(worklist.pop(), merged_base_measures, merged_calc_measures)
+        if resolved is None or resolved in seen:
+            continue
+        seen.add(resolved)
+        cm = merged_calc_measures.get(resolved)
+        if not isinstance(cm, CalcMeasure):
+            continue
+        if cm.unresolved:
+            return None
+        for dep in cm.depends_on:
+            dep_resolved = _resolve_short_name(dep, merged_base_measures, merged_calc_measures)
+            if dep_resolved is not None:
+                deps.add(dep_resolved)
+                worklist.append(dep_resolved)
+    return deps
 
 
 def _topological_calc_order(
@@ -3281,10 +3353,18 @@ class SemanticAggregateOp(Relation):
                 for name, cardinality in join_tree_info.table_cardinalities.items()
                 if cardinality == "root"
             }
-            requested_from_non_root = any(
-                "." in name and name.split(".", 1)[0] not in root_names for name in self.aggs
-            )
             merged_base_for_routing = _get_merged_fields(all_roots, "measures")
+            # A calc measure is only as fan-out-safe as the measures it
+            # reads, so route on its dependencies as well as its name.
+            calc_deps = _requested_calc_dependencies(
+                self.aggs,
+                merged_base_for_routing,
+                _get_merged_fields(all_roots, "calc_measures"),
+            )
+            requested_from_non_root = calc_deps is None or any(
+                "." in name and name.split(".", 1)[0] not in root_names
+                for name in (*self.aggs, *calc_deps)
+            )
             requested_wrapper_base = any(
                 "." not in name and name in merged_base_for_routing for name in self.aggs
             )
@@ -5212,6 +5292,7 @@ def _qualify_calc_measure_for_root(calc: CalcMeasure, root: SemanticTableOp) -> 
         depends_on=qualified_dependencies,
         prefer_known=qualified_preferred,
         metadata=calc.metadata,
+        unresolved=calc.unresolved,
     )
 
 
