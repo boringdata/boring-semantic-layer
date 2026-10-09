@@ -2304,3 +2304,42 @@ class TestJoinOneInsideJoinMany:
         assert elec["orders.total_amount"].iloc[0] == 400
         assert books["orders.order_count"].iloc[0] == 1
         assert books["orders.total_amount"].iloc[0] == 200
+
+
+# ---------------------------------------------------------------------------
+# TestCalcOverJoinedMeasure
+# ---------------------------------------------------------------------------
+class TestCalcOverJoinedMeasure:
+    """A calc measure reading a joined model's measure must not fan out.
+
+    orders (5 rows) join_one customers (3 rows); only customers 1 and 2
+    have orders, so ``customers.n`` is 2 over the join, not 5.
+    """
+
+    @pytest.fixture()
+    def orders(self):
+        con = ibis.duckdb.connect(":memory:")
+        orders_tbl = con.create_table(
+            "orders",
+            pd.DataFrame({"customer_id": [1, 1, 1, 2, 2], "amount": [10, 20, 30, 40, 50]}),
+        )
+        customers_tbl = con.create_table("customers", pd.DataFrame({"id": [1, 2, 3]}))
+        customers = to_semantic_table(customers_tbl, name="customers").with_measures(
+            n=lambda t: t.count()
+        )
+        return (
+            to_semantic_table(orders_tbl, name="orders")
+            .with_measures(revenue=lambda t: t.amount.sum())
+            .join_one(customers, on=lambda o, c: o.customer_id == c.id)
+        )
+
+    def test_calc_requested_alone(self, orders):
+        model = orders.with_measures(ratio=lambda t: t.revenue / t["customers.n"])
+        df = model.aggregate("ratio").execute()
+        assert df["ratio"].iloc[0] == pytest.approx(150 / 2)
+
+    def test_calc_matches_requesting_dependencies(self, orders):
+        model = orders.with_measures(ratio=lambda t: t.revenue / t["customers.n"])
+        alone = model.aggregate("ratio").execute()
+        with_deps = model.aggregate("ratio", "orders.revenue", "customers.n").execute()
+        assert alone["ratio"].iloc[0] == pytest.approx(with_deps["ratio"].iloc[0])

@@ -1977,6 +1977,31 @@ def _resolve_short_name(
     return resolve_suffix(name, merged_base_measures, merged_calc_measures)
 
 
+def _requested_calc_dependencies(
+    requested: Iterable[str],
+    merged_base_measures: dict,
+    merged_calc_measures: dict,
+) -> set[str]:
+    """Collect the measures that requested calc measures transitively read."""
+    deps: set[str] = set()
+    seen: set[str] = set()
+    worklist = list(requested)
+    while worklist:
+        resolved = _resolve_short_name(worklist.pop(), merged_base_measures, merged_calc_measures)
+        if resolved is None or resolved in seen:
+            continue
+        seen.add(resolved)
+        cm = merged_calc_measures.get(resolved)
+        if not isinstance(cm, CalcMeasure):
+            continue
+        for dep in cm.depends_on:
+            dep_resolved = _resolve_short_name(dep, merged_base_measures, merged_calc_measures)
+            if dep_resolved is not None:
+                deps.add(dep_resolved)
+                worklist.append(dep_resolved)
+    return deps
+
+
 def _topological_calc_order(
     calc_specs: dict[str, CalcMeasure],
     base_tbl,
@@ -3281,10 +3306,18 @@ class SemanticAggregateOp(Relation):
                 for name, cardinality in join_tree_info.table_cardinalities.items()
                 if cardinality == "root"
             }
-            requested_from_non_root = any(
-                "." in name and name.split(".", 1)[0] not in root_names for name in self.aggs
-            )
             merged_base_for_routing = _get_merged_fields(all_roots, "measures")
+            # A calc measure is only as fan-out-safe as the measures it
+            # reads, so route on its dependencies as well as its name.
+            calc_deps = _requested_calc_dependencies(
+                self.aggs,
+                merged_base_for_routing,
+                _get_merged_fields(all_roots, "calc_measures"),
+            )
+            requested_from_non_root = any(
+                "." in name and name.split(".", 1)[0] not in root_names
+                for name in (*self.aggs, *calc_deps)
+            )
             requested_wrapper_base = any(
                 "." not in name and name in merged_base_for_routing for name in self.aggs
             )
