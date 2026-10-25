@@ -586,6 +586,55 @@ def _mutate_dimensions_with_dependencies(
     return tbl
 
 
+def _with_derived_dimensions(tbl: ir.Table, dimensions: Mapping[str, Any]) -> ir.Table:
+    """Best-effort: add every derived dimension that isn't already a column.
+
+    Measure lambdas may read derived dimensions (``t.revenue.sum()``), so
+    classifying them against the raw table misreads those names as typos.
+    Dimensions that cannot resolve here (e.g. join-based) are skipped.
+    """
+    for dim_name in dimensions:
+        with contextlib.suppress(Exception):
+            tbl = _mutate_dimensions_with_dependencies(
+                tbl, [dim_name], dimensions, overwrite_existing=False
+            )
+    return tbl
+
+
+def _mutate_measure_dimension_deps(
+    tbl: ir.Table,
+    agg_specs: Mapping[str, Callable],
+    merged_dimensions: Mapping[str, Any],
+) -> ir.Table:
+    """Materialize derived dimensions that measure bodies read but ``tbl`` lacks.
+
+    Only group-by keys are materialized up front, so a measure over a derived
+    dimension (``total_revenue = t.revenue.sum()``) failed whenever the query
+    did not also group by that dimension (#310).
+    """
+
+    def is_dimension(name: str | None) -> bool:
+        # On joins, dimensions are keyed by prefixed name (sales.revenue)
+        # while measure lambdas read the bare one (t.revenue).
+        if name is None:
+            return False
+        return (
+            name in merged_dimensions or sum(d.endswith(f".{name}") for d in merged_dimensions) == 1
+        )
+
+    for spec in agg_specs.values():
+        while True:
+            try:
+                spec(tbl)
+                break
+            except Exception as exc:
+                missing = _extract_missing_column_name(exc)
+                if not is_dimension(missing) or missing in tbl.columns:
+                    break
+                tbl = _mutate_dimensions_with_dependencies(tbl, [missing], merged_dimensions)
+    return tbl
+
+
 def _reject_shadowed_group_keys(
     tbl, keys, merged_dimensions, aggs, merged_base_measures, raw_columns=None
 ):
@@ -3396,6 +3445,8 @@ class SemanticAggregateOp(Relation):
             merged_calc_measures=merged_calc_measures,
             tbl=tbl,
         )
+        if not is_post_agg:
+            tbl = _mutate_measure_dimension_deps(tbl, plan.agg_specs, merged_dimensions)
 
         return _compile_aggregation(
             tbl,

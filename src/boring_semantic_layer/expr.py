@@ -44,6 +44,7 @@ from .ops import (
     _normalize_join_predicate,
     _normalize_to_name,
     _unwrap,
+    _with_derived_dimensions,
     make_bare_ref_lambda,
 )
 
@@ -1176,7 +1177,7 @@ class SemanticModel(SemanticTable):
         all_measure_names = (
             tuple(new_base_meas.keys()) + tuple(new_calc_meas.keys()) + tuple(meas.keys())
         )
-        base_tbl = self.op().table
+        base_tbl = _with_derived_dimensions(self.op().table, self.get_dimensions())
         scope = MeasureScope(_tbl=base_tbl, _known=all_measure_names)
 
         for name, fn_or_expr in meas.items():
