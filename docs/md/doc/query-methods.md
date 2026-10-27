@@ -129,6 +129,7 @@ The `aggregate()` method calculates measures after grouping. You can reference p
 
 <note type="warning">
 **CRITICAL**: `aggregate()` takes **measure names as strings**, not expressions or lambdas directly. Use measure names from `get_model()` output.
+
 ```python
 # ✅ CORRECT - measure names as strings
 model.group_by("category").aggregate("flight_count", "total_revenue")
