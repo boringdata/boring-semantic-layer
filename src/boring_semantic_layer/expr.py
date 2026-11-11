@@ -41,9 +41,11 @@ from .ops import (
     _get_merged_fields,
     _has_prior_aggregate,
     _is_deferred,
+    _is_join_table,
     _normalize_join_predicate,
     _normalize_to_name,
     _unwrap,
+    _with_derived_dimensions,
     make_bare_ref_lambda,
 )
 
@@ -1177,6 +1179,9 @@ class SemanticModel(SemanticTable):
             tuple(new_base_meas.keys()) + tuple(new_calc_meas.keys()) + tuple(meas.keys())
         )
         base_tbl = self.op().table
+        if self.op()._source_join is None and not _is_join_table(base_tbl):
+            # Joined models keep their existing resolution; see #310.
+            base_tbl = _with_derived_dimensions(base_tbl, self.get_dimensions(), all_measure_names)
         scope = MeasureScope(_tbl=base_tbl, _known=all_measure_names)
 
         for name, fn_or_expr in meas.items():

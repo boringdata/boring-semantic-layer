@@ -508,6 +508,7 @@ def _extract_missing_column_name(exc: Exception) -> str | None:
         r"non-existent column ['\"]([^'\"]+)['\"]",
         r"Column ['\"]([^'\"]+)['\"] is not found",
         r"KeyError: ['\"]([^'\"]+)['\"]",
+        r"['\"]([^'\"]+)['\"] is not a known measure or column",
     )
     for pattern in patterns:
         match = re.search(pattern, message)
@@ -583,6 +584,99 @@ def _mutate_dimensions_with_dependencies(
 
     for dim_name in dimension_names:
         tbl = resolve_one(dim_name, tbl)
+    return tbl
+
+
+def _is_join_table(tbl: Any) -> bool:
+    """True when ``tbl``'s relation contains a join, however the model was built.
+
+    ``as_table()`` flattens a ``SemanticJoin`` into a plain model, so join
+    provenance can't be read from ``_source_join`` alone.
+    """
+    from ..graph_utils import gen_children_of
+
+    join_types = tuple({ibis_ops.JoinChain, xorq_ops.JoinChain})
+    stack, seen = [_to_op(tbl)], set()
+    while stack:
+        node = stack.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        if isinstance(node, join_types):
+            return True
+        stack.extend(gen_children_of(node))
+    return False
+
+
+def _with_derived_dimensions(
+    tbl: ir.Table, dimensions: Mapping[str, Any], measure_names: Iterable[str] = ()
+) -> ir.Table:
+    """Best-effort: add every derived dimension that isn't already a column.
+
+    Measure lambdas may read derived dimensions (``t.revenue.sum()``), so
+    classifying them against the raw table misreads those names as typos.
+    Dimensions that cannot resolve here (e.g. join-based) are skipped, and so
+    is any dimension that would add a column named like a measure, directly
+    or through a dependency: calc scopes resolve columns before measures, so
+    the column would hide the measure.
+    """
+    skip = set(measure_names)
+    for dim_name in dimensions:
+        if dim_name in skip:
+            continue
+        with contextlib.suppress(Exception):
+            enriched = _mutate_dimensions_with_dependencies(
+                tbl, [dim_name], dimensions, overwrite_existing=False
+            )
+            if not skip & (set(enriched.columns) - set(tbl.columns)):
+                tbl = enriched
+    return tbl
+
+
+def _mutate_measure_dimension_deps(
+    tbl: ir.Table,
+    agg_specs: Mapping[str, Callable],
+    dimensions: Mapping[str, Any],
+    calc_specs: Mapping[str, Any] | None = None,
+    known_measures: Iterable[str] = (),
+) -> ir.Table:
+    """Materialize derived dimensions that measure bodies read but ``tbl`` lacks.
+
+    Only group-by keys are materialized up front, so on a single model a
+    measure over a derived dimension (``total_revenue = t.revenue.sum()``)
+    failed whenever the query did not also group by that dimension (#310).
+    Calc measures are probed too: they re-run against ``tbl`` and may hold
+    inline reductions (``t.revenue.sum() / t.all(t.revenue.sum())``).
+
+    Never adds a column named like a measure, directly or through a
+    dependency: calc scopes resolve columns first, so it would hide the
+    measure.
+    """
+    known = frozenset(known_measures) | frozenset(agg_specs) | frozenset(calc_specs or {})
+
+    def probe(spec: Any) -> None:
+        if isinstance(spec, CalcMeasure):
+            evaluate_calc_lambda(spec.expr, tbl, known, priority_measures=spec.prefer_known)
+        else:
+            spec(tbl)
+
+    for spec in {**agg_specs, **(calc_specs or {})}.values():
+        while True:
+            try:
+                probe(spec)
+                break
+            except Exception as exc:
+                missing = _extract_missing_column_name(exc)
+                if missing is None or missing not in dimensions or missing in tbl.columns:
+                    break
+                if missing in known:
+                    break
+                enriched = _mutate_dimensions_with_dependencies(tbl, [missing], dimensions)
+                if missing not in enriched.columns or known & (
+                    set(enriched.columns) - set(tbl.columns)
+                ):
+                    break
+                tbl = enriched
     return tbl
 
 
@@ -3396,6 +3490,15 @@ class SemanticAggregateOp(Relation):
             merged_calc_measures=merged_calc_measures,
             tbl=tbl,
         )
+        if not is_post_agg and join_op is None and not _is_join_table(tbl):
+            # Joined models keep their existing resolution; see #310.
+            tbl = _mutate_measure_dimension_deps(
+                tbl,
+                plan.agg_specs,
+                merged_dimensions,
+                calc_specs=plan.calc_specs,
+                known_measures=(*merged_base_measures, *merged_calc_measures),
+            )
 
         return _compile_aggregation(
             tbl,
