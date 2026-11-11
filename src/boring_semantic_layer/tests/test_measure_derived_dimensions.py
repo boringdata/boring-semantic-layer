@@ -133,3 +133,19 @@ def test_measure_named_dim_not_materialized_through_dependency_at_query_time():
     # rather than let the materialized column hide the measure.
     with pytest.raises(AttributeError, match="extra"):
         model.aggregate("twice", "extra_total").execute()
+
+
+def test_joined_model_flattened_by_as_table_keeps_join_behaviour():
+    sales = to_semantic_table(
+        ibis.memtable({"id": [1, 2], "amount": [15, 40]}), name="sales"
+    ).with_dimensions(revenue=lambda t: t.amount * 2, big=lambda t: t.revenue * 10)
+    categories = to_semantic_table(
+        ibis.memtable({"id": [1, 2], "label": ["A", "B"], "revenue": [100, 200]}),
+        name="categories",
+    ).with_dimensions(label=lambda t: t.label)
+    flat = sales.join_one(categories, on="id").as_table()
+    model = flat.with_measures(wrapper=lambda t: t["sales.big"].sum())
+    # Out of scope for #310: joins keep main's resolution, which must not
+    # silently read categories' raw "revenue" column (1000/2000).
+    with pytest.raises(Exception, match="sales.big"):
+        model.group_by("categories.label").aggregate("wrapper").execute()

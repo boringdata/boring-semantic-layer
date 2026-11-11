@@ -587,6 +587,27 @@ def _mutate_dimensions_with_dependencies(
     return tbl
 
 
+def _is_join_table(tbl: Any) -> bool:
+    """True when ``tbl``'s relation contains a join, however the model was built.
+
+    ``as_table()`` flattens a ``SemanticJoin`` into a plain model, so join
+    provenance can't be read from ``_source_join`` alone.
+    """
+    from ..graph_utils import gen_children_of
+
+    join_types = tuple({ibis_ops.JoinChain, xorq_ops.JoinChain})
+    stack, seen = [_to_op(tbl)], set()
+    while stack:
+        node = stack.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        if isinstance(node, join_types):
+            return True
+        stack.extend(gen_children_of(node))
+    return False
+
+
 def _with_derived_dimensions(
     tbl: ir.Table, dimensions: Mapping[str, Any], measure_names: Iterable[str] = ()
 ) -> ir.Table:
@@ -3469,7 +3490,7 @@ class SemanticAggregateOp(Relation):
             merged_calc_measures=merged_calc_measures,
             tbl=tbl,
         )
-        if not is_post_agg and join_op is None:
+        if not is_post_agg and join_op is None and not _is_join_table(tbl):
             # Joined models keep their existing resolution; see #310.
             tbl = _mutate_measure_dimension_deps(
                 tbl,

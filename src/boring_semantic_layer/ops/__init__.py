@@ -37,6 +37,7 @@ from ._core import (
     _get_merged_fields,
     _has_prior_aggregate,
     _is_deferred,
+    _is_join_table,
     _make_schema,
     _resolve_expr,
     _unwrap,
@@ -86,6 +87,7 @@ __all__ = [
     "_rebind_to_canonical_backend",
     "_resolve_expr",
     "_unwrap",
+    "_is_join_table",
     "_with_derived_dimensions",
     "make_bare_ref_lambda",
 ]
