@@ -19,6 +19,7 @@ from ._core import (
     _mutate_dimensions_with_dependencies,
     _mutate_measure_dimension_deps,
     _resolve_expr,
+    _root_columns,
     _to_untagged,
     _unwrap,
 )
@@ -140,6 +141,7 @@ def to_untagged_with_deferred_joins(
         merged_dimensions,
         calc_specs=plan.calc_specs,
         known_measures=(*merged_base_measures, *merged_calc_measures),
+        owner_columns=_root_columns(all_roots),
     )
 
     # Execute aggregation on core table

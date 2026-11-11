@@ -193,3 +193,34 @@ def test_owning_model_wins_over_same_named_dim_on_other_model(measure):
     result = _records(joined.group_by("categories.label").aggregate(measure), "categories.label")
     factor = 10 if "big" in measure else 1
     assert [r[measure] for r in result] == [15.0 * factor, 40.0 * factor]
+
+
+def test_dimension_shadowed_by_other_models_column_is_ambiguous():
+    sales = (
+        to_semantic_table(ibis.memtable({"id": [1, 2], "amount": [15, 40]}), name="sales")
+        .with_dimensions(revenue=lambda t: t.amount * 2, big=lambda t: t.revenue * 10)
+        .with_measures(large=lambda t: t.big.sum())
+    )
+    categories = to_semantic_table(
+        ibis.memtable({"id": [1, 2], "label": ["A", "B"], "revenue": [100, 200]}),
+        name="categories",
+    ).with_dimensions(label=lambda t: t.label)
+    joined = sales.join_one(categories, on="id")
+    with pytest.raises(ValueError, match="both a dimension of 'sales' and a column"):
+        joined.group_by("categories.label").aggregate("sales.large").execute()
+
+
+def test_measure_on_joined_model_over_its_own_dimension():
+    sales = to_semantic_table(ibis.memtable({"id": [1, 2], "amount": [15, 40]}), name="sales")
+    categories = to_semantic_table(
+        ibis.memtable({"id": [1, 2], "label": ["A", "B"]}), name="categories"
+    ).with_dimensions(label=lambda t: t.label)
+    model = (
+        sales.join_one(categories, on="id")
+        .with_dimensions(extra=lambda t: t.amount + 1)
+        .with_measures(extra_total=lambda t: t.extra.sum())
+    )
+    result = _records(
+        model.group_by("categories.label").aggregate("extra_total"), "categories.label"
+    )
+    assert [r["extra_total"] for r in result] == [16, 41]

@@ -462,12 +462,20 @@ def _preaggregate_sources(
         if table_name is None:
             # Unprefixed – aggregate on the full join if available
             if tbl is not None:
-                agg_exprs = {n: f(tbl) for n, f in measures.items()}
-                _totals_sources[None] = (tbl, dict(agg_exprs))
+                wrapper_tbl = _mutate_measure_dimension_deps(
+                    tbl,
+                    measures,
+                    {**merged_dimensions, **wrapper_local_dimensions},
+                    known_measures=merged_base_measures,
+                )
+                agg_exprs = {n: f(wrapper_tbl) for n, f in measures.items()}
+                _totals_sources[None] = (wrapper_tbl, dict(agg_exprs))
                 if group_by_cols:
-                    r = tbl.group_by([tbl[c] for c in group_by_cols]).aggregate(**agg_exprs)
+                    r = wrapper_tbl.group_by([wrapper_tbl[c] for c in group_by_cols]).aggregate(
+                        **agg_exprs
+                    )
                 else:
-                    r = tbl.aggregate(**agg_exprs)
+                    r = wrapper_tbl.aggregate(**agg_exprs)
                 _preagg_results.append(r)
             continue
 

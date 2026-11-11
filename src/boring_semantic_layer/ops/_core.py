@@ -612,28 +612,29 @@ def _with_derived_dimensions(
     return tbl
 
 
-def _dimensions_seen_by(
-    measure_name: str, merged_dimensions: Mapping[str, Any], known_measures: Iterable[str]
-) -> dict[str, Any]:
-    """Dimensions as the given measure's lambdas see them.
+def _measure_owner(measure_name: str, known_measures: Iterable[str]) -> str | None:
+    """The joined model a measure belongs to, from its prefix or unique qualified name."""
+    if "." in measure_name:
+        return measure_name.split(".", 1)[0]
+    owners = {m.split(".", 1)[0] for m in known_measures if m.endswith(f".{measure_name}")}
+    return owners.pop() if len(owners) == 1 else None
+
+
+def _owner_dimensions(owner: str | None, merged_dimensions: Mapping[str, Any]) -> dict[str, Any]:
+    """The owning model's dimensions under the bare names its lambdas read.
 
     On joins, dimensions are keyed by prefixed name (``sales.revenue``) while
-    measure lambdas read bare names (``t.revenue``). Alias the measure's own
-    model's dimensions under their bare names so that model wins over a
-    same-named dimension elsewhere in the join, along the dependency chain too.
+    measure lambdas read bare names (``t.revenue``). Aliasing the owner's
+    dimensions lets that model win over a same-named dimension elsewhere in
+    the join, along the dependency chain too.
     """
-    owner = measure_name.split(".", 1)[0] if "." in measure_name else None
     if owner is None:
-        owners = {m.split(".", 1)[0] for m in known_measures if m.endswith(f".{measure_name}")}
-        owner = owners.pop() if len(owners) == 1 else None
-    if owner is None:
-        return dict(merged_dimensions)
-    own = {
+        return {}
+    return {
         d.split(".", 1)[1]: fn
         for d, fn in merged_dimensions.items()
         if d.startswith(f"{owner}.") and d.split(".", 1)[1] not in merged_dimensions
     }
-    return {**merged_dimensions, **own}
 
 
 def _mutate_measure_dimension_deps(
@@ -642,6 +643,7 @@ def _mutate_measure_dimension_deps(
     merged_dimensions: Mapping[str, Any],
     calc_specs: Mapping[str, Any] | None = None,
     known_measures: Iterable[str] = (),
+    owner_columns: Mapping[str, Iterable[str]] | None = None,
 ) -> ir.Table:
     """Materialize derived dimensions that measure bodies read but ``tbl`` lacks.
 
@@ -650,33 +652,70 @@ def _mutate_measure_dimension_deps(
     did not also group by that dimension (#310). Calc measures are probed too:
     they re-run against ``tbl`` and may hold inline reductions
     (``t.revenue.sum() / t.all(t.revenue.sum())``).
+
+    Never adds a column named like a measure (calc scopes resolve columns
+    first, so it would hide the measure). On joins, ``owner_columns`` maps
+    each model to its raw columns: when a measure reads one of its own
+    model's dimensions through a name that is a raw column of another joined
+    model, the reference is ambiguous and raises instead of silently reading
+    the other model's column.
     """
     known = frozenset(known_measures) | frozenset(agg_specs) | frozenset(calc_specs or {})
 
-    def probe(spec: Any) -> None:
+    def probe(spec: Any, on: ir.Table) -> None:
         if isinstance(spec, CalcMeasure):
-            evaluate_calc_lambda(spec.expr, tbl, known, priority_measures=spec.prefer_known)
+            evaluate_calc_lambda(spec.expr, on, known, priority_measures=spec.prefer_known)
         else:
-            spec(tbl)
+            spec(on)
 
-    for measure_name, spec in {**agg_specs, **(calc_specs or {})}.items():
-        dims = _dimensions_seen_by(measure_name, merged_dimensions, known)
+    def materialize(spec: Any, on: ir.Table, dims: Mapping[str, Any]) -> ir.Table:
         while True:
             try:
-                probe(spec)
-                break
+                probe(spec, on)
+                return on
             except Exception as exc:
                 missing = _extract_missing_column_name(exc)
-                if missing is None or missing in tbl.columns or missing in known:
-                    break
+                if missing is None or missing in on.columns or missing in known:
+                    return on
                 if missing not in dims and not any(
                     "." in d and d.split(".", 1)[1] == missing for d in dims
                 ):
-                    break
-                tbl = _mutate_dimensions_with_dependencies(tbl, [missing], dims)
-                if missing not in tbl.columns:
-                    break
+                    return on
+                enriched = _mutate_dimensions_with_dependencies(on, [missing], dims)
+                if missing not in enriched.columns or known & (
+                    set(enriched.columns) - set(on.columns)
+                ):
+                    return on
+                on = enriched
+
+    for measure_name, spec in {**agg_specs, **(calc_specs or {})}.items():
+        owner = _measure_owner(measure_name, known)
+        own = _owner_dimensions(owner, merged_dimensions)
+        dims = {**merged_dimensions, **own}
+        own_raw = set((owner_columns or {}).get(owner, ()))
+        foreign = sorted(n for n in own if n in tbl.columns and n not in own_raw)
+        if owner_columns is not None and foreign:
+            # Probe without the other model's columns: if the measure then
+            # needs its own model's dimension under one of those names, the
+            # bare reference is ambiguous.
+            trial = materialize(spec, tbl.drop(*foreign), dims)
+            if used := [n for n in foreign if n in trial.columns]:
+                raise ValueError(
+                    f"Measure {measure_name!r} reads {used}, which is both a dimension "
+                    f"of {owner!r} and a column of another joined model. Rename the "
+                    "dimension or the column so the reference is unambiguous."
+                )
+        tbl = materialize(spec, tbl, dims)
     return tbl
+
+
+def _root_columns(all_roots: Iterable[Any]) -> dict[str, tuple[str, ...]]:
+    """Each named root model's raw column names."""
+    return {
+        root.name: tuple(getattr(getattr(root, "table", None), "columns", ()))
+        for root in all_roots
+        if root.name
+    }
 
 
 def _reject_shadowed_group_keys(
@@ -3496,6 +3535,7 @@ class SemanticAggregateOp(Relation):
                 merged_dimensions,
                 calc_specs=plan.calc_specs,
                 known_measures=(*merged_base_measures, *merged_calc_measures),
+                owner_columns=_root_columns(all_roots) if join_op is not None else None,
             )
 
         return _compile_aggregation(
