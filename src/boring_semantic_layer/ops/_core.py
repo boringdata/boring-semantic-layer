@@ -508,6 +508,7 @@ def _extract_missing_column_name(exc: Exception) -> str | None:
         r"non-existent column ['\"]([^'\"]+)['\"]",
         r"Column ['\"]([^'\"]+)['\"] is not found",
         r"KeyError: ['\"]([^'\"]+)['\"]",
+        r"['\"]([^'\"]+)['\"] is not a known measure or column",
     )
     for pattern in patterns:
         match = re.search(pattern, message)
@@ -586,14 +587,21 @@ def _mutate_dimensions_with_dependencies(
     return tbl
 
 
-def _with_derived_dimensions(tbl: ir.Table, dimensions: Mapping[str, Any]) -> ir.Table:
+def _with_derived_dimensions(
+    tbl: ir.Table, dimensions: Mapping[str, Any], measure_names: Iterable[str] = ()
+) -> ir.Table:
     """Best-effort: add every derived dimension that isn't already a column.
 
     Measure lambdas may read derived dimensions (``t.revenue.sum()``), so
     classifying them against the raw table misreads those names as typos.
-    Dimensions that cannot resolve here (e.g. join-based) are skipped.
+    Dimensions that cannot resolve here (e.g. join-based) are skipped, and so
+    are dimensions named like a measure: calc scopes resolve columns before
+    measures, so the column would hide the measure.
     """
+    skip = set(measure_names)
     for dim_name in dimensions:
+        if dim_name in skip:
+            continue
         with contextlib.suppress(Exception):
             tbl = _mutate_dimensions_with_dependencies(
                 tbl, [dim_name], dimensions, overwrite_existing=False
@@ -601,37 +609,65 @@ def _with_derived_dimensions(tbl: ir.Table, dimensions: Mapping[str, Any]) -> ir
     return tbl
 
 
+def _measure_dimension(
+    name: str, measure_name: str, merged_dimensions: Mapping[str, Any]
+) -> str | None:
+    """The dimension a measure means by the bare ``name`` it reads, if any.
+
+    On joins, dimensions are keyed by prefixed name (``sales.revenue``) while
+    measure lambdas read the bare one (``t.revenue``). Prefer the measure's
+    own model, then a unique ``<model>.<name>`` match.
+    """
+    if name in merged_dimensions:
+        return name
+    if "." in measure_name:
+        own = f"{measure_name.split('.', 1)[0]}.{name}"
+        if own in merged_dimensions:
+            return own
+    matches = [d for d in merged_dimensions if "." in d and d.split(".", 1)[1] == name]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _mutate_measure_dimension_deps(
     tbl: ir.Table,
     agg_specs: Mapping[str, Callable],
     merged_dimensions: Mapping[str, Any],
+    calc_specs: Mapping[str, Any] | None = None,
+    known_measures: Iterable[str] = (),
 ) -> ir.Table:
     """Materialize derived dimensions that measure bodies read but ``tbl`` lacks.
 
     Only group-by keys are materialized up front, so a measure over a derived
     dimension (``total_revenue = t.revenue.sum()``) failed whenever the query
-    did not also group by that dimension (#310).
+    did not also group by that dimension (#310). Calc measures are probed too:
+    they re-run against ``tbl`` and may hold inline reductions
+    (``t.revenue.sum() / t.all(t.revenue.sum())``).
     """
+    known = frozenset(known_measures) | frozenset(agg_specs) | frozenset(calc_specs or {})
 
-    def is_dimension(name: str | None) -> bool:
-        # On joins, dimensions are keyed by prefixed name (sales.revenue)
-        # while measure lambdas read the bare one (t.revenue).
-        if name is None:
-            return False
-        return (
-            name in merged_dimensions or sum(d.endswith(f".{name}") for d in merged_dimensions) == 1
-        )
+    def probe(spec: Any) -> None:
+        if isinstance(spec, CalcMeasure):
+            evaluate_calc_lambda(spec.expr, tbl, known, priority_measures=spec.prefer_known)
+        else:
+            spec(tbl)
 
-    for spec in agg_specs.values():
+    for measure_name, spec in {**agg_specs, **(calc_specs or {})}.items():
         while True:
             try:
-                spec(tbl)
+                probe(spec)
                 break
             except Exception as exc:
                 missing = _extract_missing_column_name(exc)
-                if not is_dimension(missing) or missing in tbl.columns:
+                if missing is None or missing in tbl.columns or missing in known:
                     break
-                tbl = _mutate_dimensions_with_dependencies(tbl, [missing], merged_dimensions)
+                dim = _measure_dimension(missing, measure_name, merged_dimensions)
+                if dim is None:
+                    break
+                tbl = _mutate_dimensions_with_dependencies(
+                    tbl, [missing], {**merged_dimensions, missing: merged_dimensions[dim]}
+                )
+                if missing not in tbl.columns:
+                    break
     return tbl
 
 
@@ -3446,7 +3482,13 @@ class SemanticAggregateOp(Relation):
             tbl=tbl,
         )
         if not is_post_agg:
-            tbl = _mutate_measure_dimension_deps(tbl, plan.agg_specs, merged_dimensions)
+            tbl = _mutate_measure_dimension_deps(
+                tbl,
+                plan.agg_specs,
+                merged_dimensions,
+                calc_specs=plan.calc_specs,
+                known_measures=(*merged_base_measures, *merged_calc_measures),
+            )
 
         return _compile_aggregation(
             tbl,

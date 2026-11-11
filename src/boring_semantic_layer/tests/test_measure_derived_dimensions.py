@@ -4,6 +4,7 @@ import ibis
 import pytest
 from ibis import _
 
+from boring_semantic_layer import Dimension
 from boring_semantic_layer.api import to_semantic_table
 
 
@@ -105,3 +106,61 @@ def test_measure_over_derived_dim_on_join_many(sales):
         "categories.label",
     )
     assert [r["sales.total_revenue"] for r in result] == [90.0, 40.0]
+
+
+def _sales_and_categories(entity=False, colliding_dim=False):
+    sales = (
+        to_semantic_table(
+            ibis.memtable({"id": [1, 2], "quantity": [10, 20], "price": [1.5, 2.0]}),
+            name="sales",
+        )
+        .with_dimensions(revenue=lambda t: t.quantity * t.price)
+        .with_measures(total_revenue=lambda t: t.revenue.sum())
+    )
+    dims = {"id": Dimension(expr=lambda t: t.id, is_entity=entity), "label": lambda t: t.label}
+    if colliding_dim:
+        dims["revenue"] = lambda t: t.id * 100
+    categories = to_semantic_table(
+        ibis.memtable({"id": [1, 2], "label": ["A", "B"]}), name="categories"
+    ).with_dimensions(**dims)
+    return sales.join_one(categories, on="id")
+
+
+@pytest.mark.parametrize(
+    ("entity", "colliding_dim"),
+    [(True, False), (False, True)],
+    ids=["deferred-join", "other-model-has-same-dim-name"],
+)
+def test_measure_over_derived_dim_join_variants(entity, colliding_dim):
+    joined = _sales_and_categories(entity=entity, colliding_dim=colliding_dim)
+    result = _records(
+        joined.group_by("categories.id").aggregate("sales.total_revenue"), "categories.id"
+    )
+    assert [r["sales.total_revenue"] for r in result] == [15.0, 40.0]
+
+
+def test_calc_measure_with_inline_reduction_over_derived_dim(sales):
+    model = sales.with_measures(pct=lambda t: t.revenue.sum() / t.all(t.revenue.sum()))
+    result = _records(model.group_by("cat").aggregate("pct"), "cat")
+    assert [round(r["pct"], 4) for r in result] == [round(90 / 130, 4), round(40 / 130, 4)]
+
+
+def test_measure_named_like_dimension_still_resolves_as_measure():
+    model = (
+        to_semantic_table(ibis.memtable({"q": [2, 3]}), name="s")
+        .with_dimensions(revenue=lambda t: t.q * 10)
+        .with_measures(revenue=lambda t: t.q.sum(), twice=lambda t: t.revenue * 2)
+    )
+    assert "twice" in model.get_calculated_measures()
+    assert model.aggregate("twice").execute()["twice"].tolist() == [10]
+
+
+@pytest.mark.timeout(30)
+def test_unresolvable_dotted_dimension_name_raises_instead_of_looping():
+    model = (
+        to_semantic_table(ibis.memtable({"q": [2, 3]}), name="s")
+        .with_measures(total=lambda t: t.revenue.sum())
+        .with_dimensions(**{"outer.inner.revenue": lambda t: t.q * 10})
+    )
+    with pytest.raises(AttributeError, match="revenue"):
+        model.aggregate("total").execute()

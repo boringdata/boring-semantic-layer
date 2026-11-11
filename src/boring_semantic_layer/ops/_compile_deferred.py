@@ -17,6 +17,7 @@ from ._core import (
     _get_merged_fields,
     _JoinTreeInfo,
     _mutate_dimensions_with_dependencies,
+    _mutate_measure_dimension_deps,
     _resolve_expr,
     _to_untagged,
     _unwrap,
@@ -132,6 +133,13 @@ def to_untagged_with_deferred_joins(
         merged_base_measures=merged_base_measures,
         merged_calc_measures=merged_calc_measures,
         tbl=core_tbl,
+    )
+    core_tbl = _mutate_measure_dimension_deps(
+        core_tbl,
+        plan.agg_specs,
+        merged_dimensions,
+        calc_specs=plan.calc_specs,
+        known_measures=(*merged_base_measures, *merged_calc_measures),
     )
 
     # Execute aggregation on core table
