@@ -45,7 +45,6 @@ from ._core import (
     _leg_source_tables,
     _make_agg_callable,
     _mutate_dimensions_with_dependencies,
-    _mutate_measure_dimension_deps,
     _partition_agg_specs_by_source,
     _reject_unresolvable_group_keys,
     _rename_preagg_grain_to_joined_aliases,
@@ -462,20 +461,12 @@ def _preaggregate_sources(
         if table_name is None:
             # Unprefixed – aggregate on the full join if available
             if tbl is not None:
-                wrapper_tbl = _mutate_measure_dimension_deps(
-                    tbl,
-                    measures,
-                    {**merged_dimensions, **wrapper_local_dimensions},
-                    known_measures=merged_base_measures,
-                )
-                agg_exprs = {n: f(wrapper_tbl) for n, f in measures.items()}
-                _totals_sources[None] = (wrapper_tbl, dict(agg_exprs))
+                agg_exprs = {n: f(tbl) for n, f in measures.items()}
+                _totals_sources[None] = (tbl, dict(agg_exprs))
                 if group_by_cols:
-                    r = wrapper_tbl.group_by([wrapper_tbl[c] for c in group_by_cols]).aggregate(
-                        **agg_exprs
-                    )
+                    r = tbl.group_by([tbl[c] for c in group_by_cols]).aggregate(**agg_exprs)
                 else:
-                    r = wrapper_tbl.aggregate(**agg_exprs)
+                    r = tbl.aggregate(**agg_exprs)
                 _preagg_results.append(r)
             continue
 
@@ -630,17 +621,6 @@ def _preaggregate_sources(
 
         table_measures = _get_field_dict(table_op, "measures")
         table_dims = _get_field_dict(table_op, "dimensions")
-        source_measures = {
-            mname: table_measures.get(mname.split(".", 1)[1])
-            if "." in mname
-            else merged_base_measures.get(mname)
-            for mname in measures
-        }
-        raw_tbl = _mutate_measure_dimension_deps(
-            raw_tbl,
-            {m: fn for m, fn in source_measures.items() if isinstance(fn, Measure)},
-            table_dims,
-        )
         raw_columns = set(raw_tbl.columns)
 
         # Build agg expressions on the raw table
@@ -651,7 +631,9 @@ def _preaggregate_sources(
         _nested_measures_t: dict = {}
         for mname, _mfn in measures.items():
             short = mname.split(".", 1)[1] if "." in mname else mname
-            source_measure = source_measures[mname]
+            source_measure = (
+                table_measures.get(short) if "." in mname else merged_base_measures.get(mname)
+            )
             if isinstance(source_measure, Measure):
                 expr = source_measure(raw_tbl)
                 if isinstance(expr, NestedAccessMarker):

@@ -1,10 +1,9 @@
-"""Measures that read derived dimensions (#310)."""
+"""Measures that read derived dimensions on a single model (#310)."""
 
 import ibis
 import pytest
 from ibis import _
 
-from boring_semantic_layer import Dimension
 from boring_semantic_layer.api import to_semantic_table
 
 
@@ -82,63 +81,6 @@ def test_derived_dim_name_close_to_column_is_not_a_typo():
     assert model.aggregate("link_count").execute()["link_count"].tolist() == [2]
 
 
-def test_measure_over_derived_dim_on_joined_model(sales):
-    categories = to_semantic_table(
-        ibis.memtable({"category": ["A", "B"], "label": ["Alpha", "Beta"]}),
-        name="categories",
-    ).with_dimensions(label=lambda t: t.label)
-    joined = sales.join_one(categories, on="category")
-    result = _records(
-        joined.group_by("categories.label").aggregate("sales.total_revenue"),
-        "categories.label",
-    )
-    assert [r["sales.total_revenue"] for r in result] == [90.0, 40.0]
-
-
-def test_measure_over_derived_dim_on_join_many(sales):
-    categories = to_semantic_table(
-        ibis.memtable({"category": ["A", "B"], "label": ["Alpha", "Beta"]}),
-        name="categories",
-    ).with_dimensions(label=lambda t: t.label)
-    joined = categories.join_many(sales, on="category")
-    result = _records(
-        joined.group_by("categories.label").aggregate("sales.total_revenue"),
-        "categories.label",
-    )
-    assert [r["sales.total_revenue"] for r in result] == [90.0, 40.0]
-
-
-def _sales_and_categories(entity=False, colliding_dim=False):
-    sales = (
-        to_semantic_table(
-            ibis.memtable({"id": [1, 2], "quantity": [10, 20], "price": [1.5, 2.0]}),
-            name="sales",
-        )
-        .with_dimensions(revenue=lambda t: t.quantity * t.price)
-        .with_measures(total_revenue=lambda t: t.revenue.sum())
-    )
-    dims = {"id": Dimension(expr=lambda t: t.id, is_entity=entity), "label": lambda t: t.label}
-    if colliding_dim:
-        dims["revenue"] = lambda t: t.id * 100
-    categories = to_semantic_table(
-        ibis.memtable({"id": [1, 2], "label": ["A", "B"]}), name="categories"
-    ).with_dimensions(**dims)
-    return sales.join_one(categories, on="id")
-
-
-@pytest.mark.parametrize(
-    ("entity", "colliding_dim"),
-    [(True, False), (False, True)],
-    ids=["deferred-join", "other-model-has-same-dim-name"],
-)
-def test_measure_over_derived_dim_join_variants(entity, colliding_dim):
-    joined = _sales_and_categories(entity=entity, colliding_dim=colliding_dim)
-    result = _records(
-        joined.group_by("categories.id").aggregate("sales.total_revenue"), "categories.id"
-    )
-    assert [r["sales.total_revenue"] for r in result] == [15.0, 40.0]
-
-
 def test_calc_measure_with_inline_reduction_over_derived_dim(sales):
     model = sales.with_measures(pct=lambda t: t.revenue.sum() / t.all(t.revenue.sum()))
     result = _records(model.group_by("cat").aggregate("pct"), "cat")
@@ -176,51 +118,18 @@ def test_dimension_depending_on_measure_named_dim_does_not_hide_measure():
     assert model.aggregate("twice").execute()["twice"].tolist() == [10]
 
 
-@pytest.mark.parametrize("measure", ["sales.total_revenue", "total_revenue", "sales.big_total"])
-def test_owning_model_wins_over_same_named_dim_on_other_model(measure):
-    sales = (
-        to_semantic_table(
-            ibis.memtable({"id": [1, 2], "quantity": [10, 20], "price": [1.5, 2.0]}),
-            name="sales",
-        )
-        .with_dimensions(revenue=lambda t: t.quantity * t.price, big=lambda t: t.revenue * 10)
-        .with_measures(total_revenue=lambda t: t.revenue.sum(), big_total=lambda t: t.big.sum())
-    )
-    categories = to_semantic_table(
-        ibis.memtable({"id": [1, 2], "label": ["A", "B"]}), name="categories"
-    ).with_dimensions(label=lambda t: t.label, revenue=lambda t: t.id * 100)
-    joined = sales.join_one(categories, on="id")
-    result = _records(joined.group_by("categories.label").aggregate(measure), "categories.label")
-    factor = 10 if "big" in measure else 1
-    assert [r[measure] for r in result] == [15.0 * factor, 40.0 * factor]
-
-
-def test_dimension_shadowed_by_other_models_column_is_ambiguous():
-    sales = (
-        to_semantic_table(ibis.memtable({"id": [1, 2], "amount": [15, 40]}), name="sales")
-        .with_dimensions(revenue=lambda t: t.amount * 2, big=lambda t: t.revenue * 10)
-        .with_measures(large=lambda t: t.big.sum())
-    )
-    categories = to_semantic_table(
-        ibis.memtable({"id": [1, 2], "label": ["A", "B"], "revenue": [100, 200]}),
-        name="categories",
-    ).with_dimensions(label=lambda t: t.label)
-    joined = sales.join_one(categories, on="id")
-    with pytest.raises(ValueError, match="both a dimension of 'sales' and a column"):
-        joined.group_by("categories.label").aggregate("sales.large").execute()
-
-
-def test_measure_on_joined_model_over_its_own_dimension():
-    sales = to_semantic_table(ibis.memtable({"id": [1, 2], "amount": [15, 40]}), name="sales")
-    categories = to_semantic_table(
-        ibis.memtable({"id": [1, 2], "label": ["A", "B"]}), name="categories"
-    ).with_dimensions(label=lambda t: t.label)
+def test_measure_named_dim_not_materialized_through_dependency_at_query_time():
     model = (
-        sales.join_one(categories, on="id")
-        .with_dimensions(extra=lambda t: t.amount + 1)
-        .with_measures(extra_total=lambda t: t.extra.sum())
+        to_semantic_table(ibis.memtable({"q": [2, 3]}), name="s")
+        .with_dimensions(revenue=lambda t: t.q * 10, extra=lambda t: t.revenue + 1)
+        .with_measures(
+            revenue=lambda t: t.q.sum(),
+            twice=lambda t: t.revenue * 2,
+            extra_total=lambda t: t.extra.sum(),
+        )
     )
-    result = _records(
-        model.group_by("categories.label").aggregate("extra_total"), "categories.label"
-    )
-    assert [r["extra_total"] for r in result] == [16, 41]
+    assert model.aggregate("twice").execute()["twice"].tolist() == [10]
+    # extra depends on a name that is both a dimension and a measure: refuse
+    # rather than let the materialized column hide the measure.
+    with pytest.raises(AttributeError, match="extra"):
+        model.aggregate("twice", "extra_total").execute()

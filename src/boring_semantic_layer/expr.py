@@ -1177,9 +1177,10 @@ class SemanticModel(SemanticTable):
         all_measure_names = (
             tuple(new_base_meas.keys()) + tuple(new_calc_meas.keys()) + tuple(meas.keys())
         )
-        base_tbl = _with_derived_dimensions(
-            self.op().table, self.get_dimensions(), all_measure_names
-        )
+        base_tbl = self.op().table
+        if self.op()._source_join is None:
+            # Joined models keep their existing resolution; see #310.
+            base_tbl = _with_derived_dimensions(base_tbl, self.get_dimensions(), all_measure_names)
         scope = MeasureScope(_tbl=base_tbl, _known=all_measure_names)
 
         for name, fn_or_expr in meas.items():
