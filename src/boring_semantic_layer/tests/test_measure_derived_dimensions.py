@@ -164,3 +164,32 @@ def test_unresolvable_dotted_dimension_name_raises_instead_of_looping():
     )
     with pytest.raises(AttributeError, match="revenue"):
         model.aggregate("total").execute()
+
+
+def test_dimension_depending_on_measure_named_dim_does_not_hide_measure():
+    model = (
+        to_semantic_table(ibis.memtable({"q": [2, 3]}), name="s")
+        .with_dimensions(revenue=lambda t: t.q * 10, extra=lambda t: t.revenue + 1)
+        .with_measures(revenue=lambda t: t.q.sum(), twice=lambda t: t.revenue * 2)
+    )
+    assert "twice" in model.get_calculated_measures()
+    assert model.aggregate("twice").execute()["twice"].tolist() == [10]
+
+
+@pytest.mark.parametrize("measure", ["sales.total_revenue", "total_revenue", "sales.big_total"])
+def test_owning_model_wins_over_same_named_dim_on_other_model(measure):
+    sales = (
+        to_semantic_table(
+            ibis.memtable({"id": [1, 2], "quantity": [10, 20], "price": [1.5, 2.0]}),
+            name="sales",
+        )
+        .with_dimensions(revenue=lambda t: t.quantity * t.price, big=lambda t: t.revenue * 10)
+        .with_measures(total_revenue=lambda t: t.revenue.sum(), big_total=lambda t: t.big.sum())
+    )
+    categories = to_semantic_table(
+        ibis.memtable({"id": [1, 2], "label": ["A", "B"]}), name="categories"
+    ).with_dimensions(label=lambda t: t.label, revenue=lambda t: t.id * 100)
+    joined = sales.join_one(categories, on="id")
+    result = _records(joined.group_by("categories.label").aggregate(measure), "categories.label")
+    factor = 10 if "big" in measure else 1
+    assert [r[measure] for r in result] == [15.0 * factor, 40.0 * factor]

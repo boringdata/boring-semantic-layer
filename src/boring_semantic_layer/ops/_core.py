@@ -595,37 +595,45 @@ def _with_derived_dimensions(
     Measure lambdas may read derived dimensions (``t.revenue.sum()``), so
     classifying them against the raw table misreads those names as typos.
     Dimensions that cannot resolve here (e.g. join-based) are skipped, and so
-    are dimensions named like a measure: calc scopes resolve columns before
-    measures, so the column would hide the measure.
+    is any dimension that would add a column named like a measure, directly
+    or through a dependency: calc scopes resolve columns before measures, so
+    the column would hide the measure.
     """
     skip = set(measure_names)
     for dim_name in dimensions:
         if dim_name in skip:
             continue
         with contextlib.suppress(Exception):
-            tbl = _mutate_dimensions_with_dependencies(
+            enriched = _mutate_dimensions_with_dependencies(
                 tbl, [dim_name], dimensions, overwrite_existing=False
             )
+            if not skip & (set(enriched.columns) - set(tbl.columns)):
+                tbl = enriched
     return tbl
 
 
-def _measure_dimension(
-    name: str, measure_name: str, merged_dimensions: Mapping[str, Any]
-) -> str | None:
-    """The dimension a measure means by the bare ``name`` it reads, if any.
+def _dimensions_seen_by(
+    measure_name: str, merged_dimensions: Mapping[str, Any], known_measures: Iterable[str]
+) -> dict[str, Any]:
+    """Dimensions as the given measure's lambdas see them.
 
     On joins, dimensions are keyed by prefixed name (``sales.revenue``) while
-    measure lambdas read the bare one (``t.revenue``). Prefer the measure's
-    own model, then a unique ``<model>.<name>`` match.
+    measure lambdas read bare names (``t.revenue``). Alias the measure's own
+    model's dimensions under their bare names so that model wins over a
+    same-named dimension elsewhere in the join, along the dependency chain too.
     """
-    if name in merged_dimensions:
-        return name
-    if "." in measure_name:
-        own = f"{measure_name.split('.', 1)[0]}.{name}"
-        if own in merged_dimensions:
-            return own
-    matches = [d for d in merged_dimensions if "." in d and d.split(".", 1)[1] == name]
-    return matches[0] if len(matches) == 1 else None
+    owner = measure_name.split(".", 1)[0] if "." in measure_name else None
+    if owner is None:
+        owners = {m.split(".", 1)[0] for m in known_measures if m.endswith(f".{measure_name}")}
+        owner = owners.pop() if len(owners) == 1 else None
+    if owner is None:
+        return dict(merged_dimensions)
+    own = {
+        d.split(".", 1)[1]: fn
+        for d, fn in merged_dimensions.items()
+        if d.startswith(f"{owner}.") and d.split(".", 1)[1] not in merged_dimensions
+    }
+    return {**merged_dimensions, **own}
 
 
 def _mutate_measure_dimension_deps(
@@ -652,6 +660,7 @@ def _mutate_measure_dimension_deps(
             spec(tbl)
 
     for measure_name, spec in {**agg_specs, **(calc_specs or {})}.items():
+        dims = _dimensions_seen_by(measure_name, merged_dimensions, known)
         while True:
             try:
                 probe(spec)
@@ -660,12 +669,11 @@ def _mutate_measure_dimension_deps(
                 missing = _extract_missing_column_name(exc)
                 if missing is None or missing in tbl.columns or missing in known:
                     break
-                dim = _measure_dimension(missing, measure_name, merged_dimensions)
-                if dim is None:
+                if missing not in dims and not any(
+                    "." in d and d.split(".", 1)[1] == missing for d in dims
+                ):
                     break
-                tbl = _mutate_dimensions_with_dependencies(
-                    tbl, [missing], {**merged_dimensions, missing: merged_dimensions[dim]}
-                )
+                tbl = _mutate_dimensions_with_dependencies(tbl, [missing], dims)
                 if missing not in tbl.columns:
                     break
     return tbl
