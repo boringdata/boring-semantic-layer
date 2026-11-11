@@ -241,6 +241,7 @@ dropoff_locs = to_semantic_table(locs_tbl.view(), "dropoff_locs")
 
 The distinct names prevent ambiguous semantic prefixes; `.view()` prevents Ibis
 from treating both roles as the same relation.
+
 </note>
 
 <note type="warning">

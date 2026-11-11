@@ -28,28 +28,32 @@ export function Note({ children, type = 'info' }: NoteProps) {
 
   const style = styles[type]
 
-  // Extract text content if children is a string or can be converted
-  const content = typeof children === 'string'
-    ? children
-    : React.Children.toArray(children).map(child =>
-        typeof child === 'string' ? child : ''
-      ).join('')
+  // Text up to the first blank line arrives as a raw string; markdown after
+  // it (code blocks, extra paragraphs) arrives already rendered by the page.
+  const parts = React.Children.toArray(children).map((child, i) =>
+    typeof child === 'string' ? (
+      <ReactMarkdown
+        key={i}
+        components={{
+          p: ({ children }) => <>{children}</>,
+          strong: ({ children }) => <strong className="font-bold">{children}</strong>,
+          code: ({ children }) => <code>{children}</code>,
+          a: ({ href, children }) => <a href={href} className="underline font-medium">{children}</a>
+        }}
+      >
+        {child}
+      </ReactMarkdown>
+    ) : (
+      child
+    )
+  )
 
   return (
     <div className={`my-6 p-4 rounded-lg border ${style.container}`}>
       <div className="flex gap-3">
         <Info className={`h-5 w-5 mt-0.5 flex-shrink-0 ${style.icon}`} />
-        <div className={`text-sm leading-relaxed ${style.text} prose-sm prose-blue dark:prose-invert max-w-none [&_a]:underline [&_a]:font-medium [&_strong]:font-bold [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:bg-black/10 dark:[&_code]:bg-white/10`}>
-          <ReactMarkdown
-            components={{
-              p: ({ children }) => <>{children}</>,
-              strong: ({ children }) => <strong className="font-bold">{children}</strong>,
-              code: ({ children }) => <code>{children}</code>,
-              a: ({ href, children }) => <a href={href} className="underline font-medium">{children}</a>
-            }}
-          >
-            {content}
-          </ReactMarkdown>
+        <div className={`min-w-0 text-sm leading-relaxed ${style.text} prose-sm prose-blue dark:prose-invert max-w-none [&_a]:underline [&_a]:font-medium [&_strong]:font-bold [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:bg-black/10 dark:[&_code]:bg-white/10 [&_p]:text-sm [&_p]:text-inherit [&_p]:my-2 [&_pre_code]:p-0 [&_pre_code]:bg-transparent`}>
+          {parts}
         </div>
       </div>
     </div>
