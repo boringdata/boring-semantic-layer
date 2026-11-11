@@ -1491,6 +1491,62 @@ def test_yaml_calculated_measures_prefer_same_named_measures(duckdb_conn):
     assert df["avg_required_per_cell"].tolist() == pytest.approx([6.0, 5.0])
 
 
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "_.revenue / _['customers.n']",
+        "_['orders.revenue'] / _['customers.n']",
+    ],
+)
+def test_yaml_calculated_measures_over_joined_model(duckdb_conn, expr):
+    """A calculated measure may read a joined model's measure.
+
+    Only customers 1 and 2 have orders, so ``customers.n`` is 2 (not the
+    5 order rows), and the ratio is 150 / 2.
+    """
+    orders = duckdb_conn.create_table(
+        "calc_join_orders",
+        {"customer_id": [1, 1, 1, 2, 2], "amount": [10, 20, 30, 40, 50]},
+    )
+    customers = duckdb_conn.create_table("calc_join_customers", {"id": [1, 2, 3]})
+
+    config = {
+        "customers": {
+            "table": "calc_join_customers",
+            "dimensions": {"id": "_.id"},
+            "measures": {"n": "_.count()"},
+        },
+        "orders": {
+            "table": "calc_join_orders",
+            "dimensions": {"customer_id": "_.customer_id"},
+            "measures": {"revenue": "_.amount.sum()"},
+            "calculated_measures": {"revenue_per_customer": expr},
+            "joins": {
+                "customers": {
+                    "model": "customers",
+                    "type": "one",
+                    "left_on": "customer_id",
+                    "right_on": "id",
+                },
+            },
+        },
+    }
+
+    model = from_config(
+        config,
+        tables={"calc_join_orders": orders, "calc_join_customers": customers},
+    )["orders"]
+    df = model.query(measures=("revenue_per_customer",)).execute()
+    assert df["revenue_per_customer"].iloc[0] == pytest.approx(75.0)
+
+    df = (
+        model.query(dimensions=("customer_id",), measures=("orders.revenue_per_customer",))
+        .execute()
+        .sort_values("customer_id")
+    )
+    assert df["orders.revenue_per_customer"].tolist() == pytest.approx([60.0, 90.0])
+
+
 # ---------------------------------------------------------------------------
 # Issue #115: .all() for window aggregations in YAML
 # ---------------------------------------------------------------------------
